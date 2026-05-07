@@ -155,6 +155,25 @@ Each step is independent — a failure in one does not skip the others. The moda
 
 If you skip the migration, the plugin still works — but you'll have an orphan binary on disk and a stale Claude Desktop config entry pointing at it.
 
+### Verifying the legacy binary is gone
+
+After the migration modal completes step 2 (or after you remove the binary by hand), confirm that nothing lingers at the previous install location:
+
+```bash
+# macOS
+ls ~/Library/Application\ Support/obsidian-mcp-tools/bin/mcp-server
+
+# Linux
+ls ~/.local/share/obsidian-mcp-tools/bin/mcp-server
+
+# Windows (PowerShell)
+Test-Path "$env:APPDATA\obsidian-mcp-tools\bin\mcp-server.exe"
+```
+
+A clean migration returns `No such file or directory` (macOS / Linux) or `False` (Windows). If the binary is still present, the modal's step 2 was either skipped, dismissed, or failed silently — remove the file manually and restart your MCP client (Claude Desktop, Cowork, Cursor, …) so it reconnects through the in-process HTTP transport instead of the legacy stdio path.
+
+If you dismissed the modal accidentally, you can re-open the migration check from **Settings → MCP Tools → Migration from 0.3.x → Re-run migration check**.
+
 ## Using prompts
 
 The plugin lets you author **MCP prompts** as plain markdown files in your vault. Your prompt library lives alongside your notes, in a folder called `Prompts/` at the root of the vault. Every MCP-compatible client (Claude Desktop, Claude Code, Cursor, Cline, Continue, …) will surface these prompts in its own UI — typically as slash commands or attachments.
