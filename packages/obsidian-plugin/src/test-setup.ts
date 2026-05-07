@@ -263,6 +263,10 @@ type MockVaultState = {
       arrayBuffer: ArrayBuffer;
     }
   >;
+  // Per-file ctime / mtime overrides for `MockTFile.stat`. Default 0 when
+  // a path is absent so existing tests keep observing 0/0 — only tests
+  // that need recency ordering (`get_recent_files` etc.) populate this.
+  fileStats: Map<string, { ctime: number; mtime: number }>;
 };
 
 const _mockState: MockVaultState = {
@@ -276,6 +280,7 @@ const _mockState: MockVaultState = {
   resolvedLinks: {},
   unresolvedLinks: {},
   requestUrlResponses: new Map(),
+  fileStats: new Map(),
 };
 
 export function resetMockVault(): void {
@@ -295,10 +300,35 @@ export function resetMockVault(): void {
     delete _mockState.unresolvedLinks[k];
   }
   _mockState.requestUrlResponses.clear();
+  _mockState.fileStats.clear();
 }
 
 export function setMockFile(path: string, content: string): void {
   _mockState.files.set(path, content);
+}
+
+/**
+ * Override `ctime` / `mtime` on a file's `stat` block. Both default to
+ * 0 in the synthetic `MockTFile`, which works for most tests but not
+ * for tools that order files by recency (`get_recent_files`,
+ * `get_vault_files`-with-stats, etc.). Setting one or both lets a test
+ * pin a specific timestamp without having to construct a TFile by hand.
+ *
+ * Args:
+ *   path: vault-relative file path; the file should already exist via
+ *         `setMockFile()` (the override is keyed by path, not by file
+ *         identity, so calling order doesn't matter).
+ *   stat: `{ ctime?, mtime? }`. Omitted fields default to 0 — pass
+ *         only the field the test cares about.
+ */
+export function setMockFileStat(
+  path: string,
+  stat: { ctime?: number; mtime?: number },
+): void {
+  _mockState.fileStats.set(path, {
+    ctime: stat.ctime ?? 0,
+    mtime: stat.mtime ?? 0,
+  });
 }
 
 /**
@@ -474,9 +504,10 @@ class MockTFile {
     return i >= 0 ? this.name.slice(0, i) : this.name;
   }
   get stat() {
+    const override = _mockState.fileStats.get(this.path);
     return {
-      ctime: 0,
-      mtime: 0,
+      ctime: override?.ctime ?? 0,
+      mtime: override?.mtime ?? 0,
       size: (_mockState.files.get(this.path) ?? "").length,
     };
   }
