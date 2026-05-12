@@ -1,6 +1,8 @@
 # Handoff — `istefox/obsidian-mcp-connector` (was `obsidian-mcp-tools`)
 
-> **Aggiornato 2026-05-11 mattina (`0.4.6` SHIPPED — cycle 7 closed: batch di 6 PR merged 2026-05-07→2026-05-11 in singolo cut chiudendo 4 issue. PR #93 marcoaperez `rename_vault_file` (40-min review→merge turnaround) + PR #92 ENOTEMPTY abs-path leak fix #88 + PR #91 migration UX #78 + PR #90 LRA-port unhardcode #79 + PR #87 test backfill + PR #89 mock helper. Tools 26→27. Commit bump `d3019ee` + CHANGELOG promote `565fb80`. CI Release [run 25656023671](https://github.com/istefox/obsidian-mcp-connector/actions/runs/25656023671) ✅ + CI check [run 25656022693](https://github.com/istefox/obsidian-mcp-connector/actions/runs/25656022693) ✅. Convenzione rename-side fail-loud canonicizzata pubblicamente. Round-7 verify ask postato a folotp su #54 ([4418405362](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4418405362), 5 step, focus link-integrity). HEAD `565fb80`).**
+> **Aggiornato 2026-05-12 mattina (folotp round-7 verify ack — cycle 7 closed bilaterally ✅): folotp ha postato [#54 verify comment `4426895905`](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4426895905) 2026-05-12T02:40Z (~36h post BRAT-window opening) con **11/11 match** sul round-7 ask + 3/3 carryover spot-check (#80/#81/block-in-fenced) byte-equal pre/post + #74 zero-prefix invariant esteso a `rename_vault_file source-not-found`. Three-for-one ENOTEMPTY scrub validated (rmdir-trailer removed + abs path suppressed + actionable hint integrated). **`localTransport` promosso a 3° confirmed-positive HTTP-embedded chain-id signal** (prima negative-only via `apiExtensions` absence + namespace prefix; ora positive presence-with-shape machine-checkable in 1 call). **Refinement load-bearing su T1**: folotp ha esplicitamente proposto la framing "link integrity preserved" come operativamente più debole di "link text rewritten" e più forte di "link removed" — granularity corretta per la convenzione, valida per default link format con basename vault-unique dove `app.fileManager.renameFile` produce no-op text-rewrite (`[[source]]` resolve via filename lookup); metadata-cache index update è load-bearing op in tutte e 3 le config (default/abs/rel). Mio ack [#54 comment `4428953668`](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4428953668): multi-point ack rule applicata (preambolo engagement shape + per-item T1-T4 + carryover + #74 ext + refinement pinning) + soft-bridge condizionale a #68 rename_heading RFC "when that thread next moves". HEAD invariato **`0a01b37`** (handoff bump del 2026-05-11 era ultimo commit). Tutti gli altri thread invariati: marcoaperez day 1/14 silenzio post-#93 merge, store #11919 week 5/8 silenzio quiescenza totale (5+ giorni untouched), RFC #68/#77 dormienti.**
+>
+> Storico (precedente): **2026-05-11 mattina (`0.4.6` SHIPPED — cycle 7 closed: batch di 6 PR merged 2026-05-07→2026-05-11 in singolo cut chiudendo 4 issue. PR #93 marcoaperez `rename_vault_file` (40-min review→merge turnaround) + PR #92 ENOTEMPTY abs-path leak fix #88 + PR #91 migration UX #78 + PR #90 LRA-port unhardcode #79 + PR #87 test backfill + PR #89 mock helper. Tools 26→27. Commit bump `d3019ee` + CHANGELOG promote `565fb80`. CI Release [run 25656023671](https://github.com/istefox/obsidian-mcp-connector/actions/runs/25656023671) ✅ + CI check [run 25656022693](https://github.com/istefox/obsidian-mcp-connector/actions/runs/25656022693) ✅. Convenzione rename-side fail-loud canonicizzata pubblicamente. Round-7 verify ask postato a folotp su #54 ([4418405362](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4418405362), 5 step, focus link-integrity). HEAD `565fb80`).**
 >
 > Storico (precedente): **2026-05-10 (deep audit closure follow-up — CLAUDE.md + README refresh): 2 finding doc-drift residui dal deep audit RISOLTI in successione: (1) CLAUDE.md "Current versions"/"Project status"/"Pending work" sezioni stale 13 giorni refreshed ([commit `a659979`](https://github.com/istefox/obsidian-mcp-connector/commit/a659979)); (2) README "19 tools work without LRA" → "25 tools" su 2 occorrenze (linea 26 + footnote `[^4]`) + bonus nota su 0.4.5 dynamic LRA-port read via #79/#90 nella footnote ([commit `8954627`](https://github.com/istefox/obsidian-mcp-connector/commit/8954627)). Consistency interna README ora coerente su 4/4 tool count references (26 totali / 25 LRA-free). Delta check commenti 24h: ZERO novità rilevanti — tutti i thread tracciati invariati (fork #88 closed mio, #54 closed mio, #67/#68/#77 quiescenti dal 2026-05-04; upstream cluster invariato dal 2026-05-08 16:23Z; **store #11919 untouched 3+ giorni, 0 reviews/0 review_requests/0 human assignees, week 4/8 silenzio normale**); folotp attivo sul suo `folotp/organon-plugin` personale (non verso fork); marcoaperez day 5/14 silenzio. **HEAD `feat/http-embedded` = `8954627`** (13 commit avanti vs #87 baseline pre-2026-05-08). Doc-drift findings residui: 2 (markdown-patch#11 folotp informativo non-actionable + 19 dangling commits cosmetic).**
 >
@@ -13,6 +15,78 @@
 > Aggiornato `0.4.0` → `0.4.1` → `0.4.2` → `0.4.3` → `0.4.4` → `0.4.5` → **`0.4.6`** shipped consecutivamente, 7 cycle iterativi (5 soak-driven + 2 feature batch). Documento di passaggio di consegne. Self-contained.
 >
 > **Per il quadro architetturale completo** (gotcha, stack, convenzioni di codice): leggere **`CLAUDE.md`** in radice. Questo file è la sintesi *operativa*; CLAUDE.md è la sintesi *tecnica*.
+
+---
+
+## Decisioni di sessione 2026-05-12 mattina — folotp round-7 ack + cycle 7 bilateral closure ✅
+
+**Trigger**: Stefano riprende sessione dopo cut 2026-05-11. Memoria persistente vuota (handoff letto, `MEMORY.md` non esisteva), richiesta esplicita di sweep thread tracciati per delta-check post-window-opening (round-7 verify ask di ieri ha BRAT auto-update window 2026-05-12 → 2026-05-14, oggi è day 0 della window). `git fetch --all` ha confermato HEAD `0a01b37` allineato origin (un commit avanti vs handoff `565fb80` per docs bump del 2026-05-11). Sweep parallelo su 4 fronti: `#54` folotp commenti recenti + `gh issue list` fork open + store #11919 state + marcoaperez events feed.
+
+### Findings dal sweep
+
+1. **🎯 Folotp round-7 verify postato 2026-05-12T02:40:27Z** ([#54 comment `4426895905`](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4426895905)) — ~7h prima del sweep. Window respect: BRAT auto-update completato in ~36h dal cut 2026-05-11T07:19Z, ben dentro la finestra attesa.
+
+2. **Chain identification clean**: 3 positive HTTP-embedded signals citati esplicitamente da folotp — namespace `mcp__mcp-tools-istefox__*` + `get_server_info.localTransport` populated + `patch_vault_file.path` schema param. **Zero legacy artifacts**.
+
+3. **11/11 match** sul round-7 ask + 3/3 carryover + 3/3 zero-prefix invariant extension:
+
+   | Block | Items | Verdetto |
+   |---|---|---|
+   | Round-7 ask | T1 (rename + link integrity), T2a (missing parent), T2b (existing dest), T2c (from===to), T3 (ENOTEMPTY scrub #88), T4 (`localTransport` shape #78) | 6/6 match |
+   | Carryover spot-check | #5 H2-root reject (#80), #6 block-in-table reject (#81), #7 block-in-fenced-code reject (#85 symmetric) | 3/3 byte-equal pre/post |
+   | #74 zero-prefix invariant | #8 `patch_vault_file` frontmatter array-replace, #9 `delete_vault_file` 404, #10 `rename_vault_file` source-not-found (NEW) | 3/3 prefix layers = 0 |
+
+4. **Three-for-one improvement ENOTEMPTY scrub** (T3, #88): folotp framing → (a) `rmdir '…'` trailer removed, (b) absolute host path suppressed, (c) actionable `use recursive: "true"` hint integrated. Mock realism update (`adapter.rmdir` `.code`-errno'd con abs path) ora è asymptote, non one-time fix — lesson reinforcement vs 2026-05-09 implementation insight ("mock realism = test value").
+
+5. **`localTransport` promotion a 3° confirmed-positive chain-id signal**: prior preflight relied su `apiExtensions` absence (negative signal) + namespace prefix (positive); ora `localTransport` populated è positive presence-with-shape **machine-checkable in 1 call**. Forward-looking: preflight check può semplificare a `localTransport populated → HTTP-embedded chain confirmed`. Folotp non ha esplicitato l'implication ma è il use-value della sua osservazione.
+
+6. **Refinement load-bearing su T1**: folotp ha proposto framing precisa per la verify criterion — *"link integrity preserved" è operativamente più debole di "link text rewritten" e più forte di "link removed"*. Con default link format ("Use shortest path possible") + basename vault-unique, `app.fileManager.renameFile` correttamente produce no-op text-rewrite su linker bodies perché `[[source]]` continues to resolve via filename lookup; **metadata-cache index update è la load-bearing operation in tutte e 3 le config (default/abs/rel)**. PR #93 squash body convention pin già consistent con questa framing. Folotp suggerisce esplicitamente: precedence citabile per future `move_*` / `copy_*` / `rename_heading` RFC.
+
+7. **Altri thread invariati** (delta 24h):
+   - Open issues fork: 3 (#54 + #68 + #77), nessun nuovo
+   - Open PRs fork: 0
+   - Store PR #11919: `updatedAt=2026-05-07T07:53Z` (5+ giorni untouched), labels invariate (4 bot-applied), 0 reviews / 0 review_requests / 0 human assignees — **week 5/8 silenzio totale normale**
+   - Marcoaperez events: ultimo signal = merge PR #93 ieri 2026-05-11T07:16Z. **Day 1/14 post-merge**, silenzio normale stochastic
+   - Upstream cluster LRA-port (#89 ericmey / #74 vinhltt / #64 dominikblei): invariato dal 2026-05-08
+
+### Implementazione
+
+**Ack folotp round-7 shipped** ([#54 comment `4428953668`](https://github.com/istefox/obsidian-mcp-connector/issues/54#issuecomment-4428953668)) — multi-point ack rule applicata in 7 layer espliciti:
+
+1. **Preambolo engagement shape** non-generico: cita le proprietà specifiche del soak methodology di folotp (chain-id batched in parallel at session start + three-wave structure pre-state/execution/post-state + byte-exact carryover + scale-gate orchestrator-direct) come **primary external regression-detection signal** per `0.4.x` patch surface, citing what makes cycle-close declarations load-bearing per downstream tester confidence su `#54`. Articulated explicitly invece di folded implicitly nel technical reply.
+2. **T1**: match noted, refinement è "highest-value carry from this round" (separate ack al refinement, sotto).
+3. **T2a-c**: orphan-dir negative verification on T2a è il critical observable — la rename-vs-create asymmetry ora **externally validated at the runtime layer**, non solo convention-document layer.
+4. **T3**: three-for-one framing accepted as right summary. Mock realism = asymptote pinned esplicitamente.
+5. **T4**: `localTransport` promotion explicit + forward-looking implication ("preflight check simplifies to localTransport populated → HTTP-embedded confirmed").
+6. **Carryover #5-7**: stabilità helpers `hasParentH1` + `isInsideTableOrFencedCode` su 4-cycle window 0.4.2→0.4.6 → "longest-running invariant on HTTP-embedded surface".
+7. **#74 extension**: coverage estesa a 3 tools / 3 independent error code paths / single zero-prefix property.
+8. **Refinement T1 — pinning as precedent**: mirror della framing folotp **verbatim** (authority disambiguation rule — folotp è domain authority sul soak/verify methodology). Runtime-verified three-config matrix come citable precedent. **Soft-bridge condizionale a #68 rename_heading RFC** "when that thread next moves" — same convention, different surface (heading text + backlinks frontmatter vs file path + body links).
+9. **Cycle 7 closure declaration bilaterale** + next-signal framing (no commitment di timing, gated su store accept + marcoaperez stochastic 1-2 settimane).
+
+### Methodology applied
+
+- **Foundational read-fully-analyze + verify before report**: full thread #54 read end-to-end prima del draft, refinement T1 framing letta verbatim + cross-reference con PR #93 squash body per consistency check. Ack draft mostrato a Stefano pre-post per sign-off (matching pattern "actions visible to others → confirm first").
+- **Multi-point ack rule** (CLAUDE.md § Multi-point offer acknowledgement): applicata con doppia layer esplicita — (1) preambolo engagement shape + (2) per-item nello stesso ordine in cui folotp ha scritto (T1 → T2a-c → T3 → T4 → carryover → #74 → refinement). Zero points silently dropped.
+- **Authority disambiguation rule** (CLAUDE.md § Authority disambiguation): refinement T1 framing mirrored verbatim ("link integrity preserved is operationally weaker than link text rewritten and stronger than link removed") senza re-assert, perché folotp è il domain authority sul soak/verify methodology — la sua proposta di granularity correct è authoritative.
+- **Validated-contributor engagement rule**: folotp post entro 24h del round-6 close → ack entro 7h del round-7 post. Rapid cycle preserved.
+
+### State change
+
+- HEAD `feat/http-embedded` = **`0a01b37`** (invariato — solo 1 new comment GitHub, no commit/branch/version/tag change)
+- 1 new comment shipped su #54 (folotp ack `4428953668`)
+- Cycle 7 dichiarato bilateralmente chiuso
+- Refinement T1 "link integrity preserved" pinnata pubblicamente come **precedent per future `move_*`/`copy_*`/`rename_heading` RFC scope discussions**
+- Soft-bridge condizionale a #68 RFC ("when that thread next moves")
+- Memoria persistente: handoff aggiornato, `MEMORY.md` ancora vuoto (memory system non-popolato in questo progetto al 2026-05-12)
+- Folotp status: cycle 7 done, atteso passive su prossima 0.4.x release. No follow-up dovuto.
+
+### Pending immediate post-session (al 2026-05-12 mattina)
+
+- **Folotp**: passive post cycle 7 close bilaterale. Atteso passive su prossima 0.4.x cut.
+- **Marcoaperez next PR**: passive, day 1/14 post-#93 merge. Candidate next-up (sua scelta): `get_recent_files` smallest-wins-first oppure `execute_dataview_query` high-value-higher-surface. Mock-infra `setMockFileStat()` SHIPPED in `feat/http-embedded` ready a essere consumed.
+- **Store PR #11919**: passive, week 5/8 silenzio quiescenza totale (5+ giorni untouched). Routine settimanale `trig_015yL8D3VNao7nhRKjBu95ZK` lunedì 2026-05-18. Strategia silenzio mantenuta.
+- **RFC dormienti**: #68 rename_heading (folotp, 2026-05-04, refinement T1 ora citabile come precedent quando thread si muove) + #77 partial-read (folotp, 2026-05-04). Future scope, no commitment.
+- **0.4.7 cut**: gated su store accept event (no feature creep during review). CHANGELOG `[Unreleased]` vuoto, ready per next cycle.
 
 ---
 
