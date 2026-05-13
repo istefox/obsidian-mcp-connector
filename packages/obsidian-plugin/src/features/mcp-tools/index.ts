@@ -89,6 +89,10 @@ import {
   getRecentFilesSchema,
 } from "./tools/getRecentFiles";
 import {
+  getVaultFilePartialHandler,
+  getVaultFilePartialSchema,
+} from "./tools/getVaultFilePartial";
+import {
   getOutgoingLinksHandler,
   getOutgoingLinksSchema,
 } from "./tools/getOutgoingLinks";
@@ -186,6 +190,9 @@ export async function registerTools(
   );
   registry.register(getRecentFilesSchema, async ({ arguments: args }) =>
     getRecentFilesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(getVaultFilePartialSchema, async ({ arguments: args }) =>
+    getVaultFilePartialHandler({ arguments: args, app: ctx.app }),
   );
 
   // Links

@@ -7,6 +7,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Added
 
+- **`get_vault_file_partial` tool** — partial-read access to a vault
+  file via four modes operating on Obsidian's already-cached metadata
+  (`MetadataCache`) and `vault.cachedRead`. No Local REST API
+  required. Useful for context-window economics on large notes
+  (e.g. spot-check a frontmatter field on a 30 KB file without
+  loading the body).
+
+  Originated as RFC [#77](https://github.com/istefox/obsidian-mcp-connector/issues/77)
+  from @folotp (2026-05-04 upstream), originally triaged as a LRA
+  passthrough wrapper. Re-anchored in-process per bilateral lockin
+  between @istefox and @folotp on 2026-05-13 (issue #77
+  [comment 4440557399](https://github.com/istefox/obsidian-mcp-connector/issues/77#issuecomment-4440557399) /
+  [4440927656](https://github.com/istefox/obsidian-mcp-connector/issues/77#issuecomment-4440927656) /
+  [4440988763](https://github.com/istefox/obsidian-mcp-connector/issues/77#issuecomment-4440988763)),
+  aligning the tool with the 0.4.x "LRA-optional" stance — bumping
+  the "works without LRA" count from 27 to **28** of 29 tools.
+
+  Schema: `{ filename, mode, target?, targetDelimiter? }` (Option A
+  verbatim from the RFC).
+
+  - **`mode: "frontmatter"`** — returns a single frontmatter field
+    value (scalar / array / nested object), serialised as JSON.
+    Zero file I/O (cache-only). Requires `target`.
+  - **`mode: "document-map"`** — returns the file outline:
+    `{ path, frontmatter: [keys], headings: [{heading, level, line}],
+    blocks: [ids] }`. Zero file I/O (cache-only). `target` ignored.
+  - **`mode: "heading"`** — returns the markdown section under the
+    target heading, from the heading line (inclusive) to before the
+    next same-or-higher-level heading (exclusive) or EOF. Nested
+    paths via `targetDelimiter` (default `"::"`, e.g.
+    `"Parent::Child::Grandchild"`). Ambiguous targets
+    (multiple matches at the same depth) fail loud with `isError:
+    true`. Requires `target`.
+  - **`mode: "block"`** — returns the markdown range of the block
+    reference identified by `target` (with or without the leading
+    `^`). Requires `target`.
+
+  All four modes fail loud with `isError: true` and a descriptive
+  message on missing target, missing field/heading/block, ambiguous
+  heading, frontmatter-less file (frontmatter mode), or
+  filename-not-resolved. Schema validates the `mode` to the four-value
+  union at arktype layer; out-of-range modes never reach the handler.
+
+  Authorisation gate matches `list_tags` / `get_files_by_tag` /
+  `get_recent_files` — no per-tool allowlist, no plugin dependency,
+  read-only. Out of scope (deferred if surfaced): folder-scoped
+  filtering, regex-match on heading text, case-insensitive heading
+  match, multi-target batch.
+
+  Pinned by 24 cases in `getVaultFilePartial.test.ts` following the
+  priority order adopted in the #77 close-out (PRIMARY depth for
+  `frontmatter` + `document-map` since they are the zero-I/O
+  cache-only paths consumers reach for most heavily; SECONDARY
+  positive + missing + ambiguous coverage for `heading` + `block`).
+  Mock surface untouched — the existing `setMockMetadata()` helper
+  covers headings, blocks, and frontmatter shapes shipped from PR #87.
+
 - **`get_recent_files` tool** — returns the most recently modified
   markdown files in the vault, ordered by `mtime` descending with a
   `path` ascending tiebreaker on equal `mtime` (so repeat calls return

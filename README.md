@@ -23,7 +23,7 @@ Starting with **0.4.0**, the plugin hosts the MCP server **in-process inside Obs
 - **HTTP-native MCP clients** (Claude Code, Cursor, Cline, Continue, Windsurf, VS Code) connect directly to the local HTTP endpoint.
 - **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge — a two-line config the plugin generates for you.
 - **Native semantic search** runs entirely on-device via Transformers.js + `Xenova/all-MiniLM-L6-v2` (~25 MB, downloaded once and cached). No cloud, no Smart Connections requirement.
-- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 27 tools work without it. [^4]
+- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 28 tools work without it. [^4]
 
 ## Features
 
@@ -39,9 +39,10 @@ When connected to an MCP-compatible client, this plugin enables:
 - **Tag listing** — `list_tags` returns every tag in the vault with its usage count, sourced from `app.metadataCache.getTags()`. Inline `#tags` and frontmatter tags both included; no plugin dependency.
 - **Tag-filtered file lookup** — `get_files_by_tag` returns every file tagged with a given tag, with per-file occurrence count for relevance ranking. Optional `includeNested` to match `#project` against `#project/active`, `#project/archived`, etc. (mirrors Obsidian's tag pane).
 - **Recent-file context** — `get_recent_files` returns the most recently modified markdown files in the vault (ordered by `mtime` desc, with `ctime` and `size` per entry), honouring Obsidian's `Files & Links → Excluded files` configuration. Optional `limit` (1–100, default 20, fail-loud on out-of-range). Useful for agent-recency context without screen-scraping a file picker.
+- **Partial-read access** — `get_vault_file_partial` returns one of four slices of a file without loading the whole body: a single `frontmatter` field, the markdown section under a `heading` (nested paths via `targetDelimiter`, default `"::"`), the markdown range of a `block` reference, or a structured `document-map` outline (heading list + block-id list + frontmatter-field list, zero file I/O). Useful for context-window economics on large notes — spot-check a frontmatter field or grab a single section without paying for the full read.
 - **Graph navigation** — `get_outgoing_links` returns the body, embed, and frontmatter links emanating from a file (with resolved `targetPath` and `resolved` flag); `get_backlinks` returns every file that links to a given target, with per-source count. Both read-only, both backed by `app.metadataCache.resolvedLinks` / `getFirstLinkpathDest`.
 
-28 MCP tools in total. Full list in the plugin's settings → **Tools available** section.
+29 MCP tools in total. Full list in the plugin's settings → **Tools available** section.
 
 ## Prerequisites
 
@@ -135,7 +136,7 @@ Click **Copy config for streamable-http clients**. The snippet uses the generic 
 
 ### Verifying the setup
 
-Once configured, your client should expose **28 MCP tools** from this server, plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
+Once configured, your client should expose **29 MCP tools** from this server, plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
 
 To verify the connection works end-to-end, ask the agent to call `get_server_info`. A successful response confirms the client can reach the in-process server and the bearer token is correct. For deeper inspection (request/response logs, tool schema inspection without an LLM in the loop), use [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector):
 
@@ -398,4 +399,4 @@ See [GitHub Releases on this fork](https://github.com/istefox/obsidian-mcp-conne
 [^1]: For information about Claude data privacy and security, see [Claude AI's data usage policy](https://support.anthropic.com/en/articles/8325621-i-would-like-to-input-sensitive-data-into-free-claude-ai-or-claude-pro-who-can-view-my-conversations).
 [^2]: For more information about the Model Context Protocol, see [MCP Introduction](https://modelcontextprotocol.io/introduction).
 [^3]: For a list of available MCP Clients, see [MCP Example Clients](https://modelcontextprotocol.io/clients).
-[^4]: Local REST API was a hard requirement on the 0.3.x line. Starting with 0.4.0 it is optional and only enables the `search_vault` tool (DQL / JsonLogic queries). The other 27 tools work without it; `search_vault` returns an actionable error if it isn't installed. As of `0.4.5`, `search_vault` reads the LRA host and port from the plugin's live settings instead of a hardcoded `127.0.0.1:27124`, so reconfiguring LRA's listen port no longer requires a plugin restart.
+[^4]: Local REST API was a hard requirement on the 0.3.x line. Starting with 0.4.0 it is optional and only enables the `search_vault` tool (DQL / JsonLogic queries). The other 28 tools work without it; `search_vault` returns an actionable error if it isn't installed. As of `0.4.5`, `search_vault` reads the LRA host and port from the plugin's live settings instead of a hardcoded `127.0.0.1:27124`, so reconfiguring LRA's listen port no longer requires a plugin restart.
