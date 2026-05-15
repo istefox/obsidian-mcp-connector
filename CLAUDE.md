@@ -8,7 +8,7 @@ Guidance for Claude Code (and similar AI agents) working in this repository.
 
 One shipped component on the 0.4.x line:
 
-1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 26 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
+1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 29 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
 
 Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
@@ -290,7 +290,7 @@ Upstream `jacksteamdev/obsidian-mcp-tools` is **officially unmaintained** (decla
 Current state of the fork:
 
 - `main` at **0.3.12**, stable, on BRAT, fully functional (20 MCP tools, stdio+binary architecture). Protected per the policy above. HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`.
-- `feat/http-embedded` at **0.4.5** + `[Unreleased]` batch staged. Tag stack `0.4.0` → `0.4.5` (6 cycle iterativi shipped 2026-05-04 → 2026-05-06: stable cut + 4 soak-driven patches + 1 feature batch). Tools: 26 (base 20 + 1 graph batch in 0.4.4: `list_tags` + `get_files_by_tag` + `get_outgoing_links` + `get_backlinks` + 2 dir tools in 0.4.5: `create_vault_directory` + `delete_vault_directory`). `minAppVersion: 1.7.2`. Live in vault TEST via symlink; BRAT-distributed for community testers (folotp + grimlor + others tracked on issue `#54`).
+- `feat/http-embedded` at **0.4.5** + `[Unreleased]` batch staged. Tag stack `0.4.0` → `0.4.5` (6 cycle iterativi shipped 2026-05-04 → 2026-05-06: stable cut + 4 soak-driven patches + 1 feature batch). Tools: 29 (base 20 + 1 graph batch in 0.4.4: `list_tags` + `get_files_by_tag` + `get_outgoing_links` + `get_backlinks` + 2 dir tools in 0.4.5: `create_vault_directory` + `delete_vault_directory`). `minAppVersion: 1.7.2`. Live in vault TEST via symlink; BRAT-distributed for community testers (folotp + grimlor + others tracked on issue `#54`).
 - `[Unreleased]` batch on `feat/http-embedded` ready for `0.4.6` cut: #79 LRA port unhardcode (#90), #78 migration UX recurring Notice + `localTransport` field in `get_server_info` (#91), #88 `delete_vault_directory` ENOTEMPTY abs-path leak fix (#92). 0.4.6 cut gated on store PR #11919 acceptance — disciplina "no feature creep during review".
 - Community plugin store submission `obsidianmd/obsidian-releases#11919` open since 2026-04-13, automated lint cleared on 2026-04-18, **awaiting human review at week 4 of 2-8 typical window** (zero reviewer assignment as of 2026-05-09; labels `Changes requested` / `plugin` / `Additional review required` / `Skipped code scan` all from `github-actions[bot]` or `ObsidianReviewBot`, no human maintainer touch). Strategy = silence: any version bump or comment risks resetting the review queue, so post-cut work goes to `feat/http-embedded` without tagging until store accept lands.
 
