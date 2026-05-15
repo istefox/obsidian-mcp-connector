@@ -161,9 +161,21 @@ export async function preWarm(
     // parse — the success of the install is what matters, not the
     // version string.
     if (stderr) {
-      logger.debug("preWarm: stderr from mcp-remote", {
-        stderr: stderr.slice(0, 200),
-      });
+      if (isBenignMcpRemoteProbeError(stderr)) {
+        // mcp-remote has no `--help`; probing it emits an
+        // ERR_INVALID_URL / "Invalid URL" stack to stderr. That is the
+        // expected behaviour of the probe, not a problem — log a clean
+        // one-liner instead of echoing the raw trace, which in the
+        // shipped build goes to `console` and reads as a fatal error
+        // even though the pre-warm succeeded (#98).
+        logger.debug(
+          "preWarm: mcp-remote emitted its expected no-arguments probe error on stderr (benign — the package is cached)",
+        );
+      } else {
+        logger.debug("preWarm: stderr from mcp-remote", {
+          stderr: stderr.slice(0, 200),
+        });
+      }
     }
     const version = parseVersionFromHelp(stdout) ?? parseVersionFromHelp(stderr);
     const entry: PreWarmCacheEntry = {
@@ -183,14 +195,15 @@ export async function preWarm(
     // pre-warm. Distinguish that case from real failures (network
     // errors, missing Node, package not found in registry) by looking
     // at the error text.
-    if (
-      /mcp-remote/i.test(message) ||
-      /ERR_INVALID_URL/i.test(message) ||
-      /Invalid URL/i.test(message)
-    ) {
+    if (isBenignMcpRemoteProbeError(message)) {
+      // Deliberately do NOT echo `message` here: it carries the child
+      // process's raw `Fatal error: TypeError: Invalid URL … at new URL
+      // … ERR_INVALID_URL` stack. In the shipped build `logger` IS
+      // `console`, so dumping that slice makes a *successful* pre-warm
+      // look like a crash in the user's dev console (#98). The recovery
+      // is expected and benign — a clean one-liner is enough.
       logger.debug(
-        "preWarm: npx exited non-zero but mcp-remote was loaded — treating as success",
-        { message: message.slice(0, 300) },
+        "preWarm: npx exited non-zero but mcp-remote was loaded — treating as success (mcp-remote has no --help flag; its probe rejection is expected and the package is now cached)",
       );
       const entry: PreWarmCacheEntry = {
         lastWarmedAt: new Date().toISOString(),
@@ -217,6 +230,22 @@ function parseVersionFromHelp(stdout: string): string | undefined {
     stdout,
   );
   return m?.[1];
+}
+
+/**
+ * True when the text is the *expected* failure of probing `mcp-remote`
+ * (it has no `--help`/`--version`; it requires a URL positional and
+ * emits ERR_INVALID_URL / "Invalid URL" otherwise). By the time this
+ * surfaces, npx has already cached the package — the pre-warm goal is
+ * met. Used both to recover the catch path and to silence the
+ * equivalent stderr noise on the success path (#98).
+ */
+function isBenignMcpRemoteProbeError(text: string): boolean {
+  return (
+    /mcp-remote/i.test(text) ||
+    /ERR_INVALID_URL/i.test(text) ||
+    /Invalid URL/i.test(text)
+  );
 }
 
 function classifyError(message: string): string {

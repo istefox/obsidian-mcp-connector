@@ -1,9 +1,35 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
 import {
   getPreWarmCache,
   preWarm,
   type ExecRunner,
 } from "./preWarm";
+import { logger } from "$/shared/logger";
+
+/** Regex for the scary child-process stack trace we must NOT echo. */
+const SCARY_NOISE =
+  /ERR_INVALID_URL|Fatal error|TypeError: Invalid URL|at new URL/;
+
+/**
+ * Capture every `logger.debug` argument (message + meta) during `fn`
+ * as a single flattened JSON string, so a test can assert the recovery
+ * path does not leak the raw mcp-remote stack trace to the (prod =
+ * console) logger.
+ */
+async function captureDebugDuring(fn: () => Promise<void>): Promise<string> {
+  const calls: unknown[][] = [];
+  const spy = spyOn(logger, "debug").mockImplementation(
+    (...args: unknown[]) => {
+      calls.push(args);
+    },
+  );
+  try {
+    await fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return JSON.stringify(calls);
+}
 
 /**
  * Tests for the mcp-remote pre-warm runner + cache persistence.
@@ -190,6 +216,70 @@ describe("preWarm — error classification", () => {
     const cached = await getPreWarmCache(p);
     expect(cached?.lastWarmedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(cached?.version).toBe("1.0.0");
+  });
+});
+
+describe("preWarm — #98 benign mcp-remote probe error is not surfaced as noise", () => {
+  const benignThrow = () => {
+    throw new Error(
+      'Command failed: "/opt/homebrew/bin/npx" -y mcp-remote@latest --help\n' +
+        "[46042] Fatal error: TypeError: Invalid URL\n" +
+        "    at new URL (node:internal/url:819:25)\n" +
+        "    at parseCommandLineArgs (file:///.../mcp-remote/dist/chunk-…) {\n" +
+        "  code: 'ERR_INVALID_URL',\n" +
+        "  input: '--help'\n" +
+        "}",
+    );
+  };
+
+  test("recovery branch does not echo the raw stack trace into the logger", async () => {
+    const p = fakePlugin({});
+    const runner: ExecRunner = async () => benignThrow();
+
+    let result: Awaited<ReturnType<typeof preWarm>> | undefined;
+    const logged = await captureDebugDuring(async () => {
+      result = await preWarm(p, { runner, npxPath: "npx" });
+    });
+
+    // Recovery semantics unchanged: still treated as success.
+    expect(result?.ok).toBe(true);
+    // But the scary child-process trace must not reach the logger
+    // (which is `console` in the shipped/prod build — #98).
+    expect(logged).not.toMatch(SCARY_NOISE);
+  });
+
+  test("success path with benign stderr does not echo the scary trace", async () => {
+    const p = fakePlugin({});
+    const runner: ExecRunner = async () => ({
+      stdout: "mcp-remote 1.2.3 - Remote MCP server proxy\n",
+      stderr:
+        "[46042] Fatal error: TypeError: Invalid URL\n" +
+        "    at new URL (node:internal/url:819:25)\n" +
+        "  code: 'ERR_INVALID_URL', input: '--help'",
+    });
+
+    let result: Awaited<ReturnType<typeof preWarm>> | undefined;
+    const logged = await captureDebugDuring(async () => {
+      result = await preWarm(p, { runner, npxPath: "npx" });
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(logged).not.toMatch(SCARY_NOISE);
+  });
+
+  test("a genuinely unexpected stderr is still logged for diagnostics", async () => {
+    const p = fakePlugin({});
+    const runner: ExecRunner = async () => ({
+      stdout: "mcp-remote 1.2.3\n",
+      stderr: "npm warn deprecated something@1.0.0: please upgrade",
+    });
+
+    const logged = await captureDebugDuring(async () => {
+      await preWarm(p, { runner, npxPath: "npx" });
+    });
+
+    // Non-benign stderr is preserved (not over-suppressed).
+    expect(logged).toMatch(/deprecated something/);
   });
 });
 

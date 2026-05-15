@@ -215,6 +215,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
   pre-cut tests. Reported by @folotp during the 0.4.5 round-6 verify
   on #86. (#88, #92)
 
+- **"Pre-warm now" no longer dumps a fatal-looking stack trace to the
+  console when it actually succeeded.** `mcp-remote` has no `--help`
+  flag — probing it throws `ERR_INVALID_URL` on Node 20+/24. The
+  pre-warm already recovers correctly (the package is cached by the
+  time the probe fails, so it is treated as success), but it echoed the
+  raw child-process `Fatal error: TypeError: Invalid URL … at new URL …
+  ERR_INVALID_URL` slice into `logger.debug` — and in the shipped build
+  `logger` *is* `console`, so a successful pre-warm looked like a crash
+  in the user's dev console. Both the catch/recovery branch and the
+  success-path stderr log now detect the expected benign probe shape
+  and emit a clean one-line confirmation instead of the raw trace.
+  Genuinely unexpected stderr (e.g. npm deprecation warnings) is still
+  logged verbatim for diagnostics. Reported by @folotp on a 0.4.6 soak.
+  (#98)
+
 ### Changed
 
 - **Migration walkthrough adds an explicit
