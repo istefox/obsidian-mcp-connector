@@ -2,9 +2,10 @@ name: Release
 
 # Release-line-aware workflow:
 #
-# - Plugin artifacts (manifest.json, main.js, obsidian-plugin-*.zip)
-#   are built and uploaded for EVERY tag, on both the 0.3.x and 0.4.x
-#   release lines.
+# - Plugin artifacts: the 0.3.x line uploads main.js + manifest.json +
+#   the obsidian-plugin-*.zip convenience archive + the cross-platform
+#   mcp-server binaries. The 0.4.x line uploads only main.js +
+#   manifest.json (no zip, no binary).
 #
 # - mcp-server cross-platform binaries are built and uploaded ONLY for
 #   tags on the 0.3.x line. The 0.4.x line ships an in-process MCP
@@ -119,8 +120,8 @@ jobs:
             ${{ steps.get_release_body.outputs.result }}
 
             ---
-            ${{ steps.release_line.outputs.ships_binary == 'true' && '✨ This release includes attested build artifacts.' || '' }}
-            ${{ steps.release_line.outputs.ships_binary == 'true' && format('📝 View attestation details in the [workflow run]({0})', env.GH_WORKFLOW_URL) || '' }}
+            ✨ This release includes attested build artifacts.
+            📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
 
       - name: Upload plugin artifacts (0.4.x line — main.js and manifest.json only)
         if: steps.release_line.outputs.ships_binary != 'true'
@@ -142,8 +143,8 @@ jobs:
             ${{ steps.get_release_body.outputs.result }}
 
             ---
-            ${{ steps.release_line.outputs.ships_binary != 'true' && '✨ This release includes an attested build artifact (main.js).' || '' }}
-            ${{ steps.release_line.outputs.ships_binary != 'true' && format('📝 View attestation details in the [workflow run]({0})', env.GH_WORKFLOW_URL) || '' }}
+            ✨ This release includes an attested build artifact (main.js).
+            📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
 
       - name: Upload mcp-server binaries (0.3.x line only)
         if: steps.release_line.outputs.ships_binary == 'true'
