@@ -23,6 +23,6 @@ export async function deleteVaultFileHandler(
       isError: true,
     };
   }
-  await ctx.app.vault.delete(file);
+  await ctx.app.fileManager.trashFile(file);
   return { content: [{ type: "text", text: "OK" }] };
 }

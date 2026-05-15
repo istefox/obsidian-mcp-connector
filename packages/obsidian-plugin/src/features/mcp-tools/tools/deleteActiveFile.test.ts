@@ -3,7 +3,14 @@ import {
   deleteActiveFileHandler,
   deleteActiveFileSchema,
 } from "./deleteActiveFile";
-import { mockApp, resetMockVault, setMockActiveFile, setMockFile } from "$/test-setup";
+import {
+  mockApp,
+  resetMockVault,
+  setMockActiveFile,
+  setMockFile,
+  getMockTrashedPaths,
+  getMockDeletedPaths,
+} from "$/test-setup";
 
 beforeEach(() => resetMockVault());
 
@@ -14,7 +21,7 @@ describe("delete_active_file tool", () => {
     );
   });
 
-  test("deletes the active file via app.vault.delete", async () => {
+  test("trashes the active file via fileManager.trashFile, honouring the vault 'Deleted files' setting (not a permanent unlink)", async () => {
     setMockFile("Inbox/temp.md", "to be deleted");
     setMockActiveFile("Inbox/temp.md");
     const app = mockApp();
@@ -25,6 +32,8 @@ describe("delete_active_file tool", () => {
     expect(result.content[0].text).toMatch(/ok|deleted/i);
     // After deletion, no active file
     expect(app.workspace.getActiveFile()).toBeNull();
+    expect(getMockTrashedPaths()).toContain("Inbox/temp.md");
+    expect(getMockDeletedPaths()).not.toContain("Inbox/temp.md");
   });
 
   test("returns error when no active file", async () => {

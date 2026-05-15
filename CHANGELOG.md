@@ -215,6 +215,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
   pre-cut tests. Reported by @folotp during the 0.4.5 round-6 verify
   on #86. (#88, #92)
 
+- **`delete_vault_file` / `delete_active_file` now honour the vault's
+  "Deleted files" setting instead of permanently unlinking.** Both
+  handlers called `app.vault.delete(file)`, a hard unlink that bypasses
+  Obsidian's configured deletion strategy (system trash / `.trash/` /
+  permanent). Files deleted via MCP were unrecoverable even when the
+  vault was set to move deletions to `.trash` — a data-loss risk in
+  agentic bulk-delete workflows where many files are removed without
+  individual confirmation. Both now route through
+  `app.fileManager.trashFile(file)`, which applies the vault preference
+  automatically (no manual `trashOption` inspection). `delete_vault_directory`
+  is intentionally out of scope — it documents its trash-bypass
+  explicitly. Reported by @folotp on a 0.4.6 soak. (#96)
+
 ### Changed
 
 - **Migration walkthrough adds an explicit
