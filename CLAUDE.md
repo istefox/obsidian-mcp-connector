@@ -6,12 +6,11 @@ Guidance for Claude Code (and similar AI agents) working in this repository.
 
 **MCP Tools for Obsidian** — a Model Context Protocol (MCP) bridge that lets AI clients such as Claude Desktop access an Obsidian vault for reading, writing, searching (text + semantic), and executing templates, without bypassing Obsidian itself.
 
-Two shipping components glued together by the Local REST API plugin:
+One shipped component on the 0.4.x line:
 
-1. **Obsidian plugin** — installs/updates a signed MCP server binary, writes `claude_desktop_config.json`, and exposes extra HTTP endpoints that the server calls back into (semantic search via Smart Connections, template execution via Templater).
-2. **MCP server binary** — long-lived subprocess launched by Claude Desktop over stdio. Translates MCP tool/prompt calls into HTTPS requests against the Obsidian Local REST API plugin on `127.0.0.1:27124`.
+1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 26 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
 
-Why the detour through Local REST API instead of reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the server invoke other Obsidian plugins (Templater, Smart Connections, Dataview) through their APIs.
+Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
 Current versions (2026-05-09): **`main` ships 0.3.12** (stable, 20 MCP tools, stdio+binary architecture as described above), **`feat/http-embedded` ships 0.4.5** (released 2026-05-06, 26 MCP tools, in-process HTTP server inside the plugin, no binary; native semantic search via Transformers.js; see § Branch protection policy below). The `0.4.x` line has shipped 6 consecutive cycles (`0.4.0` → `0.4.5`, 5 soak-driven patches + 1 feature batch); a `[Unreleased]` block in `CHANGELOG.md` accumulates the `0.4.6` batch (currently #79 LRA port unhardcode, #78 migration UX, #88 ENOTEMPTY abs-path leak fix). License: MIT.
 
@@ -82,30 +81,26 @@ bun run release                       # Cross-platform release build
 bun run version [patch|minor|major]   # Atomic version bump + commit + tag
 ```
 
-Per-package notable scripts: `bun run inspector` in `packages/mcp-server` launches `@modelcontextprotocol/inspector` — **primary debugging tool** for server work. `bun run link` in `packages/obsidian-plugin` symlinks the built plugin into a local vault.
+Per-package notable scripts: `bun run link` in `packages/obsidian-plugin` symlinks the built plugin into a local vault.
 
 ## Architecture
 
 ### Layout
 
-- `packages/mcp-server/` — standalone MCP server, compiled to a binary
-- `packages/obsidian-plugin/` — Obsidian plugin (TS + Svelte 5)
+- `packages/obsidian-plugin/` — Obsidian plugin (TS + Svelte 5); contains the in-process MCP server (HTTP-embedded, 0.4.x)
 - `packages/shared/` — ArkType schemas, logger, cross-package types
 - `packages/test-site/` — SvelteKit harness, not part of the shipped product
 - `docs/` — architecture + feature specs (see References)
 - `.clinerules` — **authoritative architecture contract, read first**
 
-### Data flow
+### Data flow (0.4.x HTTP-embedded)
 
 ```
-Claude Desktop
-    │  stdio (JSON-RPC / MCP protocol)
+Claude Desktop / MCP client
+    │  HTTP / streamable-HTTP (MCP protocol)
     ▼
-mcp-server binary                      (reads env OBSIDIAN_API_KEY at startup)
-    │  HTTPS, self-signed cert, API key header
-    ▼
-Obsidian Local REST API plugin         (listens on 127.0.0.1:27124)
-    │  in-process function calls
+Obsidian plugin — in-process MCP server (0.4.x, port 27200 default)
+    │  in-process function calls + Local REST API for auth/vault ops
     ▼
 Obsidian (vault, Templater, Smart Connections, Dataview)
 ```
@@ -114,8 +109,7 @@ The MCP server **never** touches the vault filesystem directly, even when it wou
 
 ### Entry points
 
-- **Server**: `packages/mcp-server/src/index.ts` → instantiates `ObsidianMcpServer` (`features/core/index.ts`), wires the stdio transport, fans out feature registration.
-- **Plugin**: `packages/obsidian-plugin/src/main.ts` → `class McpToolsPlugin extends Plugin`, loads features via their `setup()` functions, registers the settings tab.
+- **Plugin** (also the MCP server host): `packages/obsidian-plugin/src/main.ts` → `class McpToolsPlugin extends Plugin`, loads features via their `setup()` functions, starts the in-process HTTP MCP server, registers the settings tab.
 - **Shared**: `packages/shared/src/index.ts` → re-exports logger and types.
 
 ### Feature-based architecture
@@ -169,7 +163,7 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 
 ### Tools (20 total)
 
-**Vault file management** — `packages/mcp-server/src/features/local-rest-api/index.ts`:
+**Vault file management** — `packages/obsidian-plugin/src/features/local-rest-api/index.ts`:
 
 | Tool | Purpose |
 |---|---|
@@ -250,7 +244,7 @@ Active traps in the current tree. Historical bugs already fixed in the fork are 
 
 - **`patches/svelte@5.16.0.patch`** forces Svelte to use `index-client.js` instead of `index-server.js` — required for Bun bundler compatibility. Re-verify if you upgrade Svelte.
 - **Self-signed HTTPS**: the server sets `process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"` inside `makeRequest.ts`. Removing or relocating this breaks every server→Obsidian call.
-- **`packages/mcp-server/dist/`** is gitignored — CI regenerates binaries on tagged releases. Run `bun run build` locally for `dist/mcp-server`, or the per-target scripts (`build:mac-arm64`, `build:mac-x64`, `build:linux`, `build:windows`), but never commit the output.
+- **`packages/obsidian-plugin/main.js` is the only shipped artifact** — CI regenerates it on tagged releases via `bun.config.ts`. Run `bun run build` from `packages/obsidian-plugin` locally; never commit the output.
 - **Version bumps must go through `bun run version`** — it atomically updates `package.json`, `manifest.json`, `versions.json` and creates the git commit + tag. Manual edits get out of sync.
 - **`packages/obsidian-plugin/main.js` is written at the package root, not `dist/`** — Obsidian expects that path. Do not move it.
 - **External modules in `bun.config.ts`** (`obsidian`, `@codemirror/*`, `@lezer/*`) must stay external. Bundling them breaks the plugin on load.
@@ -267,7 +261,7 @@ Active traps in the current tree. Historical bugs already fixed in the fork are 
 - Tests live next to the code (`*.test.ts`). Run a single file with `bun test <path>`; run a whole package with `cd packages/<name> && bun test`. There is no monorepo-wide fan-out today — run `bun run check` from the root, then `bun test` in each package.
 - **Plugin test infrastructure**:
   - `packages/obsidian-plugin/bunfig.toml` — `[test] preload` registers a synthetic `"obsidian"` module via `src/test-setup.ts`, so tests can import production modules that reference `Plugin`, `Notice`, `FileSystemAdapter`, `TFile`, etc.
-  - `packages/obsidian-plugin/src/test-setup.ts` — the module mock. `FileSystemAdapter` accepts an optional `basePath` for anchoring tests at a real temp directory. Production code never constructs it itself — Obsidian does — so the extra parameter is invisible to the ship build. Also stubs `Modal` (shallow base class with `onOpen`/`onClose` plumbing) and the `svelte` module's `mount`/`unmount` as recorders — every call is published on `globalThis.__svelteMockCalls.{mount,unmount}` so tests can both inspect component props (including callback handles like `onDecision`) and assert mount/unmount pairing. Tests that use these helpers must reset `__svelteMockCalls` in `beforeEach` for isolation.
+  - `packages/obsidian-plugin/src/test-setup.ts` — the module mock. `FileSystemAdapter` accepts an optional `basePath` for anchoring tests at a real temp directory. Production code never constructs it itself — Obsidian does — so the extra parameter is invisible to the ship build. Also stubs `Modal` (shallow base class with `onOpen`/`onClose` plumbing) and the `svelte` module's `mount`/`unmount` as recorders — every call is pushed to the exported `svelteMockCalls.{mount,unmount}` object so tests can both inspect component props (including callback handles like `onDecision`) and assert mount/unmount pairing. Tests that use these helpers must reset `svelteMockCalls` in `beforeEach` for isolation (`import { svelteMockCalls } from "$/test-setup"`; `svelteMockCalls.mount = []; svelteMockCalls.unmount = [];`).
   - `packages/obsidian-plugin/.env.test` — fake `GITHUB_DOWNLOAD_URL` / `GITHUB_REF_NAME` for the build-time `environmentVariables()` macro. Bun auto-loads when `bun test` runs.
   - **Stubbing `os.homedir()`**: use `spyOn(os, "homedir").mockReturnValue(tmpRoot)` — Bun/Node cache HOME early, so runtime `process.env.HOME = …` is not reliable. See `config.test.ts` and `uninstall.test.ts`.
   - **Installer integration tests** use real shell scripts as fake binaries (tmpdir, `mode: 0o755`) instead of mocking `child_process.exec`. See `status.integration.test.ts`. macOS-guarded (shebang approach is Unix-only).
@@ -280,11 +274,6 @@ Active traps in the current tree. Historical bugs already fixed in the fork are 
 
 1. **`bun run check`** (at repo root) — TypeScript strict check across all packages. Must pass.
 2. **Never bump version fields by hand.** Use `bun run version [patch|minor|major]`.
-
-**For changes in `packages/mcp-server/`:**
-
-3. **`bun test`** — existing tests must pass. Add tests when touching parsing or conversion logic.
-4. **`bun run inspector`** — verify new/modified tools register correctly, expose the expected schema, return well-formed MCP results.
 
 **For changes in `packages/obsidian-plugin/`:**
 
@@ -400,8 +389,7 @@ Implicit single-point responses to multi-point offers read as engagement loss �
 
 - `.clinerules` — authoritative feature architecture, ArkType conventions, error handling contract.
 - `docs/project-architecture.md` — monorepo overview (aligned with `.clinerules`).
-- `docs/features/mcp-server-install.md` — installer feature spec.
-- `docs/features/prompt-system.md` — authoritative reference for the prompt feature. Read before touching `packages/mcp-server/src/features/prompts/` or the template execution endpoint in the plugin.
+- `docs/features/prompt-system.md` — authoritative reference for the prompt feature. Read before touching the prompts feature or the template execution endpoint in the plugin.
 - `docs/design/issue-29-command-execution.md` — fork design review for Obsidian command execution (threat model, policy options, phased plan). Authoritative when resuming issue #29 / PR #47.
 - `CONTRIBUTING.md`, `SECURITY.md`.
 

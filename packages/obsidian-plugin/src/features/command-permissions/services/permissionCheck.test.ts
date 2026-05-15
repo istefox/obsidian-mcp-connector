@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { Request, Response } from "express";
 import type { Plugin } from "obsidian";
+import { svelteMockCalls } from "$/test-setup";
 import type { CommandAuditEntry } from "../types";
 import { handleCommandPermissionRequest } from "./permissionCheck";
 
@@ -17,10 +18,10 @@ import { handleCommandPermissionRequest } from "./permissionCheck";
  *     methods the handler touches (`status`, `json`, `writableEnded`).
  *   - The real `CommandPermissionModal` class, running on top of the
  *     Modal + Svelte stubs installed by `test-setup.ts`. The stubs
- *     publish every Svelte `mount` call on
- *     `globalThis.__svelteMockCalls`, so the test body simulates a
- *     user click by pulling the `onDecision` callback out of the
- *     recorded props and invoking it.
+ *     publish every Svelte `mount` call on the exported
+ *     `svelteMockCalls` object, so the test body simulates a user
+ *     click by pulling the `onDecision` callback out of the recorded
+ *     props and invoking it.
  *
  * Note on the 30-second modal timeout: the production constant lives
  * inside `permissionCheck.ts` and is not overridable, so the timeout
@@ -31,7 +32,7 @@ import { handleCommandPermissionRequest } from "./permissionCheck";
 
 // -------- Svelte mock helpers (shared contract with test-setup.ts) --------
 
-interface SvelteMockCalls {
+interface SvelteMockCallsLocal {
   mount: Array<{ component: unknown; options: { props?: unknown } }>;
   unmount: Array<unknown>;
 }
@@ -45,14 +46,13 @@ interface PromptProps {
   onDecision: (decision: "allow-once" | "allow-always" | "deny") => void;
 }
 
-function getSvelteMocks(): SvelteMockCalls {
-  return (globalThis as unknown as { __svelteMockCalls: SvelteMockCalls })
-    .__svelteMockCalls;
+function getSvelteMocks(): SvelteMockCallsLocal {
+  return svelteMockCalls;
 }
 
 function resetSvelteMocks(): void {
-  (globalThis as unknown as { __svelteMockCalls: SvelteMockCalls }).__svelteMockCalls =
-    { mount: [], unmount: [] };
+  svelteMockCalls.mount = [];
+  svelteMockCalls.unmount = [];
 }
 
 /**

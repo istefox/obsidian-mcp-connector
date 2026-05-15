@@ -10,10 +10,10 @@ const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 export default ts.config(
 	includeIgnoreFile(gitignorePath),
 	js.configs.recommended,
-	...ts.configs.recommended,
-	...svelte.configs['flat/recommended'],
+	ts.configs.recommended,
+	svelte.configs['flat/recommended'],
 	prettier,
-	...svelte.configs['flat/prettier'],
+	svelte.configs['flat/prettier'],
 	{
 		languageOptions: {
 			globals: {

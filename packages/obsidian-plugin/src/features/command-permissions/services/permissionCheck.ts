@@ -147,9 +147,9 @@ async function awaitModalDecision(
     .waitForDecision()
     .then((decision): ModalOutcome => ({ kind: "decided", decision }));
 
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let timeoutHandle: ReturnType<typeof activeWindow.setTimeout> | undefined;
   const timeoutPromise = new Promise<ModalOutcome>((resolve) => {
-    timeoutHandle = setTimeout(
+    timeoutHandle = activeWindow.setTimeout(
       () => resolve({ kind: "timeout" }),
       MODAL_TIMEOUT_MS,
     );
@@ -162,7 +162,7 @@ async function awaitModalDecision(
     }
     return outcome;
   } finally {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (timeoutHandle) activeWindow.clearTimeout(timeoutHandle);
   }
 }
 

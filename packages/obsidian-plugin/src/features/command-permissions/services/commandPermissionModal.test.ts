@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { svelteMockCalls } from "$/test-setup";
 import { CommandPermissionModal } from "./commandPermissionModal";
 
 /**
@@ -10,8 +11,8 @@ import { CommandPermissionModal } from "./commandPermissionModal";
  *   - `Modal` from "obsidian" — stubbed in `test-setup.ts` with a
  *     minimal base class that invokes onOpen/onClose from open/close.
  *   - `mount`/`unmount` from "svelte" — stubbed in `test-setup.ts`
- *     with recorders that publish every call on
- *     `globalThis.__svelteMockCalls` so tests can:
+ *     with recorders that publish every call on the exported
+ *     `svelteMockCalls` object so tests can:
  *       1. read the props passed to the Svelte component (to access
  *          the `onDecision` callback that the component would invoke
  *          on a real click), and
@@ -26,19 +27,18 @@ import { CommandPermissionModal } from "./commandPermissionModal";
  * The tests respect that contract.
  */
 
-interface SvelteMockCalls {
+interface SvelteMockCallsLocal {
   mount: Array<{ component: unknown; options: { props?: unknown } }>;
   unmount: Array<unknown>;
 }
 
-function getSvelteMocks(): SvelteMockCalls {
-  return (globalThis as unknown as { __svelteMockCalls: SvelteMockCalls })
-    .__svelteMockCalls;
+function getSvelteMocks(): SvelteMockCallsLocal {
+  return svelteMockCalls;
 }
 
 function resetSvelteMocks(): void {
-  (globalThis as unknown as { __svelteMockCalls: SvelteMockCalls }).__svelteMockCalls =
-    { mount: [], unmount: [] };
+  svelteMockCalls.mount = [];
+  svelteMockCalls.unmount = [];
 }
 
 interface PromptProps {

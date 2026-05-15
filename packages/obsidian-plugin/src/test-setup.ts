@@ -21,6 +21,19 @@
 
 import { mock } from "bun:test";
 
+// Obsidian injects `activeWindow` as a global (points to the focused Window
+// in popout-window scenarios). Tests run outside Obsidian, so we stub it to
+// the global timer functions so timer-dependent production code still works.
+// We delegate through an accessor so tests that swap `globalThis.setTimeout`
+// (e.g. the modal-timeout test) still take effect — activeWindow.setTimeout
+// reads the live globalThis binding at call time, not the one at setup time.
+(globalThis as unknown as { activeWindow: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } }).activeWindow = {
+  setTimeout: ((...args: Parameters<typeof setTimeout>) =>
+    (globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout(...args)) as typeof setTimeout,
+  clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
+    (globalThis as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout(...args),
+};
+
 void mock.module("obsidian", () => {
   class Notice {
     constructor(_message?: string, _timeout?: number) {}
@@ -182,7 +195,7 @@ void mock.module("obsidian", () => {
 /**
  * Mock Svelte's `mount`/`unmount` so we can exercise Obsidian Modal
  * lifecycle without a real DOM runtime. The mock records every call
- * on `globalThis.__svelteMockCalls` so tests can:
+ * on the exported `svelteMockCalls` object so tests can:
  *
  *   1. inspect the props passed to the component (including the
  *      `onDecision` callback);
@@ -190,15 +203,17 @@ void mock.module("obsidian", () => {
  *   3. assert that `unmount` was called with the same component ref
  *      that `mount` returned.
  *
- * Tests should reset the recorder in `beforeEach` to keep per-test
- * isolation (`(globalThis as any).__svelteMockCalls = { mount: [], unmount: [] }`).
+ * Tests should reset the recorder in `beforeEach` for isolation:
+ *   `import { svelteMockCalls } from "$/test-setup";`
+ *   `beforeEach(() => { svelteMockCalls.mount = []; svelteMockCalls.unmount = []; });`
  */
-interface SvelteMockCalls {
+export interface SvelteMockCalls {
   mount: Array<{ component: unknown; options: { props?: unknown } }>;
   unmount: Array<unknown>;
 }
 
-(globalThis as unknown as { __svelteMockCalls: SvelteMockCalls }).__svelteMockCalls = {
+/** Module-scoped Svelte mount/unmount recorder. Import in tests to read and reset. */
+export const svelteMockCalls: SvelteMockCalls = {
   mount: [],
   unmount: [],
 };
@@ -206,15 +221,11 @@ interface SvelteMockCalls {
 void mock.module("svelte", () => ({
   mount: (component: unknown, options: { props?: unknown }) => {
     const ref = { __mockRef: Symbol("svelte-mock-ref"), component, options };
-    (
-      globalThis as unknown as { __svelteMockCalls: SvelteMockCalls }
-    ).__svelteMockCalls.mount.push({ component, options });
+    svelteMockCalls.mount.push({ component, options });
     return ref;
   },
   unmount: (ref: unknown) => {
-    (
-      globalThis as unknown as { __svelteMockCalls: SvelteMockCalls }
-    ).__svelteMockCalls.unmount.push(ref);
+    svelteMockCalls.unmount.push(ref);
   },
 }));
 
