@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
+import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
 
 export const searchVaultSmartSchema = type({
   name: '"search_vault_smart"',
@@ -78,16 +79,34 @@ export async function searchVaultSmartHandler(
     );
   }
 
+  // Which backend will actually serve this query? The native
+  // Transformers.js index is only meaningful when the native provider
+  // is the one answering — Smart Connections maintains its own index.
+  // `settings` is absent only in partial test fixtures; treat that as
+  // native (the historical unconditional behaviour) to avoid
+  // regressing the native default.
+  const settings = state.settings;
+  const usingSmartConnections =
+    settings?.provider === "smart-connections" ||
+    (settings?.provider === "auto" &&
+      isSmartConnectionsAvailable(ctx.plugin));
+
   // Lazy indexer kick (Q4 = lazy on first query). Fire-and-forget:
   // the indexer's start() runs the first full vault build in the
   // background and subscribes to vault events for incremental
-  // updates. Subsequent calls are no-ops.
-  state.startIndexerIfNeeded?.();
+  // updates. Subsequent calls are no-ops. Skipped entirely under
+  // Smart Connections — kicking the native indexer there triggers a
+  // pointless embedding-model download (#99).
+  if (!usingSmartConnections) {
+    state.startIndexerIfNeeded?.();
+  }
 
   const provider = state.provider;
   if (!provider.isReady()) {
     return errorResult(
-      "Semantic search is not ready. The provider may still be loading the embedding model, or the configured backend is unavailable. Open Settings → MCP Connector → Semantic Search to choose or reconfigure a provider.",
+      usingSmartConnections
+        ? "Semantic search is not ready: the Smart Connections plugin is not loaded or has not finished indexing this vault. Wait for Smart Connections to finish loading, or open Settings → MCP Connector → Semantic Search to switch providers."
+        : "Semantic search is not ready. The provider may still be loading the embedding model, or the configured backend is unavailable. Open Settings → MCP Connector → Semantic Search to choose or reconfigure a provider.",
     );
   }
 

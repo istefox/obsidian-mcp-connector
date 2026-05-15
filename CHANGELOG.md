@@ -215,6 +215,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
   pre-cut tests. Reported by @folotp during the 0.4.5 round-6 verify
   on #86. (#88, #92)
 
+- **`delete_vault_file` / `delete_active_file` now honour the vault's
+  "Deleted files" setting instead of permanently unlinking.** Both
+  handlers called `app.vault.delete(file)`, a hard unlink that bypasses
+  Obsidian's configured deletion strategy (system trash / `.trash/` /
+  permanent). Files deleted via MCP were unrecoverable even when the
+  vault was set to move deletions to `.trash` — a data-loss risk in
+  agentic bulk-delete workflows where many files are removed without
+  individual confirmation. Both now route through
+  `app.fileManager.trashFile(file)`, which applies the vault preference
+  automatically (no manual `trashOption` inspection). `delete_vault_directory`
+  is intentionally out of scope — it documents its trash-bypass
+  explicitly. Reported by @folotp on a 0.4.6 soak. (#96)
+
+- **`search_vault_smart` now honours the `smart-connections` provider
+  setting instead of always invoking the native pipeline.** Two root
+  causes: (1) the production wiring never bound the resolved Smart
+  Connections API onto the plugin instance, so
+  `SmartConnectionsProvider.isReady()` (which reads `plugin.smartSearch`)
+  always returned `false` — the tool reported "Semantic search is not
+  ready" even with Smart Connections fully loaded and explicitly
+  selected; (2) the handler kicked the native Transformers.js indexer
+  unconditionally on every call, triggering a HuggingFace embedding
+  model download (`ensurePipeline` → `from_pretrained`) even when Smart
+  Connections was the selected backend. Fixes: `main.ts` binds
+  `this.smartSearch` from the existing `loadSmartSearchAPI` reactive
+  loader (same best-effort pattern as the Local REST API binding); the
+  `search_vault_smart` handler skips the native indexer kick when Smart
+  Connections is the active backend (`smart-connections`, or `auto`
+  with Smart Connections available). The "not ready" error is now
+  provider-aware — under Smart Connections it names the Smart
+  Connections plugin rather than the irrelevant native embedding model.
+  Reported by @folotp on a 0.4.6 soak. (#99)
+
 - **"Pre-warm now" no longer dumps a fatal-looking stack trace to the
   console when it actually succeeded.** `mcp-remote` has no `--help`
   flag — probing it throws `ERR_INVALID_URL` on Node 20+/24. The

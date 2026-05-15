@@ -284,6 +284,12 @@ type MockVaultState = {
   // depending on the glob/regex compilation path. Empty by default so
   // tests that don't exercise exclusion keep observing the full vault.
   ignored: Set<string>;
+  // Records which destructive path a delete took. `trashFile` honours the
+  // vault "Deleted files" setting (recoverable); raw `vault.delete` is a
+  // permanent unlink. Tests assert delete handlers route through the
+  // former (regression guard for fork issue #96).
+  trashedPaths: string[];
+  deletedPaths: string[];
 };
 
 // Synthetic absolute filesystem prefix used by the mock `adapter.rmdir`
@@ -307,6 +313,8 @@ const _mockState: MockVaultState = {
   requestUrlResponses: new Map(),
   fileStats: new Map(),
   ignored: new Set(),
+  trashedPaths: [],
+  deletedPaths: [],
 };
 
 export function resetMockVault(): void {
@@ -328,6 +336,18 @@ export function resetMockVault(): void {
   _mockState.requestUrlResponses.clear();
   _mockState.fileStats.clear();
   _mockState.ignored.clear();
+  _mockState.trashedPaths = [];
+  _mockState.deletedPaths = [];
+}
+
+/** Paths routed through `fileManager.trashFile` (recoverable delete). */
+export function getMockTrashedPaths(): string[] {
+  return [..._mockState.trashedPaths];
+}
+
+/** Paths routed through `vault.delete` (permanent unlink). */
+export function getMockDeletedPaths(): string[] {
+  return [..._mockState.deletedPaths];
 }
 
 export function setMockFile(path: string, content: string): void {
@@ -650,6 +670,7 @@ export function mockApp(): App {
     },
     delete: async (file: TAbstractFile): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
+      _mockState.deletedPaths.push(path);
       _mockState.files.delete(path);
       if (_mockState.activeFilePath === path) {
         _mockState.activeFilePath = null;
@@ -819,6 +840,22 @@ export function mockApp(): App {
       }
       if (_mockState.activeFilePath === path) {
         _mockState.activeFilePath = newPath;
+      }
+    },
+    /**
+     * Mock of `app.fileManager.trashFile`. The real implementation
+     * honours the vault's "Deleted files" setting (system trash /
+     * `.trash/` / permanent). Here the destination is irrelevant —
+     * tests only need to observe that the recoverable path was taken
+     * (vs. the permanent `vault.delete`), so the call is recorded and
+     * the file removed from the live vault.
+     */
+    trashFile: async (file: TAbstractFile): Promise<void> => {
+      const path = (file as unknown as MockTFile).path;
+      _mockState.trashedPaths.push(path);
+      _mockState.files.delete(path);
+      if (_mockState.activeFilePath === path) {
+        _mockState.activeFilePath = null;
       }
     },
   };
