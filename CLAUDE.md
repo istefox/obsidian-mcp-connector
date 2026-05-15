@@ -27,7 +27,7 @@ Active branches as of 2026-05-09:
 | Branch | Version | Status | Use |
 |---|---|---|---|
 | `main` | **0.3.12** | **PROTECTED** — stable, BRAT users install this | Bug-fix patches only (0.3.x line) |
-| `feat/http-embedded` | **0.4.5** (+ `[Unreleased]` batch ready for 0.4.6) | Active dev — Phase 4 ✅ closed, 6 cycle `0.4.x` shipped, batch staged for next cut | The HTTP-embedded pivot per `docs/design/2026-04-24-http-embedded-design.md` and `docs/plans/0.4.0-phase-{1,2,3,4}-*.md` |
+| `feat/http-embedded` | **0.4.6** | Active dev — Phase 4 ✅ closed, 6 cycle `0.4.x` shipped | The HTTP-embedded pivot per `docs/design/2026-04-24-http-embedded-design.md` and `docs/plans/0.4.0-phase-{1,2,3,4}-*.md` |
 
 **Hard rules — apply unless Stefano explicitly authorizes the specific action:**
 
@@ -142,8 +142,8 @@ tools.register(
     },
   }).describe("Human-readable tool description shown to the model"),
   async ({ arguments: args }) => {
-    const data = await makeRequest(ResponseSchema, "/endpoint", { /* ... */ });
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    const files = ctx.plugin.app.vault.getMarkdownFiles();
+    return { content: [{ type: "text", text: JSON.stringify(files, null, 2) }] };
   },
 );
 ```
@@ -225,7 +225,7 @@ Full spec lives in `.clinerules`. Highlights:
 
 - **TypeScript strict mode** everywhere, no exceptions. `verbatimModuleSyntax: true` — use `import type` for type-only imports.
 - **Prefer functional over OOP.** Pure functions, single responsibility, action-oriented names (`installMcpServer`, `getInstallationStatus`).
-- **Never reach the filesystem** from the server process except for logging. All vault access goes through `makeRequest()` → Local REST API.
+- **Never touch the vault filesystem directly from an MCP handler.** All vault reads/mutations go through Obsidian APIs — `plugin.app.vault.*` / `plugin.app.fileManager.*` / `vault.cachedRead` — never raw `fs`/`fsp`. This preserves Obsidian's metadata cache and respects file locks on open notes. (The 0.3.x `makeRequest()` → Local REST API pattern no longer exists; the 0.4.x server is in-process.)
 - **Never use `console.log`** in production code — use the shared `logger` from `packages/shared/src/logger.ts` with a structured context object (`logger.error("message", { requestId, error })`).
 - **Settings are augmented via TypeScript module augmentation**, not a central types file:
   ```typescript

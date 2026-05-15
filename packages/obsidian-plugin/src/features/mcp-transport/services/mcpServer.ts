@@ -40,7 +40,7 @@ export type McpService = {
  * the order of milliseconds and is dominated by the JSON parse;
  * acceptable for a single-user local server.
  *
- * The `ToolRegistry` (with all 20 tool registrations) is created
+ * The `ToolRegistry` (with all 29 tool registrations) is created
  * once at setup and shared across requests — registration is idempotent
  * but doing it per request would multiply the per-request cost
  * significantly with no benefit.
