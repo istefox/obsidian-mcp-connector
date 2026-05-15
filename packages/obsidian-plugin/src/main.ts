@@ -10,6 +10,7 @@ import {
   Templater,
   type PromptArgAccessor,
   type SearchResponse,
+  type SmartConnections,
 } from "shared";
 import {
   CommandPermissionModal,
@@ -84,6 +85,17 @@ export default class McpToolsPlugin extends Plugin {
   mcpTransportState?: McpTransportState;
 
   semanticSearchState?: SemanticSearchState;
+
+  /**
+   * Resolved Smart Connections search API, populated best-effort at
+   * onload from the reactive `loadSmartSearchAPI` loader. The
+   * SmartConnectionsProvider + provider factory read this field to
+   * decide readiness and to dispatch `search_vault_smart` queries when
+   * the user picks the "smart-connections" (or "auto") provider.
+   * Undefined until the loader resolves, or permanently if Smart
+   * Connections is not installed (#99).
+   */
+  smartSearch?: SmartConnections.SmartSearch;
 
   getLocalRestApiKey(): string | undefined {
     return this.localRestApi.plugin?.settings?.apiKey;
@@ -499,6 +511,33 @@ export default class McpToolsPlugin extends Plugin {
       })
       .catch((error: unknown) => {
         logger.debug("Local REST API load skipped", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
+    // Smart Connections: resolve the search API best-effort and bind
+    // it onto the plugin instance. The SmartConnectionsProvider and
+    // the provider factory read `this.smartSearch` to decide readiness
+    // and dispatch `search_vault_smart` under the "smart-connections" /
+    // "auto" provider settings. Without this binding the field stays
+    // undefined and the provider can never become ready even with
+    // Smart Connections fully loaded (#99). Best-effort, same shape as
+    // the Local REST API binding above.
+    lastValueFrom(loadSmartSearchAPI(this))
+      .then((dep) => {
+        this.smartSearch = dep.api;
+        if (this.smartSearch) {
+          logger.info(
+            "Smart Connections detected — `search_vault_smart` can use it",
+          );
+        } else {
+          logger.debug(
+            "Smart Connections not installed — `search_vault_smart` falls back to the native provider unless reconfigured",
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        logger.debug("Smart Connections load skipped", {
           error: error instanceof Error ? error.message : String(error),
         });
       });

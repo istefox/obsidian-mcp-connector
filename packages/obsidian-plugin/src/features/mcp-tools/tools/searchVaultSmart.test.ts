@@ -164,3 +164,110 @@ describe("search_vault_smart tool — dispatch contract (T11)", () => {
     expect(result.content[0]?.text).toMatch(/transient backend hiccup/);
   });
 });
+
+describe("search_vault_smart — native indexer gating by provider (#99)", () => {
+  function stateWith(opts: {
+    providerSetting: "native" | "smart-connections" | "auto";
+    ready?: boolean;
+    smartSearchPresent?: boolean;
+  }): {
+    plugin: ReturnType<typeof mockPlugin>;
+    indexerKicks: () => number;
+  } {
+    let kicks = 0;
+    const spy = fakeProvider({ ready: opts.ready ?? true, results: [] });
+    const plugin = mockPlugin({
+      // `isSmartConnectionsAvailable` reads plugin.smartSearch?.search
+      smartSearch: opts.smartSearchPresent
+        ? { search: async () => [] }
+        : undefined,
+      semanticSearchState: {
+        provider: spy.provider,
+        settings: { provider: opts.providerSetting, indexingMode: "live" },
+        startIndexerIfNeeded: () => {
+          kicks += 1;
+        },
+      },
+    } as never);
+    return { plugin, indexerKicks: () => kicks };
+  }
+
+  test("does NOT kick the native indexer when provider = smart-connections", async () => {
+    const { plugin, indexerKicks } = stateWith({
+      providerSetting: "smart-connections",
+    });
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(indexerKicks()).toBe(0);
+  });
+
+  test("kicks the native indexer when provider = native", async () => {
+    const { plugin, indexerKicks } = stateWith({ providerSetting: "native" });
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(indexerKicks()).toBe(1);
+  });
+
+  test("provider = auto: kicks native indexer only when Smart Connections is unavailable", async () => {
+    const withSC = stateWith({
+      providerSetting: "auto",
+      smartSearchPresent: true,
+    });
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin: withSC.plugin,
+    });
+    expect(withSC.indexerKicks()).toBe(0);
+
+    const withoutSC = stateWith({
+      providerSetting: "auto",
+      smartSearchPresent: false,
+    });
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin: withoutSC.plugin,
+    });
+    expect(withoutSC.indexerKicks()).toBe(1);
+  });
+});
+
+describe("search_vault_smart — provider-aware not-ready message (#99)", () => {
+  function notReadyPlugin(providerSetting: "native" | "smart-connections") {
+    const spy = fakeProvider({ ready: false });
+    return mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        settings: { provider: providerSetting, indexingMode: "live" },
+      },
+    } as never);
+  }
+
+  test("smart-connections: message names Smart Connections, not the embedding model", async () => {
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin: notReadyPlugin("smart-connections"),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/smart connections/i);
+    expect(result.content[0]?.text).not.toMatch(/embedding model/i);
+  });
+
+  test("native: message refers to the embedding model loading", async () => {
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin: notReadyPlugin("native"),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/embedding model|still be loading/i);
+  });
+});

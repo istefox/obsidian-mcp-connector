@@ -215,6 +215,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
   pre-cut tests. Reported by @folotp during the 0.4.5 round-6 verify
   on #86. (#88, #92)
 
+- **`search_vault_smart` now honours the `smart-connections` provider
+  setting instead of always invoking the native pipeline.** Two root
+  causes: (1) the production wiring never bound the resolved Smart
+  Connections API onto the plugin instance, so
+  `SmartConnectionsProvider.isReady()` (which reads `plugin.smartSearch`)
+  always returned `false` — the tool reported "Semantic search is not
+  ready" even with Smart Connections fully loaded and explicitly
+  selected; (2) the handler kicked the native Transformers.js indexer
+  unconditionally on every call, triggering a HuggingFace embedding
+  model download (`ensurePipeline` → `from_pretrained`) even when Smart
+  Connections was the selected backend. Fixes: `main.ts` binds
+  `this.smartSearch` from the existing `loadSmartSearchAPI` reactive
+  loader (same best-effort pattern as the Local REST API binding); the
+  `search_vault_smart` handler skips the native indexer kick when Smart
+  Connections is the active backend (`smart-connections`, or `auto`
+  with Smart Connections available). The "not ready" error is now
+  provider-aware — under Smart Connections it names the Smart
+  Connections plugin rather than the irrelevant native embedding model.
+  Reported by @folotp on a 0.4.6 soak. (#99)
+
 ### Changed
 
 - **Migration walkthrough adds an explicit
