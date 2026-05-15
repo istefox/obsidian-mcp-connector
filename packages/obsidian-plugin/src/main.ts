@@ -29,13 +29,6 @@ import {
   teardown as mcpTransportTeardown,
   type McpTransportState,
 } from "./features/mcp-transport";
-// `mcp-server-install` setup was the 0.3.x install-prompt entry point.
-// In 0.4.0 the server runs in-process — no binary to install. The setup
-// is no longer invoked at plugin load. The module stays in the tree as
-// a rollback safety net (and `updateClaudeConfig` legacy is still
-// imported by `tool-toggle/components/ToolToggleSettings.svelte` in a
-// branch that no longer fires in 0.4.0). T14 retires it for good.
-// import { setup as setupMcpServerInstall } from "./features/mcp-server-install";
 import { registerTemplatesCompatRoute } from "./features/mcp-tools/services/templatesCompat";
 import { setupMigration } from "./features/migration";
 import {
@@ -463,8 +456,7 @@ export default class McpToolsPlugin extends Plugin {
       });
     }
 
-    // 0.4.0: mcp-server-install setup is intentionally not invoked.
-    // See the import site at the top of this file for the rationale.
+    // 0.4.0: the in-process server has no binary to install.
 
     // Migration UX (Phase 4 T8) — detect leftover 0.3.x state and,
     // if found, queue the migration modal at workspace.onLayoutReady.

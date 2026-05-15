@@ -6,12 +6,11 @@
   import type McpServerPlugin from "src/main";
 
   // 0.4.0 no longer ships an external `mcp-server` binary — the MCP
-  // server runs in-process. The `mcp-server-install` settings section
+  // server runs in-process. The binary-installer settings section
   // (Install server, Local REST API required, Installation location,
   // Server install folder, …) was a 0.3.x install-flow surface and
-  // is hidden from the 0.4.0 settings tab. The module itself stays in
-  // the tree as a rollback safety net until 0.4.0 stable cuts; T14
-  // retires it for good. See `docs/plans/0.4.0-phase-4-…` T12.b.
+  // is hidden from the 0.4.0 settings tab. The retired installer module
+  // was removed in chore(0.4) as part of T14.
 
   // The `tool-toggle` UI is also hidden in 0.4.0. On 0.3.x the toggle
   // wrote `OBSIDIAN_DISABLED_TOOLS` into the binary's env, and the

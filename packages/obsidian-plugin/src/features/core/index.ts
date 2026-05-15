@@ -1,5 +1,5 @@
 import { mount, unmount } from "svelte";
-import type { SetupResult } from "../mcp-server-install/types";
+import type { SetupResult } from "./types";
 import SettingsTab from "./components/SettingsTab.svelte";
 
 import { App, PluginSettingTab } from "obsidian";

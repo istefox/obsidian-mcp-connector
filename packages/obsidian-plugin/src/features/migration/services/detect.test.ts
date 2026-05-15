@@ -13,8 +13,7 @@ import path from "path";
 import { detectLegacyInstall, hasAnyLegacySignal } from "./detect";
 
 /**
- * Tests for the migration legacy-install detector. Same sandbox
- * pattern as `mcp-server-install/services/config.test.ts`:
+ * Tests for the migration legacy-install detector. Sandbox pattern:
  *
  * - Real tmpdir per test acting as the fake HOME and as the legacy
  *   binary install directory.

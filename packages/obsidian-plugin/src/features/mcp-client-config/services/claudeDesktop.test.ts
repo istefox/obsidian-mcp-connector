@@ -20,9 +20,8 @@ import {
 /**
  * Tests for the 0.4.0 Claude Desktop config writer.
  *
- * Same sandbox pattern as `mcp-server-install/services/config.test.ts`:
- * tmpdir per test acting as the fake HOME (only used here to keep the
- * stub aligned with the production code), explicit `configPath`
+ * Uses a tmpdir per test acting as the fake HOME (only used here to keep
+ * the stub aligned with the production code), with an explicit `configPath`
  * passed to every call so the tests are platform-independent.
  *
  * Invariants exercised below:

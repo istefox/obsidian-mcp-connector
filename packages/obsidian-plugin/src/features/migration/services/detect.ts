@@ -6,7 +6,7 @@ import {
   BINARY_NAME,
   INSTALL_PATH,
   type Platform,
-} from "$/features/mcp-server-install/constants";
+} from "$/features/migration/constants";
 import {
   FORK_PLUGIN_ID,
   LEGACY_PLUGIN_ID,
@@ -79,8 +79,7 @@ export type DetectLegacyInstallInput = {
   legacyPluginId?: string;
   /**
    * Absolute path to `claude_desktop_config.json`. If undefined the
-   * detector resolves it from the platform default (same logic as
-   * `mcp-server-install/services/config.ts:getConfigPath`).
+   * detector resolves it from the platform default.
    */
   claudeConfigPath?: string;
   /**
@@ -267,10 +266,8 @@ function currentPlatform(): Platform | null {
 }
 
 /**
- * Mirrors `mcp-server-install/services/status.ts:expandHomePath`.
- * Duplicated here (rather than imported) because that module pulls in
- * the macro-using install constants and we want this detection module
- * to stay light. Keep the two in sync if either evolves.
+ * Expands `~` and `%VAR%` placeholders in a path template.
+ * Defined locally so this detection module stays light.
  */
 function expandHomePath(template: string): string {
   let expanded = template;
