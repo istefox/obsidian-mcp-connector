@@ -140,6 +140,18 @@ const config: BuildConfig = {
     // false`, ONNX wasm pinned to a CDN) — only the eager call must not
     // throw.
     "import.meta.url": JSON.stringify("file:///C:/mcp-tools-for-obsidian.ts"),
+    // Same class of bug as #100 but via the CommonJS path identifiers.
+    // `onnxruntime-web/dist/ort-web.node.js` resolves its dist dir from
+    // `__dirname`/`__filename`; with `target:"node"` Bun bakes the BUILD
+    // MACHINE's absolute path (`/home/runner/work/.../onnxruntime-web/...`)
+    // into main.js, so a rebuild on any other machine differs byte-for-byte
+    // and Obsidian's automated "Build verification" fails (release artifact
+    // != source rebuild). Neutralise to a stable placeholder: the resolved
+    // value is dead in our build (onnxruntime-web runs as WASM, CDN-pinned,
+    // `allowLocalModels=false`, `onnxruntime-node` shimmed) — nothing reads
+    // the real dirname at runtime.
+    "__dirname": JSON.stringify("/"),
+    "__filename": JSON.stringify("/mcp-tools-for-obsidian.js"),
     // These environment variables are critical for the MCP server download functionality.
     // In CI the release workflow injects the correct values (see .github/workflows/release.yml);
     // the fallback targets the active fork repo so local builds keep working.

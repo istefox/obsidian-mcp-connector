@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.4.8] — 2026-05-16
+
+### Fixed
+
+- **Reproducible build (Obsidian automated "Build verification")** —
+  `onnxruntime-web/dist/ort-web.node.js` resolves its directory from
+  `__dirname`/`__filename`; with the `target:"node"` bundle Bun baked
+  the build machine's absolute path
+  (`/home/runner/work/.../onnxruntime-web/...`) into `main.js`, so a
+  rebuild from source on any other machine no longer matched the
+  released artifact and the community-store automated review reported
+  *"the main.js built from source does not match the release artifact"*.
+  Neutralised `__dirname`/`__filename` in the bundler `define` block
+  (same proven approach as the `import.meta.url` fix in #100; the
+  resolved value is dead — onnxruntime-web runs as WASM, CDN-pinned,
+  `allowLocalModels=false`, `onnxruntime-node` shimmed).
+- **Pinned the build toolchain** — `bun-version` in the release
+  workflow and `mise.toml` were `latest` (non-deterministic across
+  builds). Pinned both to `1.3.12` so CI releases are reproducible,
+  per the store reviewer's recommendation.
+
 ## [0.4.7] — 2026-05-16
 
 ### Added
