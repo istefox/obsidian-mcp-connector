@@ -74,7 +74,7 @@ const sveltePlugin: BunPlugin = {
           filename: parsed.base,
 					generate: "client",
 					css: "injected",
-					dev: isProd,
+					dev: !isProd,
 				});
 
 				return {
