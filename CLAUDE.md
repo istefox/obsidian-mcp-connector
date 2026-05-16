@@ -4,7 +4,7 @@ Guidance for Claude Code (and similar AI agents) working in this repository.
 
 ## Project
 
-**MCP Tools for Obsidian** — a Model Context Protocol (MCP) bridge that lets AI clients such as Claude Desktop access an Obsidian vault for reading, writing, searching (text + semantic), and executing templates, without bypassing Obsidian itself.
+**MCP Connector** — a Model Context Protocol (MCP) bridge that lets AI clients such as Claude Desktop access an Obsidian vault for reading, writing, searching (text + semantic), and executing templates, without bypassing Obsidian itself.
 
 One shipped component on the 0.4.x line:
 
@@ -12,13 +12,13 @@ One shipped component on the 0.4.x line:
 
 Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
-Current line: **`main` = 0.4.7** — the standalone in-process HTTP MCP server (promoted 2026-05-16); no separate binary, native semantic search via Transformers.js. The `packages/mcp-server` binary and `features/mcp-server-install` installer are retired. The 0.3.x stdio/binary line is archived at `archive/main-0.3.12` (abandoned; tags retained). The `[Unreleased]` block in `CHANGELOG.md` accumulates the next cut; consult `CHANGELOG.md` for its current contents (do not enumerate here — it drifts). License: MIT.
+Current line: **`main` = 0.4.8** — the standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16); no separate binary, native semantic search via Transformers.js. **Accepted & listed in the Obsidian community plugin store** (id `mcp-tools-istefox`, 2026-05-16; Obsidian shows a standard "not manually reviewed by Obsidian staff" disclaimer — automated review path). The `packages/mcp-server` binary and `features/mcp-server-install` installer are retired. The 0.3.x stdio/binary line is archived at `archive/main-0.3.12` (abandoned; tags retained). The `[Unreleased]` block in `CHANGELOG.md` accumulates the next cut; consult `CHANGELOG.md` for its current contents (do not enumerate here — it drifts). License: MIT.
 
 ### Branch protection policy
 
-**`main` is the production line** — standalone in-process HTTP MCP server, currently **0.4.7** (promoted 2026-05-16). The historical rule "don't merge `feat/http-embedded` → `main` until Stefano decides the 0.4.0 bump" is **discharged**: the promotion has happened; `main` IS the 0.4.x line. Normal branch + PR discipline now applies.
+**`main` is the production line** — standalone in-process HTTP MCP server, currently **0.4.8** (0.4.x promoted to `main` 2026-05-16; accepted & listed in the Obsidian community store). The historical rule "don't merge `feat/http-embedded` → `main` until Stefano decides the 0.4.0 bump" is **discharged**: the promotion has happened; `main` IS the 0.4.x line. Normal branch + PR discipline now applies.
 
-`feat/http-embedded` is a residual dev branch that became equal to `main` at promotion time. `main` is authoritative going forward; `feat/http-embedded` may be used for in-flight work or left as a historical marker — it no longer has "pre-release" status.
+`feat/http-embedded` was **retired (deleted from origin) 2026-05-16** — it was 0-ahead/29-behind `main` at the time, so nothing was lost (it was removed from the `General` ruleset first, keeping `main` protection intact). `main` is the sole, authoritative line.
 
 The 0.3.x stdio/binary line is **archived at `archive/main-0.3.12`** (do not delete it or its tags; users on old installs may reference them). Active development against 0.3.x is abandoned.
 
@@ -34,7 +34,7 @@ If a request seems likely to compromise `main`'s functionality, stop and ask bef
 
 **GitHub Rulesets active on `istefox/obsidian-mcp-connector`** (since 2026-05-05):
 
-- **`General`** (branch): targets `main` + `feat/http-embedded`, rules: Restrict deletions + Block force pushes.
+- **`General`** (branch): targets `main` (`~DEFAULT_BRANCH`) only — `feat/http-embedded` was removed from it when that branch was retired 2026-05-16. Rules: Restrict deletions + Block force pushes.
 - **`main-strict`** (branch): targets `main` only, rule: Require pull request before merging (0 approvals). Direct push to `main` will be REJECTED.
 - **`tags-protection`** (tag): targets pattern `0.*` (covers 0.1.x through 0.9.x), rules: Restrict updates + Restrict deletions + Block force pushes.
 
@@ -47,7 +47,7 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | Layer | Tech |
 |---|---|
 | Monorepo | Bun workspaces (`bun.lock`) — **do not use npm/yarn/pnpm** |
-| Toolchain pinning | `mise.toml` (bun latest) |
+| Toolchain pinning | `mise.toml` + `release.yml` (bun pinned `1.3.12` — reproducible builds; do not revert to `latest`) |
 | Language | TypeScript 5, strict mode, `verbatimModuleSyntax: true` |
 | Runtime validation | **ArkType** (`arktype` 2.0.0-rc.30) at every external boundary |
 | MCP | `@modelcontextprotocol/sdk` 1.29.0 |
@@ -56,8 +56,8 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | HTML→Markdown | Turndown 7.2 |
 | Test | `bun:test` (native) |
 | Format | Prettier 3 (`.prettierrc.yaml`) — 2-space indent, 80 col |
-| Build | `bun build --compile` for the server binary, custom `bun.config.ts` for the plugin |
-| CI | GitHub Actions (`.github/workflows/release.yml`) — cross-platform binaries + SLSA provenance |
+| Build | `packages/obsidian-plugin/bun.config.ts` (Bun bundler) → plugin `main.js`. No binary. `__dirname`/`__filename`/`import.meta.*` are neutralized in the `define` block for a reproducible cross-machine bundle (Obsidian store build-verification) |
+| CI | GitHub Actions (`.github/workflows/release.yml`, tag-triggered) — plugin-only release assets (`main.js` + `manifest.json`) + GitHub build-provenance attestation |
 
 Path alias inside every package: **`$/*` → `src/*`**. Use it instead of relative imports across feature boundaries.
 
@@ -175,11 +175,11 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 | `search_vault` | Search via Dataview DQL or JsonLogic query. |
 | `search_vault_simple` | Plain text search with context window. |
 
-**Semantic search** — `features/smart-connections/index.ts`:
+**Semantic search** — `features/semantic-search/` (native Transformers.js MiniLM embedder, WASM CDN-pinned, in-process — no Smart Connections required):
 
 | Tool | Purpose |
 |---|---|
-| `search_vault_smart` | Semantic search delegated to the Smart Connections plugin (`/search/smart` endpoint registered by this repo's plugin). Supports folder include/exclude filters and result limits. |
+| `search_vault_smart` | Semantic search via the bundled native Transformers.js MiniLM provider. Smart Connections is an optional alternative backend selectable via the provider setting (`providerFactory`), not a dependency. Supports folder include/exclude filters and result limits. |
 
 **Templater integration** — `features/templates/index.ts`:
 
@@ -244,7 +244,7 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
 - **`execute_template.createFile`** is typed as the string `"true"|"false"` (not boolean) because older MCP clients serialize booleans as strings — explicit workaround in `features/templates/index.ts`, kept as belt-and-suspenders for SDK 1.29.0.
 - **`plugin.loadData()` / `plugin.saveData()` are NOT atomic** — default Obsidian persistence is two independent async calls. Any feature doing `load → modify → save` in response to concurrent events MUST serialize with a mutex. See `features/command-permissions/services/settingsLock.ts` for the canonical implementation + 35-way regression test.
 - **Command-permission policy invariants** — `features/command-permissions/` is the security boundary for `execute_obsidian_command`. Whenever you touch `permissionCheck.ts`, preserve these load-bearing properties: (1) **deny by default** — `enabled !== true` short-circuits to deny BEFORE any allowlist check; (2) **two-phase mutex** — Phase A (load + decide-or-detect-modal-needed + save-on-fast-path) holds the lock; modal wait runs OUTSIDE the lock; Phase B (re-load + persist final outcome) re-acquires it, so concurrent requests serialize their I/O without serializing user interaction; (3) **the destructive heuristic is a nudge, not a gate** — matching commands disable "Allow always" but "Allow once" still works; presets in `presets.ts` MUST exclude every word the regex catches; (4) **allowlist entries are exact ids** — no wildcard support, deliberate. The full threat model and option matrix lives in `docs/design/issue-29-command-execution.md` — read it before changing the policy shape.
-- **Every `from "obsidian"` import in `packages/shared/` must be `import type`.** The npm `obsidian` package ships only `.d.ts`; Obsidian injects the runtime module at plugin load. A value import survives `verbatimModuleSyntax` and fails `bun build --compile` with `Could not resolve "obsidian"`. The `packages/obsidian-plugin/` package is fine — value imports there are legitimate.
+- **Every `from "obsidian"` import in `packages/shared/` must be `import type`.** The npm `obsidian` package ships only `.d.ts`; Obsidian injects the runtime module at plugin load. A value import survives `verbatimModuleSyntax` and fails the plugin bundle build (`bun.config.ts`) with `Could not resolve "obsidian"`. The `packages/obsidian-plugin/` package is fine — value imports there are legitimate.
 
 ## Testing & CI
 
@@ -277,18 +277,18 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
 
 ## Project status (2026-05-16)
 
-- `main` at **0.4.7** — standalone in-process HTTP MCP server (promoted 2026-05-16). Tools: 29. `minAppVersion: 1.7.2`. BRAT-distributed for community testers. Tag stack `0.4.0` → `0.4.7`.
+- `main` at **0.4.8** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 29. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.4.8`.
 - `archive/main-0.3.12` — the retired 0.3.x stdio/binary line (20 MCP tools). Preserved for historical reference; HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`. No active development.
-- Community plugin store submission `obsidianmd/obsidian-releases#11919` open since 2026-04-13, automated lint cleared on 2026-04-18, **awaiting human review**. Consult `CHANGELOG.md` for the current `[Unreleased]` state.
+- **Community store: ACCEPTED & LISTED** (2026-05-16) — id `mcp-tools-istefox` in `obsidianmd/obsidian-releases/community-plugins.json`; installable in-app + via BRAT. Obsidian shows a standard "not manually reviewed by Obsidian staff" disclaimer (automated review path; high-risk `fs`/`child_process` capability disclosures, which are intrinsic and were deliberately NOT removed). The legacy PR-based submission `obsidianmd/obsidian-releases#11919` was closed (process moved to the community.obsidian.md portal). Consult `CHANGELOG.md` for the current `[Unreleased]` state.
 
 ## Pending work
 
 Items in flight, ordered by priority:
 
-1. **Store PR #11919 monitor** — passive wait. Routine `trig_015yL8D3VNao7nhRKjBu95ZK` (Mondays 07:00 UTC = 09:00 Rome CEST / 08:00 Rome CET) checks weekly and notifies only on real activity. The hourly issue `#79` watcher `trig_01Dx8sZTD78yBj7buuVYP9KE` remains active for orthogonal scope.
-2. **Next version cut**: when ready, run `bun run version patch` + tag push; CI `release.yml` produces release artifacts. Consult `CHANGELOG.md` `[Unreleased]` for current pending entries.
-3. **Marcoaperez next PR** (passive): inventory of 5+ tools agreed (`get_recent_files` / `get_document_map` / `get_periodic_note` family / `execute_dataview_query` / `get_vault_files`). PR #83 `list_tags` shipped 2026-05-05; next contribution stochastic in 1-2 week window. Mock infra `setMockFileStat()` already in `main` to be consumed when PR arrives.
-4. **Community store listing**: gated on store PR #11919 acceptance.
+1. **Next version cut**: when ready, branch + PR a `manifest.json`/`package.json`/`versions.json`/`CHANGELOG` bump + tag push; CI `release.yml` produces plugin-only release artifacts (reproducible bundle + build-provenance attestation). Roll forward only — never reuse or move a published `0.*` tag.
+2. **Owner-only, non-blocking**: (a) GitHub fork-network detach is CLOSED won't-do (only path is destructive — accept the "forked from" badge + the suppressed Contributors UI); (b) Windows #100 load smoke unperformed but field-corroborated by the reporter — non-blocking; roll forward to a patch release if it ever regresses.
+
+The community-store listing is DONE (accepted & listed 2026-05-16). The fork-era external-contribution pipeline tracking no longer applies — the project is standalone; contributions are evaluated per-PR on their merits.
 
 Items resolved and out of "pending":
 

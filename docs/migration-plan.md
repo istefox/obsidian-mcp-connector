@@ -1,5 +1,7 @@
 # Migration Plan
 
+> **⚠️ HISTORICAL / SUPERSEDED (kept for reference).** This was the pre-0.4 reorganization plan; it references the now-removed `mcp-server` / `mcp-server-install` pieces. The 0.4.x in-process migration is **complete** — for the current architecture see [`docs/project-architecture.md`](project-architecture.md). Do not treat this as an active plan.
+
 This document outlines the step-by-step plan to migrate the current codebase to the new project architecture.
 
 ## Phase 1: Project Structure Setup

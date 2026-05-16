@@ -72,7 +72,7 @@ The following are **explicitly not** addressed by this plugin's security model. 
 
 ## Legacy 0.3.x Considerations
 
-The 0.3.x line (`main` branch) ships a different architecture: a standalone Go MCP server binary launched by Claude Desktop over stdio, communicating with Obsidian via the [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin over HTTPS with a self-signed certificate.
+The 0.3.x line (abandoned; archived at the `archive/main-0.3.12` branch — no longer `main`) shipped a different architecture: a standalone Go MCP server binary launched by Claude Desktop over stdio, communicating with Obsidian via the [Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin over HTTPS with a self-signed certificate.
 
 For 0.3.x users, the binary distribution is secured by:
 
@@ -89,7 +89,7 @@ The 0.4.x release pipeline (per `release.yml` split, PR #62) only emits attestat
 
 | Version | Status | Security policy |
 |---|---|---|
-| **0.4.x** | **Current — full support** | Critical and high vulnerabilities patched; plugin-only release line. Latest: `0.4.7` (2026-05-16). |
+| **0.4.x** | **Current — full support** | Critical and high vulnerabilities patched; plugin-only release line. Latest: `0.4.8` (2026-05-16). |
 | **0.3.x** | Legacy — critical fixes only | Binary release line for users on the standalone-server architecture. Patched only for actively exploited or data-loss-class issues. Latest: `0.3.12` (2026-04-28). |
 | 0.2.x and earlier | End of life | No support. Users should migrate to `0.4.0` (or `0.3.12` if the binary architecture is required). |
 
@@ -101,7 +101,7 @@ Time-to-patch targets, measured from confirmed report:
 - **High** (privilege escalation within the documented threat model, authentication bypass requiring local access, persistent unauthorized state changes): patch within 30 days.
 - **Moderate / Low**: addressed in the next regular release.
 
-Patches for the 0.4.x line ship as new tags on the `feat/http-embedded` → `main` track. Patches for the 0.3.x line ship from the `main` branch as 0.3.x tags.
+Patches for the 0.4.x line ship as new tags on `main` (roll forward only — published `0.*` tags are immutable). Any critical-only 0.3.x patch would ship from the archived `archive/main-0.3.12` branch as a new 0.3.x tag.
 
 ## Best Practices for Users
 

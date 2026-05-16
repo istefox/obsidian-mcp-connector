@@ -4,9 +4,9 @@
 
 ```
 packages/
-├── mcp-server/        # Server implementation
-├── obsidian-plugin/   # Obsidian plugin
-└── shared/           # Shared utilities and types
+├── obsidian-plugin/   # The plugin: in-process MCP server, tools, settings UI
+├── shared/            # Shared ArkType schemas and types
+└── test-site/         # SvelteKit harness (dev-only, not shipped)
 ```
 
 ## Features

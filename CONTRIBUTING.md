@@ -1,4 +1,4 @@
-# Contributing to MCP Tools for Obsidian
+# Contributing to MCP Connector
 
 ## Community Standards
 
@@ -59,9 +59,9 @@ Think before you post. Ask yourself:
 ### Monorepo Structure
 ```
 packages/
-├── mcp-server/        # TypeScript MCP server implementation
-├── obsidian-plugin/   # Obsidian plugin (TypeScript/Svelte)
-└── shared/           # Shared utilities and types
+├── obsidian-plugin/   # The plugin: in-process MCP server, tools, settings UI (TypeScript/Svelte)
+├── shared/            # Shared ArkType schemas and types
+└── test-site/         # SvelteKit harness (dev-only, not shipped)
 ```
 
 ### Feature-Based Architecture
@@ -119,11 +119,10 @@ packages/
    - Creates git commit and tag
    - Pushes to GitHub
 
-2. **Automated build**: GitHub Actions handles:
-   - Cross-platform binary compilation
-   - SLSA provenance attestation  
-   - Release artifact upload
-   - Security verification
+2. **Automated build**: GitHub Actions (`release.yml`, tag-triggered) handles:
+   - Plugin bundle build (`bun.config.ts` → `main.js`) — no binary
+   - GitHub build-provenance attestation for `main.js`
+   - Release artifact upload (`main.js` + `manifest.json`)
 
 3. **Release notes**: GitHub automatically generates release notes from PRs
 
@@ -148,7 +147,7 @@ bun test
 
 # Integration testing with local vault
 # 1. Set up test Obsidian vault
-# 2. Install plugin locally: `bun run build:plugin`
+# 2. Build plugin locally: `bun run build` (outputs main.js + manifest.json at repo root)
 # 3. Test MCP server connection with Claude Desktop
 # 4. Verify all features work end-to-end
 ```

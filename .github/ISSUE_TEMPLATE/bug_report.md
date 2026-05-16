@@ -22,7 +22,7 @@ For questions or general help, use Discord: https://discord.gg/q59pTrN9AA
 - **OS**: (e.g., macOS 14.2, Windows 11, Ubuntu 22.04)
 - **Obsidian version**: (e.g., 1.7.7)  
 - **Claude Desktop version**: (e.g., 1.0.2)
-- **Plugin version**: (e.g., 0.2.23)
+- **Plugin version**: (e.g., 0.4.8)
 - **Required plugins status**:
   - [ ] Local REST API installed and configured
   - [ ] Smart Connections installed (if using semantic search)

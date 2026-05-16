@@ -30,7 +30,7 @@ For discussions about ideas, use Discord: https://discord.gg/q59pTrN9AA
 ## Implementation Notes
 <!-- 
 Optional: Technical details if you have ideas about implementation
-- Which package would this affect? (mcp-server, obsidian-plugin, shared)
+- Which package would this affect? (obsidian-plugin, shared)
 - Any specific Obsidian plugins this would integrate with?
 - MCP protocol considerations?
 -->

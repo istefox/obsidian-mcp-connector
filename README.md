@@ -40,7 +40,7 @@ When connected to an MCP-compatible client, this plugin enables:
 
 ### Required
 
-- [Obsidian](https://obsidian.md/) v1.7.7 or higher.
+- [Obsidian](https://obsidian.md/) v1.7.2 or higher.
 - An MCP-compatible client. Examples: [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/claude/docs/claude-code), [Cursor](https://cursor.com), [Cline](https://github.com/cline/cline), [Continue](https://continue.dev), [Windsurf](https://codeium.com/windsurf), [VS Code](https://code.visualstudio.com).
 - For **Claude Desktop only**: [Node.js](https://nodejs.org) (any LTS version) — required to run the `npx mcp-remote` bridge. The plugin auto-detects your Node install (including Homebrew on macOS) and offers a one-click install if missing.
 
@@ -52,18 +52,18 @@ When connected to an MCP-compatible client, this plugin enables:
 
 ## Installation
 
-There are two install paths depending on whether MCP Connector has finished community-store review.
+MCP Connector is available in the Obsidian community plugin store **and** via BRAT — use either.
 
-### Option A — Community plugin store (once approved)
+### Option A — Community plugin store
 
-1. **Settings → Community plugins → Browse**, search **"MCP Connector"** by Stefano Ferri.
-2. Install + Enable.
+1. **Settings → Community plugins → Browse**, search **"MCP Connector"**.
+2. Install + Enable. Obsidian shows a *"This plugin has not been manually reviewed by Obsidian staff"* notice — community plugins pass an automated build/security review, not a hand audit.
 3. The first-load migration modal opens if you have a 0.3.x install — confirm or skip the steps it proposes (see [Migration from 0.3.x](#migration-from-03x) below).
 4. Open the plugin settings and use the **Quick setup for clients** section to wire up your MCP client.
 
-### Option B — BRAT (available immediately)
+### Option B — BRAT
 
-While the community-store entry is in review, install via [BRAT](https://github.com/TfTHacker/obsidian42-brat):
+Prefer the latest build, or the store entry hasn't propagated to your client yet? Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat):
 
 1. Install and enable the **Obsidian42 — BRAT** plugin from the community store.
 2. **Settings → BRAT → Add Beta plugin**, paste `istefox/obsidian-mcp-connector`.
@@ -330,8 +330,7 @@ This project uses a Bun monorepo with a feature-based architecture. For the full
 
 ```
 packages/
-├── mcp-server/        # In-process MCP server (registered tools, ToolRegistry)
-├── obsidian-plugin/   # Obsidian plugin (settings UI, migration modal, transport)
+├── obsidian-plugin/   # The plugin: in-process MCP server, registered tools, settings UI, migration modal, transport
 ├── shared/            # Shared ArkType schemas and types
 └── test-site/         # SvelteKit harness (dev-only, not shipped)
 ```
@@ -357,7 +356,7 @@ The plugin's `main.js` is written at the package root (`packages/obsidian-plugin
 **Before contributing, please read our [Contributing Guidelines](CONTRIBUTING.md) including our community standards and behavioral expectations.**
 
 1. Fork the repository.
-2. Create a feature branch from `main` (bug fix on the 0.3.x line) or `feat/http-embedded` (0.4.x work).
+2. Create a feature branch from `main`.
 3. Make your changes; keep PRs scoped.
 4. Run tests:
    ```bash
@@ -376,7 +375,7 @@ We welcome genuine contributions but maintain strict community standards. Be res
 
 ## Changelog
 
-See [GitHub Releases on this fork](https://github.com/istefox/obsidian-mcp-connector/releases) and [`CHANGELOG.md`](CHANGELOG.md) for the detailed changelog.
+See [GitHub Releases](https://github.com/istefox/obsidian-mcp-connector/releases) and [`CHANGELOG.md`](CHANGELOG.md) for the detailed changelog.
 
 ## Other MCP servers by istefox
 
