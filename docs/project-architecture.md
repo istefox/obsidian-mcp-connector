@@ -1,3 +1,5 @@
+> Reflects the 0.4.x in-process architecture. Authoritative contract: CLAUDE.md / .clinerules.
+
 # Project Architecture
 
 Use the following structure and conventions for all new features.
@@ -6,8 +8,7 @@ Use the following structure and conventions for all new features.
 
 This project uses a monorepo with multiple packages:
 
-- `packages/mcp-server` - The MCP server implementation
-- `packages/obsidian-plugin` - The Obsidian plugin
+- `packages/obsidian-plugin` - The Obsidian plugin (hosts the in-process HTTP MCP server)
 - `packages/shared` - Shared code between packages
 - `docs/` - Project documentation
 - `docs/features` - Feature requirements
@@ -16,15 +17,7 @@ This project uses a monorepo with multiple packages:
 
 ```
 packages/
-├── mcp-server/           # Server implementation
-│   ├── dist/            # Compiled output
-│   ├── logs/           # Server logs
-│   ├── playground/     # Development testing
-│   ├── scripts/        # Build and utility scripts
-│   └── src/            # Source code
-│
-├── obsidian-plugin/     # Obsidian plugin
-│   ├── docs/           # Documentation
+├── obsidian-plugin/     # Obsidian plugin (in-process MCP server, 0.4.x)
 │   ├── src/
 │   │   ├── features/   # Feature modules
 │   │   └── main.ts     # Plugin entry point
@@ -46,9 +39,12 @@ The Obsidian plugin uses a feature-based architecture where each feature is a se
 ```
 src/features/
 ├── core/                # Plugin initialization and settings
-├── mcp-server-install/ # Binary management
-├── mcp-server-prompts/ # Template execution
-└── smart-search/       # Search functionality
+├── mcp-tools/           # MCP tool handlers (vault, fetch, commands)
+├── mcp-transport/       # In-process HTTP MCP server
+├── prompts/             # MCP prompts (vault-driven, tag-gated)
+├── mcp-client-config/   # claude_desktop_config.json writer
+├── semantic-search/     # Native semantic search via Transformers.js
+└── migration/           # Settings migration helpers
 
 Each feature contains:
 feature/

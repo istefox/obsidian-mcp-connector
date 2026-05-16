@@ -156,6 +156,9 @@ bun test
 ## Security Considerations
 
 ### Binary Security
+
+These notes apply to the legacy 0.3.x binary line. The current 0.4.x line ships no standalone binary — the only artifact is the plugin bundle (main.js), attested at release.
+
 - All binaries are SLSA-attested and cryptographically signed
 - Use `gh attestation verify --owner istefox <binary>` to verify integrity
 - Report security issues via the [security policy](SECURITY.md)

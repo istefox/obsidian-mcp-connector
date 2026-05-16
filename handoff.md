@@ -1765,7 +1765,7 @@ Issue dedicata da aprire post-T14.
 | `.clinerules` | Contratto autoritativo della feature architecture (più rigido di CLAUDE.md, raramente cambia) |
 | `docs/design/issue-29-command-execution.md` | Design completo Fase 1+2+3 di #29, includendo il diario di Fase 2 |
 | `docs/features/prompt-system.md` | Reference del sistema prompts (vault → MCP) |
-| `docs/features/mcp-server-install.md` | Reference dell'installer flow |
+| ~~`docs/features/mcp-server-install.md`~~ (removed in 0.4.7 — feature retired) | ~~Reference dell'installer flow~~ |
 | `docs/project-architecture.md` | Vista alto livello (allineato con `.clinerules`) |
 | `docs/migration-plan.md` | Storico — può essere stantio, da verificare prima di seguire |
 | `cline_docs/` | Directory per task records on-demand (workflow opzionale, non in uso attivo) |

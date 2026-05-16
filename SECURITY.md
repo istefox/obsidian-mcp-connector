@@ -89,7 +89,7 @@ The 0.4.x release pipeline (per `release.yml` split, PR #62) only emits attestat
 
 | Version | Status | Security policy |
 |---|---|---|
-| **0.4.x** | **Current — full support** | Critical and high vulnerabilities patched; plugin-only release line. Latest: `0.4.0` (2026-05-04). |
+| **0.4.x** | **Current — full support** | Critical and high vulnerabilities patched; plugin-only release line. Latest: `0.4.7` (2026-05-16). |
 | **0.3.x** | Legacy — critical fixes only | Binary release line for users on the standalone-server architecture. Patched only for actively exploited or data-loss-class issues. Latest: `0.3.12` (2026-04-28). |
 | 0.2.x and earlier | End of life | No support. Users should migrate to `0.4.0` (or `0.3.12` if the binary architecture is required). |
 
