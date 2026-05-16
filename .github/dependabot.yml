@@ -1,0 +1,147 @@
+# Dependabot keeps direct dependencies and GitHub Actions current.
+# Bun workspaces use the npm registry under the hood, so the `npm`
+# ecosystem covers `package.json` files in every workspace package.
+#
+# Policy notes (v5, 2026-05-16 — restored after the standalone
+# de-fork; the prior v4 file was dropped during cleanup and its
+# absence let Dependabot fall back to defaults and open a major
+# `vite` PR that this policy already forbids):
+# - Schedule monthly to avoid PR noise on a small project.
+# - `versioning-strategy: increase-if-necessary` keeps PRs minimal
+#   (only bump constraints when a security fix or peer dep requires
+#   it).
+# - **Blanket: ignore EVERY major bump on EVERY package across EVERY
+#   ecosystem (`dependency-name: "*"`, `version-update:semver-major`).**
+#   Major upgrades require coordinated work, breaking-change review,
+#   and often workflow/test changes — they will be done manually,
+#   case-by-case, when the upgrade is intentional.
+# - A few packages get a TOTAL ignore (any bump, even minor/patch)
+#   because they are pinned for non-version reasons (patch file,
+#   type-only injection at runtime, root `overrides` pin). Listed
+#   inline.
+# - `/packages/mcp-server` is intentionally absent — that package was
+#   removed (the 0.4.x line ships an in-process server, no binary).
+# - `/packages/test-site` is intentionally NOT managed — it is a
+#   non-shipped test harness; its dev deps must not generate PRs.
+# - `open-pull-requests-limit` is kept low. Security-update PRs are
+#   counted separately by Dependabot, so this is a hard cap on
+#   *version* updates only.
+# - Security updates are unaffected by this config — they continue
+#   to open PRs for actual GHSA alerts regardless of the ignore rules.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 3
+    versioning-strategy: "increase-if-necessary"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      types:
+        patterns:
+          - "@types/*"
+        update-types:
+          - "minor"
+          - "patch"
+      dev-tooling:
+        patterns:
+          - "prettier"
+          - "tsc-watch"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # Runtime validator at every external boundary; rc → stable
+      # (and even minor bumps in the early 2.x line) can drift in
+      # subtle ways. Bump only with a planned upgrade and targeted
+      # tests. Workspace-aware: Dependabot detects arktype from the
+      # workspace packages even though the root package.json does
+      # not declare it directly.
+      - dependency-name: "arktype"
+      # Pinned to 5.4.11 via the root package.json "overrides"
+      # (workspace-wide). Any declared bump would only desync the
+      # declared range from the resolved version. A real vite
+      # upgrade is a deliberate change (raise/remove the override +
+      # fix breakages), never an auto-PR.
+      - dependency-name: "vite"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/obsidian-plugin"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 2
+    versioning-strategy: "increase-if-necessary"
+    labels:
+      - "dependencies"
+      - "scope:obsidian-plugin"
+    commit-message:
+      prefix: "chore(deps,plugin)"
+      include: "scope"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # Patched at 5.16.0 — see patches/svelte@5.16.0.patch.
+      # Any bump must re-validate the patch under bun's bundler.
+      - dependency-name: "svelte"
+      # Type-only npm package; runtime is injected by Obsidian itself.
+      # Bump alongside an Obsidian compat audit, not on auto-PR.
+      - dependency-name: "obsidian"
+      # See root config — runtime validator, planned upgrades only.
+      - dependency-name: "arktype"
+      # See root config — pinned via root "overrides", planned only.
+      - dependency-name: "vite"
+
+  - package-ecosystem: "npm"
+    directory: "/packages/shared"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 2
+    versioning-strategy: "increase-if-necessary"
+    labels:
+      - "dependencies"
+      - "scope:shared"
+    commit-message:
+      prefix: "chore(deps,shared)"
+      include: "scope"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "obsidian"
+      # See root config — runtime validator, planned upgrades only.
+      - dependency-name: "arktype"
+      # See root config — pinned via root "overrides", planned only.
+      - dependency-name: "vite"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "07:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "scope:ci"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
