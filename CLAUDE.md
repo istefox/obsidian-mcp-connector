@@ -12,39 +12,35 @@ One shipped component on the 0.4.x line:
 
 Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
-Current lines: **`main` = 0.3.12** — the legacy stdio + standalone-binary architecture, retained only on the protected `main` branch (see § Branch protection policy). **`feat/http-embedded` = 0.4.7** — the active 0.4.x line: in-process HTTP MCP server inside the plugin, no binary, native semantic search via Transformers.js. The `packages/mcp-server` binary and `features/mcp-server-install` installer have been retired from the 0.4.x line. The `[Unreleased]` block in `CHANGELOG.md` accumulates the next cut; consult `CHANGELOG.md` for its current contents (do not enumerate here — it drifts). License: MIT.
+Current line: **`main` = 0.4.7** — the standalone in-process HTTP MCP server (promoted 2026-05-16); no separate binary, native semantic search via Transformers.js. The `packages/mcp-server` binary and `features/mcp-server-install` installer are retired. The 0.3.x stdio/binary line is archived at `archive/main-0.3.12` (abandoned; tags retained). The `[Unreleased]` block in `CHANGELOG.md` accumulates the next cut; consult `CHANGELOG.md` for its current contents (do not enumerate here — it drifts). License: MIT.
 
-### Branch protection policy (set by Stefano)
+### Branch protection policy
 
-**`main` is the production-ready, user-facing branch. Treat it as protected.**
+**`main` is the production line** — standalone in-process HTTP MCP server, currently **0.4.7** (promoted 2026-05-16). The historical rule "don't merge `feat/http-embedded` → `main` until Stefano decides the 0.4.0 bump" is **discharged**: the promotion has happened; `main` IS the 0.4.x line. Normal branch + PR discipline now applies.
 
-Active branches as of 2026-05-16:
+`feat/http-embedded` is a residual dev branch that became equal to `main` at promotion time. `main` is authoritative going forward; `feat/http-embedded` may be used for in-flight work or left as a historical marker — it no longer has "pre-release" status.
 
-| Branch | Version | Status | Use |
-|---|---|---|---|
-| `main` | **0.3.12** | **PROTECTED** — stable, BRAT users install this | Bug-fix patches only (0.3.x line) |
-| `feat/http-embedded` | **0.4.7** | Active dev — the HTTP-embedded pivot | The in-process HTTP MCP server per `docs/design/2026-04-24-http-embedded-design.md` |
+The 0.3.x stdio/binary line is **archived at `archive/main-0.3.12`** (do not delete it or its tags; users on old installs may reference them). Active development against 0.3.x is abandoned.
 
 **Hard rules — apply unless Stefano explicitly authorizes the specific action:**
 
-1. **Never merge** any experimental branch **into `main`** without explicit go-ahead from Stefano.
+1. **All changes to `main` must go through a PR** — direct `git push origin main` is REJECTED by the `main-strict` ruleset (0 approvals required; self-merge is allowed). Branch + PR is always the path.
 2. **Never force-push, rebase, or `reset --hard`** on `main` under any circumstance.
-3. **Never delete or overwrite tags** on any `0.x.x` line (covers `0.3.0` through `0.3.12` legacy stable + `0.4.0` through `0.4.7` HTTP-embedded shipped). Enforced by the `tags-protection` ruleset glob `0.*`.
+3. **Never delete or overwrite tags** on any `0.x.x` line (covers `0.3.0` through `0.3.12` archived stable + all `0.4.x` tags). Enforced by the `tags-protection` ruleset glob `0.*`.
 4. **Never delete `0.3.x` or `0.4.x` GitHub releases** from the releases page.
-5. Bug fixes against 0.3.x are welcome — branch from `main`, PR, merge as 0.3.x etc. This pattern preserves the stable line; it does not replace it.
-6. Merging `main` → `feat/http-embedded` (the inverse direction, to keep the dev branch aligned) is **safe and encouraged** — it does not touch `main`.
+5. **Never delete the `archive/main-0.3.12` branch** — it is the preserved record of the 0.3.x line.
 
 If a request seems likely to compromise `main`'s functionality, stop and ask before acting.
 
-**These hard rules are also enforced as GitHub Rulesets (since 2026-05-05)** — three rulesets active on `istefox/obsidian-mcp-connector`:
+**GitHub Rulesets active on `istefox/obsidian-mcp-connector`** (since 2026-05-05):
 
-- **`General`** (branch): targets `main` + `feat/http-embedded`, rules: Restrict deletions + Block force pushes. Enforces rule 2.
-- **`main-strict`** (branch): targets `main` only, rule: Require pull request before merging (0 approvals). Enforces rule 1 — direct `git push origin main` without PR will be REJECTED.
-- **`tags-protection`** (tag): targets pattern `0.*` (covers 0.1.x through 0.9.x), rules: Restrict updates + Restrict deletions + Block force pushes. Enforces rules 3 + 4.
+- **`General`** (branch): targets `main` + `feat/http-embedded`, rules: Restrict deletions + Block force pushes.
+- **`main-strict`** (branch): targets `main` only, rule: Require pull request before merging (0 approvals). Direct push to `main` will be REJECTED.
+- **`tags-protection`** (tag): targets pattern `0.*` (covers 0.1.x through 0.9.x), rules: Restrict updates + Restrict deletions + Block force pushes.
 
-Bypass list is empty on all three — admin (Stefano) is also subject to the rules. In a true emergency, the path is: temporarily disable the ruleset → perform the operation → re-enable. This adds friction = explicit awareness of destructive intent. Manage at https://github.com/istefox/obsidian-mcp-connector/settings/rules.
+Bypass list is empty on all three — admin (Stefano) is also subject to the rules. In a true emergency, the path is: temporarily disable the ruleset → perform the operation → re-enable. Manage at https://github.com/istefox/obsidian-mcp-connector/settings/rules.
 
-If you ever encounter a "GH013: Repository rule violations" error, the operation you attempted is structurally blocked because it violates one of these rules — investigate why before disabling protection. Don't disable rulesets to "make it work" without confirming the action is intended.
+If you ever encounter a "GH013: Repository rule violations" error, the operation you attempted is structurally blocked — investigate why before disabling protection. Don't disable rulesets to "make it work" without confirming the action is intended.
 
 ## Stack
 
@@ -54,7 +50,7 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | Toolchain pinning | `mise.toml` (bun latest) |
 | Language | TypeScript 5, strict mode, `verbatimModuleSyntax: true` |
 | Runtime validation | **ArkType** (`arktype` 2.0.0-rc.30) at every external boundary |
-| MCP | `@modelcontextprotocol/sdk` 1.29.0 (fork) |
+| MCP | `@modelcontextprotocol/sdk` 1.29.0 |
 | UI | Svelte 5.17 inside the Obsidian plugin (patched — see `patches/svelte@5.16.0.patch`) |
 | Reactive deps | RxJS 7.8 (polls other Obsidian plugins until loaded) |
 | HTML→Markdown | Turndown 7.2 |
@@ -221,7 +217,7 @@ Full spec lives in `.clinerules`. Highlights:
 
 - **TypeScript strict mode** everywhere, no exceptions. `verbatimModuleSyntax: true` — use `import type` for type-only imports.
 - **Prefer functional over OOP.** Pure functions, single responsibility, action-oriented names (`installMcpServer`, `getInstallationStatus`).
-- **Never touch the vault filesystem directly from an MCP handler.** All vault reads/mutations go through Obsidian APIs — `plugin.app.vault.*` / `plugin.app.fileManager.*` / `vault.cachedRead` — never raw `fs`/`fsp`. This preserves Obsidian's metadata cache and respects file locks on open notes. (The 0.3.x `makeRequest()` → Local REST API pattern no longer exists; the 0.4.x server is in-process.)
+- **Never touch the vault filesystem directly from an MCP handler.** All vault reads/mutations go through Obsidian APIs — `plugin.app.vault.*` / `plugin.app.fileManager.*` / `vault.cachedRead` — never raw `fs`/`fsp`. This preserves Obsidian's metadata cache and respects file locks on open notes. (The server is in-process; there is no `makeRequest()` → Local REST API proxy layer.)
 - **Never use `console.log`** in production code — use the shared `logger` from `packages/shared/src/logger.ts` with a structured context object (`logger.error("message", { requestId, error })`).
 - **Settings are augmented via TypeScript module augmentation**, not a central types file:
   ```typescript
@@ -236,7 +232,7 @@ Full spec lives in `.clinerules`. Highlights:
 
 ## Gotchas
 
-Active traps in the current tree. Historical bugs already fixed in the fork are in `git log` — don't clutter this list with them.
+Active traps in the current tree. Historical bugs already fixed are in `git log` — don't clutter this list with them.
 
 - **`patches/svelte@5.16.0.patch`** forces Svelte to use `index-client.js` instead of `index-server.js` — required for Bun bundler compatibility. Re-verify if you upgrade Svelte.
 - **`packages/obsidian-plugin/main.js` is the only shipped artifact** — CI regenerates it on tagged releases via `bun.config.ts`. Run `bun run build` from `packages/obsidian-plugin` locally; never commit the output.
@@ -281,17 +277,17 @@ Active traps in the current tree. Historical bugs already fixed in the fork are 
 
 ## Project status (2026-05-16)
 
-- `main` at **0.3.12**, stable, on BRAT, fully functional (20 MCP tools, stdio+binary architecture). Protected per the policy above. HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`.
-- `feat/http-embedded` at **0.4.7**. Tag stack `0.4.0` → `0.4.7`. Tools: 29. `minAppVersion: 1.7.2`. Live in vault TEST via symlink; BRAT-distributed for community testers.
-- Community plugin store submission `obsidianmd/obsidian-releases#11919` open since 2026-04-13, automated lint cleared on 2026-04-18, **awaiting human review** (week 6/8 typical window). Strategy = silence: any version bump or comment risks resetting the review queue, so post-cut work goes to `feat/http-embedded` without tagging until store accept lands.
+- `main` at **0.4.7** — standalone in-process HTTP MCP server (promoted 2026-05-16). Tools: 29. `minAppVersion: 1.7.2`. BRAT-distributed for community testers. Tag stack `0.4.0` → `0.4.7`.
+- `archive/main-0.3.12` — the retired 0.3.x stdio/binary line (20 MCP tools). Preserved for historical reference; HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`. No active development.
+- Community plugin store submission `obsidianmd/obsidian-releases#11919` open since 2026-04-13, automated lint cleared on 2026-04-18, **awaiting human review**. Consult `CHANGELOG.md` for the current `[Unreleased]` state.
 
 ## Pending work
 
 Items in flight, ordered by priority:
 
-1. **Store PR #11919 monitor** — passive wait, week 4/8 silence is normal. Routine `trig_015yL8D3VNao7nhRKjBu95ZK` (Mondays 07:00 UTC = 09:00 Rome CEST / 08:00 Rome CET) checks weekly and notifies only on real activity. The hourly issue `#79` watcher `trig_01Dx8sZTD78yBj7buuVYP9KE` remains active for orthogonal scope. Three older overlapping routines disabled 2026-04-25.
-2. **0.4.6 cut**: triggered by store-accept event. CHANGELOG `[Unreleased]` is populated and ready-to-promote (5 entry: 2 Added + 2 Fixed + 1 Changed). Cut runs through `bun run version patch` + tag push; CI `release.yml` produces release artifacts.
-3. **Marcoaperez next PR** (passive): inventory of 5+ tools agreed (`get_recent_files` / `get_document_map` / `get_periodic_note` family / `execute_dataview_query` / `get_vault_files`). PR #83 `list_tags` shipped 2026-05-05; next contribution stochastic in 1-2 week window. Mock infra `setMockFileStat()` already shipped in `feat/http-embedded` to be consumed when PR arrives.
+1. **Store PR #11919 monitor** — passive wait. Routine `trig_015yL8D3VNao7nhRKjBu95ZK` (Mondays 07:00 UTC = 09:00 Rome CEST / 08:00 Rome CET) checks weekly and notifies only on real activity. The hourly issue `#79` watcher `trig_01Dx8sZTD78yBj7buuVYP9KE` remains active for orthogonal scope.
+2. **Next version cut**: when ready, run `bun run version patch` + tag push; CI `release.yml` produces release artifacts. Consult `CHANGELOG.md` `[Unreleased]` for current pending entries.
+3. **Marcoaperez next PR** (passive): inventory of 5+ tools agreed (`get_recent_files` / `get_document_map` / `get_periodic_note` family / `execute_dataview_query` / `get_vault_files`). PR #83 `list_tags` shipped 2026-05-05; next contribution stochastic in 1-2 week window. Mock infra `setMockFileStat()` already in `main` to be consumed when PR arrives.
 4. **Community store listing**: gated on store PR #11919 acceptance.
 
 Items resolved and out of "pending":
@@ -307,11 +303,11 @@ Items resolved and out of "pending":
 
 ## Soak preflight: chain identification first
 
-When a soak round comes in (folotp / marcoaperez / grimlor / any external tester), confirm **which MCP path the client is actually exercising before interpreting any verdict**. The plugin now ships in two distinct architectures (`0.3.x` legacy stdio binary + Local REST API + `markdown-patch`, vs. `0.4.x` in-process HTTP-embedded), and a tester can have both installed simultaneously: the legacy binary at `~/Library/Application Support/obsidian-mcp-tools/bin/mcp-server` persists from any pre-0.4.x install unless explicitly deleted, and `claude_desktop_config.json` is not auto-rewritten on plugin update. A tester who BRAT-pinned the plugin on top of a `0.3.x` install can have Claude Desktop routing through the legacy binary while the 0.4.x plugin is concurrently loaded — which makes any verdict about "0.4.x behavior" suspect until the chain is identified.
+When a soak round comes in (folotp / marcoaperez / grimlor / any external tester), confirm **which MCP path the client is actually exercising before interpreting any verdict**. The current (0.4.x) architecture is in-process HTTP-embedded; the legacy 0.3.x stdio/binary line is archived and abandoned. However, a tester can have both installed simultaneously: the legacy binary at `~/Library/Application Support/obsidian-mcp-tools/bin/mcp-server` persists from any pre-0.4.x install unless explicitly deleted, and `claude_desktop_config.json` is not auto-rewritten on plugin update. A tester who BRAT-pinned the plugin on top of a `0.3.x` install can have Claude Desktop routing through the legacy binary while the 0.4.x plugin is concurrently loaded — which makes any verdict about "0.4.x behavior" suspect until the chain is identified.
 
 Three discriminators, applied as a first-line check in any soak comment **before** posting verdicts:
 
-1. **Process inventory** — `ps aux | grep -E 'mcp-server|mcp-remote'`. Legacy stdio chain shows the upstream binary process; HTTP-embedded chain shows `npx mcp-remote` (or no bridge process at all if the client speaks streamable-http natively).
+1. **Process inventory** — `ps aux | grep -E 'mcp-server|mcp-remote'`. Legacy stdio chain (0.3.x, archived) shows the old binary process; HTTP-embedded chain (0.4.x, current) shows `npx mcp-remote` (or no bridge process at all if the client speaks streamable-http natively).
 2. **`get_server_info` shape** — call the tool from the client. **Legacy chain returns `apiExtensions[]`** (the LRA extension manifest list); **HTTP-embedded returns no `apiExtensions` field** (the in-process server doesn't expose LRA's manifest concept). Field absence is a positive HTTP-embedded marker.
 3. **Tool namespace prefix on the client side** — `mcp__obsidian-mcp-tools__*` (legacy 0.3.x binary) vs. `mcp__mcp-tools-istefox__*` (0.4.x in-process plugin). Visible in the client's tool list before any tool is called.
 
@@ -323,7 +319,7 @@ When you ask a tester to soak a candidate cut (BRAT-pin or beta tag), include th
 
 ### Foundational principle: read fully, analyze deeply, take the time
 
-**Before posting any reply, comment, follow-up, or triage on any GitHub thread (fork or upstream — issues, PRs, review comments, all of them), read the entire thread end-to-end and analyze it.** This is non-negotiable and supersedes every rule below; the rules are concrete instances of this principle, not substitutes for it. Stefano has flagged this expectation explicitly after a cluster of failure modes in a single 24-hour window: "i post, gli issues ecc... vanno letti interamente ma soprattutto **analizzati**! prenditi il tempo che vuoi, ma vanno analizzati a fondo!" Take that as standing instruction for every outreach action, not just the ones that look ambiguous.
+**Before posting any reply, comment, follow-up, or triage on any GitHub thread (project issues, PRs, review comments, third-party dependencies), read the entire thread end-to-end and analyze it.** This is non-negotiable and supersedes every rule below; the rules are concrete instances of this principle, not substitutes for it. Stefano has flagged this expectation explicitly after a cluster of failure modes in a single 24-hour window: "i post, gli issues ecc... vanno letti interamente ma soprattutto **analizzati**! prenditi il tempo che vuoi, ma vanno analizzati a fondo!" Take that as standing instruction for every outreach action, not just the ones that look ambiguous.
 
 What "read fully + analyze" means in practice:
 
@@ -335,18 +331,18 @@ What "read fully + analyze" means in practice:
 
 There is **no time pressure** on outreach or triage. Take whatever time is required. The cost of a 5-minute deeper read is one session-time unit; the cost of posting on a misread thread is a relationship with a domain authority + a follow-up correction + an entry in this rule list. The concrete rules below all exist because of failures of this foundational principle in a single 24-hour window. If this principle is followed, the others mostly take care of themselves.
 
-### When triaging an upstream issue or any candidate for cross-link outreach
+### When triaging an issue or any candidate for cross-link outreach
 
 **Never skip without informed evidence.** Before marking a candidate as "skip", apply these two checks in order:
 
-1. **Read the full issue body.** Excerpt-level reading misses substance — the asker's context, the bug shape, the specific repro that may already be addressed in the fork. Comment counts and labels are not enough.
-2. **Targeted code grep on the fork.** When the claim is technical (parser bug, transport issue, tool behaviour), grep for the load-bearing function and hand-trace against the asker's fixture. A 5-minute trace beats a "cannot verify" assumption.
+1. **Read the full issue body.** Excerpt-level reading misses substance — the asker's context, the bug shape, the specific repro that may already be addressed in this codebase. Comment counts and labels are not enough.
+2. **Targeted code grep.** When the claim is technical (parser bug, transport issue, tool behaviour), grep for the load-bearing function and hand-trace against the asker's fixture. A 5-minute trace beats a "cannot verify" assumption.
 
 If **both** checks fail to unblock an informed position, skip is justified — and frame any comment to future-you that way ("did not verify"). If **either** unblocks one, engage with the confidence the evidence supports.
 
 ### Sweep enumeration rule
 
-When doing a periodic sweep of upstream issues / PRs, **enumerate `state=open` without `since=` filter**. Filtering by recent activity excludes old-but-still-open items that have been languishing without engagement — exactly the long-tail audience most receptive to a redirect to the maintained fork. The 2026-05-04 deep review surfaced 10 never-commented items (3 issues + 7 PRs, including a 2025-05 multi-vault PR and a 2025-07 NFS-symlink bug) that the prior `since=2026-04-29` sweep had hidden. Use `gh api '/repos/.../issues?state=open&per_page=100' --jq 'sort_by(.number) | .[] | …'` for the canonical full inventory.
+When doing a periodic sweep of issues / PRs, **enumerate `state=open` without `since=` filter**. Filtering by recent activity excludes old-but-still-open items that have been languishing without engagement. The 2026-05-04 deep review surfaced 10 never-commented items (3 issues + 7 PRs, including a 2025-05 multi-vault PR and a 2025-07 NFS-symlink bug) that the prior `since=2026-04-29` sweep had hidden. Use `gh api '/repos/.../issues?state=open&per_page=100' --jq 'sort_by(.number) | .[] | …'` for the canonical full inventory.
 
 ### Stale-claim audit on prior outreach
 
@@ -354,7 +350,7 @@ When a major release event happens (architecture pivot, stable cut, deprecation)
 
 ### Validated-contributor engagement rule
 
-When a fork issue is **OPEN, authored by a validated maintainer-grade contributor (folotp / marcoaperez / grimlor)**, and has **zero comments after >12h**, treat it as engagement-priority regardless of whether you've been pinged. These contributors invest meaningful effort into proposals; silence past the 12h mark reads as drop signal even if the issue is "future scope, no commitment". Post a substantive triage comment within the next session: technical preference between proposed options, implementation footprint estimate, timeline expectation framed against current gating constraints. The comment doesn't have to commit to a milestone — but it has to engage with the substance. The 2026-05-04 fork #77 (folotp's partial-read RFC) was sat for ~13h with the `enhancement` label and no other action because the prior session's triage note ("future scope, no commitment") was inherited as a passive-monitor signal in the next session's sweep; that framing was wrong. "Future scope" gates milestone commitment, not engagement.
+When a project issue is **OPEN, authored by a validated maintainer-grade contributor (folotp / marcoaperez / grimlor)**, and has **zero comments after >12h**, treat it as engagement-priority regardless of whether you've been pinged. These contributors invest meaningful effort into proposals; silence past the 12h mark reads as drop signal even if the issue is "future scope, no commitment". Post a substantive triage comment within the next session: technical preference between proposed options, implementation footprint estimate, timeline expectation framed against current gating constraints. The comment doesn't have to commit to a milestone — but it has to engage with the substance. The 2026-05-04 fork #77 (folotp's partial-read RFC) was sat for ~13h with the `enhancement` label and no other action because the prior session's triage note ("future scope, no commitment") was inherited as a passive-monitor signal in the next session's sweep; that framing was wrong. "Future scope" gates milestone commitment, not engagement.
 
 ### Authority disambiguation rule
 
@@ -380,7 +376,7 @@ Implicit single-point responses to multi-point offers read as engagement loss �
 - `.clinerules` — authoritative feature architecture, ArkType conventions, error handling contract.
 - `docs/project-architecture.md` — monorepo overview (aligned with `.clinerules`).
 - `docs/features/prompt-system.md` — authoritative reference for the prompt feature. Read before touching the prompts feature or the template execution endpoint in the plugin.
-- `docs/design/issue-29-command-execution.md` — fork design review for Obsidian command execution (threat model, policy options, phased plan). Authoritative when resuming issue #29 / PR #47.
+- `docs/design/issue-29-command-execution.md` — design review for Obsidian command execution (threat model, policy options, phased plan). Authoritative when resuming issue #29 / PR #47.
 - `CONTRIBUTING.md`, `SECURITY.md`.
 
 **Live project state**:
