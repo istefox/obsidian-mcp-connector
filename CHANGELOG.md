@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-05-17
+
 ### Security
 
 - **`fetch` now refuses non-`http(s)` and internal targets.** The
