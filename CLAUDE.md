@@ -159,7 +159,7 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 
 | Tool | Purpose |
 |---|---|
-| `get_server_info` | Local REST API status + auth check. Only tool that works without auth. |
+| `get_server_info` | Local REST API status + auth check. Like every MCP tool, requires the bearer token — there is no unauthenticated path. |
 | `get_active_file` | Content of the currently active note (markdown or JSON with tags + frontmatter). |
 | `update_active_file` | Replace content of the active note. |
 | `append_to_active_file` | Append to the active note. |

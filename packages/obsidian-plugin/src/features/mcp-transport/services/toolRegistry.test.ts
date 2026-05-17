@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, spyOn } from "bun:test";
 import { type } from "arktype";
 import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { logger } from "$/shared/logger";
 import { normalizeInputSchema, ToolRegistryClass } from "./toolRegistry";
 
 /**
@@ -353,5 +354,43 @@ describe("ToolRegistry — issue #74 (registry-level isError envelope)", () => {
     // Handler-side isError envelope is forwarded byte-for-byte.
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe("Template not found: foo.md");
+  });
+});
+
+describe("ToolRegistry — tool-error log redaction", () => {
+  test("error log carries the tool name but never params.arguments", async () => {
+    const tools = new ToolRegistryClass();
+    const schema = type({
+      name: '"redact-me"',
+      arguments: { secret: "string" },
+    }).describe("Tool that throws so the error path logs");
+
+    tools.register(schema, () => {
+      throw new McpError(ErrorCode.InternalError, "boom");
+    });
+
+    const calls: Array<[unknown, unknown]> = [];
+    const spy = spyOn(logger, "error").mockImplementation(
+      (msg: unknown, meta?: unknown) => {
+        calls.push([msg, meta]);
+      },
+    );
+
+    try {
+      await tools.dispatch(
+        // The argument value is sensitive user data; it must not be logged.
+        { name: "redact-me", arguments: { secret: "private-note-body" } },
+        fakeContext,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(calls.length).toBe(1);
+    const meta = calls[0]?.[1] as Record<string, unknown>;
+    expect(meta.tool).toBe("redact-me");
+    expect("params" in meta).toBe(false);
+    // No serialized form of the meta object may leak the argument value.
+    expect(JSON.stringify(meta)).not.toContain("private-note-body");
   });
 });

@@ -1,9 +1,11 @@
 import { describe, expect, test, afterEach } from "bun:test";
+import type { Server } from "node:http";
 import {
   startHttpServer,
   stopHttpServer,
   type RunningServer,
 } from "./httpServer";
+import { MAX_REQUEST_BODY_BYTES } from "../constants";
 
 const running: RunningServer[] = [];
 afterEach(async () => {
@@ -112,6 +114,85 @@ describe("startHttpServer", () => {
     } finally {
       console.error = originalConsoleError;
     }
+  });
+});
+
+describe("stopHttpServer — connection draining", () => {
+  test("force-drops keep-alive/SSE sockets before close()", async () => {
+    const order: string[] = [];
+    const fakeServer = {
+      closeAllConnections: () => {
+        order.push("closeAllConnections");
+      },
+      close: (cb: (err?: Error) => void) => {
+        order.push("close");
+        cb();
+      },
+    } as unknown as Server;
+
+    await stopHttpServer({ server: fakeServer, port: 0 });
+
+    // closeAllConnections MUST run first — otherwise an open mcp-remote
+    // stream keeps close() from ever resolving.
+    expect(order).toEqual(["closeAllConnections", "close"]);
+  });
+});
+
+describe("request body size cap", () => {
+  test("rejects an oversize Content-Length with 413 before the handler runs", async () => {
+    let handlerCalled = false;
+    const token = "t".repeat(32);
+    const server = await startHttpServer({
+      bearerToken: token,
+      requestHandler: async (_req, res) => {
+        handlerCalled = true;
+        res.writeHead(200);
+        res.end("ok");
+      },
+    });
+    running.push(server);
+
+    // fetch derives Content-Length from the body, so send a real
+    // oversize payload — the server reads the declared length and
+    // rejects before the handler is ever invoked.
+    const oversize = "x".repeat(MAX_REQUEST_BODY_BYTES + 1);
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: oversize,
+    });
+    expect(res.status).toBe(413);
+    expect(handlerCalled).toBe(false);
+  });
+
+  test("an under-limit request still reaches the handler with its body", async () => {
+    let received = "";
+    const token = "t".repeat(32);
+    const server = await startHttpServer({
+      bearerToken: token,
+      requestHandler: async (req, res) => {
+        for await (const chunk of req) received += chunk;
+        res.writeHead(200);
+        res.end("ok");
+      },
+    });
+    running.push(server);
+
+    const payload = JSON.stringify({ hello: "world" });
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: payload,
+    });
+    expect(res.status).toBe(200);
+    // The body must still flow to the handler untouched on the happy path.
+    expect(received).toBe(payload);
   });
 });
 

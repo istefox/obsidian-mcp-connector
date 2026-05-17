@@ -6,7 +6,11 @@ import {
 } from "node:http";
 import { runMiddleware } from "./middleware";
 import { bindWithFallback } from "./port";
-import { PORT_RANGE } from "../constants";
+import {
+  ERROR_CODES,
+  MAX_REQUEST_BODY_BYTES,
+  PORT_RANGE,
+} from "../constants";
 
 export type RequestHandler = (
   req: IncomingMessage,
@@ -56,6 +60,25 @@ export async function startHttpServer(
       return;
     }
 
+    // Reject an oversize body up front via the declared Content-Length so
+    // the SDK never buffers a huge payload (DoS/OOM in the renderer). We
+    // do NOT also attach a streamed req.on('data') byte counter: the SDK
+    // consumes this same stream later (hono's Readable.toWeb(req)), and a
+    // 'data' listener here would flip the stream to flowing mode and steal
+    // bytes from it, breaking every valid request. Content-Length is a
+    // partial but safe mitigation; a chunked request with no length still
+    // reaches the SDK's own parser.
+    const declaredLength = Number(req.headers["content-length"]);
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > MAX_REQUEST_BODY_BYTES
+    ) {
+      res.writeHead(ERROR_CODES.PAYLOAD_TOO_LARGE);
+      res.end();
+      req.destroy();
+      return;
+    }
+
     // void prefix: fire-and-forget is intentional. Errors are caught
     // below and logged without rethrowing.
     void config.requestHandler(req, res).catch((err) => {
@@ -89,12 +112,29 @@ export async function startHttpServer(
  * Gracefully close the HTTP server and release its port.
  *
  * Resolves when the server has fully closed (all connections drained).
- * Rejects if the server was not listening or if close() emits an error.
+ * Rejects only on a genuine close() error — an already-stopped listener
+ * counts as success since the port is released either way.
  *
  * @param running - The RunningServer returned by startHttpServer.
  */
 export async function stopHttpServer({ server }: RunningServer): Promise<void> {
+  // Force-drop keep-alive + in-flight + SSE sockets first: without this an
+  // open mcp-remote stream keeps the connection alive and server.close()
+  // never resolves on plugin disable/update, so the port "walks".
+  // Cast: closeAllConnections is Node >=18.2 (Obsidian's Electron + Bun
+  // both have it) but the pinned @types/node@16 predates the typing.
+  (server as { closeAllConnections?: () => void }).closeAllConnections?.();
   await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
+    server.close((err) => {
+      // ERR_SERVER_NOT_RUNNING means the listener is already gone, i.e.
+      // the port is released — the goal is met. (Bun's closeAllConnections
+      // also stops the listener; real Node/Electron does not. Tolerating
+      // it here keeps one teardown path correct on both runtimes.)
+      if (err && (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+        reject(err);
+        return;
+      }
+      resolve();
+    });
   });
 }

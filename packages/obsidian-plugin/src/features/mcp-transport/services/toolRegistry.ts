@@ -261,16 +261,18 @@ export class ToolRegistryClass<
       // local fix in PR #69 was the same shape; this lifts the pattern
       // up so it applies uniformly to every tool that throws.
       //
-      // Logging stays on `logger.error` because we still want full
-      // diagnostic context (stack, error, params) for the operator
+      // Logging stays on `logger.error` because we still want
+      // diagnostic context (stack, error, tool name) for the operator
       // even when the client-facing surface is the cleaner envelope.
       const formattedError = formatMcpError(error);
+      // Log the tool name only, never params.arguments — those carry
+      // user data (note content, paths, queries) onto the on-disk log.
       logger.error(`Error handling ${params.name}`, {
         ...formattedError,
         message: formattedError.message,
         stack: formattedError.stack,
         error,
-        params,
+        tool: params.name,
       });
       return {
         content: [
