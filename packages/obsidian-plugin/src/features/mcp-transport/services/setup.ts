@@ -55,7 +55,9 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
       >;
       let token = mcpTransportSettings.bearerToken as string | undefined;
 
-      if (!token || token.length < 32) {
+      // Byte length, not UTF-16 code units: the 32-byte floor is a
+      // security threshold and must hold regardless of encoding.
+      if (!token || Buffer.byteLength(token, "utf8") < 32) {
         // No valid token yet — generate a fresh one and persist it.
         // This only happens on the very first load after plugin install.
         token = generateToken();
