@@ -50,6 +50,10 @@ import {
   renameVaultFileSchema,
 } from "./tools/renameVaultFile";
 import {
+  renameHeadingHandler,
+  renameHeadingSchema,
+} from "./tools/renameHeading";
+import {
   createVaultDirectoryHandler,
   createVaultDirectorySchema,
 } from "./tools/createVaultDirectory";
@@ -173,6 +177,9 @@ export async function registerTools(
   );
   registry.register(renameVaultFileSchema, async ({ arguments: args }) =>
     renameVaultFileHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(renameHeadingSchema, async ({ arguments: args }) =>
+    renameHeadingHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(createVaultDirectorySchema, async ({ arguments: args }) =>
     createVaultDirectoryHandler({ arguments: args, app: ctx.app }),
