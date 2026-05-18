@@ -301,6 +301,11 @@ type MockVaultState = {
   // former (regression guard for fork issue #96).
   trashedPaths: string[];
   deletedPaths: string[];
+  // Test hooks for the rename_heading apply path (#143 hardening):
+  // paths whose `vault.modify` throws, and paths whose content mutates
+  // after the first read (TOCTOU / concurrent-edit simulation).
+  modifyFailPaths: Set<string>;
+  readMutations: Map<string, { content: string; firstReadSeen: boolean }>;
 };
 
 // Synthetic absolute filesystem prefix used by the mock `adapter.rmdir`
@@ -326,6 +331,8 @@ const _mockState: MockVaultState = {
   ignored: new Set(),
   trashedPaths: [],
   deletedPaths: [],
+  modifyFailPaths: new Set(),
+  readMutations: new Map(),
 };
 
 export function resetMockVault(): void {
@@ -349,6 +356,22 @@ export function resetMockVault(): void {
   _mockState.ignored.clear();
   _mockState.trashedPaths = [];
   _mockState.deletedPaths = [];
+  _mockState.modifyFailPaths.clear();
+  _mockState.readMutations.clear();
+}
+
+/** Make `vault.modify(file)` reject for `path` (rename_heading #143 M2). */
+export function setMockModifyFail(path: string): void {
+  _mockState.modifyFailPaths.add(path);
+}
+
+/**
+ * Simulate a concurrent edit: `path` reads its stored content the first
+ * time, then `mutated` on every subsequent read (rename_heading #143 H3
+ * TOCTOU guard).
+ */
+export function setMockReadMutation(path: string, mutated: string): void {
+  _mockState.readMutations.set(path, { content: mutated, firstReadSeen: false });
 }
 
 /** Paths routed through `fileManager.trashFile` (recoverable delete). */
@@ -632,6 +655,11 @@ export function mockApp(): App {
       const path = (file as unknown as MockTFile).path;
       const content = _mockState.files.get(path);
       if (content === undefined) throw new Error(`ENOENT: ${path}`);
+      const mut = _mockState.readMutations.get(path);
+      if (mut) {
+        if (mut.firstReadSeen) return mut.content;
+        mut.firstReadSeen = true;
+      }
       return content;
     },
     cachedRead: async (file: TFile): Promise<string> => {
@@ -672,6 +700,9 @@ export function mockApp(): App {
     },
     modify: async (file: TFile, content: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
+      if (_mockState.modifyFailPaths.has(path)) {
+        throw new Error(`mock modify failure: ${path}`);
+      }
       _mockState.files.set(path, content);
     },
     append: async (file: TFile, content: string): Promise<void> => {

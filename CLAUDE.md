@@ -8,7 +8,7 @@ Guidance for Claude Code (and similar AI agents) working in this repository.
 
 One shipped component on the 0.4.x line:
 
-1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 29 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
+1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 30 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
 
 Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
@@ -153,7 +153,7 @@ Rules:
 
 Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are exposed.
 
-### Tools (29 total, 0.4.x)
+### Tools (30 total, 0.4.x)
 
 **Vault file management** — `packages/obsidian-plugin/src/features/mcp-tools/tools/`:
 
@@ -172,6 +172,7 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 | `append_to_vault_file` | Append to an arbitrary file. |
 | `patch_vault_file` | Heading/block/frontmatter-aware insert into a file. |
 | `delete_vault_file` | Delete a file. |
+| `rename_heading` | Rename a heading in a file and rewrite every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault so links keep resolving. |
 | `search_vault` | Search via Dataview DQL or JsonLogic query. |
 | `search_vault_simple` | Plain text search with context window. |
 
@@ -311,7 +312,7 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
 
 ## Project status (2026-05-18)
 
-- `main` at **0.4.10** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 29. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.4.10`.
+- `main` at **0.4.10** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 30. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.4.10`.
 - `archive/main-0.3.12` — the retired 0.3.x stdio/binary line (20 MCP tools). Preserved for historical reference; HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`. No active development.
 - **Community store: ACCEPTED & LISTED** (2026-05-16) — id `mcp-tools-istefox` in `obsidianmd/obsidian-releases/community-plugins.json`; installable in-app + via BRAT. Obsidian shows a standard "not manually reviewed by Obsidian staff" disclaimer (automated review path; high-risk `fs`/`child_process` capability disclosures, which are intrinsic and were deliberately NOT removed). The legacy PR-based submission `obsidianmd/obsidian-releases#11919` was closed (process moved to the community.obsidian.md portal). Consult `CHANGELOG.md` for the current `[Unreleased]` state.
 

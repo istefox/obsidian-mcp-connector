@@ -15,13 +15,13 @@ Starting with **0.4.0**, the plugin hosts the MCP server **in-process inside Obs
 - **HTTP-native MCP clients** (Claude Code, Cursor, Cline, Continue, Windsurf, VS Code) connect directly to the local HTTP endpoint.
 - **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge — a two-line config the plugin generates for you.
 - **Native semantic search** runs entirely on-device via Transformers.js + `Xenova/all-MiniLM-L6-v2` (~25 MB, downloaded once and cached). No cloud, no Smart Connections requirement.
-- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 28 tools work without it. [^4]
+- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 29 tools work without it. [^4]
 
 ## Features
 
 When connected to an MCP-compatible client, this plugin enables:
 
-- **Vault access** — read, write, and patch notes through 17 typed tools (`get_vault_file`, `create_vault_file`, `patch_vault_file`, `rename_vault_file`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory`, …) with native binary content for images and audio. Missing parent directories on a `create`/`append` path are auto-created. `rename_vault_file` preserves link integrity across the vault via `app.fileManager.renameFile`.
+- **Vault access** — read, write, and patch notes through 18 typed tools (`get_vault_file`, `create_vault_file`, `patch_vault_file`, `rename_vault_file`, `rename_heading`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory`, …) with native binary content for images and audio. Missing parent directories on a `create`/`append` path are auto-created. `rename_vault_file` preserves link integrity across the vault via `app.fileManager.renameFile`; `rename_heading` renames a heading in place and rewrites every wikilink / markdown link / subheading-path reference pointing at it across the vault.
 - **Native semantic search** — `search_vault_smart` over an on-device MiniLM index, with optional fallback to Smart Connections if it is installed. Provider tri-state setting (`auto` / `native` / `smart-connections`) under the plugin settings.
 - **Plain-text + structured search** — `search_vault_simple` (text + context windows) and `search_vault` (DQL / JsonLogic via Local REST API).
 - **Template execution** — invoke Templater templates as MCP tool calls with dynamic parameters.
@@ -34,7 +34,7 @@ When connected to an MCP-compatible client, this plugin enables:
 - **Partial-read access** — `get_vault_file_partial` returns one of four slices of a file without loading the whole body: a single `frontmatter` field, the markdown section under a `heading` (nested paths via `targetDelimiter`, default `"::"`), the markdown range of a `block` reference, or a structured `document-map` outline (heading list + block-id list + frontmatter-field list, zero file I/O). Useful for context-window economics on large notes — spot-check a frontmatter field or grab a single section without paying for the full read.
 - **Graph navigation** — `get_outgoing_links` returns the body, embed, and frontmatter links emanating from a file (with resolved `targetPath` and `resolved` flag); `get_backlinks` returns every file that links to a given target, with per-source count. Both read-only, both backed by `app.metadataCache.resolvedLinks` / `getFirstLinkpathDest`.
 
-29 MCP tools in total. Full list in the plugin's settings → **Tools available** section.
+30 MCP tools in total. Full list in the plugin's settings → **Tools available** section.
 
 ## Prerequisites
 
@@ -128,7 +128,7 @@ Click **Copy config for streamable-http clients**. The snippet uses the generic 
 
 ### Verifying the setup
 
-Once configured, your client should expose **29 MCP tools** from this server, plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
+Once configured, your client should expose **30 MCP tools** from this server, plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
 
 To verify the connection works end-to-end, ask the agent to call `get_server_info`. A successful response confirms the client can reach the in-process server and the bearer token is correct. For deeper inspection (request/response logs, tool schema inspection without an LLM in the loop), use [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector):
 
@@ -397,4 +397,4 @@ See [GitHub Releases](https://github.com/istefox/obsidian-mcp-connector/releases
 [^1]: For information about Claude data privacy and security, see [Claude AI's data usage policy](https://support.anthropic.com/en/articles/8325621-i-would-like-to-input-sensitive-data-into-free-claude-ai-or-claude-pro-who-can-view-my-conversations).
 [^2]: For more information about the Model Context Protocol, see [MCP Introduction](https://modelcontextprotocol.io/introduction).
 [^3]: For a list of available MCP Clients, see [MCP Example Clients](https://modelcontextprotocol.io/clients).
-[^4]: Local REST API was a hard requirement on the 0.3.x line. Starting with 0.4.0 it is optional and only enables the `search_vault` tool (DQL / JsonLogic queries). The other 28 tools work without it; `search_vault` returns an actionable error if it isn't installed. As of `0.4.5`, `search_vault` reads the LRA host and port from the plugin's live settings instead of a hardcoded `127.0.0.1:27124`, so reconfiguring LRA's listen port no longer requires a plugin restart.
+[^4]: Local REST API was a hard requirement on the 0.3.x line. Starting with 0.4.0 it is optional and only enables the `search_vault` tool (DQL / JsonLogic queries). The other 29 tools work without it; `search_vault` returns an actionable error if it isn't installed. As of `0.4.5`, `search_vault` reads the LRA host and port from the plugin's live settings instead of a hardcoded `127.0.0.1:27124`, so reconfiguring LRA's listen port no longer requires a plugin restart.

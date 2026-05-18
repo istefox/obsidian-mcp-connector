@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`rename_heading` tool** — renames a heading in a vault file and
+  rewrites every backlinking reference (wikilinks, markdown links, and
+  subheading-path links) across the vault so links keep resolving.
+  Multi-match is disambiguated with an optional `from.level`; an
+  ambiguous match, a name collision with an existing heading, or a
+  mid-walk write failure each fail loud with a specific `errorCode`
+  and a recoverable file list.
+
 ## [0.4.10] — 2026-05-18
 
 ### Added
