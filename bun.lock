@@ -75,6 +75,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "svelte@5.18.0": "patches/svelte@5.18.0.patch",
+  },
   "overrides": {
     "vite": "5.4.11",
   },
