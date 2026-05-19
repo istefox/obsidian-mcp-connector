@@ -181,9 +181,15 @@ dist
 # Finder (MacOS) folder config
 .DS_Store
 
+# Built plugin bundle — emitted at the REPO ROOT by `bun run build`
+# (bun.config.ts `outdir: "../.."`). The shipped artifact AND the file
+# Obsidian loads via `bun run link` symlinks. Gitignored (never
+# committed) but NOT scratch — do not delete it; a missing main.js
+# breaks every dev-linked vault (real MCP outage 2026-05-19).
+main.js
+
 # Scratch pad
 playground/
-main.js
 bin/
 docs/planning/
 data.json

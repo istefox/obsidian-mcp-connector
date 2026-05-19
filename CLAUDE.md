@@ -47,7 +47,7 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | Language | TypeScript 5, strict mode, `verbatimModuleSyntax: true` |
 | Runtime validation | **ArkType** (`arktype` 2.0.0-rc.30) at every external boundary |
 | MCP | `@modelcontextprotocol/sdk` 1.29.0 |
-| UI | Svelte 5.17 inside the Obsidian plugin (patched — see `patches/svelte@5.16.0.patch`) |
+| UI | Svelte 5.18 inside the Obsidian plugin (patched — see `patches/svelte@5.18.0.patch`) |
 | Reactive deps | RxJS 7.8 (polls other Obsidian plugins until loaded) |
 | HTML→Markdown | Turndown 7.2 |
 | Test | `bun:test` (native) |
@@ -265,10 +265,9 @@ never cleaned up?* If exhaust, it does not get committed.
 
 Active traps in the current tree. Historical bugs already fixed are in `git log` — don't clutter this list with them.
 
-- **`patches/svelte@5.16.0.patch`** forces Svelte to use `index-client.js` instead of `index-server.js` — required for Bun bundler compatibility. Re-verify if you upgrade Svelte.
-- **`packages/obsidian-plugin/main.js` is the only shipped artifact** — CI regenerates it on tagged releases via `bun.config.ts`. Run `bun run build` from `packages/obsidian-plugin` locally; never commit the output.
+- **`patches/svelte@5.18.0.patch`** rewrites Svelte's `exports["."]` `default`/`worker` to `index-client.js` (not `index-server.js`) — required for Bun bundler compatibility; without it the bundle build fails with `Error compiling Svelte component: Unexpected token` at offset 0 on **every** `.svelte`. **Bun's `patchedDependencies` key is an exact `svelte@<version>`**: if the resolved Svelte version drifts (e.g. `5.16.0` → `5.18.0`) Bun **silently skips the patch** (no error) and the build breaks cryptically. On any Svelte version change you MUST rename the patch file and update the `patchedDependencies` key to the new exact version, then `bun install && bun run build` to verify (the hunk is context-based and applied cleanly 5.16→5.18). Latent because CI does not build the bundle (`ci.yml` = typecheck + tests only); only a forced rebuild surfaces it.
+- **The built bundle is `<repo-root>/main.js`** (NOT `packages/obsidian-plugin/main.js`) — `bun.config.ts` has `outdir: "../.."`, so `bun run build` emits to the repo root. It is the only shipped artifact (CI regenerates it on tagged releases) **and** the file Obsidian loads in dev: vaults using `bun run link` symlink `.obsidian/plugins/mcp-tools-istefox` → the repo root, so `<repo-root>/main.js` is a **live loaded plugin bundle**. Gitignored but **NOT scratch** — never commit it, never delete it as "cleanup": deleting it breaks every dev-linked Obsidian install (real MCP outage 2026-05-19). Lost copy ⇒ not in git: rebuild, or pull the byte-identical `main.js` from the matching GitHub release.
 - **Version bumps must go through `bun run version`** — it atomically updates `package.json`, `manifest.json`, `versions.json` and creates the git commit + tag. Manual edits get out of sync.
-- **`packages/obsidian-plugin/main.js` is written at the package root, not `dist/`** — Obsidian expects that path. Do not move it.
 - **External modules in `bun.config.ts`** (`obsidian`, `@codemirror/*`, `@lezer/*`) must stay external. Bundling them breaks the plugin on load.
 - **Version macro** in `features/version/index.ts` uses Bun's `with { type: "macro" }` / `with { type: "json" }` import attribute — works on Bun's compile path, will break under plain tsc emit.
 - **Smart Connections compatibility**: the plugin wrapper handles both v2.x (`window.SmartSearch`) and v3.0+ (`smartEnv.smart_sources`). Preserve both code paths when modifying.
