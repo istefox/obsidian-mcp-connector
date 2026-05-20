@@ -1,8 +1,8 @@
 name: CI
 
 # On-PR validation: typecheck + bundle build-smoke + tests across the
-# workspace. Runs on every push to main / feat/http-embedded and on
-# every PR targeting either branch. The build step here is a smoke
+# workspace. Runs on every push to main and on every PR targeting
+# main. The build step here is a smoke
 # check that catches a non-buildable bundle (e.g. Svelte/patch version
 # drift — #150). release.yml stays separate (tag-triggered) and owns
 # the release build: release env + zip + upload + attestation.
@@ -15,11 +15,9 @@ on:
   push:
     branches:
       - main
-      - feat/http-embedded
   pull_request:
     branches:
       - main
-      - feat/http-embedded
 
 # Cancel an older in-flight run for the same ref when a new push lands.
 # A redundant test run on a stale commit is wasted CI time.

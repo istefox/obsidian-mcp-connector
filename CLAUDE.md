@@ -53,7 +53,7 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | Test | `bun:test` (native) |
 | Format | Prettier 3 (`.prettierrc.yaml`) — 2-space indent, 80 col |
 | Build | `packages/obsidian-plugin/bun.config.ts` (Bun bundler) → plugin `main.js`. No binary. `__dirname`/`__filename`/`import.meta.*` are neutralized in the `define` block for a reproducible cross-machine bundle (Obsidian store build-verification) |
-| CI | GitHub Actions — `ci.yml` (typecheck + bundle build-smoke + workspace tests on push/PR to `main` & `feat/http-embedded`); `release.yml` (tag-triggered) builds plugin assets (`main.js` + `manifest.json`) + GitHub build-provenance attestation |
+| CI | GitHub Actions — `ci.yml` (typecheck + bundle build-smoke + workspace tests on push/PR to `main`); `release.yml` (tag-triggered) builds plugin assets (`main.js` + `manifest.json`) + GitHub build-provenance attestation |
 
 Path alias inside every package: **`$/*` → `src/*`**. Use it instead of relative imports across feature boundaries.
 
@@ -287,7 +287,7 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
   - **Stubbing `os.homedir()`**: use `spyOn(os, "homedir").mockReturnValue(tmpRoot)` — Bun/Node cache HOME early, so runtime `process.env.HOME = …` is not reliable. See `config.test.ts` and `uninstall.test.ts`.
   - **Installer integration tests** use real shell scripts as fake binaries (tmpdir, `mode: 0o755`) instead of mocking `child_process.exec`. See `status.integration.test.ts`. macOS-guarded (shebang approach is Unix-only).
 - **Still uncovered**: `installMcpServer` orchestration wrapper, `downloadFile` (HTTP + stream), Svelte component rendering (covered only by `svelte-check` and manual `bun run link` smoke tests).
-- CI: `.github/workflows/ci.yml` runs on every push/PR to `main` or `feat/http-embedded` — `bun install --frozen-lockfile`, `bun run check` (workspace typecheck), `bun run build` (bundle build-smoke, #150), then `bun test` in `packages/shared` and `packages/obsidian-plugin`. `.github/workflows/release.yml` is separate (tag push): builds the plugin assets + GitHub build-provenance attestation (no binary, no cross-compile). Keep tests green locally — CI gates the PR.
+- CI: `.github/workflows/ci.yml` runs on every push/PR to `main` — `bun install --frozen-lockfile`, `bun run check` (workspace typecheck), `bun run build` (bundle build-smoke, #150), then `bun test` in `packages/shared` and `packages/obsidian-plugin`. `.github/workflows/release.yml` is separate (tag push): builds the plugin assets + GitHub build-provenance attestation (no binary, no cross-compile). Keep tests green locally — CI gates the PR.
 
 ## Pre-commit checklist
 
