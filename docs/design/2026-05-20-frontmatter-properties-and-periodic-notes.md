@@ -144,7 +144,13 @@ for single-key ops.
 
 #### `get_or_create_daily_note(date?) → { path, content, created }`
 
-- `date?: string` — ISO `YYYY-MM-DD`. Default: today (server-local timezone).
+- `date?: string` — ISO `YYYY-MM-DD`. Default: today in the **plugin
+  process timezone**, which in the in-process / desktop deployment is
+  the user's own machine TZ (the 99% case). In a headless or
+  multi-host setup where the MCP server runs on a different host than
+  the Obsidian client, an explicit `date: YYYY-MM-DD` should be passed
+  to avoid TZ-driven off-by-one errors. Documented verbatim in
+  `.describe()`.
 - Returns the existing note if present, otherwise creates it and returns
   the new file. `created: boolean` reflects which path was taken.
 
@@ -157,6 +163,15 @@ for single-key ops.
   end-of-file append (like `append_to_vault_file`).
 - If the daily note does not exist, it is auto-created first (same path as
   `get_or_create_daily_note`).
+- **`underHeading` resolution on an auto-created daily**: if the freshly
+  created file (empty or rendered from template) does not contain the
+  requested heading, the tool returns `errorCode: "heading_not_found"`.
+  The auto-created file is **left in place** (no rollback) — its
+  existence is the right end state regardless of whether this single
+  append landed. The model can then add the heading (`patch_vault_file`
+  or a subsequent `append_to_daily_note` without `underHeading`) and
+  retry. Strict-by-default, no silent end-of-file fallback (consistent
+  with `patch_vault_file targetType:"heading"`).
 
 #### `get_or_create_periodic_note(period, date?) → { path, content, created }`
 
@@ -193,7 +208,9 @@ unit-tested independently.
 | `date` malformed for the chosen period (e.g. `2026-W99`) | Pre-validated by ArkType regex; `errorCode: "invalid_date_for_period"`. |
 | Daily note exists with custom non-ISO format the plugin generates | Detector reads the plugin's format setting and matches. Without the plugin, only ISO is recognised. |
 | Plugin returns the wrong note (race during user setting change) | Out of scope — single source of truth is the plugin's API; we don't second-guess. |
-| `append_to_daily_note` with `underHeading` that doesn't exist | Error from the heading walker (same as `patch_vault_file` today). |
+| `append_to_daily_note` with `underHeading` that doesn't exist (existing daily) | Error from the heading walker (same as `patch_vault_file` today). |
+| `append_to_daily_note` with `underHeading` that doesn't exist (auto-created daily, this call) | `errorCode: "heading_not_found"`; auto-created file is **not** rolled back. Model adds heading + retries. |
+| User disables the Daily Notes plugin **after** notes have been created with its custom format | Subsequent calls without the plugin fall back to ISO format → may create a second note that day with the ISO path while the custom-format note is orphaned. Documented; not auto-recovered. Recommend re-enabling the plugin to keep continuity. |
 | Template that calls Templater | Daily Notes API uses the configured template engine; if Templater is configured + enabled, it runs. If template references undefined variables, the plugin handles it. Out of our hands. |
 
 ## Tool count after both PRs
