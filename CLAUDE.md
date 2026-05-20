@@ -43,7 +43,7 @@ If you ever encounter a "GH013: Repository rule violations" error, the operation
 | Layer | Tech |
 |---|---|
 | Monorepo | Bun workspaces (`bun.lock`) — **do not use npm/yarn/pnpm** |
-| Toolchain pinning | `mise.toml` + `release.yml` (bun pinned `1.3.12` — reproducible builds; do not revert to `latest`) |
+| Toolchain pinning | `mise.toml` + `release.yml` (bun pinned `1.3.12` — reproducible builds; do not revert to `latest`). `ci.yml` deliberately uses `latest` (see Pending #3). |
 | Language | TypeScript 5, strict mode, `verbatimModuleSyntax: true` |
 | Runtime validation | **ArkType** (`arktype` 2.0.0-rc.30) at every external boundary |
 | MCP | `@modelcontextprotocol/sdk` 1.29.0 |
