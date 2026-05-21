@@ -154,7 +154,11 @@ describe("get_outgoing_links tool", () => {
     setMockFile("target.md", "");
     setMockMetadata("note.md", {
       links: [
-        { link: "target", original: "[[target|Friendly]]", displayText: "Friendly" },
+        {
+          link: "target",
+          original: "[[target|Friendly]]",
+          displayText: "Friendly",
+        },
       ],
     });
     const r = await getOutgoingLinksHandler({
@@ -224,7 +228,11 @@ describe("get_outgoing_links tool", () => {
     setMockFile("child.md", "");
     setMockMetadata("child.md", {
       frontmatterLinks: [
-        { link: "missing-parent", original: "[[missing-parent]]", key: "parent" },
+        {
+          link: "missing-parent",
+          original: "[[missing-parent]]",
+          key: "parent",
+        },
       ],
     });
     const r = await getOutgoingLinksHandler({

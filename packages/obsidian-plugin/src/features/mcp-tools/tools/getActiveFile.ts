@@ -15,9 +15,7 @@ export type GetActiveFileContext = {
   app: App;
 };
 
-export async function getActiveFileHandler(
-  ctx: GetActiveFileContext,
-): Promise<{
+export async function getActiveFileHandler(ctx: GetActiveFileContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {

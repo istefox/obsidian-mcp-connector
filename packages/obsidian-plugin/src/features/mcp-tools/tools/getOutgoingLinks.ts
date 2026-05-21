@@ -51,21 +51,17 @@ export async function getOutgoingLinksHandler(
   const abstract = ctx.app.vault.getAbstractFileByPath(sourcePath);
   if (!abstract) {
     return {
-      content: [
-        { type: "text", text: `File not found: ${sourcePath}` },
-      ],
+      content: [{ type: "text", text: `File not found: ${sourcePath}` }],
       isError: true,
     };
   }
   const file = abstract as TFile;
 
-  const cache = ctx.app.metadataCache.getFileCache(file) as
-    | {
-        links?: RawLink[];
-        embeds?: RawLink[];
-        frontmatterLinks?: Array<RawLink & { key: string }>;
-      }
-    | null;
+  const cache = ctx.app.metadataCache.getFileCache(file) as {
+    links?: RawLink[];
+    embeds?: RawLink[];
+    frontmatterLinks?: Array<RawLink & { key: string }>;
+  } | null;
 
   const includeEmbeds = (ctx.arguments.includeEmbeds ?? "true") === "true";
   const includeUnresolved =
@@ -75,7 +71,9 @@ export async function getOutgoingLinksHandler(
   // API for turning a linkpath (e.g. `"Note Name"` or `"folder/Note"`)
   // into a concrete `TFile`; using it here means the caller gets the
   // resolved vault path without an extra round-trip to a separate tool.
-  const resolve = (linkpath: string): { resolved: boolean; targetPath: string | null } => {
+  const resolve = (
+    linkpath: string,
+  ): { resolved: boolean; targetPath: string | null } => {
     const dest = ctx.app.metadataCache.getFirstLinkpathDest(
       linkpath,
       sourcePath,

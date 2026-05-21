@@ -96,7 +96,10 @@ describe("setAutoWriteEnabled", () => {
     await setAutoWriteEnabled(p, true);
 
     const data = p._data as Record<string, unknown>;
-    expect((data.mcpClientConfig as Record<string, unknown>).autoWriteClaudeDesktopConfig).toBe(true);
+    expect(
+      (data.mcpClientConfig as Record<string, unknown>)
+        .autoWriteClaudeDesktopConfig,
+    ).toBe(true);
     expect((data.mcpClientConfig as Record<string, unknown>).someOtherKey).toBe(
       "preserved",
     );
@@ -133,9 +136,7 @@ describe("applyAutoWrite", () => {
   let homedirSpy: Mock<typeof os.homedir>;
 
   beforeEach(async () => {
-    tmpRoot = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "mcp-tools-autowrite-"),
-    );
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-tools-autowrite-"));
     homedirSpy = spyOn(os, "homedir").mockReturnValue(tmpRoot);
   });
 

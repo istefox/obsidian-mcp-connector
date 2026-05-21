@@ -1,5 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { searchVaultSimpleHandler, searchVaultSimpleSchema } from "./searchVaultSimple";
+import {
+  searchVaultSimpleHandler,
+  searchVaultSimpleSchema,
+} from "./searchVaultSimple";
 import { mockApp, resetMockVault, setMockFile } from "$/test-setup";
 
 beforeEach(() => resetMockVault());

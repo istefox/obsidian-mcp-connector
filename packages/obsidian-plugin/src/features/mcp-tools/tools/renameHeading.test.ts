@@ -1,8 +1,5 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import {
-  renameHeadingHandler,
-  renameHeadingSchema,
-} from "./renameHeading";
+import { renameHeadingHandler, renameHeadingSchema } from "./renameHeading";
 import {
   mockApp,
   resetMockVault,
@@ -191,10 +188,7 @@ describe("rename_heading tool", () => {
       "a.md",
       "Two refs: [[source#Target]] and [[source#Target|alias]].",
     );
-    setMockFile(
-      "b.md",
-      "One ref: [text](source.md#Target).",
-    );
+    setMockFile("b.md", "One ref: [text](source.md#Target).");
     setMockMetadata("source.md", {
       headings: [{ heading: "Target", level: 2, line: 0 }],
     });
@@ -207,11 +201,7 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBeUndefined();
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.updatedFiles.sort()).toEqual([
-      "a.md",
-      "b.md",
-      "source.md",
-    ]);
+    expect(payload.updatedFiles.sort()).toEqual(["a.md", "b.md", "source.md"]);
     expect(payload.linkRewriteCount).toBe(3);
   });
 

@@ -56,7 +56,9 @@ function makeVector(seed: number): Float32Array {
   return v;
 }
 
-function makeRecord(opts: Partial<EmbeddingRecord> & { chunkId: string }): EmbeddingRecord {
+function makeRecord(
+  opts: Partial<EmbeddingRecord> & { chunkId: string },
+): EmbeddingRecord {
   return {
     chunkId: opts.chunkId,
     filePath: opts.filePath ?? "Notes/a.md",
@@ -167,7 +169,12 @@ describe("embedding store", () => {
     const v2 = makeVector(13);
     await a.upsert([
       makeRecord({ chunkId: "x:0", vector: v1, contentHash: "h1" }),
-      makeRecord({ chunkId: "y:0", vector: v2, contentHash: "h2", filePath: "Y.md" }),
+      makeRecord({
+        chunkId: "y:0",
+        vector: v2,
+        contentHash: "h2",
+        filePath: "Y.md",
+      }),
     ]);
     await a.flush();
 
@@ -203,7 +210,9 @@ describe("embedding store", () => {
     // Subsequent upsert + flush should overwrite with the current version.
     await store.upsert([makeRecord({ chunkId: "a:0" })]);
     await store.flush();
-    const written = JSON.parse(mem.files.get("/p/embeddings.index.json") ?? "{}");
+    const written = JSON.parse(
+      mem.files.get("/p/embeddings.index.json") ?? "{}",
+    );
     expect(written.version).toBe(FORMAT_VERSION);
     expect(written.records).toHaveLength(1);
   });

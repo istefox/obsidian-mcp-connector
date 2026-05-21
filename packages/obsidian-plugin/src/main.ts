@@ -1,11 +1,7 @@
 import { type } from "arktype";
 import { Notice, Plugin, TFile } from "obsidian";
 import { lastValueFrom } from "rxjs";
-import {
-  LocalRestAPI,
-  Templater,
-  type SmartConnections,
-} from "shared";
+import { LocalRestAPI, Templater, type SmartConnections } from "shared";
 import {
   CommandPermissionModal,
   globalSettingsMutex,
@@ -150,53 +146,51 @@ export default class McpToolsPlugin extends Plugin {
       | { kind: "done"; outcome: "allow" | "deny"; reason?: string }
       | { kind: "needs-modal"; softRateLimit: number };
 
-    const phaseA: PhaseAResult = await globalSettingsMutex.run(
-      async () => {
-        const settings = (await this.loadData()) ?? {};
-        const perms = settings.commandPermissions ?? {};
+    const phaseA: PhaseAResult = await globalSettingsMutex.run(async () => {
+      const settings = (await this.loadData()) ?? {};
+      const perms = settings.commandPermissions ?? {};
 
-        const pureOutcome = decidePermission(
-          commandId,
-          perms.enabled,
-          perms.allowlist,
-        );
+      const pureOutcome = decidePermission(
+        commandId,
+        perms.enabled,
+        perms.allowlist,
+      );
 
-        const inAllowlist = (perms.allowlist ?? []).includes(commandId);
-        const needsModal =
-          perms.enabled === true &&
-          pureOutcome.decision === "deny" &&
-          !inAllowlist;
+      const inAllowlist = (perms.allowlist ?? []).includes(commandId);
+      const needsModal =
+        perms.enabled === true &&
+        pureOutcome.decision === "deny" &&
+        !inAllowlist;
 
-        if (needsModal) {
-          return {
-            kind: "needs-modal",
-            softRateLimit: perms.softRateLimit ?? SOFT_RATE_LIMIT_PER_MINUTE,
-          };
-        }
-
-        // Fast path: write audit entry and return.
-        const auditEntry: CommandAuditEntry = {
-          timestamp: new Date().toISOString(),
-          commandId,
-          decision: pureOutcome.decision,
-          ...(pureOutcome.reason ? { reason: pureOutcome.reason } : {}),
-        };
-        settings.commandPermissions = {
-          ...perms,
-          recentInvocations: appendAuditEntry(
-            perms.recentInvocations,
-            auditEntry,
-          ),
-        };
-        await this.saveData(settings);
-
+      if (needsModal) {
         return {
-          kind: "done",
-          outcome: pureOutcome.decision,
-          reason: pureOutcome.reason,
+          kind: "needs-modal",
+          softRateLimit: perms.softRateLimit ?? SOFT_RATE_LIMIT_PER_MINUTE,
         };
-      },
-    );
+      }
+
+      // Fast path: write audit entry and return.
+      const auditEntry: CommandAuditEntry = {
+        timestamp: new Date().toISOString(),
+        commandId,
+        decision: pureOutcome.decision,
+        ...(pureOutcome.reason ? { reason: pureOutcome.reason } : {}),
+      };
+      settings.commandPermissions = {
+        ...perms,
+        recentInvocations: appendAuditEntry(
+          perms.recentInvocations,
+          auditEntry,
+        ),
+      };
+      await this.saveData(settings);
+
+      return {
+        kind: "done",
+        outcome: pureOutcome.decision,
+        reason: pureOutcome.reason,
+      };
+    });
 
     if (phaseA.kind === "done") {
       return { outcome: phaseA.outcome, reason: phaseA.reason };
@@ -227,11 +221,16 @@ export default class McpToolsPlugin extends Plugin {
     // Race the modal decision against the timeout.
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     type ModalOutcome =
-      | { kind: "decided"; decision: import("./features/command-permissions").ModalDecision }
+      | {
+          kind: "decided";
+          decision: import("./features/command-permissions").ModalDecision;
+        }
       | { kind: "timeout" };
 
     const outcome = await Promise.race<ModalOutcome>([
-      modal.waitForDecision().then((d) => ({ kind: "decided" as const, decision: d })),
+      modal
+        .waitForDecision()
+        .then((d) => ({ kind: "decided" as const, decision: d })),
       new Promise<ModalOutcome>((resolve) => {
         timeoutHandle = setTimeout(
           () => resolve({ kind: "timeout" }),

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createEmbedder, type PipelineFactory, type PipelineFn } from "./embedder";
+import {
+  createEmbedder,
+  type PipelineFactory,
+  type PipelineFn,
+} from "./embedder";
 
 /**
  * Deterministic mock factory: returns a pipeline that hashes the
@@ -34,7 +38,11 @@ function makeMockFactory(): {
     };
     return pipe;
   };
-  return { factory, callCount: () => factoryCalls, embedCount: () => embedCalls };
+  return {
+    factory,
+    callCount: () => factoryCalls,
+    embedCount: () => embedCalls,
+  };
 }
 
 describe("embedder", () => {

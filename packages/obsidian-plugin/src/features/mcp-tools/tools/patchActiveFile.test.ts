@@ -1,5 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { patchActiveFileHandler, patchActiveFileSchema } from "./patchActiveFile";
+import {
+  patchActiveFileHandler,
+  patchActiveFileSchema,
+} from "./patchActiveFile";
 import {
   mockApp,
   resetMockVault,
@@ -12,11 +15,16 @@ beforeEach(() => resetMockVault());
 
 describe("patch_active_file tool", () => {
   test("schema declares the tool name", () => {
-    expect(patchActiveFileSchema.get("name")?.toString()).toContain("patch_active_file");
+    expect(patchActiveFileSchema.get("name")?.toString()).toContain(
+      "patch_active_file",
+    );
   });
 
   test("inserts content under matching heading (append + heading)", async () => {
-    setMockFile("a.md", "# Top\n\n## Section A\n\noldA\n\n## Section B\n\noldB\n");
+    setMockFile(
+      "a.md",
+      "# Top\n\n## Section A\n\noldA\n\n## Section B\n\noldB\n",
+    );
     setMockActiveFile("a.md");
     const app = mockApp();
 
@@ -78,7 +86,9 @@ describe("patch_active_file tool", () => {
       app,
     });
     expect(result.isError).toBeUndefined();
-    const cache = app.metadataCache.getFileCache(app.workspace.getActiveFile()!);
+    const cache = app.metadataCache.getFileCache(
+      app.workspace.getActiveFile()!,
+    );
     expect(cache?.frontmatter?.status).toBe("published");
   });
 
@@ -140,7 +150,9 @@ describe("patch_active_file tool", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/array/i);
-    const cache = app.metadataCache.getFileCache(app.workspace.getActiveFile()!);
+    const cache = app.metadataCache.getFileCache(
+      app.workspace.getActiveFile()!,
+    );
     expect(cache?.frontmatter?.tags).toEqual(["alpha", "beta"]);
   });
 
@@ -160,7 +172,9 @@ describe("patch_active_file tool", () => {
       app,
     });
     expect(result.isError).toBeUndefined();
-    const cache = app.metadataCache.getFileCache(app.workspace.getActiveFile()!);
+    const cache = app.metadataCache.getFileCache(
+      app.workspace.getActiveFile()!,
+    );
     expect(cache?.frontmatter?.tags).toEqual(["existing", "new-tag"]);
   });
 
@@ -180,7 +194,9 @@ describe("patch_active_file tool", () => {
       app,
     });
     expect(result.isError).toBeUndefined();
-    const cache = app.metadataCache.getFileCache(app.workspace.getActiveFile()!);
+    const cache = app.metadataCache.getFileCache(
+      app.workspace.getActiveFile()!,
+    );
     expect(cache?.frontmatter?.tags).toEqual(["existing", "new-tag"]);
   });
 
@@ -275,7 +291,10 @@ describe("patch_active_file tool", () => {
     // (the legit frontmatter-title pattern). A mixed doc — H1 present but
     // not a parent of the target H2 — remains ambiguous, so #80's reject
     // is preserved here.
-    setMockFile("a.md", "## RootHeading\n\nBody content.\n\n# Real Title\n\nx\n");
+    setMockFile(
+      "a.md",
+      "## RootHeading\n\nBody content.\n\n# Real Title\n\nx\n",
+    );
     setMockActiveFile("a.md");
     const result = await patchActiveFileHandler({
       arguments: {
@@ -346,15 +365,16 @@ describe("patch_active_file tool", () => {
       app,
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
     const file = app.vault.getAbstractFileByPath("a.md");
     if (!file) throw new Error("expected file");
     expect(await app.vault.read(file as never)).toBe(fixture);
   });
 
   test("#81: rejects block-in-fenced-code replace symmetrically", async () => {
-    const fixture =
-      "## Section\n\n```\ncode line ^block-id\n```\n\nEnd.\n";
+    const fixture = "## Section\n\n```\ncode line ^block-id\n```\n\nEnd.\n";
     setMockFile("a.md", fixture);
     setMockMetadata("a.md", {
       blocks: { "block-id": { startLine: 3, endLine: 3 } },
@@ -371,7 +391,9 @@ describe("patch_active_file tool", () => {
       app: mockApp(),
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
   });
 
   test("#84: rejects when cache returns startLine at the opening fence line", async () => {
@@ -400,7 +422,9 @@ describe("patch_active_file tool", () => {
       app,
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
     // Vault-safety property: file untouched byte-exact.
     const file = app.vault.getAbstractFileByPath("a.md");
     if (!file) throw new Error("expected file");

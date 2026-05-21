@@ -134,11 +134,14 @@ describe("provider factory — chooser", () => {
     expect(provider.isReady()).toBe(true);
     // Confirm it dispatches to SC by observing the call.
     let saw: string | undefined;
-    (deps.plugin as unknown as { smartSearch: { search: (q: string) => Promise<unknown[]> } }).smartSearch.search =
-      async (q: string) => {
-        saw = q;
-        return [];
-      };
+    (
+      deps.plugin as unknown as {
+        smartSearch: { search: (q: string) => Promise<unknown[]> };
+      }
+    ).smartSearch.search = async (q: string) => {
+      saw = q;
+      return [];
+    };
     await provider.search("ping", {});
     expect(saw).toBe("ping");
   });
@@ -183,9 +186,7 @@ describe("isSmartConnectionsAvailable", () => {
   });
 
   test("true when plugin.smartSearch.search is a function", () => {
-    expect(isSmartConnectionsAvailable(pluginWithSmartSearch(true))).toBe(
-      true,
-    );
+    expect(isSmartConnectionsAvailable(pluginWithSmartSearch(true))).toBe(true);
   });
 
   test("false when smartSearch exists but search is not a function", () => {

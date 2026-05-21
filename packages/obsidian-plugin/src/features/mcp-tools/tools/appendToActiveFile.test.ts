@@ -1,12 +1,22 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { appendToActiveFileHandler, appendToActiveFileSchema } from "./appendToActiveFile";
-import { mockApp, resetMockVault, setMockActiveFile, setMockFile } from "$/test-setup";
+import {
+  appendToActiveFileHandler,
+  appendToActiveFileSchema,
+} from "./appendToActiveFile";
+import {
+  mockApp,
+  resetMockVault,
+  setMockActiveFile,
+  setMockFile,
+} from "$/test-setup";
 
 beforeEach(() => resetMockVault());
 
 describe("append_to_active_file tool", () => {
   test("schema declares the tool name", () => {
-    expect(appendToActiveFileSchema.get("name")?.toString()).toContain("append_to_active_file");
+    expect(appendToActiveFileSchema.get("name")?.toString()).toContain(
+      "append_to_active_file",
+    );
   });
 
   test("appends content to existing active file with newline normalization", async () => {

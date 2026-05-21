@@ -48,9 +48,7 @@ describe("mapFolderFilter helper", () => {
   });
 
   test("empty array filters do NOT emit the key (SC distinguishes [] from absent)", () => {
-    expect(
-      mapFolderFilter({ folders: [], excludeFolders: [] }),
-    ).toEqual({});
+    expect(mapFolderFilter({ folders: [], excludeFolders: [] })).toEqual({});
   });
 
   test("combines all keys", () => {

@@ -67,9 +67,8 @@ type RawSmartSearchResult = {
 function getSmartSearch(
   plugin: McpToolsPlugin,
 ): SmartConnections.SmartSearch | undefined {
-  return (
-    plugin as unknown as { smartSearch?: SmartConnections.SmartSearch }
-  ).smartSearch;
+  return (plugin as unknown as { smartSearch?: SmartConnections.SmartSearch })
+    .smartSearch;
 }
 
 export class SmartConnectionsUnavailableError extends Error {

@@ -4,16 +4,12 @@ import type { App, TFile } from "obsidian";
 export const getVaultFilePartialSchema = type({
   name: '"get_vault_file_partial"',
   arguments: {
-    filename: type("string>0").describe(
-      "Vault-relative path to the file.",
-    ),
-    mode: type(
-      '"frontmatter" | "heading" | "block" | "document-map"',
-    ).describe(
+    filename: type("string>0").describe("Vault-relative path to the file."),
+    mode: type('"frontmatter" | "heading" | "block" | "document-map"').describe(
       'One of: `"frontmatter"` (returns a single frontmatter field value), `"heading"` (returns the markdown section under the target heading), `"block"` (returns the markdown range of the target block reference), or `"document-map"` (returns the file outline — heading list, block-id list, frontmatter-field list — with no body content).',
     ),
     "target?": type("string>0").describe(
-      'Field name for `frontmatter`, heading text (optionally nested via `targetDelimiter`) for `heading`, or block id (with or without the leading `^`) for `block`. Required for all modes EXCEPT `document-map` (where it is ignored).',
+      "Field name for `frontmatter`, heading text (optionally nested via `targetDelimiter`) for `heading`, or block id (with or without the leading `^`) for `block`. Required for all modes EXCEPT `document-map` (where it is ignored).",
     ),
     "targetDelimiter?": type("string>0").describe(
       'Delimiter used to address a nested heading path, e.g. `"Parent::Child::Grandchild"`. Defaults to `"::"` (matching the Local REST API convention). Only meaningful for `mode: "heading"`.',
@@ -49,26 +45,27 @@ type MockCache = {
   frontmatter?: Record<string, unknown>;
 };
 
-function errorResponse(
-  message: string,
-): { content: Array<{ type: "text"; text: string }>; isError: true } {
+function errorResponse(message: string): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
   return {
     content: [{ type: "text", text: message }],
     isError: true,
   };
 }
 
-function jsonResponse(
-  value: unknown,
-): { content: Array<{ type: "text"; text: string }> } {
+function jsonResponse(value: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+} {
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
   };
 }
 
-function textResponse(
-  text: string,
-): { content: Array<{ type: "text"; text: string }> } {
+function textResponse(text: string): {
+  content: Array<{ type: "text"; text: string }>;
+} {
   return {
     content: [{ type: "text", text }],
   };
@@ -92,10 +89,11 @@ function findHeadingSection(
   target: string,
   delimiter: string,
   totalLines: number,
-):
-  | { startLine: number; endLine: number; level: number }
-  | { error: string } {
-  const segments = target.split(delimiter).map((s) => s.trim()).filter(Boolean);
+): { startLine: number; endLine: number; level: number } | { error: string } {
+  const segments = target
+    .split(delimiter)
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (segments.length === 0) {
     return { error: "Invalid heading target: empty after delimiter split." };
   }
@@ -190,8 +188,7 @@ export async function getVaultFilePartialHandler(
     );
   }
 
-  const cache = (ctx.app.metadataCache.getFileCache(file) ??
-    {}) as MockCache;
+  const cache = (ctx.app.metadataCache.getFileCache(file) ?? {}) as MockCache;
 
   // ── frontmatter ───────────────────────────────────────────────────────────
   if (mode === "frontmatter") {
@@ -246,7 +243,9 @@ export async function getVaultFilePartialHandler(
       level: h.level,
       line: h.position.start.line,
     }));
-    const blocks = Object.keys(cache.blocks ?? {}).slice().sort(compareName);
+    const blocks = Object.keys(cache.blocks ?? {})
+      .slice()
+      .sort(compareName);
     const frontmatterKeys = Object.keys(cache.frontmatter ?? {})
       .slice()
       .sort(compareName);
@@ -267,9 +266,7 @@ export async function getVaultFilePartialHandler(
   if (mode === "heading") {
     const headings = cache.headings ?? [];
     if (headings.length === 0) {
-      return errorResponse(
-        `File has no headings: ${filename}.`,
-      );
+      return errorResponse(`File has no headings: ${filename}.`);
     }
     const delim = targetDelimiter ?? "::";
     const result = findHeadingSection(headings, target!, delim, lines.length);
@@ -295,9 +292,7 @@ export async function getVaultFilePartialHandler(
     }
     const entry = blocks[key];
     if (!entry) {
-      return errorResponse(
-        `Block not found: "^${key}" in ${filename}.`,
-      );
+      return errorResponse(`Block not found: "^${key}" in ${filename}.`);
     }
     // Block position uses inclusive end line in the metadata cache.
     const section = lines

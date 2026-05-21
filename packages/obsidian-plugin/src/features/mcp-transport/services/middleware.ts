@@ -2,9 +2,7 @@ import { ERROR_CODES, MCP_PATH_PREFIX } from "../constants";
 import { isOriginAllowed } from "./origin";
 import { compareTokens } from "./token";
 
-export type MethodPathResult =
-  | { ok: true }
-  | { ok: false; status: 404 | 405 };
+export type MethodPathResult = { ok: true } | { ok: false; status: 404 | 405 };
 
 const ALLOWED_METHODS = new Set(["GET", "POST"]);
 

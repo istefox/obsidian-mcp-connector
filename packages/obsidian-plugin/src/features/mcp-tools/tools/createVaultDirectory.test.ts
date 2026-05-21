@@ -37,7 +37,11 @@ describe("create_vault_directory tool", () => {
       app,
     });
     expect(result.isError).toBeUndefined();
-    expect(getMockFolders()).toEqual(["Projects", "Projects/2026", "Projects/2026/Q2"]);
+    expect(getMockFolders()).toEqual([
+      "Projects",
+      "Projects/2026",
+      "Projects/2026/Q2",
+    ]);
   });
 
   test("idempotent — succeeds when directory already exists", async () => {

@@ -1,5 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { deleteVaultFileHandler, deleteVaultFileSchema } from "./deleteVaultFile";
+import {
+  deleteVaultFileHandler,
+  deleteVaultFileSchema,
+} from "./deleteVaultFile";
 import {
   mockApp,
   resetMockVault,
@@ -12,7 +15,9 @@ beforeEach(() => resetMockVault());
 
 describe("delete_vault_file tool", () => {
   test("schema declares the tool name", () => {
-    expect(deleteVaultFileSchema.get("name")?.toString()).toContain("delete_vault_file");
+    expect(deleteVaultFileSchema.get("name")?.toString()).toContain(
+      "delete_vault_file",
+    );
   });
 
   test("deletes existing file", async () => {

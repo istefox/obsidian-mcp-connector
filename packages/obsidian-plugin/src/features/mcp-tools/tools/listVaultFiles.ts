@@ -4,9 +4,13 @@ import type { App } from "obsidian";
 export const listVaultFilesSchema = type({
   name: '"list_vault_files"',
   arguments: {
-    "directory?": type("string").describe("Optional vault-relative directory prefix. Empty/omitted = vault root (all files)."),
+    "directory?": type("string").describe(
+      "Optional vault-relative directory prefix. Empty/omitted = vault root (all files).",
+    ),
   },
-}).describe("Lists vault files, optionally filtered by directory prefix. Returns an array of vault-relative paths.");
+}).describe(
+  "Lists vault files, optionally filtered by directory prefix. Returns an array of vault-relative paths.",
+);
 
 export type ListVaultFilesContext = {
   arguments: { directory?: string };

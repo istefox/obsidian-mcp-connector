@@ -10,11 +10,7 @@ import {
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
-import {
-  executeSteps,
-  planMigration,
-  type MigrationContext,
-} from "./plan";
+import { executeSteps, planMigration, type MigrationContext } from "./plan";
 import { FORK_PLUGIN_ID } from "../../mcp-client-config/services/claudeDesktop";
 
 /**
@@ -133,9 +129,7 @@ describe("executeSteps — rewriteClaudeConfig", () => {
   let homedirSpy: Mock<typeof os.homedir>;
 
   beforeEach(async () => {
-    tmpRoot = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "mcp-tools-plan-test-"),
-    );
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-tools-plan-test-"));
     configPath = path.join(tmpRoot, "claude_desktop_config.json");
     homedirSpy = spyOn(os, "homedir").mockReturnValue(tmpRoot);
   });
@@ -238,9 +232,7 @@ describe("executeSteps — deleteLegacyBinary", () => {
   let tmpRoot: string;
 
   beforeEach(async () => {
-    tmpRoot = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "mcp-tools-plan-bin-"),
-    );
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-tools-plan-bin-"));
   });
 
   afterEach(async () => {

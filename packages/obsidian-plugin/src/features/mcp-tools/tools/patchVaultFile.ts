@@ -8,7 +8,9 @@ import {
 export const patchVaultFileSchema = type({
   name: '"patch_vault_file"',
   arguments: {
-    path: type("string>0").describe("Vault-relative path to the file to patch."),
+    path: type("string>0").describe(
+      "Vault-relative path to the file to patch.",
+    ),
     operation: '"append"|"prepend"|"replace"',
     targetType: '"heading"|"block"|"frontmatter"',
     target: type("string>0").describe(
@@ -56,7 +58,10 @@ export type PatchVaultFileContext = {
  */
 export async function patchVaultFileHandler(
   ctx: PatchVaultFileContext,
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   const file = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
   if (!file) {
     return {

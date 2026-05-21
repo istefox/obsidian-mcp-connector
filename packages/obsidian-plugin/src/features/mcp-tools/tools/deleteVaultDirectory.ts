@@ -12,7 +12,7 @@ export const deleteVaultDirectorySchema = type({
     ),
   },
 }).describe(
-  "Deletes a directory from the vault. Defaults to non-recursive (fails if the directory is not empty). Use `recursive: \"true\"` to remove the directory and all its contents in one call. Bottoms out in `app.vault.adapter.rmdir`, so deleted content does NOT go through the Obsidian trash.",
+  'Deletes a directory from the vault. Defaults to non-recursive (fails if the directory is not empty). Use `recursive: "true"` to remove the directory and all its contents in one call. Bottoms out in `app.vault.adapter.rmdir`, so deleted content does NOT go through the Obsidian trash.',
 );
 
 export type DeleteVaultDirectoryContext = {

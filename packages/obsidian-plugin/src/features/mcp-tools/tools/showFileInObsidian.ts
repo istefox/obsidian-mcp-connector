@@ -20,7 +20,10 @@ export type ShowFileInObsidianContext = {
 
 export async function showFileInObsidianHandler(
   ctx: ShowFileInObsidianContext,
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   await ctx.app.workspace.openLinkText(
     ctx.arguments.filename,
     "",

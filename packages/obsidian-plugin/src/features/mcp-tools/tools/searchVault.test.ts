@@ -16,7 +16,12 @@ describe("search_vault tool", () => {
 
   test("returns informative error when Local REST API not available", async () => {
     const plugin = mockPlugin({
-      localRestApi: { id: "obsidian-local-rest-api", name: "Local REST API", required: true, installed: false },
+      localRestApi: {
+        id: "obsidian-local-rest-api",
+        name: "Local REST API",
+        required: true,
+        installed: false,
+      },
       getLocalRestApiKey: () => undefined,
     } as never);
     const result = await searchVaultHandler({
@@ -56,7 +61,9 @@ describe("search_vault tool", () => {
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text as string);
-    expect(Array.isArray(data) || (data.results && Array.isArray(data.results))).toBe(true);
+    expect(
+      Array.isArray(data) || (data.results && Array.isArray(data.results)),
+    ).toBe(true);
   });
 
   // Fork issue #79: searchVault no longer hardcodes the LRA URL.

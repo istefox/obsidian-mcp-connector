@@ -99,11 +99,7 @@ describe("filterPresetAgainstRegistry", () => {
       id: "dup",
       label: "Dup",
       description: "",
-      commandIds: [
-        "editor:toggle-bold",
-        "editor:toggle-bold",
-        "graph:open",
-      ],
+      commandIds: ["editor:toggle-bold", "editor:toggle-bold", "graph:open"],
     };
     const registry = makeRegistry(["editor:toggle-bold", "graph:open"]);
     expect(filterPresetAgainstRegistry(dupPreset, registry)).toEqual([
@@ -128,11 +124,7 @@ describe("mergeIntoAllowlist", () => {
         ["editor:toggle-bold", "graph:open"],
         ["graph:open", "editor:toggle-italic", "editor:toggle-bold"],
       ),
-    ).toEqual([
-      "editor:toggle-bold",
-      "graph:open",
-      "editor:toggle-italic",
-    ]);
+    ).toEqual(["editor:toggle-bold", "graph:open", "editor:toggle-italic"]);
   });
 
   test("is a no-op when every new id is already present", () => {

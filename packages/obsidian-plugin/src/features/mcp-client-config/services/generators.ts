@@ -29,7 +29,9 @@ export const clientConfigInputSchema = type({
    * `http://127.0.0.1:<port>/mcp` in 0.4.0 — the plugin binds
    * loopback only.
    */
-  url: type(/^https?:\/\//).describe("MCP endpoint URL, e.g. http://127.0.0.1:27200/mcp"),
+  url: type(/^https?:\/\//).describe(
+    "MCP endpoint URL, e.g. http://127.0.0.1:27200/mcp",
+  ),
   /** Bearer token. Written verbatim into the Authorization header. */
   token: "string > 0",
   /** Override the entry key. Defaults to FORK_PLUGIN_ID. */
@@ -47,7 +49,9 @@ export type ClaudeDesktopEntry = {
   args: string[];
 };
 
-export function claudeDesktopConfig(input: ClientConfigInput): ClaudeDesktopEntry {
+export function claudeDesktopConfig(
+  input: ClientConfigInput,
+): ClaudeDesktopEntry {
   return {
     command: "npx",
     args: [

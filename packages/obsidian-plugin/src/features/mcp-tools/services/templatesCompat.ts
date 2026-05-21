@@ -125,7 +125,8 @@ export async function handleTemplatesExecuteCompat(
   } catch (parseError) {
     logger.error("Templates compat — failed to parse handler payload", {
       payload: errorText,
-      error: parseError instanceof Error ? parseError.message : String(parseError),
+      error:
+        parseError instanceof Error ? parseError.message : String(parseError),
     });
     return {
       status: 500,

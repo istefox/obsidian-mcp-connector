@@ -6,7 +6,8 @@ export const TOKEN_BYTE_LENGTH = 32 as const;
 // Cap on the request body to bound memory in the Electron renderer (DoS/OOM).
 export const MAX_REQUEST_BODY_BYTES = 1_048_576 as const;
 
-export const ALLOWED_ORIGINS_PATTERN = /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
+export const ALLOWED_ORIGINS_PATTERN =
+  /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 export const ERROR_CODES = {
   METHOD_NOT_ALLOWED: 405,

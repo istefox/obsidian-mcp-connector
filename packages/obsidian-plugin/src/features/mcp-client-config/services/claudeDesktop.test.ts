@@ -250,9 +250,7 @@ describe("removeFromClaudeDesktopConfig", () => {
   let homedirSpy: Mock<typeof os.homedir>;
 
   beforeEach(async () => {
-    tmpRoot = await fsp.mkdtemp(
-      path.join(os.tmpdir(), "mcp-tools-claude-rm-"),
-    );
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-tools-claude-rm-"));
     configPath = path.join(tmpRoot, "claude_desktop_config.json");
     homedirSpy = spyOn(os, "homedir").mockReturnValue(tmpRoot);
   });

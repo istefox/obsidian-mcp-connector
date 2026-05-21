@@ -7,7 +7,9 @@ const DEFAULT_LIMIT = 50;
 export const searchVaultSimpleSchema = type({
   name: '"search_vault_simple"',
   arguments: {
-    query: type("string>0").describe("Substring to search for (case-insensitive)."),
+    query: type("string>0").describe(
+      "Substring to search for (case-insensitive).",
+    ),
     "contextLength?": type("number.integer>=0").describe(
       "Characters of context to include before/after each match. Default 100.",
     ),

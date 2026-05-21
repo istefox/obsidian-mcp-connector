@@ -48,7 +48,10 @@ export type PatchActiveFileContext = {
 
 export async function patchActiveFileHandler(
   ctx: PatchActiveFileContext,
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
     return {
@@ -81,7 +84,10 @@ export async function applyPatch(
   app: App,
   file: TFile,
   args: PatchActiveFileContext["arguments"],
-): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   // Block defaults to false to fail loud on unresolved block ids — avoids
   // silent corruption in block-in-table scenarios (issue #71).
   const createIfMissing =
@@ -99,7 +105,11 @@ export async function applyPatch(
     await app.fileManager.processFrontMatter(file, (fm) => {
       const existing = fm[args.target];
       if (args.operation === "replace") {
-        const plan = planFrontmatterReplace(existing, args.content, args.target);
+        const plan = planFrontmatterReplace(
+          existing,
+          args.content,
+          args.target,
+        );
         if (plan.kind === "reject") {
           rejection = plan.message;
           return;
@@ -298,7 +308,11 @@ export async function applyPatch(
       lines.splice(pos.startLine, 0, args.content);
     } else {
       // replace: swap the lines from startLine to endLine (inclusive).
-      lines.splice(pos.startLine, pos.endLine - pos.startLine + 1, args.content);
+      lines.splice(
+        pos.startLine,
+        pos.endLine - pos.startLine + 1,
+        args.content,
+      );
     }
 
     await app.vault.modify(file, lines.join("\n"));

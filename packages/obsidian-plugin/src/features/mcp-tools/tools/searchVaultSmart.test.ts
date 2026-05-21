@@ -268,6 +268,8 @@ describe("search_vault_smart — provider-aware not-ready message (#99)", () => 
       plugin: notReadyPlugin("native"),
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/embedding model|still be loading/i);
+    expect(result.content[0]?.text).toMatch(
+      /embedding model|still be loading/i,
+    );
   });
 });

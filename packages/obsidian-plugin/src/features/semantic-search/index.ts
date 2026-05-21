@@ -1,6 +1,9 @@
 import { type } from "arktype";
 import type McpToolsPlugin from "$/main";
-import { globalSettingsMutex, type Mutex } from "$/features/command-permissions";
+import {
+  globalSettingsMutex,
+  type Mutex,
+} from "$/features/command-permissions";
 import { logger } from "$/shared/logger";
 import {
   DEFAULT_SEMANTIC_SETTINGS,
@@ -123,7 +126,9 @@ async function loadAndPersistSettings(
 ): Promise<SemanticSearchSettings> {
   return mutex.run(async () => {
     const data = ((await plugin.loadData()) as Record<string, unknown>) ?? {};
-    const stored = data.semanticSearch as Partial<SemanticSearchSettings> | undefined;
+    const stored = data.semanticSearch as
+      | Partial<SemanticSearchSettings>
+      | undefined;
 
     const merged: SemanticSearchSettings = {
       ...DEFAULT_SEMANTIC_SETTINGS,

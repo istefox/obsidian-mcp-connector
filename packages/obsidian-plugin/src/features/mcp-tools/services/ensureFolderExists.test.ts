@@ -49,21 +49,23 @@ describe("ensureFolderExists", () => {
   test("re-throws non-'already-exists' errors", async () => {
     const app = mockApp();
     // Override createFolder to throw a permissions error.
-    (app.vault as unknown as { createFolder: (p: string) => Promise<void> }).createFolder =
-      async () => {
-        throw new Error("EACCES: permission denied");
-      };
+    (
+      app.vault as unknown as { createFolder: (p: string) => Promise<void> }
+    ).createFolder = async () => {
+      throw new Error("EACCES: permission denied");
+    };
     await expect(ensureFolderExists(app, "Locked")).rejects.toThrow(/EACCES/);
   });
 
   test("swallows 'Folder already exists' race", async () => {
     const app = mockApp();
     let calls = 0;
-    (app.vault as unknown as { createFolder: (p: string) => Promise<void> }).createFolder =
-      async () => {
-        calls++;
-        throw new Error("Folder already exists: Race");
-      };
+    (
+      app.vault as unknown as { createFolder: (p: string) => Promise<void> }
+    ).createFolder = async () => {
+      calls++;
+      throw new Error("Folder already exists: Race");
+    };
     // getAbstractFileByPath returns null in the bare mock above, so the
     // helper will reach the createFolder call and must swallow the
     // already-exists error.

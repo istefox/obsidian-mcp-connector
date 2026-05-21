@@ -1,7 +1,10 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import type McpToolsPlugin from "$/main";
 import { applySettings, setup, type SemanticSearchState } from "./index";
-import { DEFAULT_SEMANTIC_SETTINGS, type SemanticSearchSettings } from "./types";
+import {
+  DEFAULT_SEMANTIC_SETTINGS,
+  type SemanticSearchSettings,
+} from "./types";
 
 /**
  * Minimal plugin stub: only loadData + saveData are exercised by the
@@ -30,7 +33,9 @@ function makePluginStub(initial: Record<string, unknown> = {}) {
   };
 }
 
-async function setupOrThrow(plugin: McpToolsPlugin): Promise<SemanticSearchState> {
+async function setupOrThrow(
+  plugin: McpToolsPlugin,
+): Promise<SemanticSearchState> {
   const result = await setup(plugin);
   if (!result.success) {
     throw new Error(`setup failed: ${result.error}`);
@@ -55,7 +60,9 @@ describe("semantic-search setup — settings load/merge/persist", () => {
     const state = await setupOrThrow(plugin);
 
     expect(state.settings.provider).toBe("native");
-    expect(state.settings.indexingMode).toBe(DEFAULT_SEMANTIC_SETTINGS.indexingMode);
+    expect(state.settings.indexingMode).toBe(
+      DEFAULT_SEMANTIC_SETTINGS.indexingMode,
+    );
     expect(state.settings.unloadModelWhenIdle).toBe(
       DEFAULT_SEMANTIC_SETTINGS.unloadModelWhenIdle,
     );
@@ -81,7 +88,11 @@ describe("semantic-search setup — settings load/merge/persist", () => {
 
   test("malformed settings → fallback defaults + log, persist sanitized", async () => {
     const { plugin, getSaveCount, getStorage } = makePluginStub({
-      semanticSearch: { provider: "telepathy", indexingMode: 42, unloadModelWhenIdle: "yes" },
+      semanticSearch: {
+        provider: "telepathy",
+        indexingMode: 42,
+        unloadModelWhenIdle: "yes",
+      },
     });
     const state = await setupOrThrow(plugin);
 
@@ -125,11 +136,16 @@ describe("semantic-search setup — settings load/merge/persist", () => {
     const { plugin } = makePluginStub({
       semanticSearch: { provider: "native" },
     });
-    const [a, b] = await Promise.all([setupOrThrow(plugin), setupOrThrow(plugin)]);
+    const [a, b] = await Promise.all([
+      setupOrThrow(plugin),
+      setupOrThrow(plugin),
+    ]);
 
     expect(a.settings).toEqual(b.settings);
     expect(a.settings.provider).toBe("native");
-    expect(a.settings.indexingMode).toBe(DEFAULT_SEMANTIC_SETTINGS.indexingMode);
+    expect(a.settings.indexingMode).toBe(
+      DEFAULT_SEMANTIC_SETTINGS.indexingMode,
+    );
   });
 });
 
@@ -278,12 +294,24 @@ describe("applySettings — UI swap path (T12)", () => {
     const { plugin } = makePluginStub();
     const { createEmbeddingStore } = await import("./services/store");
     const adapter = {
-      async exists() { return false; },
-      async read(): Promise<string> { throw new Error("nope"); },
-      async write() { return; },
-      async readBinary(): Promise<ArrayBuffer> { throw new Error("nope"); },
-      async writeBinary() { return; },
-      async remove() { return; },
+      async exists() {
+        return false;
+      },
+      async read(): Promise<string> {
+        throw new Error("nope");
+      },
+      async write() {
+        return;
+      },
+      async readBinary(): Promise<ArrayBuffer> {
+        throw new Error("nope");
+      },
+      async writeBinary() {
+        return;
+      },
+      async remove() {
+        return;
+      },
     };
     const store = createEmbeddingStore({
       adapter,
@@ -326,8 +354,8 @@ describe("applySettings — UI swap path (T12)", () => {
 
     expect(state.provider).toBe(initialProvider); // unchanged (NoopProvider)
     expect(state.settings.provider).toBe("native");
-    expect(
-      (getStorage().semanticSearch as { provider: string }).provider,
-    ).toBe("native");
+    expect((getStorage().semanticSearch as { provider: string }).provider).toBe(
+      "native",
+    );
   });
 });

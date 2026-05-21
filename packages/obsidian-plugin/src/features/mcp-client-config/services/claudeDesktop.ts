@@ -139,9 +139,7 @@ export async function updateClaudeDesktopConfig(
         logger.warn("Claude Desktop config backup failed", {
           configPath: `${configPath}.backup`,
           error:
-            backupErr instanceof Error
-              ? backupErr.message
-              : String(backupErr),
+            backupErr instanceof Error ? backupErr.message : String(backupErr),
         });
       }
     }
@@ -226,7 +224,10 @@ export function defaultClaudeDesktopConfigPath(): string | undefined {
 // Internals
 // ---------------------------------------------------------------------------
 
-function buildHttpEntry(port: number, token: string): {
+function buildHttpEntry(
+  port: number,
+  token: string,
+): {
   command: string;
   args: string[];
 } {

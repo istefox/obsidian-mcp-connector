@@ -234,9 +234,7 @@ async function probeLegacyClaudeConfigEntry(
   }
 
   const command = typeof newEntry.command === "string" ? newEntry.command : "";
-  const args = Array.isArray(newEntry.args)
-    ? (newEntry.args as unknown[])
-    : [];
+  const args = Array.isArray(newEntry.args) ? (newEntry.args as unknown[]) : [];
 
   // 0.4.0 shape: command="npx", args contains the literal "mcp-remote".
   const usesNpx = command === "npx";

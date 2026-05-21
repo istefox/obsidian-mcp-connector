@@ -16,7 +16,9 @@ import {
 describe("resolveHeadingPath", () => {
   test("matches single-level heading", () => {
     const content = "# Top\n\nbody\n\n## Section A\n";
-    expect(resolveHeadingPath(content, "Section A", "::")).toBe("Top::Section A");
+    expect(resolveHeadingPath(content, "Section A", "::")).toBe(
+      "Top::Section A",
+    );
   });
 
   test("matches nested heading via stack", () => {
@@ -90,7 +92,12 @@ describe("findBlockPositionFromCache", () => {
 
   test("returns null when cache has no blocks property", () => {
     const cache = {};
-    expect(findBlockPositionFromCache(cache as { blocks?: Record<string, unknown> }, "x")).toBeNull();
+    expect(
+      findBlockPositionFromCache(
+        cache as { blocks?: Record<string, unknown> },
+        "x",
+      ),
+    ).toBeNull();
   });
 });
 
@@ -296,20 +303,12 @@ describe("isInsideTableOrFencedCode", () => {
   });
 
   test("detects line at header-row position above separator", () => {
-    const lines = [
-      "| Col | Data |",
-      "| --- | --- |",
-      "| row | val  |",
-    ];
+    const lines = ["| Col | Data |", "| --- | --- |", "| row | val  |"];
     expect(isInsideTableOrFencedCode(lines, 0)).toBe(true);
   });
 
   test("detects separator row itself", () => {
-    const lines = [
-      "| Col | Data |",
-      "| --- | --- |",
-      "| row | val  |",
-    ];
+    const lines = ["| Col | Data |", "| --- | --- |", "| row | val  |"];
     expect(isInsideTableOrFencedCode(lines, 1)).toBe(true);
   });
 
@@ -362,11 +361,7 @@ describe("isInsideTableOrFencedCode", () => {
   });
 
   test("detects table with alignment colons in separator", () => {
-    const lines = [
-      "| Col | Data |",
-      "|:----|----:|",
-      "| a   | b   |",
-    ];
+    const lines = ["| Col | Data |", "|:----|----:|", "| a   | b   |"];
     expect(isInsideTableOrFencedCode(lines, 2)).toBe(true);
   });
 
@@ -491,15 +486,7 @@ describe("findHeadingSectionEnd (#137 — heading-branch fenced-code guard)", ()
 
   // R4: fence with no internal ## (control) — existing behaviour preserved.
   test("R4: fence without internal headings → next sibling heading", () => {
-    const lines = [
-      "## A",
-      "",
-      "```js",
-      "const x = 1;",
-      "```",
-      "",
-      "## B",
-    ];
+    const lines = ["## A", "", "```js", "const x = 1;", "```", "", "## B"];
     expect(findHeadingSectionEnd(lines, 0, 2)).toBe(6);
   });
 

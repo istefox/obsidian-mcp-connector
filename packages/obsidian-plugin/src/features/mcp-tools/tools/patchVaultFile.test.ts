@@ -11,7 +11,9 @@ beforeEach(() => resetMockVault());
 
 describe("patch_vault_file tool", () => {
   test("schema declares the tool name", () => {
-    expect(patchVaultFileSchema.get("name")?.toString()).toContain("patch_vault_file");
+    expect(patchVaultFileSchema.get("name")?.toString()).toContain(
+      "patch_vault_file",
+    );
   });
 
   test("patches heading on arbitrary path", async () => {
@@ -350,7 +352,8 @@ describe("patch_vault_file — H2-root reject (#80)", () => {
     // somewhere, but the target H2 has no H1 parent) is still ambiguous,
     // so the #80 reject is preserved here. The H1-free sub-case that #80
     // originally filed is now intentionally allowed — see the #139 tests.
-    const fixture = "## RootHeading\n\nBody content.\n\n# Real Title\n\n## Under\n\nx\n";
+    const fixture =
+      "## RootHeading\n\nBody content.\n\n# Real Title\n\n## Under\n\nx\n";
     setMockFile("Notes/r1.md", fixture);
     const app = mockApp();
     const result = await patchVaultFileHandler({
@@ -529,7 +532,9 @@ describe("patch_vault_file — block-in-table / fenced-code reject (#81)", () =>
       app,
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
     // File content must be unchanged — this is the vault-safety property.
     const file = app.vault.getAbstractFileByPath("Notes/r2.md");
     if (!file) throw new Error("expected file");
@@ -538,8 +543,7 @@ describe("patch_vault_file — block-in-table / fenced-code reject (#81)", () =>
   });
 
   test("rejects block-in-fenced-code replace symmetrically", async () => {
-    const fixture =
-      "## Section\n\n```\ncode line ^block-id\n```\n\nEnd.\n";
+    const fixture = "## Section\n\n```\ncode line ^block-id\n```\n\nEnd.\n";
     setMockFile("Notes/r2f.md", fixture);
     setMockMetadata("Notes/r2f.md", {
       blocks: {
@@ -559,7 +563,9 @@ describe("patch_vault_file — block-in-table / fenced-code reject (#81)", () =>
       app,
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
     const file = app.vault.getAbstractFileByPath("Notes/r2f.md");
     if (!file) throw new Error("expected file");
     expect(await app.vault.read(file as never)).toBe(fixture);
@@ -642,7 +648,9 @@ describe("patch_vault_file — block-in-fenced-code via regex-fallback (#84)", (
       app,
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/markdown table or fenced code block/i);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
     // Vault-safety property: file untouched byte-exact.
     const file = app.vault.getAbstractFileByPath("Notes/r84.md");
     if (!file) throw new Error("expected file");
@@ -650,8 +658,7 @@ describe("patch_vault_file — block-in-fenced-code via regex-fallback (#84)", (
   });
 
   test("rejects on append op symmetrically (regex-fallback path)", async () => {
-    const fixture =
-      "## Section\n\n```\nx\n^id\n```\n\nEnd.\n";
+    const fixture = "## Section\n\n```\nx\n^id\n```\n\nEnd.\n";
     setMockFile("Notes/r84a.md", fixture);
     const app = mockApp();
     const r = await patchVaultFileHandler({
@@ -675,7 +682,8 @@ describe("patch_vault_file — block-in-fenced-code via regex-fallback (#84)", (
     // The walk-back stops at the blank line before the fence — startLine
     // points inside the safe paragraph, not at the fence. No false-positive
     // reject from the 0.4.3 boundary extension.
-    const fixture = "## Section\n\nFirst paragraph.\n^my-block\n\n```\ncode\n```\n";
+    const fixture =
+      "## Section\n\nFirst paragraph.\n^my-block\n\n```\ncode\n```\n";
     setMockFile("Notes/r84c.md", fixture);
     const app = mockApp();
     const result = await patchVaultFileHandler({

@@ -52,7 +52,10 @@ describe("get_active_file tool", () => {
 
   test("returns informative error when no active file", async () => {
     setMockActiveFile(null);
-    const result = await getActiveFileHandler({ arguments: {}, app: mockApp() });
+    const result = await getActiveFileHandler({
+      arguments: {},
+      app: mockApp(),
+    });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/no active file/i);
   });

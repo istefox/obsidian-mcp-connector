@@ -6,7 +6,11 @@ import {
   type VaultLike,
 } from "./indexer";
 import type { Embedder } from "./embedder";
-import { createEmbeddingStore, type EmbeddingRecord, type VaultAdapter } from "./store";
+import {
+  createEmbeddingStore,
+  type EmbeddingRecord,
+  type VaultAdapter,
+} from "./store";
 import type { Chunk } from "./chunker";
 
 const DIM = 4;
@@ -24,8 +28,7 @@ function makeVault(initial: Record<string, string> = {}): {
     delete: new Set(),
   };
   const vault: VaultLike = {
-    getMarkdownFiles: () =>
-      Array.from(files.keys()).map((path) => ({ path })),
+    getMarkdownFiles: () => Array.from(files.keys()).map((path) => ({ path })),
     read: async (path) => {
       const v = files.get(path);
       if (v === undefined) throw new Error(`ENOENT ${path}`);
@@ -93,7 +96,10 @@ async function makeStore() {
  */
 async function fakeChunker(content: string): Promise<Chunk[]> {
   if (content.length === 0) return [];
-  const parts = content.split("---CHUNK---").map((s) => s.trim()).filter(Boolean);
+  const parts = content
+    .split("---CHUNK---")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return parts.map((text, i) => ({
     id: String(i),
     text,
@@ -126,7 +132,9 @@ function fakeEmbedder(): {
   return { embedder, embeds: () => [...calls] };
 }
 
-async function collect(store: Awaited<ReturnType<typeof makeStore>>): Promise<EmbeddingRecord[]> {
+async function collect(
+  store: Awaited<ReturnType<typeof makeStore>>,
+): Promise<EmbeddingRecord[]> {
   const out: EmbeddingRecord[] = [];
   for await (const r of store.scan()) out.push(r);
   return out;
@@ -145,12 +153,20 @@ describe("live indexer", () => {
       "b.md": "bravo---CHUNK---bravo two",
     });
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     await indexer.stop();
 
     expect(store.size()).toBe(3); // 1 + 2
-    expect(embeds()).toEqual(expect.arrayContaining(["alpha", "bravo", "bravo two"]));
+    expect(embeds()).toEqual(
+      expect.arrayContaining(["alpha", "bravo", "bravo two"]),
+    );
     const recs = await collect(store);
     expect(new Set(recs.map((r) => r.filePath))).toEqual(
       new Set(["a.md", "b.md"]),
@@ -162,7 +178,13 @@ describe("live indexer", () => {
       "f.md": "one---CHUNK---two---CHUNK---three",
     });
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
 
     expect(embeds()).toEqual(["one", "two", "three"]);
@@ -183,7 +205,13 @@ describe("live indexer", () => {
   test("create event embeds new chunks", async () => {
     const { vault, files, emit } = makeVault({});
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
 
     expect(store.size()).toBe(0);
@@ -204,7 +232,13 @@ describe("live indexer", () => {
       "kept.md": "x",
     });
     const { embedder } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
 
     expect(store.size()).toBe(4);
@@ -225,7 +259,13 @@ describe("live indexer", () => {
       "f.md": "v1",
     });
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 50 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 50,
+    });
     await indexer.start();
 
     files.set("f.md", "v2");
@@ -253,7 +293,13 @@ describe("live indexer", () => {
   test("stop unsubscribes from vault events (no further processing)", async () => {
     const { vault, files, emit } = makeVault({});
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     await indexer.stop();
 
@@ -272,7 +318,13 @@ describe("live indexer", () => {
       "b.md": "two",
     });
     const { embedder, embeds } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     expect(embeds()).toEqual(["one", "two"]);
 
@@ -293,7 +345,13 @@ describe("live indexer", () => {
       "f.md": "content",
     });
     const { embedder } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     expect(store.size()).toBe(1);
 
@@ -310,7 +368,13 @@ describe("live indexer", () => {
       "f.md": "one---CHUNK---two",
     });
     const { embedder } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     expect(store.size()).toBe(2);
 
@@ -342,7 +406,13 @@ describe("live indexer", () => {
       "f.md": "one---CHUNK---two",
     });
     const { embedder } = fakeEmbedder();
-    const indexer = createLiveIndexer({ vault, chunker: fakeChunker, embedder, store, debounceMs: 30 });
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
     await indexer.start();
     expect(store.size()).toBe(2);
 
@@ -359,7 +429,9 @@ describe("live indexer", () => {
 });
 
 /** mtime-aware in-memory vault for the low-power tests. */
-function makeMtimeVault(initial: Record<string, { content: string; mtime: number }>): {
+function makeMtimeVault(
+  initial: Record<string, { content: string; mtime: number }>,
+): {
   vault: VaultLike;
   files: Map<string, { content: string; mtime: number }>;
 } {

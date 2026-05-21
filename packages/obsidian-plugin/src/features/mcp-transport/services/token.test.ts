@@ -39,7 +39,7 @@ describe("compareTokens", () => {
     // Regression: earlier implementation compared String.length, which let
     // this case through the guard and crashed in timingSafeEqual.
     const a = "é" + "a".repeat(3); // 4 chars, 5 bytes
-    const b = "a".repeat(4);       // 4 chars, 4 bytes
+    const b = "a".repeat(4); // 4 chars, 4 bytes
     expect(a.length).toBe(b.length);
     expect(compareTokens(a, b)).toBe(false);
   });

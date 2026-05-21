@@ -1,5 +1,8 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { updateActiveFileHandler, updateActiveFileSchema } from "./updateActiveFile";
+import {
+  updateActiveFileHandler,
+  updateActiveFileSchema,
+} from "./updateActiveFile";
 import {
   mockApp,
   resetMockVault,
@@ -49,6 +52,9 @@ describe("update_active_file tool", () => {
     const schema = updateActiveFileSchema;
     const result = schema({ name: "update_active_file", arguments: {} });
     // ArkType returns errors as a property when validation fails
-    expect(result instanceof Error || (typeof result === "object" && "summary" in result)).toBe(true);
+    expect(
+      result instanceof Error ||
+        (typeof result === "object" && "summary" in result),
+    ).toBe(true);
   });
 });

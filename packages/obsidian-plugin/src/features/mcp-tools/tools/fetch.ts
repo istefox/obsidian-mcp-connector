@@ -128,9 +128,7 @@ export type FetchContext = {
  * Returns:
  *   MCP tool result with content array
  */
-export async function fetchHandler(
-  ctx: FetchContext,
-): Promise<{
+export async function fetchHandler(ctx: FetchContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {

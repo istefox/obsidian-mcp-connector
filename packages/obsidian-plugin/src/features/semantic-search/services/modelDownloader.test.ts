@@ -106,7 +106,10 @@ describe("model downloader — state machine (T13)", () => {
     ctrl.reject(new Error("network is down"));
     await expect(pending).rejects.toThrow("network is down");
 
-    expect(dl.getState()).toEqual({ kind: "error", message: "network is down" });
+    expect(dl.getState()).toEqual({
+      kind: "error",
+      message: "network is down",
+    });
     // Emissions include the final error state.
     expect(states[states.length - 1]).toEqual({
       kind: "error",

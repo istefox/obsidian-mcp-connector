@@ -181,7 +181,9 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       const lenFloat = idx.byteLength / 4;
       // Copy into a fresh Float32Array so each record owns its buffer
       // independently of the read-side ArrayBuffer lifetime.
-      const vector = new Float32Array(all.subarray(startFloat, startFloat + lenFloat));
+      const vector = new Float32Array(
+        all.subarray(startFloat, startFloat + lenFloat),
+      );
       this.records.set(idx.chunkId, {
         chunkId: idx.chunkId,
         filePath: idx.filePath,

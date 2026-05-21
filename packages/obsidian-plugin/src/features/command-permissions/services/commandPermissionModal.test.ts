@@ -89,15 +89,18 @@ describe("CommandPermissionModal", () => {
     ["allow-once" as const],
     ["allow-always" as const],
     ["deny" as const],
-  ])("onDecision(%s) from the Svelte component resolves the promise", async (decision) => {
-    const modal = new CommandPermissionModal(fakeApp, baseOpts);
-    modal.open();
-    const promise = modal.waitForDecision();
+  ])(
+    "onDecision(%s) from the Svelte component resolves the promise",
+    async (decision) => {
+      const modal = new CommandPermissionModal(fakeApp, baseOpts);
+      modal.open();
+      const promise = modal.waitForDecision();
 
-    promptPropsFromLastMount().onDecision(decision);
+      promptPropsFromLastMount().onDecision(decision);
 
-    expect(await promise).toBe(decision);
-  });
+      expect(await promise).toBe(decision);
+    },
+  );
 
   test("close() before any decision resolves the promise with 'deny'", async () => {
     const modal = new CommandPermissionModal(fakeApp, baseOpts);
@@ -181,9 +184,7 @@ describe("CommandPermissionModal", () => {
     const modal = new CommandPermissionModal(fakeApp, baseOpts);
     modal.open();
 
-    const mountedRef = (
-      modal as unknown as { component?: unknown }
-    ).component;
+    const mountedRef = (modal as unknown as { component?: unknown }).component;
     expect(mountedRef).toBeDefined();
 
     modal.close();

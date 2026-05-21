@@ -120,8 +120,7 @@ function memVault(initial: Record<string, string>): {
     delete: new Set(),
   };
   const vault: VaultLike = {
-    getMarkdownFiles: () =>
-      Array.from(files.keys()).map((path) => ({ path })),
+    getMarkdownFiles: () => Array.from(files.keys()).map((path) => ({ path })),
     read: async (path) => {
       const v = files.get(path);
       if (v === undefined) throw new Error(`ENOENT ${path}`);
@@ -150,11 +149,15 @@ const integrationChunker = (content: string): Promise<Chunk[]> =>
 describe("Phase 3 end-to-end integration", () => {
   test("full pipeline: chunker → embedder → store → indexer → provider returns the expected top-K", async () => {
     const { vault } = memVault({
-      "fruits/apple.md": "# Apple\n\nApple harvest notes — apple varieties and apple recipes.",
-      "fruits/banana.md": "# Banana\n\nBanana ripening curve and banana storage tricks.",
-      "fruits/cherry.md": "# Cherry\n\nCherry season report and cherry pie recipe.",
+      "fruits/apple.md":
+        "# Apple\n\nApple harvest notes — apple varieties and apple recipes.",
+      "fruits/banana.md":
+        "# Banana\n\nBanana ripening curve and banana storage tricks.",
+      "fruits/cherry.md":
+        "# Cherry\n\nCherry season report and cherry pie recipe.",
       "music/album.md": "# Album\n\nFavorite album list with music reviews.",
-      "code/obsidian.md": "# Obsidian\n\nNotes on the Obsidian vault and search workflows.",
+      "code/obsidian.md":
+        "# Obsidian\n\nNotes on the Obsidian vault and search workflows.",
     });
 
     const adapter = memVaultAdapter();
@@ -192,9 +195,12 @@ describe("Phase 3 end-to-end integration", () => {
 
   test("live modify reranks the next query: changing content shifts which file dominates", async () => {
     const { vault, files, emit } = memVault({
-      "a.md": "# A\n\nApple, apple, apple — apple-only file with the apple keyword.",
-      "b.md": "# B\n\nBanana, banana, banana — banana-only file with the banana keyword.",
-      "c.md": "# C\n\nCherry, cherry, cherry — cherry-only file with the cherry keyword.",
+      "a.md":
+        "# A\n\nApple, apple, apple — apple-only file with the apple keyword.",
+      "b.md":
+        "# B\n\nBanana, banana, banana — banana-only file with the banana keyword.",
+      "c.md":
+        "# C\n\nCherry, cherry, cherry — cherry-only file with the cherry keyword.",
     });
     const adapter = memVaultAdapter();
     const store = createEmbeddingStore({
@@ -241,8 +247,10 @@ describe("Phase 3 end-to-end integration", () => {
 
   test("delete event drops a file from subsequent queries", async () => {
     const { vault, files, emit } = memVault({
-      "ephemeral.md": "# E\n\nMusic recommendations: jazz music and ambient music.",
-      "lasting.md": "# L\n\nMusic theory cheatsheet: scales, intervals, music notation.",
+      "ephemeral.md":
+        "# E\n\nMusic recommendations: jazz music and ambient music.",
+      "lasting.md":
+        "# L\n\nMusic theory cheatsheet: scales, intervals, music notation.",
     });
     const adapter = memVaultAdapter();
     const store = createEmbeddingStore({

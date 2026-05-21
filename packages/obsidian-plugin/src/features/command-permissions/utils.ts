@@ -230,19 +230,12 @@ function csvEscape(value: string): string {
  * an empty value. Keeping the schema stable simplifies downstream
  * automation.
  */
-export function auditLogToCsv(
-  entries: readonly CommandAuditEntry[],
-): string {
+export function auditLogToCsv(entries: readonly CommandAuditEntry[]): string {
   const header = ["timestamp", "commandId", "decision", "reason"];
   const rows: string[] = [header.map(csvEscape).join(",")];
   for (const entry of entries) {
     rows.push(
-      [
-        entry.timestamp,
-        entry.commandId,
-        entry.decision,
-        entry.reason ?? "",
-      ]
+      [entry.timestamp, entry.commandId, entry.decision, entry.reason ?? ""]
         .map(csvEscape)
         .join(","),
     );

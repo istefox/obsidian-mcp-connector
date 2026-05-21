@@ -155,7 +155,9 @@ describe("chunker", () => {
   });
 
   test("offset reflects section position in file", async () => {
-    const content = ["# A", "", lorem(30), "", "## B", "", lorem(30)].join("\n");
+    const content = ["# A", "", lorem(30), "", "## B", "", lorem(30)].join(
+      "\n",
+    );
     const chunks = await chunk(content);
     expect(chunks).toHaveLength(2);
     expect(chunks[0]?.offset).toBe(0);

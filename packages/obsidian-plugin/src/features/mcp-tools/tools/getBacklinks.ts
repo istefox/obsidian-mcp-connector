@@ -20,9 +20,7 @@ export type GetBacklinksContext = {
   app: App;
 };
 
-export async function getBacklinksHandler(
-  ctx: GetBacklinksContext,
-): Promise<{
+export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
 }> {
   const target = ctx.arguments.path;
@@ -37,9 +35,11 @@ export async function getBacklinksHandler(
   const aggregated = new Map<string, number>();
 
   const resolvedLinks =
-    (ctx.app.metadataCache as unknown as {
-      resolvedLinks?: Record<string, Record<string, number>>;
-    }).resolvedLinks ?? {};
+    (
+      ctx.app.metadataCache as unknown as {
+        resolvedLinks?: Record<string, Record<string, number>>;
+      }
+    ).resolvedLinks ?? {};
   for (const [source, targets] of Object.entries(resolvedLinks)) {
     const count = targets[target] ?? 0;
     if (count > 0) {
@@ -49,9 +49,11 @@ export async function getBacklinksHandler(
 
   if (includeUnresolved) {
     const unresolvedLinks =
-      (ctx.app.metadataCache as unknown as {
-        unresolvedLinks?: Record<string, Record<string, number>>;
-      }).unresolvedLinks ?? {};
+      (
+        ctx.app.metadataCache as unknown as {
+          unresolvedLinks?: Record<string, Record<string, number>>;
+        }
+      ).unresolvedLinks ?? {};
     // Match by full path, by path without `.md`, or by filename — that
     // covers the common shapes of what an unresolved link looks like.
     const targetWithoutExt = target.replace(/\.md$/, "");

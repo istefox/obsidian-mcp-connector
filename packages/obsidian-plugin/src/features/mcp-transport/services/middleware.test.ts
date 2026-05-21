@@ -41,15 +41,24 @@ describe("checkMethodAndPath", () => {
   });
 
   test("strips query string on a rejected path too", () => {
-    expect(checkMethodAndPath("POST", "/other?foo=bar")).toEqual({ ok: false, status: 404 });
+    expect(checkMethodAndPath("POST", "/other?foo=bar")).toEqual({
+      ok: false,
+      status: 404,
+    });
   });
 
   test("treats undefined method as disallowed (405) on valid path", () => {
-    expect(checkMethodAndPath(undefined, "/mcp")).toEqual({ ok: false, status: 405 });
+    expect(checkMethodAndPath(undefined, "/mcp")).toEqual({
+      ok: false,
+      status: 405,
+    });
   });
 
   test("treats undefined url as 404", () => {
-    expect(checkMethodAndPath("POST", undefined)).toEqual({ ok: false, status: 404 });
+    expect(checkMethodAndPath("POST", undefined)).toEqual({
+      ok: false,
+      status: 404,
+    });
   });
 });
 
@@ -59,23 +68,29 @@ describe("runMiddleware", () => {
   const token = "test-token-12345678901234567890abcd";
 
   test("allows POST /mcp with correct Authorization and no Origin", () => {
-    const result = runMiddleware({
-      method: "POST",
-      url: "/mcp",
-      headers: { authorization: `Bearer ${token}` },
-    }, token);
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: { authorization: `Bearer ${token}` },
+      },
+      token,
+    );
     expect(result).toEqual({ ok: true });
   });
 
   test("allows POST /mcp with localhost Origin", () => {
-    const result = runMiddleware({
-      method: "POST",
-      url: "/mcp",
-      headers: {
-        authorization: `Bearer ${token}`,
-        origin: "http://localhost:3000",
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          origin: "http://localhost:3000",
+        },
       },
-    }, token);
+      token,
+    );
     expect(result).toEqual({ ok: true });
   });
 
@@ -92,7 +107,9 @@ describe("runMiddleware", () => {
       {
         method: "POST",
         url: "/mcp",
-        headers: { authorization: "Bearer wrong-token-xxxxxxxxxxxxxxxxxxxxxxx" },
+        headers: {
+          authorization: "Bearer wrong-token-xxxxxxxxxxxxxxxxxxxxxxx",
+        },
       },
       token,
     );

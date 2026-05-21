@@ -6,11 +6,7 @@ import {
 } from "node:http";
 import { runMiddleware } from "./middleware";
 import { bindWithFallback } from "./port";
-import {
-  ERROR_CODES,
-  MAX_REQUEST_BODY_BYTES,
-  PORT_RANGE,
-} from "../constants";
+import { ERROR_CODES, MAX_REQUEST_BODY_BYTES, PORT_RANGE } from "../constants";
 
 export type RequestHandler = (
   req: IncomingMessage,
@@ -130,7 +126,10 @@ export async function stopHttpServer({ server }: RunningServer): Promise<void> {
       // the port is released — the goal is met. (Bun's closeAllConnections
       // also stops the listener; real Node/Electron does not. Tolerating
       // it here keeps one teardown path correct on both runtimes.)
-      if (err && (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING") {
+      if (
+        err &&
+        (err as NodeJS.ErrnoException).code !== "ERR_SERVER_NOT_RUNNING"
+      ) {
         reject(err);
         return;
       }

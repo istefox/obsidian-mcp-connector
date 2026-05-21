@@ -171,9 +171,8 @@ describe("get_recent_files tool", () => {
     setMockFileStat("b.md", { mtime: 2 });
 
     const app = mockApp();
-    delete (
-      app.metadataCache as unknown as { isUserIgnored?: unknown }
-    ).isUserIgnored;
+    delete (app.metadataCache as unknown as { isUserIgnored?: unknown })
+      .isUserIgnored;
 
     const r = await getRecentFilesHandler({ arguments: {}, app });
     const data = JSON.parse(r.content[0].text as string);

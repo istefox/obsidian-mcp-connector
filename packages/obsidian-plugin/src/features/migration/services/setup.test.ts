@@ -8,9 +8,7 @@ const NO_LEGACY: LegacyInstallState = {
   hasLegacyClaudeConfigEntry: false,
 };
 
-function withSignal(
-  partial: Partial<LegacyInstallState>,
-): LegacyInstallState {
+function withSignal(partial: Partial<LegacyInstallState>): LegacyInstallState {
   return { ...NO_LEGACY, ...partial };
 }
 
@@ -48,10 +46,7 @@ describe("decideMigrationAction (fork #78)", () => {
 
   test("legacy plugin data keys only + previously skipped → notice", () => {
     expect(
-      decideMigrationAction(
-        withSignal({ hasLegacySettingsKeys: true }),
-        true,
-      ),
+      decideMigrationAction(withSignal({ hasLegacySettingsKeys: true }), true),
     ).toBe("notice");
   });
 

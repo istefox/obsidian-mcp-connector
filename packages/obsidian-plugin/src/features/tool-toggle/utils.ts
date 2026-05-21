@@ -85,9 +85,7 @@ export function parseDisabledToolsCsv(raw: string | undefined): string[] {
 export function serializeDisabledToolsToEnv(
   disabled: readonly string[],
 ): string | undefined {
-  const cleaned = disabled
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const cleaned = disabled.map((s) => s.trim()).filter((s) => s.length > 0);
   if (cleaned.length === 0) return undefined;
   return cleaned.join(", ");
 }

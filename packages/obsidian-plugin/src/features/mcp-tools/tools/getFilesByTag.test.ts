@@ -1,9 +1,11 @@
 import { describe, expect, test, beforeEach } from "bun:test";
+import { getFilesByTagHandler, getFilesByTagSchema } from "./getFilesByTag";
 import {
-  getFilesByTagHandler,
-  getFilesByTagSchema,
-} from "./getFilesByTag";
-import { mockApp, resetMockVault, setMockFile, setMockMetadata } from "$/test-setup";
+  mockApp,
+  resetMockVault,
+  setMockFile,
+  setMockMetadata,
+} from "$/test-setup";
 
 beforeEach(() => resetMockVault());
 

@@ -98,9 +98,7 @@ function findBacklinkerPaths(
   return out;
 }
 
-export async function renameHeadingHandler(
-  ctx: RenameHeadingContext,
-): Promise<{
+export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
@@ -122,9 +120,11 @@ export async function renameHeadingHandler(
 
   // ── 2. Identify backlinkers + load their text ───────────────────────────
   const resolvedLinks =
-    (ctx.app.metadataCache as unknown as {
-      resolvedLinks?: Record<string, Record<string, number>>;
-    }).resolvedLinks ?? {};
+    (
+      ctx.app.metadataCache as unknown as {
+        resolvedLinks?: Record<string, Record<string, number>>;
+      }
+    ).resolvedLinks ?? {};
   const backlinkerPaths = findBacklinkerPaths(resolvedLinks, path);
 
   const backlinkerTexts: Record<string, string> = {};

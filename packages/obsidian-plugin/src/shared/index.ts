@@ -163,7 +163,8 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
           required: false,
           installed: true,
           api,
-          plugin: smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
+          plugin:
+            smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
         };
       }
 
@@ -172,7 +173,8 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
 
       // Fallback to plugin system (fixes Linux/cross-platform detection issues)
       if (!legacyApi && smartConnectionsPlugin?.env) {
-        legacyApi = smartConnectionsPlugin.env as unknown as SmartConnections.SmartSearch;
+        legacyApi =
+          smartConnectionsPlugin.env as unknown as SmartConnections.SmartSearch;
         // Cache it for future use
         window.SmartSearch = legacyApi;
       }
@@ -183,7 +185,8 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
         required: false,
         installed: !!legacyApi,
         api: legacyApi,
-        plugin: smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
+        plugin:
+          smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
       };
     }),
     takeWhile((dependency) => !dependency.installed, true),

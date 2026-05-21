@@ -278,4 +278,3 @@ describe("ApiNoteJson — issue #81 (array-valued frontmatter keys)", () => {
     expect(result).toBeInstanceOf(type.errors);
   });
 });
-

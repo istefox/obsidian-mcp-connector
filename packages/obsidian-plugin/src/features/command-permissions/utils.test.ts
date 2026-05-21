@@ -111,27 +111,34 @@ describe("appendAuditEntry", () => {
 
 describe("decidePermission", () => {
   test("denies when enabled is false", () => {
-    expect(decidePermission("editor:toggle-bold", false, ["editor:toggle-bold"]).decision).toBe(
-      "deny",
-    );
+    expect(
+      decidePermission("editor:toggle-bold", false, ["editor:toggle-bold"])
+        .decision,
+    ).toBe("deny");
   });
 
   test("denies when enabled is undefined (default-off)", () => {
     // The whole feature is opt-in; forgetting to set enabled must
     // not silently authorize the command.
-    expect(decidePermission("editor:toggle-bold", undefined, ["editor:toggle-bold"]).decision).toBe(
-      "deny",
-    );
+    expect(
+      decidePermission("editor:toggle-bold", undefined, ["editor:toggle-bold"])
+        .decision,
+    ).toBe("deny");
   });
 
   test("denies when the allowlist is empty", () => {
-    expect(decidePermission("editor:toggle-bold", true, []).decision).toBe("deny");
-    expect(decidePermission("editor:toggle-bold", true, undefined).decision).toBe("deny");
+    expect(decidePermission("editor:toggle-bold", true, []).decision).toBe(
+      "deny",
+    );
+    expect(
+      decidePermission("editor:toggle-bold", true, undefined).decision,
+    ).toBe("deny");
   });
 
   test("denies when the command id is not in the allowlist", () => {
     expect(
-      decidePermission("editor:delete-file", true, ["editor:toggle-bold"]).decision,
+      decidePermission("editor:delete-file", true, ["editor:toggle-bold"])
+        .decision,
     ).toBe("deny");
   });
 
@@ -147,7 +154,9 @@ describe("decidePermission", () => {
   test("denied decisions include a human-readable reason", () => {
     // The reason is surfaced back to the MCP client as the error
     // message, so it must be present and descriptive.
-    const result = decidePermission("editor:delete-file", true, ["editor:toggle-bold"]);
+    const result = decidePermission("editor:delete-file", true, [
+      "editor:toggle-bold",
+    ]);
     expect(result.decision).toBe("deny");
     expect(result.reason).toBeDefined();
     expect(result.reason).toContain("allowlist");
@@ -213,7 +222,9 @@ describe("isDestructiveCommand", () => {
     expect(isDestructiveCommand("editor:toggle-bold")).toBe(false);
     expect(isDestructiveCommand("graph:open")).toBe(false);
     expect(isDestructiveCommand("workspace:save")).toBe(false);
-    expect(isDestructiveCommand("file-explorer:reveal-active-file")).toBe(false);
+    expect(isDestructiveCommand("file-explorer:reveal-active-file")).toBe(
+      false,
+    );
   });
 });
 
@@ -402,9 +413,7 @@ describe("auditLogCsvFilename", () => {
     // We only assert the prefix/suffix shape since the actual date
     // depends on when the test runs.
     const filename = auditLogCsvFilename();
-    expect(filename).toMatch(
-      /^mcp-tools-audit-\d{4}-\d{2}-\d{2}\.csv$/,
-    );
+    expect(filename).toMatch(/^mcp-tools-audit-\d{4}-\d{2}-\d{2}\.csv$/);
   });
 });
 
@@ -482,7 +491,9 @@ describe("groupCommandsByNamespace", () => {
     // it to the fallback bucket instead.
     const result = groupCommandsByNamespace([cmd(":weird")]);
     expect(result.has("")).toBe(false);
-    expect(result.get(NAMESPACE_FALLBACK)?.map((c) => c.id)).toEqual([":weird"]);
+    expect(result.get(NAMESPACE_FALLBACK)?.map((c) => c.id)).toEqual([
+      ":weird",
+    ]);
   });
 });
 

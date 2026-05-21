@@ -36,9 +36,7 @@ export type MigrationStepId =
   | "deleteLegacyBinary"
   | "pruneLegacySettings";
 
-export type MigrationStepResult =
-  | { ok: true }
-  | { ok: false; error: string };
+export type MigrationStepResult = { ok: true } | { ok: false; error: string };
 
 export type MigrationStep = {
   id: MigrationStepId;

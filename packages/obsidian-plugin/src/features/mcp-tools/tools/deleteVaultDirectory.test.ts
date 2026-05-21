@@ -60,7 +60,9 @@ describe("delete_vault_directory tool", () => {
     expect(result.isError).toBeUndefined();
     expect(getMockFolders()).toEqual([]);
     expect(app.vault.getAbstractFileByPath("Archive/2025/old.md")).toBeNull();
-    expect(app.vault.getAbstractFileByPath("Archive/2025/Q1/note.md")).toBeNull();
+    expect(
+      app.vault.getAbstractFileByPath("Archive/2025/Q1/note.md"),
+    ).toBeNull();
   });
 
   test("returns error if directory does not exist", async () => {

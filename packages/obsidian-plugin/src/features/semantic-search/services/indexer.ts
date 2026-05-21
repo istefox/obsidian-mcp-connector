@@ -330,10 +330,7 @@ type ProcessDeps = {
  * index stays consistent with what `chunker` would produce on a
  * fresh re-build.
  */
-async function processOnePath(
-  deps: ProcessDeps,
-  path: string,
-): Promise<void> {
+async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
   let content: string;
   try {
     content = await deps.vault.read(path);

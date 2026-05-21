@@ -46,10 +46,7 @@ describe("get_vault_file_partial tool", () => {
   });
 
   test("targetDelimiter override is respected on heading mode", async () => {
-    setMockFile(
-      "doc.md",
-      "# Parent\nfoo\n## Child\nbar\n## Other\nbaz",
-    );
+    setMockFile("doc.md", "# Parent\nfoo\n## Child\nbar\n## Other\nbaz");
     setMockMetadata("doc.md", {
       headings: [
         { heading: "Parent", level: 1, line: 0 },
@@ -77,7 +74,11 @@ describe("get_vault_file_partial tool", () => {
       setMockFile("note.md", "");
       setMockMetadata("note.md", { frontmatter: { status: "open" } });
       const r = await getVaultFilePartialHandler({
-        arguments: { filename: "note.md", mode: "frontmatter", target: "status" },
+        arguments: {
+          filename: "note.md",
+          mode: "frontmatter",
+          target: "status",
+        },
         app: mockApp(),
       });
       expect(r.isError).toBeUndefined();
@@ -88,7 +89,11 @@ describe("get_vault_file_partial tool", () => {
       setMockFile("note.md", "");
       setMockMetadata("note.md", { frontmatter: { other: "x" } });
       const r = await getVaultFilePartialHandler({
-        arguments: { filename: "note.md", mode: "frontmatter", target: "status" },
+        arguments: {
+          filename: "note.md",
+          mode: "frontmatter",
+          target: "status",
+        },
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
@@ -143,7 +148,11 @@ describe("get_vault_file_partial tool", () => {
     test("#138 R4: empty fence (--- / ---) → still 'File has no frontmatter'", async () => {
       setMockFile("empty-fm.md", ["---", "---", "", "# Body"].join("\n"));
       const r = await getVaultFilePartialHandler({
-        arguments: { filename: "empty-fm.md", mode: "frontmatter", target: "x" },
+        arguments: {
+          filename: "empty-fm.md",
+          mode: "frontmatter",
+          target: "x",
+        },
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
@@ -151,9 +160,16 @@ describe("get_vault_file_partial tool", () => {
     });
 
     test("#138 R5: opening --- with no closing fence → actionable error, not 'no frontmatter'", async () => {
-      setMockFile("malformed.md", ["---", "foo: bar", "still no close"].join("\n"));
+      setMockFile(
+        "malformed.md",
+        ["---", "foo: bar", "still no close"].join("\n"),
+      );
       const r = await getVaultFilePartialHandler({
-        arguments: { filename: "malformed.md", mode: "frontmatter", target: "foo" },
+        arguments: {
+          filename: "malformed.md",
+          mode: "frontmatter",
+          target: "foo",
+        },
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
@@ -192,7 +208,11 @@ describe("get_vault_file_partial tool", () => {
         frontmatter: { author: { name: "Marco", role: "PM" } },
       });
       const r = await getVaultFilePartialHandler({
-        arguments: { filename: "note.md", mode: "frontmatter", target: "author" },
+        arguments: {
+          filename: "note.md",
+          mode: "frontmatter",
+          target: "author",
+        },
         app: mockApp(),
       });
       expect(r.isError).toBeUndefined();
@@ -228,7 +248,7 @@ describe("get_vault_file_partial tool", () => {
           { heading: "Intro", level: 1, line: 0 },
           { heading: "Details", level: 2, line: 5 },
         ],
-        blocks: { "abc": { startLine: 10, endLine: 12 } },
+        blocks: { abc: { startLine: 10, endLine: 12 } },
         frontmatter: { status: "draft", tags: ["x"] },
       });
       const r = await getVaultFilePartialHandler({
@@ -356,10 +376,7 @@ describe("get_vault_file_partial tool", () => {
     });
 
     test("returns isError when the target heading is ambiguous", async () => {
-      setMockFile(
-        "doc.md",
-        "# Section\nfirst\n# Section\nsecond",
-      );
+      setMockFile("doc.md", "# Section\nfirst\n# Section\nsecond");
       setMockMetadata("doc.md", {
         headings: [
           { heading: "Section", level: 1, line: 0 },
@@ -419,10 +436,7 @@ describe("get_vault_file_partial tool", () => {
 
   describe("mode: block (SECONDARY)", () => {
     test("returns the markdown range of a block reference", async () => {
-      setMockFile(
-        "doc.md",
-        "intro\nthis is the target ^abc\nfollowup",
-      );
+      setMockFile("doc.md", "intro\nthis is the target ^abc\nfollowup");
       setMockMetadata("doc.md", {
         blocks: { abc: { startLine: 1, endLine: 1 } },
       });

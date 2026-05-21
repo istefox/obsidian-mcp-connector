@@ -209,8 +209,14 @@ export class ToolRegistryClass<
       // `Record<string, unknown>`. Cast the schema to a loose getter for
       // this lookup — the runtime behavior is identical.
       const valueSchema = (
-        argsSchema as unknown as { get: (k: string) => { exclude: (s: string) => { expression: string } } }
-      ).get(key).exclude("undefined");
+        argsSchema as unknown as {
+          get: (k: string) => {
+            exclude: (s: string) => { expression: string };
+          };
+        }
+      )
+        .get(key)
+        .exclude("undefined");
       if (
         valueSchema.expression === "boolean" &&
         typeof value === "string" &&
@@ -275,9 +281,7 @@ export class ToolRegistryClass<
         tool: params.name,
       });
       return {
-        content: [
-          { type: "text" as const, text: formattedError.message },
-        ],
+        content: [{ type: "text" as const, text: formattedError.message }],
         isError: true,
       };
     }

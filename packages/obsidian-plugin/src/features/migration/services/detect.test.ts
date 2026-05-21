@@ -160,7 +160,8 @@ describe("detectLegacyInstall", () => {
       JSON.stringify({
         mcpServers: {
           "mcp-tools-istefox": {
-            command: "/Users/u/Library/Application Support/obsidian-mcp-tools/bin/mcp-server",
+            command:
+              "/Users/u/Library/Application Support/obsidian-mcp-tools/bin/mcp-server",
             env: { OBSIDIAN_API_KEY: "k" },
           },
         },

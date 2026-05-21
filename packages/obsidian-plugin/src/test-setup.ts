@@ -27,11 +27,22 @@ import { mock } from "bun:test";
 // We delegate through an accessor so tests that swap `globalThis.setTimeout`
 // (e.g. the modal-timeout test) still take effect — activeWindow.setTimeout
 // reads the live globalThis binding at call time, not the one at setup time.
-(globalThis as unknown as { activeWindow: { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } }).activeWindow = {
+(
+  globalThis as unknown as {
+    activeWindow: {
+      setTimeout: typeof setTimeout;
+      clearTimeout: typeof clearTimeout;
+    };
+  }
+).activeWindow = {
   setTimeout: ((...args: Parameters<typeof setTimeout>) =>
-    (globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout(...args)) as typeof setTimeout,
+    (globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout(
+      ...args,
+    )) as typeof setTimeout,
   clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-    (globalThis as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout(...args),
+    (
+      globalThis as unknown as { clearTimeout: typeof clearTimeout }
+    ).clearTimeout(...args),
 };
 
 void mock.module("obsidian", () => {
@@ -371,7 +382,10 @@ export function setMockModifyFail(path: string): void {
  * TOCTOU guard).
  */
 export function setMockReadMutation(path: string, mutated: string): void {
-  _mockState.readMutations.set(path, { content: mutated, firstReadSeen: false });
+  _mockState.readMutations.set(path, {
+    content: mutated,
+    firstReadSeen: false,
+  });
 }
 
 /** Paths routed through `fileManager.trashFile` (recoverable delete). */
@@ -859,10 +873,7 @@ export function mockApp(): App {
      * Folder rename is out of scope (the handler rejects it via the
      * existing API surface — TFolder cannot be passed as `from`).
      */
-    renameFile: async (
-      file: TAbstractFile,
-      newPath: string,
-    ): Promise<void> => {
+    renameFile: async (file: TAbstractFile, newPath: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
       if (!_mockState.files.has(path)) {
         throw new Error(`File not found: ${path}`);

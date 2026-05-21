@@ -309,9 +309,12 @@ describe("headingRename — rewriteBacklinker fenced-code guard (#143 C2)", () =
   });
 
   test("C2: a markdown link inside a ~~~ fenced block is NOT rewritten", () => {
-    const text = ["~~~", "[doc](source.md#Old)", "~~~", "[doc](source.md#Old)"].join(
-      "\n",
-    );
+    const text = [
+      "~~~",
+      "[doc](source.md#Old)",
+      "~~~",
+      "[doc](source.md#Old)",
+    ].join("\n");
     const r = rewriteBacklinker(
       text,
       "Old",
@@ -352,11 +355,7 @@ describe("headingRename — rewriteSourceHeadingLine level fallback (#143 H2)", 
 describe("headingRename — planRename (integration)", () => {
   test("happy path with one source rename + two backlinkers", () => {
     const sourceText = "# Title\n## Old\nbody\n## Other";
-    const sourceHeadings = [
-      h("Title", 1, 0),
-      h("Old", 2, 1),
-      h("Other", 2, 3),
-    ];
+    const sourceHeadings = [h("Title", 1, 0), h("Old", 2, 1), h("Other", 2, 3)];
     const backlinkers = {
       "a.md": "See [[source#Old]].",
       "b.md": "Also [[source#Old|alias]].",

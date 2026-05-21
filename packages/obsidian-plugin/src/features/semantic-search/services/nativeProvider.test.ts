@@ -5,7 +5,11 @@ import {
   type ExcerptResolver,
 } from "./nativeProvider";
 import type { Embedder } from "./embedder";
-import { createEmbeddingStore, type EmbeddingRecord, type VaultAdapter } from "./store";
+import {
+  createEmbeddingStore,
+  type EmbeddingRecord,
+  type VaultAdapter,
+} from "./store";
 
 const DIM = 4;
 
@@ -17,8 +21,7 @@ function vec(values: number[]): Float32Array {
 
 function makeFakeEmbedder(textToVec: Map<string, Float32Array>): Embedder {
   return {
-    embed: async (text: string) =>
-      textToVec.get(text) ?? new Float32Array(DIM),
+    embed: async (text: string) => textToVec.get(text) ?? new Float32Array(DIM),
     embedBatch: async (texts: string[]) =>
       texts.map((t) => textToVec.get(t) ?? new Float32Array(DIM)),
     unload: async () => undefined,
@@ -56,7 +59,9 @@ function makeMemAdapter(): VaultAdapter {
   };
 }
 
-function rec(opts: Partial<EmbeddingRecord> & { chunkId: string; vector: Float32Array }): EmbeddingRecord {
+function rec(
+  opts: Partial<EmbeddingRecord> & { chunkId: string; vector: Float32Array },
+): EmbeddingRecord {
   return {
     chunkId: opts.chunkId,
     filePath: opts.filePath ?? "Notes/a.md",
@@ -83,9 +88,7 @@ async function makeStore(records: EmbeddingRecord[]) {
 describe("native provider", () => {
   test("returns empty when store is empty", async () => {
     const store = await makeStore([]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
     const out = await provider.search("q", {});
     expect(out).toEqual([]);
@@ -107,9 +110,7 @@ describe("native provider", () => {
         filePath: "Notes/f.md",
       }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["query", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["query", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("query", { limit: 3 });
@@ -127,9 +128,7 @@ describe("native provider", () => {
       rec({ chunkId: "b", vector: vec([1, 0, 0, 0]), filePath: "B/y.md" }),
       rec({ chunkId: "c", vector: vec([1, 0, 0, 0]), filePath: "C/z.md" }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("q", { folders: ["A", "B"] });
@@ -145,9 +144,7 @@ describe("native provider", () => {
       rec({ chunkId: "b", vector: vec([1, 0, 0, 0]), filePath: "B/y.md" }),
       rec({ chunkId: "c", vector: vec([1, 0, 0, 0]), filePath: "C/z.md" }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("q", { excludeFolders: ["B"] });
@@ -168,9 +165,7 @@ describe("native provider", () => {
         filePath: "NotesArchive/y.md",
       }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("q", { folders: ["Notes"] });
@@ -184,9 +179,7 @@ describe("native provider", () => {
       rec({ chunkId: "3", vector: vec([0.8, 0.2, 0, 0]), filePath: "3.md" }),
       rec({ chunkId: "4", vector: vec([0.7, 0.3, 0, 0]), filePath: "4.md" }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("q", { limit: 2 });
@@ -205,10 +198,9 @@ describe("native provider", () => {
         offset: 5,
       }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
-    const resolver: ExcerptResolver = async (_p, _o, max) => longBody.slice(0, max);
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
+    const resolver: ExcerptResolver = async (_p, _o, max) =>
+      longBody.slice(0, max);
 
     const provider = createNativeProvider({
       embedder,
@@ -237,9 +229,7 @@ describe("native provider", () => {
         filePath: "n.md",
       }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const provider = createNativeProvider({ embedder, store });
 
     const out = await provider.search("q", { limit: 2 });
@@ -268,9 +258,7 @@ describe("native provider", () => {
         filePath: "a.md",
       }),
     ]);
-    const embedder = makeFakeEmbedder(
-      new Map([["q", vec([1, 0, 0, 0])]]),
-    );
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
     const resolver: ExcerptResolver = async () => {
       throw new Error("vault read failed");
     };

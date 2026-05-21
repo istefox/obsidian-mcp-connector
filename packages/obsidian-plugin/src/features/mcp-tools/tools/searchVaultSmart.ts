@@ -88,8 +88,7 @@ export async function searchVaultSmartHandler(
   const settings = state.settings;
   const usingSmartConnections =
     settings?.provider === "smart-connections" ||
-    (settings?.provider === "auto" &&
-      isSmartConnectionsAvailable(ctx.plugin));
+    (settings?.provider === "auto" && isSmartConnectionsAvailable(ctx.plugin));
 
   // Lazy indexer kick (Q4 = lazy on first query). Fire-and-forget:
   // the indexer's start() runs the first full vault build in the

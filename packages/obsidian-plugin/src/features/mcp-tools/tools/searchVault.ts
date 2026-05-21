@@ -35,9 +35,7 @@ export type SearchVaultContext = {
  * to check runtime availability, and `plugin.getLocalRestApiKey()` to obtain
  * the bearer token for the legacy REST endpoint.
  */
-export async function searchVaultHandler(
-  ctx: SearchVaultContext,
-): Promise<{
+export async function searchVaultHandler(ctx: SearchVaultContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {

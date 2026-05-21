@@ -20,9 +20,7 @@ export type GetFilesByTagContext = {
   app: App;
 };
 
-export async function getFilesByTagHandler(
-  ctx: GetFilesByTagContext,
-): Promise<{
+export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
