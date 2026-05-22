@@ -41,6 +41,25 @@ export async function deleteNotePropertyHandler(
       isError: true,
     };
   }
+  if ((abstract as { children?: unknown }).children !== undefined) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: "Path is a folder, not a file",
+              errorCode: "not_a_file",
+              path,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
   const file = abstract as TFile;
 
   await ctx.app.fileManager.processFrontMatter(file, (fm) => {

@@ -44,6 +44,27 @@ export async function getNotePropertyHandler(
       isError: true,
     };
   }
+  // A folder path resolves to a TFolder (duck-typed via `children`), not a
+  // TFile — guard before casting so we don't read a folder as a note.
+  if ((abstract as { children?: unknown }).children !== undefined) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: "Path is a folder, not a file",
+              errorCode: "not_a_file",
+              path: ctx.arguments.path,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
   const file = abstract as TFile;
   const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter as
     | Record<string, unknown>

@@ -7,6 +7,7 @@ import {
   mockApp,
   resetMockVault,
   setMockFile,
+  setMockFolder,
   setMockMetadata,
 } from "$/test-setup";
 
@@ -68,6 +69,18 @@ describe("delete_note_property tool", () => {
     expect(r.isError).toBe(true);
     expect(JSON.parse(r.content[0].text as string).errorCode).toBe(
       "file_not_found",
+    );
+  });
+
+  test("errors with not_a_file when the path is a folder", async () => {
+    setMockFolder("Projects");
+    const r = await deleteNotePropertyHandler({
+      arguments: { path: "Projects", key: "k" },
+      app: mockApp(),
+    });
+    expect(r.isError).toBe(true);
+    expect(JSON.parse(r.content[0].text as string).errorCode).toBe(
+      "not_a_file",
     );
   });
 });

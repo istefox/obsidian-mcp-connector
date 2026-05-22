@@ -82,6 +82,18 @@ describe("list_property_values tool", () => {
     expect(data.values).toEqual([{ value: "active", count: 1 }]);
   });
 
+  test("accepts a folder prefix that already ends in a slash", async () => {
+    seed("Projects/a.md", { status: "active" });
+    seed("Archive/b.md", { status: "active" });
+    const r = await listPropertyValuesHandler({
+      arguments: { key: "status", folder: "Projects/" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.totalDistinct).toBe(1);
+    expect(data.values).toEqual([{ value: "active", count: 1 }]);
+  });
+
   test("truncates to limit and reports totalDistinct", async () => {
     seed("a.md", { k: "v1" });
     seed("b.md", { k: "v2" });
