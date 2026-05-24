@@ -315,7 +315,11 @@ function _defaultFormat(period: MockPeriodType): string {
     case "daily":
       return "YYYY-MM-DD";
     case "weekly":
-      return "gggg-[W]ww";
+      // ISO 8601 week-year (GGGG/WW), matching the detector. The locale
+      // form `gggg-[W]ww` diverges at year boundaries (e.g. 2026-12-28 →
+      // ISO 2026-W53 vs locale 2027-W01); keep the mock aligned so the
+      // plugin-on weekly path is exercised against the real path shape.
+      return "GGGG-[W]WW";
     case "monthly":
       return "YYYY-MM";
     case "quarterly":

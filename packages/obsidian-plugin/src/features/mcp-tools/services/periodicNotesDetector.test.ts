@@ -165,6 +165,24 @@ describe("periodicNotesDetector", () => {
       const r = resolvePeriodicNote(app, "daily", "2026-05-22");
       expect(r.exists).toBe(false);
     });
+
+    test("weekly default format matches the detector at an ISO year boundary", async () => {
+      // `2026-W53` is a real ISO week (its Monday is 2026-12-28), but the
+      // *locale* week-year of that date is 2027-W01. If the mock's default
+      // weekly format were `gggg-[W]ww` (locale) while the detector uses
+      // `GGGG-[W]WW` (ISO), create() would land the file at `2027-W01.md`
+      // while the detector resolves `2026-W53.md` — a silent path mismatch.
+      // Both must use ISO. (Regression guard for the mock format.)
+      setMockPeriodicNotesPlugin("weekly", { loaded: true, folder: "Weekly" });
+      const app = mockApp();
+      const r = resolvePeriodicNote(app, "weekly", "2026-W53");
+      expect(r.path).toBe("Weekly/2026-W53.md");
+      expect(r.exists).toBe(false);
+      await r.create();
+      expect(
+        app.vault.getAbstractFileByPath("Weekly/2026-W53.md"),
+      ).not.toBeNull();
+    });
   });
 
   describe("resolvePeriodicNote — date default = today", () => {

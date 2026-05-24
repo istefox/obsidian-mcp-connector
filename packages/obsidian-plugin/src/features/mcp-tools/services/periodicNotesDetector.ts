@@ -265,3 +265,23 @@ function computePath(
   const filename = `${m.format(format)}.md`;
   return folder ? `${folder}/${filename}` : filename;
 }
+
+/**
+ * Human-readable expected date format for a period, used in the
+ * `invalid_date_for_period` error message. Shared by the periodic-note
+ * tools so the wording stays in one place.
+ */
+export function describeFormat(period: PeriodType): string {
+  switch (period) {
+    case "daily":
+      return "`YYYY-MM-DD`";
+    case "weekly":
+      return "`YYYY-Www` (ISO week, e.g. `2026-W21`)";
+    case "monthly":
+      return "`YYYY-MM`";
+    case "quarterly":
+      return "`YYYY-QN` (N=1-4)";
+    case "yearly":
+      return "`YYYY`";
+  }
+}

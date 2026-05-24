@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App, TFile } from "obsidian";
 import {
   DATE_REGEX_BY_PERIOD,
+  describeFormat,
   isValidPeriodicDate,
   type PeriodType,
   resolvePeriodicNote,
@@ -175,19 +176,4 @@ function errorPayload(
     ],
     isError: true,
   };
-}
-
-function describeFormat(period: PeriodType): string {
-  switch (period) {
-    case "daily":
-      return "`YYYY-MM-DD`";
-    case "weekly":
-      return "`YYYY-Www` (ISO week, e.g. `2026-W21`)";
-    case "monthly":
-      return "`YYYY-MM`";
-    case "quarterly":
-      return "`YYYY-QN` (N=1-4)";
-    case "yearly":
-      return "`YYYY`";
-  }
 }
