@@ -33,6 +33,32 @@ function isInvalidKey(key: string): boolean {
   return /[:\n\r]/.test(key) || key.trimStart().startsWith("#");
 }
 
+// LLM clients (e.g. Claude) sometimes send arrays as JSON-encoded strings
+// ('["a","b"]') rather than native JSON arrays (["a","b"]) when constructing
+// tool calls. Detect and unwrap: if the value is a string that parses as a
+// homogeneous JSON array of strings or numbers, return the parsed array so
+// processFrontMatter writes a YAML list instead of a quoted string.
+function coerceJsonEncodedArray(
+  value: string | number | boolean | string[] | number[],
+): string | number | boolean | string[] | number[] {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[")) return value;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!Array.isArray(parsed) || parsed.length === 0) return value;
+    if (parsed.every((item): item is string => typeof item === "string")) {
+      return parsed;
+    }
+    if (parsed.every((item): item is number => typeof item === "number")) {
+      return parsed;
+    }
+  } catch {
+    // not valid JSON — use the string as-is
+  }
+  return value;
+}
+
 export async function setNotePropertyHandler(
   ctx: SetNotePropertyContext,
 ): Promise<{
@@ -98,7 +124,7 @@ export async function setNotePropertyHandler(
     if (value === null) {
       delete fm[key];
     } else {
-      fm[key] = value;
+      fm[key] = coerceJsonEncodedArray(value);
     }
   });
 

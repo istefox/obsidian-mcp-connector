@@ -69,6 +69,46 @@ describe("set_note_property tool", () => {
     expect(readFm("n.md")?.tags).toEqual(["x", "y"]);
   });
 
+  test("JSON-encoded string array is coerced to a native list (LLM client workaround)", async () => {
+    setMockFile("n.md", "");
+    setMockMetadata("n.md", { frontmatter: {} });
+    await setNotePropertyHandler({
+      arguments: { path: "n.md", key: "tags", value: '["a","b","c"]' },
+      app: mockApp(),
+    });
+    expect(readFm("n.md")?.tags).toEqual(["a", "b", "c"]);
+  });
+
+  test("JSON-encoded number array is coerced to a native list", async () => {
+    setMockFile("n.md", "");
+    setMockMetadata("n.md", { frontmatter: {} });
+    await setNotePropertyHandler({
+      arguments: { path: "n.md", key: "scores", value: "[1,2,3]" },
+      app: mockApp(),
+    });
+    expect(readFm("n.md")?.scores).toEqual([1, 2, 3]);
+  });
+
+  test("plain string is not coerced even if it contains brackets", async () => {
+    setMockFile("n.md", "");
+    setMockMetadata("n.md", { frontmatter: {} });
+    await setNotePropertyHandler({
+      arguments: { path: "n.md", key: "note", value: "[see above]" },
+      app: mockApp(),
+    });
+    expect(readFm("n.md")?.note).toBe("[see above]");
+  });
+
+  test("mixed-type JSON array is not coerced (stays as string)", async () => {
+    setMockFile("n.md", "");
+    setMockMetadata("n.md", { frontmatter: {} });
+    await setNotePropertyHandler({
+      arguments: { path: "n.md", key: "mixed", value: '["a",1]' },
+      app: mockApp(),
+    });
+    expect(readFm("n.md")?.mixed).toBe('["a",1]');
+  });
+
   test("auto-initialises a missing frontmatter block", async () => {
     setMockFile("n.md", "just a body, no frontmatter");
     const r = await setNotePropertyHandler({
