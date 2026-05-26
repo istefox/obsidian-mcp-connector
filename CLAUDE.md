@@ -8,7 +8,7 @@ Guidance for Claude Code (and similar AI agents) working in this repository.
 
 One shipped component on the 0.4.x line:
 
-1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 37 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
+1. **Obsidian plugin** — hosts an in-process HTTP MCP server (port 27200 default), writes `claude_desktop_config.json`, exposes all 38 MCP tools and prompts over streamable-HTTP. No separate binary. Semantic search via native Transformers.js (no Smart Connections dependency).
 
 Why operations go through Obsidian APIs rather than reading `.md` files directly: it preserves Obsidian's metadata cache, respects file locks on open notes, and lets the plugin invoke other Obsidian plugins (Templater, Dataview) through their APIs.
 
@@ -149,7 +149,7 @@ Rules:
 
 Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are exposed.
 
-### Tools (37 total, 0.4.x)
+### Tools (38 total, 0.4.x)
 
 **Vault file management** — `packages/obsidian-plugin/src/features/mcp-tools/tools/`:
 
@@ -173,7 +173,8 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 | `set_note_property` | Set one frontmatter key (atomic via `processFrontMatter`; auto-inits the block; `value:null` deletes). |
 | `delete_note_property` | Remove one frontmatter key (idempotent). |
 | `list_property_values` | Enumerate distinct values of a frontmatter key across the vault, with per-value counts (scale-safe). |
-| `search_vault` | Search via Dataview DQL or JsonLogic query. |
+| `search_vault` | Search via Dataview DQL or JsonLogic query (LRA-coupled — kept for backward compatibility). |
+| `execute_dataview_query` | Run a Dataview DQL query in-process via the plugin API; returns the native typed result (`{type:"table"\|"list"\|"task"\|"calendar", …}`). No LRA required. Three-state detection (`dataview_not_installed` / `dataview_not_ready` / query-failed). Prefer over `search_vault`'s DQL for new workflows. |
 | `search_vault_simple` | Plain text search with context window. |
 
 **Semantic search** — `features/semantic-search/` (native Transformers.js MiniLM embedder, WASM CDN-pinned, in-process — no Smart Connections required):

@@ -115,6 +115,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "delete_note_property",
         "delete_vault_directory",
         "delete_vault_file",
+        "execute_dataview_query",
         "execute_obsidian_command",
         "execute_template",
         "fetch",
@@ -144,7 +145,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "show_file_in_obsidian",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(37);
+      expect(names).toHaveLength(38);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }

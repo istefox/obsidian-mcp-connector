@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`execute_dataview_query` — in-process Dataview DQL tool.** New tool that
+  runs a DQL query directly against the Dataview plugin API
+  (`app.plugins.plugins.dataview.api.query(query, sourcePath)`) and returns
+  the native typed result — `{type:"table", headers, values}` /
+  `{type:"list", values}` / `{type:"task", values}` / `{type:"calendar", values}`.
+  In-process: no Local REST API required. Three-state plugin detection
+  surfaces a distinct `errorCode` per cause: `dataview_not_installed`
+  (permanent), `dataview_not_ready` (transient — the plugin is loaded but
+  the index hasn't finished building yet, Dataview fires
+  `dataview:index-ready` when done), and `dataview_query_failed` (the DQL
+  was parsed/evaluated by Dataview and rejected — Dataview's error string
+  surfaces verbatim). DQL validation is delegated to Dataview entirely;
+  ArkType only validates the boundary string shapes. Coexists with
+  `search_vault` (which keeps its LRA-coupled DQL + JsonLogic path
+  unchanged for backward compatibility) — the new tool's `.describe()`
+  guides agents to prefer it for new DQL workflows. Large results are not
+  truncated at the tool level; `.describe()` recommends in-DQL `LIMIT`.
+  Tool count 37 → 38. **The LRA-coupled count stays at 1** —
+  `search_vault` is the only remaining LRA-coupled tool. (ADR-0003, #166)
+
 ## [0.6.0] — 2026-05-24
 
 ### Added

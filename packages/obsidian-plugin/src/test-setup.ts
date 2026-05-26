@@ -371,6 +371,86 @@ void mock.module("obsidian-daily-notes-interface", () => ({
     _createPeriodicNote("yearly", date),
 }));
 
+// === Mock for the Dataview community plugin (ADR-0003, #166) =============
+//
+// `execute_dataview_query` reads `app.plugins.plugins["dataview"]` directly,
+// not through an npm library, so this mock lives at the app surface — see
+// the `dataview` getter inside `mockApp()` below. The three-state seam is:
+//
+//   "absent"      → app.plugins.plugins["dataview"] returns undefined
+//   "not_ready"   → returns { /* no .api */ } (plugin loaded, index unbuilt)
+//   "ready"       → returns { api: { query: queryImpl } }
+//
+// Tests seed via `setMockDataviewState(...)` and (when "ready") supply a
+// query implementation via `setMockDataviewQueryImpl(fn)`. Default impl is
+// an empty TABLE result so tests that don't care about the payload still
+// get a well-shaped Result envelope back. Mirrors the property-tools
+// `errorCode` failure shape via the `successful: false` branch.
+
+type MockDataviewState = "absent" | "not_ready" | "ready";
+
+interface MockDataviewResultSuccess<T> {
+  successful: true;
+  value: T;
+}
+interface MockDataviewResultFailure {
+  successful: false;
+  error: string;
+}
+type MockDataviewResult<T> =
+  | MockDataviewResultSuccess<T>
+  | MockDataviewResultFailure;
+
+type MockDataviewQueryImpl = (
+  source: string,
+  originFile?: string,
+) => MockDataviewResult<unknown> | Promise<MockDataviewResult<unknown>>;
+
+const _defaultDataviewQueryImpl: MockDataviewQueryImpl = () => ({
+  successful: true,
+  value: { type: "table", headers: [], values: [] },
+});
+
+const _mockDataview = {
+  state: "absent" as MockDataviewState,
+  queryImpl: _defaultDataviewQueryImpl,
+  // Records the (source, originFile) of every query call so tests can assert
+  // that sourcePath flowed through to Dataview's originFile parameter.
+  calls: [] as Array<{ source: string; originFile?: string }>,
+};
+
+/**
+ * Seed the Dataview plugin state. `"absent"` means the plugin isn't
+ * installed (default); `"not_ready"` means it's loaded but the index hasn't
+ * built yet (`.api` undefined); `"ready"` means queries can run.
+ */
+export function setMockDataviewState(state: MockDataviewState): void {
+  _mockDataview.state = state;
+}
+
+/**
+ * Provide the function `api.query` invokes when state is `"ready"`. Receives
+ * the DQL source string + optional `originFile` (Dataview's name for
+ * `sourcePath`); returns a `Result<T, string>` envelope.
+ */
+export function setMockDataviewQueryImpl(impl: MockDataviewQueryImpl): void {
+  _mockDataview.queryImpl = impl;
+}
+
+/** Test-only: the (source, originFile) of every `api.query` call recorded. */
+export function getMockDataviewCalls(): Array<{
+  source: string;
+  originFile?: string;
+}> {
+  return [..._mockDataview.calls];
+}
+
+export function resetMockDataview(): void {
+  _mockDataview.state = "absent";
+  _mockDataview.queryImpl = _defaultDataviewQueryImpl;
+  _mockDataview.calls = [];
+}
+
 // === Phase 2 mock vault state for tool tests ===
 
 type MockVaultState = {
@@ -501,6 +581,7 @@ export function resetMockVault(): void {
   _mockState.modifyFailPaths.clear();
   _mockState.readMutations.clear();
   resetMockPeriodicNotes();
+  resetMockDataview();
 }
 
 /** Make `vault.modify(file)` reject for `path` (rename_heading #143 M2). */
@@ -1055,12 +1136,48 @@ export function mockApp(): App {
     },
   };
 
+  // Community-plugin registry surface (`app.plugins.plugins[id]`). Synthesised
+  // from `_mockDataview.state` at read time so tests can switch state mid-run
+  // without re-creating the App. Only the `dataview` slot is wired today —
+  // additional community plugins can be added the same way (see ADR-0003).
+  const plugins = {
+    plugins: new Proxy({} as Record<string, unknown>, {
+      get: (_target, prop) => {
+        if (prop !== "dataview") return undefined;
+        if (_mockDataview.state === "absent") return undefined;
+        if (_mockDataview.state === "not_ready") {
+          // Plugin object exists, but `.api` is undefined. Same shape Dataview
+          // exposes during the post-load / pre-index-ready window.
+          return {};
+        }
+        // ready
+        return {
+          api: {
+            query: async (
+              source: string,
+              originFile?: string,
+              _settings?: unknown,
+            ) => {
+              _mockDataview.calls.push({ source, originFile });
+              return await _mockDataview.queryImpl(source, originFile);
+            },
+          },
+        };
+      },
+      has: (_target, prop) => {
+        if (prop !== "dataview") return false;
+        return _mockDataview.state !== "absent";
+      },
+    }),
+  };
+
   return {
     vault,
     workspace,
     metadataCache,
     fileManager,
     commands,
+    plugins,
   } as unknown as App;
 }
 

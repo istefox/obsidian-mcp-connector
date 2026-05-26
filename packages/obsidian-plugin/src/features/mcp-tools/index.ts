@@ -135,6 +135,10 @@ import {
   appendToPeriodicNoteHandler,
   appendToPeriodicNoteSchema,
 } from "./tools/appendToPeriodicNote";
+import {
+  executeDataviewQueryHandler,
+  executeDataviewQuerySchema,
+} from "./tools/executeDataviewQuery";
 
 export type RegisterToolsContext = {
   app: App;
@@ -270,6 +274,9 @@ export async function registerTools(
       app: ctx.app,
       plugin: ctx.plugin,
     }),
+  );
+  registry.register(executeDataviewQuerySchema, async ({ arguments: args }) =>
+    executeDataviewQueryHandler({ arguments: args, app: ctx.app }),
   );
 
   // Commands
