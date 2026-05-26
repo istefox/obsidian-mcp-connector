@@ -119,9 +119,12 @@ describe("end-to-end: HTTP → McpServer", () => {
         "execute_obsidian_command",
         "execute_template",
         "fetch",
+        "find_broken_links",
+        "find_orphaned_notes",
         "get_active_file",
         "get_backlinks",
         "get_files_by_tag",
+        "get_note_outline",
         "get_note_property",
         "get_or_create_daily_note",
         "get_or_create_periodic_note",
@@ -130,6 +133,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "get_server_info",
         "get_vault_file",
         "get_vault_file_partial",
+        "list_bookmarks",
         "list_obsidian_commands",
         "list_property_values",
         "list_tags",
@@ -138,6 +142,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "patch_vault_file",
         "rename_heading",
         "rename_vault_file",
+        "search_and_replace",
         "search_vault",
         "search_vault_simple",
         "search_vault_smart",
@@ -145,7 +150,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "show_file_in_obsidian",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(38);
+      expect(names).toHaveLength(43);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
