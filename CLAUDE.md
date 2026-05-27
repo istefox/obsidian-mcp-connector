@@ -328,9 +328,9 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
 
 3. **`bun run check` at the repo root** (again) — shared-package changes cascade; both runtime packages must still type-check.
 
-## Project status (2026-05-26)
+## Project status (2026-05-27)
 
-- `main` at **0.8.0** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 43. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.8.0`.
+- `main` at **0.8.1** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 43. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.8.1`.
 - `archive/main-0.3.12` — the retired 0.3.x stdio/binary line (20 MCP tools). Preserved for historical reference; HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`. No active development.
 - **Community store: ACCEPTED & LISTED** (2026-05-16) — id `mcp-tools-istefox` in `obsidianmd/obsidian-releases/community-plugins.json`; installable in-app + via BRAT. Obsidian shows a standard "not manually reviewed by Obsidian staff" disclaimer (automated review path; high-risk `fs`/`child_process` capability disclosures, which are intrinsic and were deliberately NOT removed). The legacy PR-based submission `obsidianmd/obsidian-releases#11919` was closed (process moved to the community.obsidian.md portal). Consult `CHANGELOG.md` for the current `[Unreleased]` state.
 
