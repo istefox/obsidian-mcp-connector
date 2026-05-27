@@ -5,6 +5,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-27
+
+### Added
+
+- **Multilingual embedding providers with download-on-demand (DLC).** Introduces a
+  pluggable `EmbeddingProvider` interface and three new ONNX providers available
+  on demand: **Gemma 300M** (768d, recommended for non-Latin vaults),
+  **Multilingual-E5-Base** (768d, alternative multilingual model), and a
+  **native MiniLM-L6-v2** adapter (existing model, now exposed through the
+  unified interface). Providers are downloaded from Hugging Face on first use
+  and swapped live without restart. A per-provider binary store tracks each
+  model's index independently. (ADR-0005, PR #194)
+
+  Key mechanics:
+  - **Auto-suggest**: on startup, `search_vault_smart` samples the vault for
+    non-ASCII character ratio; vaults above 30% automatically surface a
+    recommendation banner to switch to `embedding-gemma-300m`.
+  - **Live swap**: selecting a new provider in settings triggers a background
+    rebuild; the previous provider continues to serve queries until the new
+    index is ready.
+  - **DLC progress UI**: settings panel shows download progress, current
+    provider, and index status per model.
+  - **Crash-safe migration**: v1 flat store (`embeddings.bin`) is migrated to
+    the per-provider directory layout using a `.migrating` sentinel that
+    prevents partial migration state on crash.
+
+- **`scope` parameter for `find_broken_links`.** Optional `scope: string[]`
+  limits the scan to vault-relative path prefixes — mirrors `search_and_replace`.
+  Addresses payload overflow on large vaults (~1860 links / 612K chars on 1050
+  files). Omitting `scope` preserves vault-wide behaviour. (#193, PR #195)
+
+### Changed
+
+- **Chunker enhancements.** Frontmatter is now emitted as a dedicated
+  `#frontmatter` chunk for independent embedding; H3 sub-sections split before
+  the sliding-window fallback; sentence-level overlap wrapper at embed time
+  (stored text is unchanged); CRLF-safe heading detection.
+- **`search_vault_smart`** wired to the new provider factory — queries route to
+  whichever provider is active (native MiniLM, Gemma, E5, or Smart Connections).
+
+### Fixed
+
+- **Port tests no longer fail when Obsidian is running.** `bindWithFallback`
+  tests used the production `PORT_RANGE` (27200+); if the plugin was live, all
+  three tests failed. Rewritten to use OS-assigned ephemeral ports.
+
 ## [0.8.2] — 2026-05-27
 
 ### Fixed

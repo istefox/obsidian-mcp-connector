@@ -1,6 +1,6 @@
 {
   "name": "mcp-tools-for-obsidian",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "private": true,
   "description": "Connect MCP-compatible clients (Claude Desktop, Claude Code, Cline) to your Obsidian vault with semantic search, templates, file management and gated command execution.",
   "tags": [
