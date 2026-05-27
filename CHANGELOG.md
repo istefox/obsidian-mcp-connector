@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-27
+
+### Added
+
+- **MCP Prompts — vault-native prompt library.** Every `.md` file in the vault's
+  `Prompts/` folder tagged `#mcp-tools-prompt` is now automatically exposed as an
+  MCP prompt. No configuration required — edit prompts directly in Obsidian.
+  Discovery uses in-process `getMarkdownFiles()` + metadata cache (zero HTTP calls).
+  Prompt arguments are declared with `<% tp.mcpTools.prompt("name", "desc") %>` syntax
+  and injected via `{{name}}` Mustache placeholders at invocation time.
+  A `VaultWatcher` keeps the list live as files are created, renamed, or deleted.
+  Templater is not required — argument declarations are stripped from the rendered
+  output; all other Templater expressions pass through verbatim. (ADR-0006, PR #197)
+
+  MCP client integration:
+  - **Claude Desktop**: prompts appear under "Attach from MCP" → `mcp-tools-istefox`.
+  - **Claude Code**: slash commands `/mcp__mcp-tools-istefox__<prompt-name>`.
+  - **Other clients**: any MCP client that supports `prompts/list` + `prompts/get`.
+
 ## [0.9.0] — 2026-05-27
 
 ### Added
