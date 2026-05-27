@@ -171,12 +171,17 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
       // Try window.SmartSearch first (works on some platforms for v2.x)
       let legacyApi = window.SmartSearch;
 
-      // Fallback to plugin system (fixes Linux/cross-platform detection issues)
+      // Fallback to plugin system (fixes Linux/cross-platform detection issues).
+      // SC v4 removed window.SmartSearch; plugin.env exists but has no search().
+      // Guard: only accept env if it exposes a callable search() — otherwise keep
+      // legacyApi null so polling continues until the v3 path becomes ready.
       if (!legacyApi && smartConnectionsPlugin?.env) {
-        legacyApi =
+        const candidate =
           smartConnectionsPlugin.env as unknown as SmartConnections.SmartSearch;
-        // Cache it for future use
-        window.SmartSearch = legacyApi;
+        if (typeof candidate.search === "function") {
+          legacyApi = candidate;
+          window.SmartSearch = legacyApi;
+        }
       }
 
       return {
@@ -189,7 +194,7 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
           smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
       };
     }),
-    takeWhile((dependency) => !dependency.installed, true),
+    takeWhile((dep) => typeof dep.api?.search !== "function", true),
     distinct(({ installed }) => installed),
   );
 

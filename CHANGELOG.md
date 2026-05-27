@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-05-27
+
+### Fixed
+
+- **`search_vault_smart` broken with Smart Connections v4.** SC v4 removed `window.SmartSearch`; the v2 fallback in `loadSmartSearchAPI` blindly assigned `plugin.env` (which has no `search()` in SC v4) as the API, causing `installed: true` with an uncallable search function. The stream then closed immediately, permanently blocking access to `smart_sources`. Fixed by guarding the v2 fallback with `typeof candidate.search === "function"` — if `env` has no callable `search()`, polling continues until the v3 path (`smart_sources`) becomes ready. Also tightened the `takeWhile` predicate to `typeof dep.api?.search !== "function"` for defence-in-depth. (#186)
+
 ## [0.8.1] — 2026-05-27
 
 ### Fixed
