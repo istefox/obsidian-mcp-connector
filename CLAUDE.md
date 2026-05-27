@@ -168,6 +168,9 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 | `append_to_vault_file` | Append to an arbitrary file. |
 | `patch_vault_file` | Heading/block/frontmatter-aware insert into a file. |
 | `delete_vault_file` | Delete a file. |
+| `rename_vault_file` | Rename or move a file via `app.fileManager.renameFile`, preserving link integrity (wikilinks, markdown links, embeds, frontmatter aliases rewritten vault-wide). Source must exist; destination parent must already exist. |
+| `create_vault_directory` | Create a directory at the given path, recursively creating any missing parent directories. Idempotent — succeeds silently if it already exists. |
+| `delete_vault_directory` | Delete a directory. Non-recursive by default (fails if non-empty). `recursive:"true"` removes the directory and all contents; bypasses the Obsidian trash — irreversible. |
 | `rename_heading` | Rename a heading in a file and rewrite every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault so links keep resolving. |
 | `get_note_property` | Read one frontmatter key from a note (native type preserved; `null` if absent). |
 | `set_note_property` | Set one frontmatter key (atomic via `processFrontMatter`; auto-inits the block; `value:null` deletes). |
@@ -176,6 +179,17 @@ Capabilities declared: **`tools`** and **`prompts`**. No MCP resources are expos
 | `search_vault` | Search via Dataview DQL or JsonLogic query (LRA-coupled — kept for backward compatibility). |
 | `execute_dataview_query` | Run a Dataview DQL query in-process via the plugin API; returns the native typed result (`{type:"table"\|"list"\|"task"\|"calendar", …}`). No LRA required. Three-state detection (`dataview_not_installed` / `dataview_not_ready` / query-failed). Prefer over `search_vault`'s DQL for new workflows. |
 | `search_vault_simple` | Plain text search with context window. |
+
+**Vault graph & navigation** — `features/mcp-tools/tools/`:
+
+| Tool | Purpose |
+|---|---|
+| `get_vault_file_partial` | Partial read of a file: single frontmatter field, a heading section, a block range, or document outline (`document-map`). Zero-I/O on cached metadata for `frontmatter`/`document-map`; one `cachedRead` for `heading`/`block`. |
+| `list_tags` | All tags used across the vault with usage counts; aggregates inline `#tags` and frontmatter tags via metadata cache. Sortable by name or count. |
+| `get_files_by_tag` | Files tagged with the given tag, with per-file occurrence count. Supports hierarchical tag matching (`#project` matches `#project/active` etc.). |
+| `get_recent_files` | Most recently modified markdown files ordered by `mtime` desc. Each entry includes path, mtime, ctime, size. Honours `Excluded files` setting. |
+| `get_outgoing_links` | Every link emanating from a file: wikilinks, markdown links, embeds, frontmatter links. Each entry includes raw linkpath, syntax, display text, layer (body / frontmatter), embed flag, resolution status, and resolved vault path. |
+| `get_backlinks` | Every file that links to the given target, with per-source link count. Reverse-index via `metadataCache.resolvedLinks`; opt-in `includeUnresolved` extends with broken-link sources. |
 
 **Vault intelligence** — `features/mcp-tools/tools/` (Module E, ADR-0004):
 
@@ -226,8 +240,8 @@ Prompts are **dynamically discovered** from the vault, not hardcoded — see `fe
 
 - Source directory: `Prompts/` at the vault root.
 - A file becomes an MCP prompt only if it has the tag `#mcp-tools-prompt`.
-- Prompt arguments are parsed from Templater template syntax in the file body (`parseTemplateParameters`).
-- On `GetPrompt`, the server runs the template through `/templates/execute` (Templater plugin), strips frontmatter, and returns the result as a user message.
+- Prompt arguments are declared via `<% tp.mcpTools.prompt("arg_name", "description") %>` lines in the file body; parsed at discovery time with a `matchAll` regex on that syntax.
+- On `GetPrompt`, the server substitutes `{{arg_name}}` placeholders in the body, strips frontmatter and the `<% tp.mcpTools.prompt() %>` declaration lines, and returns the rendered text as a user message. Templater is **not required** — the in-process renderer handles substitution directly (`promptRenderer.ts`).
 
 This means prompt schemas are **runtime data**: they depend on the user's vault contents and change when they edit a prompt note. Full reference in `docs/features/prompt-system.md`.
 
@@ -330,7 +344,7 @@ Active traps in the current tree. Historical bugs already fixed are in `git log`
 
 ## Project status (2026-05-27)
 
-- `main` at **0.8.1** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 43. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.8.1`.
+- `main` at **0.10.0** — standalone in-process HTTP MCP server (0.4.x promoted to `main` 2026-05-16). Tools: 43 + MCP prompts. `minAppVersion: 1.7.2`. Distributed via the **Obsidian community store** (accepted & listed, id `mcp-tools-istefox`) **and** BRAT. Tag stack `0.4.0` → `0.10.0`.
 - `archive/main-0.3.12` — the retired 0.3.x stdio/binary line (20 MCP tools). Preserved for historical reference; HEAD `76fa012` 2026-04-28; tag stack `0.3.0` → `0.3.12`. No active development.
 - **Community store: ACCEPTED & LISTED** (2026-05-16) — id `mcp-tools-istefox` in `obsidianmd/obsidian-releases/community-plugins.json`; installable in-app + via BRAT. Obsidian shows a standard "not manually reviewed by Obsidian staff" disclaimer (automated review path; high-risk `fs`/`child_process` capability disclosures, which are intrinsic and were deliberately NOT removed). The legacy PR-based submission `obsidianmd/obsidian-releases#11919` was closed (process moved to the community.obsidian.md portal). Consult `CHANGELOG.md` for the current `[Unreleased]` state.
 
@@ -341,7 +355,7 @@ Items in flight, ordered by priority:
 1. **Next version cut**: when ready, branch + PR a `manifest.json`/`package.json`/`versions.json`/`CHANGELOG` bump + tag push; CI `release.yml` produces plugin-only release artifacts (reproducible bundle + build-provenance attestation). Roll forward only — never reuse or move a published `0.*` tag.
 2. **Owner-only, non-blocking**: (a) GitHub fork-network detach is CLOSED won't-do (only path is destructive — accept the "forked from" badge + the suppressed Contributors UI); (b) Windows #100 load smoke unperformed but field-corroborated by the reporter — non-blocking; roll forward to a patch release if it ever regresses.
 3. **CI/release Bun-pin divergence (low; deferred by #150).** `ci.yml` build-smoke runs on `bun-version: latest`, `release.yml` pins `1.3.12`. #150 deliberately left them split — the #149 svelte-patch class is Bun-version-independent under `--frozen-lockfile`, and pinning CI could mask a `latest`-only break. Revisit only if a CI-green-on-`latest` build ever diverges from the pinned release build.
-4. **#124 (BRAT install fails) — open, awaiting reporter.** Release-side re-verified clean on 0.5.0 (required assets `state=uploaded`; residual cause is BRAT-side/rate-limit, not release-side). Reporter `@folotp` silent since the 0.5.0 retest re-point (2026-05-19T05:30:01Z). A cloud routine (`trig_01NySG31D1RawgLrBUf6UJ7g`) is armed for 2026-05-23T08:00Z: if still silent it auto-closes as not-planned with the agreed comment, else reports for manual follow-up. Don't re-triage or close early — verify live state first; the routine owns the timeline.
+4. **#124 (BRAT install fails) — verify current state.** Release-side clean; residual cause is BRAT-side/rate-limit. The 2026-05-23 auto-close routine has fired; check GitHub to confirm current status before any follow-up.
 
 The community-store listing is DONE (accepted & listed 2026-05-16). The fork-era external-contribution pipeline tracking no longer applies — the project is standalone; contributions are evaluated per-PR on their merits.
 ## Soak preflight: chain identification first

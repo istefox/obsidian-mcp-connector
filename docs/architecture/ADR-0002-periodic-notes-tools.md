@@ -1,7 +1,8 @@
 # ADR-0002 — Daily / periodic notes tools (Module C)
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-05-20
+- **Shipped**: v0.6.0 (PR #159 `feat/periodic-notes` → `main`)
 - **Scope**: PR #2 / `feat/periodic-notes` — 3 new MCP tools + 1 detector service
 
 ## Context

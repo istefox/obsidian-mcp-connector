@@ -1,7 +1,8 @@
 # ADR-0001 — Atomic frontmatter property tools (Module D)
 
-- **Status**: Proposed
+- **Status**: Accepted
 - **Date**: 2026-05-20
+- **Shipped**: v0.6.0 (PR #159 `feat/note-properties` → `main`)
 - **Scope**: PR #1 / `feat/note-properties` — 4 new MCP tools
 
 ## Context
