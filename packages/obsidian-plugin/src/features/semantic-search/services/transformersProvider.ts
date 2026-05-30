@@ -13,7 +13,6 @@
 
 import type { EmbeddingProvider } from "../types";
 import type { EmbedTensor, PipelineFactory, PipelineFn } from "./embedder";
-import { configureEnv } from "./onnxEnv";
 
 export type TaskPromptFn = (text: string, role: "document" | "query") => string;
 
@@ -71,7 +70,6 @@ class TransformersProviderImpl implements EmbeddingProvider {
   private async ensurePipeline(): Promise<PipelineFn> {
     if (this.pipeline) return this.pipeline;
     if (!this.loadPromise) {
-      configureEnv();
       this.loadPromise = this.opts
         .pipelineFactory(this.opts.modelId)
         .then((p) => {

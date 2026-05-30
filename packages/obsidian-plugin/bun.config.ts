@@ -32,13 +32,30 @@ const isProd = args.includes("--prod");
 const stubEmptyModulesPlugin: BunPlugin = {
   name: "stub-empty-modules",
   setup(build) {
-    // Redirect onnxruntime-node → onnxruntime-web (re-export wrapper).
+    // Redirect onnxruntime-web → onnxruntime-web/all.
+    // `ort.min.js` (the default "." export) includes WASM/CPU EP only.
+    // `ort.all.min.js` adds WebGPU EP (via JSEP) + WebGL EP. Without this
+    // redirect, `device: "webgpu"` always fails with "backend not found"
+    // because the WebGPU EP is never registered at startup.
+    build.onResolve({ filter: /^onnxruntime-web$/ }, () => ({
+      path: "onnxruntime-web-all-shim",
+      namespace: "ort-all-redirect",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "ort-all-redirect" }, () => ({
+      contents: "module.exports = require('onnxruntime-web/all');",
+      loader: "js",
+    }));
+    // Redirect onnxruntime-node → onnxruntime-web/all (re-export wrapper).
+    // @huggingface/transformers v4 still imports onnxruntime-node at the
+    // backend level and chooses it whenever process?.release?.name === 'node'
+    // — which in Electron renderer is true. Using /all keeps WebGPU EP
+    // available on the node-shim path too.
     build.onResolve({ filter: /^onnxruntime-node$/ }, () => ({
       path: "onnxruntime-node-shim",
       namespace: "ort-node-redirect",
     }));
     build.onLoad({ filter: /.*/, namespace: "ort-node-redirect" }, () => ({
-      contents: "module.exports = require('onnxruntime-web');",
+      contents: "module.exports = require('onnxruntime-web/all');",
       loader: "js",
     }));
     // Stub sharp.

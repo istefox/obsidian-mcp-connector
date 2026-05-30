@@ -66,6 +66,7 @@ export type ProgressCallback = (info: ProgressEvent) => void;
 export type PipelineFactoryWithProgress = (
   model: string,
   onProgress?: ProgressCallback,
+  opts?: { dtype?: string },
 ) => Promise<PipelineFn>;
 
 export interface Embedder {
@@ -211,16 +212,70 @@ export function createEmbedder(opts: EmbedderOpts): Embedder {
 // v2.17.2. Spike (2026-04-26) found import.meta.url failures; a later
 // re-spike confirmed v4 loads cleanly with the bun.config.ts define block
 // already in place (import.meta.url + __dirname/__filename neutralized).
+//
+// device must be explicit — Transformers.js v4 auto-selects WebGPU when
+// navigator.gpu is present (Electron exposes it). We probe once via
+// requestAdapter(); on success we configure JSEP WASM env (no numThreads
+// override) and use "webgpu"; on failure we configure CPU env (numThreads:1)
+// and use "cpu". Valid v4.2.0 devices: "coreml" | "webgpu" | "cpu".
 import { pipeline as _hfPipeline } from "@huggingface/transformers";
-import { configureEnv } from "./onnxEnv";
+import { configureEnv, configureEnvForWebGpu } from "./onnxEnv";
+import { logger } from "$/shared/logger";
+
+// Resolved once: "webgpu" if requestAdapter() returns a non-null adapter,
+// "cpu" otherwise. Cached so all subsequent factory calls share the same
+// device and env configuration without re-probing.
+let _deviceConfig: Promise<"webgpu" | "cpu"> | null = null;
+
+function resolveDevice(): Promise<"webgpu" | "cpu"> {
+  if (!_deviceConfig) {
+    _deviceConfig = (async (): Promise<"webgpu" | "cpu"> => {
+      if (typeof navigator === "undefined" || !("gpu" in navigator)) {
+        configureEnv();
+        return "cpu";
+      }
+      try {
+        const adapter = await (
+          navigator as { gpu: { requestAdapter(): Promise<unknown> } }
+        ).gpu.requestAdapter();
+        if (adapter !== null) {
+          // JSEP WASM path: omit numThreads so onnxruntime-web selects
+          // ort-wasm-simd.jsep.wasm, which registers the WebGPU EP.
+          configureEnvForWebGpu();
+          return "webgpu";
+        }
+      } catch {
+        // adapter probe failed — fall through to cpu
+      }
+      configureEnv();
+      return "cpu";
+    })();
+  }
+  return _deviceConfig;
+}
 
 export async function realPipelineFactory(
   model: string,
   onProgress?: ProgressCallback,
+  opts?: { dtype?: string },
 ): Promise<PipelineFn> {
-  configureEnv();
+  const device = await resolveDevice();
+
+  if (device === "webgpu") {
+    // No CPU fallback: a failed WebGPU attempt corrupts onnxruntime-web's
+    // internal session state — subsequent cpu calls also get "webgpu backend
+    // not found". Let the error propagate so the caller can surface it cleanly.
+    const pipe = await _hfPipeline("feature-extraction", model, {
+      device: "webgpu",
+      progress_callback: onProgress,
+    } as Parameters<typeof _hfPipeline>[2]);
+    return pipe as unknown as PipelineFn;
+  }
+
   const pipe = await _hfPipeline("feature-extraction", model, {
+    device: "cpu",
     progress_callback: onProgress,
+    ...(opts?.dtype !== undefined ? { dtype: opts.dtype } : {}),
   } as Parameters<typeof _hfPipeline>[2]);
   return pipe as unknown as PipelineFn;
 }
