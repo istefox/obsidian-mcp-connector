@@ -605,8 +605,11 @@ export default class McpToolsPlugin extends Plugin {
         };
 
         // B3: Trigger rebuild for the active provider's store that was just
-        // wiped by the migration modal. The modal's "Rebuild now" button only
-        // wipes; this makes the rebuild actually happen automatically.
+        // wiped by the migration. Deferred to onLayoutReady because
+        // vault.getMarkdownFiles() can return an empty/partial snapshot
+        // during onload() — Obsidian's vault scan is still in flight.
+        // Firing earlier silently produces a 0-chunk rebuild and the .then()
+        // flush writes an empty store.
         const settingToRegistryKey: Partial<Record<string, ProviderKey>> = {
           native: "native-minilm-l6-v2",
           auto: "native-minilm-l6-v2",
@@ -619,11 +622,13 @@ export default class McpToolsPlugin extends Plugin {
           activeRegistryKey &&
           staleProviderKeys.includes(activeRegistryKey)
         ) {
-          if (activeRegistryKey === "native-minilm-l6-v2") {
-            state.startIndexerIfNeeded();
-          } else {
-            state.startRebuildFor(activeRegistryKey);
-          }
+          this.app.workspace.onLayoutReady(() => {
+            if (activeRegistryKey === "native-minilm-l6-v2") {
+              state.startIndexerIfNeeded?.();
+            } else {
+              state.startRebuildFor?.(activeRegistryKey);
+            }
+          });
         }
 
         state.teardown = async () => {

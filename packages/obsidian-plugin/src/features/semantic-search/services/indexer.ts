@@ -117,9 +117,17 @@ class LiveIndexerImpl implements SemanticIndexer {
       return;
     }
     const files = this.opts.vault.getMarkdownFiles();
+    logger.info("live indexer: rebuildAll starting", {
+      providerKey: this.opts.embedder.providerKey,
+      fileCount: files.length,
+    });
     for (const f of files) {
       await this.processFile(f.path);
     }
+    logger.info("live indexer: rebuildAll finished", {
+      providerKey: this.opts.embedder.providerKey,
+      fileCount: files.length,
+    });
   }
 
   async flush(): Promise<void> {
