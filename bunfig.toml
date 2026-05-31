@@ -1,0 +1,9 @@
+# Root-level Bun configuration.
+#
+# Mirrors the preload in packages/obsidian-plugin/bunfig.toml so that
+# `bun test` run from the repo root also registers the synthetic
+# "obsidian" module (the real package has only .d.ts files and cannot
+# be loaded at runtime outside Obsidian itself).
+
+[test]
+preload = ["./packages/obsidian-plugin/src/test-setup.ts"]
