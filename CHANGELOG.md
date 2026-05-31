@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-05-31
+
+### Changed
+
+- **Indexer rebuild is now linear instead of quadratic.** `processOnePath` previously
+  walked the entire embedding store on every file processed during a full re-index
+  (O(N×M) over vault size). A secondary `Map<filePath, Set<chunkId>>` index now
+  makes per-file lookup O(chunks-in-file). `delete(filePath)` gets the same speedup.
+  Large vaults with many files will see noticeably faster rebuild times. (PR #211)
+
+### Removed
+
+- Unused imports and a dead export removed across six source files (no behavior change). (PR #210)
+
 ## [0.11.0] — 2026-05-30
 
 ### Added
