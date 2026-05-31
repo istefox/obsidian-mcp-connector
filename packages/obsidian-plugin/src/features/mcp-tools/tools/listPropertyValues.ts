@@ -36,13 +36,16 @@ export async function listPropertyValuesHandler(
   // Distinct-value counter keyed by a stable JSON serialisation so native
   // types stay distinct (number 5 vs string "5") while still groupable.
   // The original native value is kept alongside the count.
-  const counts = new Map<string, { value: unknown; count: number }>();
+  const counts = new Map<
+    string,
+    { value: unknown; count: number; key: string }
+  >();
 
   const record = (v: unknown): void => {
     const k = JSON.stringify(v);
     const entry = counts.get(k);
     if (entry) entry.count++;
-    else counts.set(k, { value: v, count: 1 });
+    else counts.set(k, { value: v, count: 1, key: k });
   };
 
   for (const file of ctx.app.vault.getMarkdownFiles()) {
@@ -60,10 +63,12 @@ export async function listPropertyValuesHandler(
 
   const all = [...counts.values()].sort((a, b) => {
     if (b.count !== a.count) return b.count - a.count;
-    return JSON.stringify(a.value).localeCompare(JSON.stringify(b.value), "en");
+    return a.key.localeCompare(b.key, "en");
   });
   const totalDistinct = all.length;
-  const values = all.slice(0, limit);
+  const values = all
+    .slice(0, limit)
+    .map(({ value, count }) => ({ value, count }));
 
   return {
     content: [

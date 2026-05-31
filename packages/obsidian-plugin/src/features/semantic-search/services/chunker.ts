@@ -216,7 +216,7 @@ function slidingWindows(
   // word tokens so the window step is in real tokens.
   const wordIndices: number[] = [];
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] && /\S/.test(tokens[i] ?? "")) wordIndices.push(i);
+    if ((tokens[i] ?? "").trim().length > 0) wordIndices.push(i);
   }
 
   if (wordIndices.length <= maxTokens) return [prefix + body];
