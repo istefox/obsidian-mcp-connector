@@ -53,10 +53,28 @@ export type LiveIndexerOpts = {
   store: EmbeddingStore;
   /** Per-file inactivity window before re-processing. Default 2000ms. */
   debounceMs?: number;
+  /**
+   * Idle window after the last `processOnePath` completes before the
+   * in-memory store is flushed to disk. Coalesces a burst of edits into
+   * a single `writeBinary` call. Default 5000ms. `stop()` and the public
+   * `flush()` method both drain any pending flush before returning.
+   */
+  flushDebounceMs?: number;
+};
+
+export type StartOpts = {
+  /**
+   * Whether to run a full `rebuildAll()` immediately as part of `start()`.
+   * Default `true` (existing behavior). Set to `false` when an existing
+   * on-disk store is already current and you only need to subscribe to
+   * future vault events — e.g. a DLC indexer auto-started at plugin load
+   * for a provider whose store survived from a prior session.
+   */
+  initialRebuild?: boolean;
 };
 
 export interface SemanticIndexer {
-  start(): Promise<void>;
+  start(opts?: StartOpts): Promise<void>;
   stop(): Promise<void>;
   /** Force a full re-build over all markdown files. */
   rebuildAll(): Promise<void>;
@@ -71,21 +89,26 @@ export interface SemanticIndexer {
 }
 
 const DEFAULT_DEBOUNCE_MS = 2000;
+const DEFAULT_FLUSH_DEBOUNCE_MS = 5000;
 
 class LiveIndexerImpl implements SemanticIndexer {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private inFlight = new Map<string, Promise<void>>();
   private unsubs: Array<() => void> = [];
   private running = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushInFlight: Promise<void> | null = null;
   private readonly debounceMs: number;
+  private readonly flushDebounceMs: number;
   private readonly opts: LiveIndexerOpts;
 
   constructor(opts: LiveIndexerOpts) {
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
+    this.flushDebounceMs = opts.flushDebounceMs ?? DEFAULT_FLUSH_DEBOUNCE_MS;
     this.opts = { ...opts, chunker: wrapChunkerWithOverlap(opts.chunker) };
   }
 
-  async start(): Promise<void> {
+  async start(opts: StartOpts = {}): Promise<void> {
     if (this.running) return;
     this.running = true;
 
@@ -95,7 +118,9 @@ class LiveIndexerImpl implements SemanticIndexer {
       this.opts.vault.on("delete", (p) => this.schedule(p)),
     );
 
-    await this.rebuildAll();
+    if (opts.initialRebuild !== false) {
+      await this.rebuildAll();
+    }
   }
 
   async stop(): Promise<void> {
@@ -107,6 +132,9 @@ class LiveIndexerImpl implements SemanticIndexer {
     // Wait for any in-flight processing to finish so the store is
     // not mid-mutation when the caller drops it.
     await Promise.all(this.inFlight.values());
+    // Drain any pending debounced flush + await an in-flight one so the
+    // on-disk store reflects every event processed before stop().
+    await this.drainFlush();
   }
 
   async rebuildAll(): Promise<void> {
@@ -142,6 +170,10 @@ class LiveIndexerImpl implements SemanticIndexer {
       }),
     );
     await Promise.all(this.inFlight.values());
+    // Persist whatever the processing produced so callers (tests and
+    // production teardown alike) see a synchronous "everything settled,
+    // including disk" boundary.
+    await this.drainFlush();
   }
 
   pending(): number {
@@ -175,6 +207,9 @@ class LiveIndexerImpl implements SemanticIndexer {
     this.inFlight.set(path, next);
     try {
       await next;
+      // Schedule a debounced flush so the upsert/delete the file just
+      // produced eventually reaches disk. Coalesces bursts.
+      this.scheduleFlush();
     } finally {
       // Only clear inFlight if our promise is still the current one
       // (a later schedule may have queued behind).
@@ -184,6 +219,52 @@ class LiveIndexerImpl implements SemanticIndexer {
 
   private async doProcessFile(path: string): Promise<void> {
     await processOnePath(this.opts, path);
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushInFlight = this.runFlush();
+    }, this.flushDebounceMs);
+  }
+
+  private async runFlush(): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      await this.opts.store.flush();
+      logger.info("live indexer: flush completed", {
+        providerKey: this.opts.embedder.providerKey,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (err) {
+      // Do not let a transient flush failure crash future processing —
+      // the store still has `dirty = true` (or the next upsert will set
+      // it), so the next debounced flush self-heals by rewriting both
+      // bin and index from current in-memory state.
+      logger.error("live indexer: flush failed", {
+        providerKey: this.opts.embedder.providerKey,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.flushInFlight = null;
+    }
+  }
+
+  /**
+   * Force any pending debounced flush to run now, then await the
+   * in-flight flush (if any) so the caller observes a synchronous
+   * "store persisted" boundary. Used by `stop()` and `flush()`.
+   */
+  private async drainFlush(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+      this.flushInFlight = this.runFlush();
+    }
+    if (this.flushInFlight) {
+      await this.flushInFlight;
+    }
   }
 }
 
@@ -238,13 +319,15 @@ class LowPowerIndexerImpl implements SemanticIndexer {
     this.opts = { ...opts, chunker: wrapChunkerWithOverlap(opts.chunker) };
   }
 
-  async start(): Promise<void> {
+  async start(opts: StartOpts = {}): Promise<void> {
     if (this.running) return;
     this.running = true;
     // Run the first scan immediately so the user doesn't wait
-    // `intervalMs` for indexing to begin. Subsequent scans tick on
-    // the interval.
-    await this.runCycle();
+    // `intervalMs` for indexing to begin (unless explicitly opted out).
+    // Subsequent scans tick on the interval regardless.
+    if (opts.initialRebuild !== false) {
+      await this.runCycle();
+    }
     this.timer = setInterval(() => {
       // Skip if a cycle is still in flight to avoid stacking.
       if (this.cycleInFlight) return;

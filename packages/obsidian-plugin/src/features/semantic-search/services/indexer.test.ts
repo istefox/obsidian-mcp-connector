@@ -480,6 +480,291 @@ describe("live indexer", () => {
   });
 });
 
+/**
+ * Wrap an `EmbeddingStore` so its `flush()` call count can be observed by
+ * tests. The wrapper proxies every method to the wrapped store; only
+ * `flush` is instrumented.
+ */
+function wrapStoreWithFlushSpy(store: Awaited<ReturnType<typeof makeStore>>): {
+  store: typeof store;
+  flushCalls: () => number;
+} {
+  let calls = 0;
+  // Class methods on `store` are not enumerable own properties, so a
+  // spread would lose them. Delegate explicitly.
+  const wrapped: typeof store = {
+    init: () => store.init(),
+    size: () => store.size(),
+    scan: () => store.scan(),
+    upsert: (records) => store.upsert(records),
+    delete: (path) => store.delete(path),
+    close: () => store.close(),
+    flush: async () => {
+      calls++;
+      await store.flush();
+    },
+  };
+  return { store: wrapped, flushCalls: () => calls };
+}
+
+describe("live indexer — flush debounce", () => {
+  let rawStore: Awaited<ReturnType<typeof makeStore>>;
+
+  beforeEach(async () => {
+    rawStore = await makeStore();
+  });
+
+  test("create event flushes store after flushDebounceMs of idle", async () => {
+    const { vault, files, emit } = makeVault({});
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+      flushDebounceMs: 20,
+    });
+    await indexer.start();
+    expect(flushCalls()).toBe(0);
+
+    files.set("new.md", "fresh content");
+    emit("create", "new.md");
+
+    // Wait for processFile debounce + flush debounce + slack.
+    await new Promise((r) => setTimeout(r, 80));
+    expect(flushCalls()).toBeGreaterThanOrEqual(1);
+
+    await indexer.stop();
+  });
+
+  test("modify event flushes store after flushDebounceMs", async () => {
+    const { vault, files, emit } = makeVault({ "a.md": "v1" });
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+      flushDebounceMs: 20,
+    });
+    await indexer.start();
+    const startCalls = flushCalls();
+
+    files.set("a.md", "v2");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(flushCalls()).toBeGreaterThan(startCalls);
+
+    await indexer.stop();
+  });
+
+  test("delete event flushes store after flushDebounceMs", async () => {
+    const { vault, files, emit } = makeVault({ "a.md": "v1" });
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+      flushDebounceMs: 20,
+    });
+    await indexer.start();
+    const startCalls = flushCalls();
+
+    files.delete("a.md");
+    emit("delete", "a.md");
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(flushCalls()).toBeGreaterThan(startCalls);
+
+    await indexer.stop();
+  });
+
+  test("rapid burst of edits coalesces to a single debounced flush", async () => {
+    const { vault, files, emit } = makeVault({ "a.md": "v1" });
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+      flushDebounceMs: 50,
+    });
+    await indexer.start();
+    const startCalls = flushCalls();
+
+    // Three edits, each within the flush debounce window.
+    files.set("a.md", "v2");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 20));
+    files.set("a.md", "v3");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 20));
+    files.set("a.md", "v4");
+    emit("modify", "a.md");
+
+    // Wait for the final debounce cycle to settle.
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Exactly one flush for the whole burst.
+    expect(flushCalls() - startCalls).toBe(1);
+
+    await indexer.stop();
+  });
+
+  test("stop() forces pending debounced flush to run", async () => {
+    const { vault, files, emit } = makeVault({});
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 5,
+      // Long enough that the timer would not fire before stop() does.
+      flushDebounceMs: 10_000,
+    });
+    await indexer.start();
+    const startCalls = flushCalls();
+
+    files.set("new.md", "fresh");
+    emit("create", "new.md");
+    // Wait only long enough for processFile to complete and schedule the
+    // flush timer — not long enough for the 10-second timer to fire.
+    await new Promise((r) => setTimeout(r, 40));
+
+    await indexer.stop();
+
+    // stop() must have drained the pending flush.
+    expect(flushCalls() - startCalls).toBe(1);
+  });
+
+  test("public flush() drains pending debounced flush", async () => {
+    const { vault, files, emit } = makeVault({});
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 5,
+      flushDebounceMs: 10_000,
+    });
+    await indexer.start();
+    const startCalls = flushCalls();
+
+    files.set("new.md", "fresh");
+    emit("create", "new.md");
+
+    // flush() drains both the pending processFile timer AND the pending
+    // flush timer, so the caller observes "fully persisted" synchronously.
+    await indexer.flush();
+
+    expect(flushCalls() - startCalls).toBeGreaterThanOrEqual(1);
+
+    await indexer.stop();
+  });
+});
+
+describe("live indexer — start({ initialRebuild: false })", () => {
+  let rawStore: Awaited<ReturnType<typeof makeStore>>;
+
+  beforeEach(async () => {
+    rawStore = await makeStore();
+  });
+
+  test("subscribes without running rebuildAll", async () => {
+    const { vault } = makeVault({
+      "a.md": "alpha",
+      "b.md": "bravo",
+    });
+    const { embedder, embeds } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store: rawStore,
+      debounceMs: 10,
+      flushDebounceMs: 10,
+    });
+
+    await indexer.start({ initialRebuild: false });
+
+    // No embeds because rebuildAll was skipped.
+    expect(embeds()).toEqual([]);
+    expect(rawStore.size()).toBe(0);
+
+    await indexer.stop();
+  });
+
+  test("subscribes so a subsequent vault create event triggers processFile + flush", async () => {
+    const { vault, files, emit } = makeVault({});
+    const { embedder, embeds } = fakeEmbeddingProvider();
+    const { store, flushCalls } = wrapStoreWithFlushSpy(rawStore);
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+      flushDebounceMs: 20,
+    });
+    await indexer.start({ initialRebuild: false });
+    expect(embeds()).toEqual([]);
+
+    // The whole point of an auto-subscribed DLC indexer: future events
+    // flow into the store + persist to disk without an explicit rebuild.
+    files.set("new.md", "fresh content");
+    emit("create", "new.md");
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(embeds()).toContain("fresh content");
+    expect(store.size()).toBeGreaterThan(0);
+    expect(flushCalls()).toBeGreaterThanOrEqual(1);
+
+    await indexer.stop();
+  });
+
+  test("explicit rebuildAll() after subscribe-only start still indexes the vault", async () => {
+    const { vault } = makeVault({ "a.md": "alpha" });
+    const { embedder, embeds } = fakeEmbeddingProvider();
+
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store: rawStore,
+      debounceMs: 5,
+      flushDebounceMs: 5,
+    });
+    await indexer.start({ initialRebuild: false });
+    expect(embeds()).toEqual([]);
+
+    await indexer.rebuildAll();
+    expect(embeds()).toContain("alpha");
+
+    await indexer.stop();
+  });
+});
+
 /** mtime-aware in-memory vault for the low-power tests. */
 function makeMtimeVault(
   initial: Record<string, { content: string; mtime: number }>,

@@ -120,8 +120,21 @@ export type SemanticSearchState = {
    * Trigger a download + full index build for a specific providerKey.
    * Wired by production setup (Task 8); absent in tests and early lifecycle.
    * The settings UI calls this from the rebuild banner's "Rebuild now" button.
+   *
+   * Implementation detail: the first call for a providerKey creates a
+   * persistent `LiveIndexer` (stored in `dlcIndexers`) and calls `start()`
+   * so vault create/modify/delete events flow into the matching store from
+   * that point on. Subsequent calls reuse the already-subscribed indexer
+   * and run a fresh `rebuildAll()` against it.
    */
   startRebuildFor?: ((providerKey: string) => void) | null;
+  /**
+   * Persistent DLC indexers keyed by providerKey. Populated lazily by
+   * `startRebuildFor` and by the plugin-load auto-subscribe for the
+   * active DLC provider. Used by `teardown` to stop and flush every
+   * subscribed indexer on plugin unload.
+   */
+  dlcIndexers?: Map<string, SemanticIndexer> | null;
   teardown: () => Promise<void>;
 };
 
