@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 
 export const findOrphanedNotesSchema = type({

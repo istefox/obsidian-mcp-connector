@@ -89,7 +89,9 @@ class ModelDownloaderImpl implements ModelDownloader {
         const pipe = await this.opts.innerFactory(
           model,
           (info) => this.onProgress(info),
-          this.opts.dtype !== undefined ? { dtype: this.opts.dtype } : undefined,
+          this.opts.dtype !== undefined
+            ? { dtype: this.opts.dtype }
+            : undefined,
         );
         this.setState({ kind: "ready" });
         return pipe;

@@ -202,7 +202,7 @@ export function getDetectedNpxPath(): string | null {
   // Replace the trailing `node` (or `node.exe`) with the npx
   // counterpart. Use a regex so we don't accidentally chop a
   // path that happens to contain "node" elsewhere.
-  return cachedNodePath.replace(/node(\.exe)?$/i, (m, ext) =>
+  return cachedNodePath.replace(/node(\.exe)?$/i, (_m, ext) =>
     ext ? "npx.cmd" : "npx",
   );
 }

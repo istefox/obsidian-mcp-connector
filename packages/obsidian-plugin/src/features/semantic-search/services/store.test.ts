@@ -431,3 +431,72 @@ describe("embedding store", () => {
     }
   });
 });
+
+describe("EmbeddingStore — recordsFor", () => {
+  function makeOpts() {
+    const { adapter } = makeMemAdapter();
+    return {
+      adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: DIM,
+    };
+  }
+
+  test("returns empty iterable for unknown filePath", async () => {
+    const store = createEmbeddingStore(makeOpts());
+    await store.init();
+    const result = Array.from(store.recordsFor("Notes/missing.md"));
+    expect(result).toHaveLength(0);
+  });
+
+  test("returns only records for the requested filePath", async () => {
+    const store = createEmbeddingStore(makeOpts());
+    await store.init();
+    await store.upsert([
+      makeRecord({ chunkId: "a:0", filePath: "Notes/a.md" }),
+      makeRecord({ chunkId: "a:1", filePath: "Notes/a.md" }),
+      makeRecord({ chunkId: "b:0", filePath: "Notes/b.md" }),
+    ]);
+    const forA = Array.from(store.recordsFor("Notes/a.md"));
+    expect(forA).toHaveLength(2);
+    expect(forA.every((r) => r.filePath === "Notes/a.md")).toBe(true);
+    const forB = Array.from(store.recordsFor("Notes/b.md"));
+    expect(forB).toHaveLength(1);
+    expect(forB[0]?.chunkId).toBe("b:0");
+  });
+
+  test("returns empty iterable after delete for that filePath", async () => {
+    const store = createEmbeddingStore(makeOpts());
+    await store.init();
+    await store.upsert([
+      makeRecord({ chunkId: "a:0", filePath: "Notes/a.md" }),
+      makeRecord({ chunkId: "a:1", filePath: "Notes/a.md" }),
+    ]);
+    await store.delete("Notes/a.md");
+    const result = Array.from(store.recordsFor("Notes/a.md"));
+    expect(result).toHaveLength(0);
+    expect(store.size()).toBe(0);
+  });
+
+  test("recordsFor reflects records loaded from disk after flush+init", async () => {
+    const opts = makeOpts();
+    const store1 = createEmbeddingStore(opts);
+    await store1.init();
+    await store1.upsert([
+      makeRecord({ chunkId: "a:0", filePath: "Notes/a.md" }),
+      makeRecord({ chunkId: "b:0", filePath: "Notes/b.md" }),
+    ]);
+    await store1.flush();
+    await store1.close();
+
+    const store2 = createEmbeddingStore(opts);
+    await store2.init();
+    const forA = Array.from(store2.recordsFor("Notes/a.md"));
+    expect(forA).toHaveLength(1);
+    expect(forA[0]?.chunkId).toBe("a:0");
+    const forB = Array.from(store2.recordsFor("Notes/b.md"));
+    expect(forB).toHaveLength(1);
+    expect(forB[0]?.chunkId).toBe("b:0");
+  });
+});

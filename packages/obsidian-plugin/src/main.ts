@@ -1,7 +1,6 @@
-import { type } from "arktype";
 import { Notice, Plugin, TFile } from "obsidian";
 import { lastValueFrom } from "rxjs";
-import { LocalRestAPI, Templater, type SmartConnections } from "shared";
+import { type SmartConnections } from "shared";
 import {
   CommandPermissionModal,
   globalSettingsMutex,

@@ -197,6 +197,12 @@ embeddings.index.json*
 tmp/
 
 # Local strategy / private notes & session scaffolding (never in the public repo)
+# Claude Code tooling — kept locally for development, never published
+CLAUDE.md
+.clinerules
+docs/deep-refactor/
+# Local dev tool version pin (mise/asdf) — not required for contributors
+mise.toml
 handoff*.md
 .claude/.triage-fix-last-*.json
 .remember/

@@ -22,7 +22,7 @@
  */
 
 import { logger } from "$/shared/logger";
-import type { Chunk, ChunkerFn } from "./chunker";
+import type { ChunkerFn } from "./chunker";
 import { wrapChunkerWithOverlap } from "./chunker";
 import type { EmbeddingRecord, EmbeddingStore } from "./store";
 import type { EmbeddingProvider } from "../types";
@@ -467,8 +467,8 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
   }
 
   const existingByHash = new Map<string, EmbeddingRecord>();
-  for await (const r of deps.store.scan()) {
-    if (r.filePath === path) existingByHash.set(r.contentHash, r);
+  for (const r of deps.store.recordsFor(path)) {
+    existingByHash.set(r.contentHash, r);
   }
 
   const records: EmbeddingRecord[] = [];
