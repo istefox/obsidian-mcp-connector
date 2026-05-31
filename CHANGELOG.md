@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-05-31
+
+### Fixed
+
+- CI lockfile mismatch after `packages/test-site` removal. (PR #215)
+
 ## [0.11.1] — 2026-05-31
 
 ### Changed
