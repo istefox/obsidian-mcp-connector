@@ -470,7 +470,8 @@ describe("applySettings — UI swap path (T12)", () => {
     const fakeGemmaEp = {
       providerKey: "embedding-gemma-300m" as const,
       dimensions: 768,
-      maxInputTokens: 2048,
+      maxInputTokens: 512,
+      getMaxInputTokens: async () => 2048,
       embed: async (texts: string[]) => texts.map(() => new Float32Array(768)),
       isAvailable: async () => true,
       getModelSizeBytes: () => 0,

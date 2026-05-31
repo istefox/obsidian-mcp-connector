@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
+  __resetBackendForTesting,
   createEmbedder,
+  resolveBackend,
   type PipelineFactory,
   type PipelineFn,
 } from "./embedder";
@@ -199,5 +201,57 @@ describe("embedder", () => {
     });
     await embedder.embed("hello");
     expect(pipeOpts[0]).toMatchObject({ truncation: true, max_length: 128 });
+  });
+});
+
+describe("resolveBackend", () => {
+  afterEach(() => {
+    __resetBackendForTesting();
+  });
+
+  test("returns 'wasm' when navigator is undefined (test environment)", async () => {
+    expect(await resolveBackend(undefined)).toBe("wasm");
+  });
+
+  test("returns 'wasm' when navigator.gpu is missing", async () => {
+    expect(await resolveBackend({})).toBe("wasm");
+  });
+
+  test("returns 'wasm' when requestAdapter resolves null", async () => {
+    expect(
+      await resolveBackend({
+        gpu: { requestAdapter: async () => null },
+      }),
+    ).toBe("wasm");
+  });
+
+  test("returns 'wasm' when requestAdapter throws", async () => {
+    expect(
+      await resolveBackend({
+        gpu: {
+          requestAdapter: async () => {
+            throw new Error("adapter denied");
+          },
+        },
+      }),
+    ).toBe("wasm");
+  });
+
+  test("returns 'webgpu' when requestAdapter resolves a non-null adapter", async () => {
+    expect(
+      await resolveBackend({
+        gpu: { requestAdapter: async () => ({}) },
+      }),
+    ).toBe("webgpu");
+  });
+
+  test("cached after first call — second call ignores changed navigator", async () => {
+    expect(
+      await resolveBackend({
+        gpu: { requestAdapter: async () => ({}) },
+      }),
+    ).toBe("webgpu");
+    // No reset between calls; the cached result wins.
+    expect(await resolveBackend(undefined)).toBe("webgpu");
   });
 });

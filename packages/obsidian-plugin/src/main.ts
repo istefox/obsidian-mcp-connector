@@ -52,13 +52,12 @@ import { createMultilingualE5Provider } from "./features/semantic-search/service
 import { detectNonAsciiRatio } from "./features/semantic-search/services/langDetect";
 import type { VaultAdapter } from "./features/semantic-search/services/store";
 import { FORMAT_VERSION } from "./features/semantic-search/services/store";
-import { IndexWipeMigrationModal } from "./features/semantic-search/services/indexWipeMigrationModal";
 import {
   createLiveIndexer,
   createLowPowerIndexer,
   type VaultLike,
 } from "./features/semantic-search/services/indexer";
-import { chunk as semanticChunk } from "./features/semantic-search/services/chunker";
+import { makeChunkerForProvider } from "./features/semantic-search/services/chunker";
 import type { ExcerptResolver } from "./features/semantic-search/services/nativeProvider";
 import {
   loadLocalRestAPI,
@@ -421,14 +420,12 @@ export default class McpToolsPlugin extends Plugin {
       }
 
       if (staleProviderKeys.length > 0) {
-        await new Promise<void>((resolve) => {
-          const modal = new IndexWipeMigrationModal({
-            app: this.app,
-            onConfirm: resolve,
-            onCancel: resolve,
-          });
-          modal.open();
-        });
+        // Silent wipe: the previous IndexWipeMigrationModal flow blocked
+        // onload() indefinitely on Obsidian's "Loading plugins..." splash,
+        // which suppresses modal interaction during plugin load. Embedding
+        // data is fully derivable from vault notes (no original content
+        // lost), so user confirmation buys nothing — wipe immediately and
+        // surface a Notice after the workspace becomes interactive.
         for (const key of staleProviderKeys) {
           const dirPath = `${embeddingsBaseDir}/${key}`;
           try {
@@ -447,6 +444,13 @@ export default class McpToolsPlugin extends Plugin {
             );
           }
         }
+        const wipedCount = staleProviderKeys.length;
+        this.app.workspace.onLayoutReady(() => {
+          new Notice(
+            `MCP Tools: Semantic search index format upgraded (${wipedCount} provider${wipedCount > 1 ? "s" : ""} migrated). Rebuilding automatically.`,
+            8000,
+          );
+        });
       }
 
       const registry = createEmbeddingStoreRegistry(
@@ -514,17 +518,21 @@ export default class McpToolsPlugin extends Plugin {
         }
 
         // Native indexer — lazy start on first search tool call.
+        // The chunker tracks the provider's effective max-input-tokens
+        // (backend-resolved via getMaxInputTokens()), with a small safety
+        // margin for the task-prompt prefix prepended at embed time.
+        const nativeChunker = makeChunkerForProvider(nativeEp);
         const indexer =
           state.settings.indexingMode === "low-power"
             ? createLowPowerIndexer({
                 vault: ssVault,
-                chunker: semanticChunk,
+                chunker: nativeChunker,
                 embedder: nativeEp,
                 store: nativeStore,
               })
             : createLiveIndexer({
                 vault: ssVault,
-                chunker: semanticChunk,
+                chunker: nativeChunker,
                 embedder: nativeEp,
                 store: nativeStore,
               });
@@ -570,7 +578,7 @@ export default class McpToolsPlugin extends Plugin {
           const dlcStore = registry.storeFor(providerKey, ep.dimensions);
           const dlcIndexer = createLiveIndexer({
             vault: ssVault,
-            chunker: semanticChunk,
+            chunker: makeChunkerForProvider(ep),
             embedder: ep,
             store: dlcStore,
           });

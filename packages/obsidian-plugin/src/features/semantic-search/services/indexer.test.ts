@@ -119,6 +119,7 @@ function fakeEmbeddingProvider(): {
     providerKey: "test-provider",
     dimensions: DIM,
     maxInputTokens: 512,
+    getMaxInputTokens: async () => 512,
     embed: async (texts, _role) => {
       for (const text of texts) calls.push(text);
       return texts.map((text) => {
@@ -410,6 +411,7 @@ describe("live indexer", () => {
       providerKey: "unavailable",
       dimensions: DIM,
       maxInputTokens: 512,
+      getMaxInputTokens: async () => 512,
       embed: async (texts, _role) => {
         for (const t of texts) embeds.push(t);
         return texts.map(() => new Float32Array(DIM));

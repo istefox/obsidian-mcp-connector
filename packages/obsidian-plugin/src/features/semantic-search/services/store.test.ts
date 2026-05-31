@@ -315,7 +315,7 @@ describe("embedding store", () => {
     expect(written.records).toHaveLength(0);
   });
 
-  test("FORMAT_VERSION 3 round-trip: flushed index carries version 3", async () => {
+  test("FORMAT_VERSION round-trip: flushed index carries current FORMAT_VERSION", async () => {
     const opts = {
       adapter: mem.adapter,
       binPath: "/p/embeddings.bin",
@@ -330,7 +330,7 @@ describe("embedding store", () => {
       mem.files.get("/p/embeddings.index.json") ?? "{}",
     );
     expect(written.version).toBe(FORMAT_VERSION);
-    expect(FORMAT_VERSION).toBe(3);
+    expect(FORMAT_VERSION).toBe(4);
   });
 
   test("v1 index treated as stale (version mismatch); re-init from scratch", async () => {

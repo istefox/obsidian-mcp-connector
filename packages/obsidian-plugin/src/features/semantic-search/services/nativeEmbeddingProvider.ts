@@ -22,6 +22,12 @@ class NativeEmbeddingProviderImpl implements EmbeddingProvider {
 
   constructor(private embedder: Embedder) {}
 
+  // MiniLM's 256-token cap is a model-intrinsic limit; identical on
+  // both WASM and WebGPU paths. No backend probe required.
+  getMaxInputTokens(): Promise<number> {
+    return Promise.resolve(MAX_INPUT_TOKENS);
+  }
+
   getModelSizeBytes(): number {
     return MODEL_SIZE_BYTES;
   }

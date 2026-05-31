@@ -219,39 +219,74 @@ export function createEmbedder(opts: EmbedderOpts): Embedder {
 // override) and use "webgpu"; on failure we configure CPU env (numThreads:1)
 // and use "cpu". Valid v4.2.0 devices: "coreml" | "webgpu" | "cpu".
 import { pipeline as _hfPipeline } from "@huggingface/transformers";
+import type { BackendKind } from "../types";
 import { configureEnv, configureEnvForWebGpu } from "./onnxEnv";
 import { logger } from "$/shared/logger";
 
-// Resolved once: "webgpu" if requestAdapter() returns a non-null adapter,
-// "cpu" otherwise. Cached so all subsequent factory calls share the same
-// device and env configuration without re-probing.
-let _deviceConfig: Promise<"webgpu" | "cpu"> | null = null;
+export type { BackendKind } from "../types";
 
-function resolveDevice(): Promise<"webgpu" | "cpu"> {
-  if (!_deviceConfig) {
-    _deviceConfig = (async (): Promise<"webgpu" | "cpu"> => {
-      if (typeof navigator === "undefined" || !("gpu" in navigator)) {
-        configureEnv();
-        return "cpu";
-      }
-      try {
-        const adapter = await (
-          navigator as { gpu: { requestAdapter(): Promise<unknown> } }
-        ).gpu.requestAdapter();
-        if (adapter !== null) {
-          // JSEP WASM path: omit numThreads so onnxruntime-web selects
-          // ort-wasm-simd.jsep.wasm, which registers the WebGPU EP.
-          configureEnvForWebGpu();
-          return "webgpu";
-        }
-      } catch {
-        // adapter probe failed — fall through to cpu
-      }
-      configureEnv();
-      return "cpu";
+/**
+ * Optional navigator-shape parameter used by tests to inject a mock
+ * `navigator.gpu` without touching the global. Production callers pass
+ * nothing and the function reads the real `navigator`.
+ */
+export type NavigatorLike = {
+  gpu?: { requestAdapter(): Promise<unknown> };
+};
+
+// Resolved once: "webgpu" if requestAdapter() returns a non-null adapter,
+// "wasm" otherwise. Cached so all subsequent factory calls share the same
+// backend and env configuration without re-probing.
+let _backendConfig: Promise<BackendKind> | null = null;
+
+/**
+ * Probe the active inference backend. Calls the matching env configurator
+ * (`configureEnvForWebGpu` on success, `configureEnv` otherwise) so the
+ * one-shot env state is consistent with the resolved backend.
+ *
+ * Cached after first call. Tests should call `__resetBackendForTesting()`
+ * in `afterEach` to clear the cache.
+ */
+export function resolveBackend(
+  navigatorRef: NavigatorLike | undefined = typeof navigator !== "undefined"
+    ? (navigator as unknown as NavigatorLike)
+    : undefined,
+): Promise<BackendKind> {
+  if (!_backendConfig) {
+    _backendConfig = (async (): Promise<BackendKind> => {
+      const backend = await resolveBackendInner(navigatorRef);
+      logger.info("semantic-search: backend resolved", { backend });
+      return backend;
     })();
   }
-  return _deviceConfig;
+  return _backendConfig;
+}
+
+async function resolveBackendInner(
+  navigatorRef: NavigatorLike | undefined,
+): Promise<BackendKind> {
+  if (!navigatorRef?.gpu) {
+    configureEnv();
+    return "wasm";
+  }
+  try {
+    const adapter = await navigatorRef.gpu.requestAdapter();
+    if (adapter !== null) {
+      // JSEP WASM path: omit numThreads so onnxruntime-web selects
+      // ort-wasm-simd.jsep.wasm, which registers the WebGPU EP.
+      configureEnvForWebGpu();
+      return "webgpu";
+    }
+  } catch {
+    // adapter probe failed — fall through to wasm
+  }
+  configureEnv();
+  return "wasm";
+}
+
+/** Test-only: reset the cached backend resolution. */
+export function __resetBackendForTesting(): void {
+  _backendConfig = null;
 }
 
 export async function realPipelineFactory(
@@ -259,9 +294,9 @@ export async function realPipelineFactory(
   onProgress?: ProgressCallback,
   opts?: { dtype?: string },
 ): Promise<PipelineFn> {
-  const device = await resolveDevice();
+  const backend = await resolveBackend();
 
-  if (device === "webgpu") {
+  if (backend === "webgpu") {
     // No CPU fallback: a failed WebGPU attempt corrupts onnxruntime-web's
     // internal session state — subsequent cpu calls also get "webgpu backend
     // not found". Let the error propagate so the caller can surface it cleanly.

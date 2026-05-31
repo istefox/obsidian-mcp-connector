@@ -21,6 +21,7 @@
  */
 
 import { logger } from "$/shared/logger";
+import type { EmbeddingProvider } from "../types";
 
 export type ChunkOpts = {
   maxTokens?: number;
@@ -415,4 +416,48 @@ export async function chunk(
   }
 
   return fmChunk ? [fmChunk, ...bodyChunks] : bodyChunks;
+}
+
+/**
+ * Headroom subtracted from `provider.getMaxInputTokens()` so the longest
+ * task-prompt prefix can be prepended at embed time without exceeding
+ * the model's hard cap. Gemma's `"task: search result | query: "` is ≈8
+ * BPE tokens; 16 gives ample slack for prompt variants while keeping
+ * chunks near the model's effective context.
+ */
+const TASK_PROMPT_HEADROOM = 16;
+
+/**
+ * Absolute floor for chunk size. Guards against pathological provider
+ * caps (e.g. a misconfigured small-context model) producing chunks too
+ * tiny for `chunk()`'s `minTokens` heuristic to make sense.
+ */
+const MIN_CHUNK_MAX_TOKENS = 64;
+
+/**
+ * Build a `ChunkerFn` whose token budget tracks the provider's effective
+ * `getMaxInputTokens()` (backend-resolved). The headroom subtraction
+ * accounts for the task-prompt prefix prepended at embed time, so the
+ * rendered prompted text stays within the model's hard cap.
+ */
+export function makeChunkerForProvider(
+  provider: EmbeddingProvider,
+): ChunkerFn {
+  let logged = false;
+  return async (content: string): Promise<Chunk[]> => {
+    const maxInputTokens = await provider.getMaxInputTokens();
+    const maxTokens = Math.max(
+      MIN_CHUNK_MAX_TOKENS,
+      maxInputTokens - TASK_PROMPT_HEADROOM,
+    );
+    if (!logged) {
+      logged = true;
+      logger.info("semantic-search: chunker bound to provider", {
+        providerKey: provider.providerKey,
+        maxInputTokens,
+        chunkMaxTokens: maxTokens,
+      });
+    }
+    return chunk(content, { maxTokens });
+  };
 }

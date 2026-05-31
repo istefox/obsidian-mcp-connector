@@ -10,8 +10,10 @@ export function createEmbeddingGemmaProvider(
     modelId: "onnx-community/embeddinggemma-300m-ONNX",
     providerKey: "embedding-gemma-300m",
     dimensions: 768,
-    // Capped at 512 — onnxruntime-web@1.26.0-dev SafeInt overflow at 2048 (#202)
-    maxInputTokens: 512,
+    // WASM capped at 512 — onnxruntime-web@1.26.0 SafeInt overflow at 2048
+    // (#202, upstream microsoft/onnxruntime#28726). WebGPU EP bypasses the
+    // WASM int math path and unlocks the model's full 2K context.
+    maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
     modelSizeBytes: 190_000_000,
     taskPrompt: (text, role) =>
       role === "query"

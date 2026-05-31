@@ -1,6 +1,17 @@
 import { type } from "arktype";
 
 /**
+ * Active inference runtime. Resolved once per process by
+ * `resolveBackend()` in `services/embedder.ts`.
+ *
+ * - `wasm`: onnxruntime-web CPU EP (non-JSEP WASM). Fallback path for
+ *   hardware without `navigator.gpu` or after a failed adapter probe.
+ * - `webgpu`: onnxruntime-web WebGPU EP via JSEP WASM. Faster, larger
+ *   effective context windows for models that intrinsically support them.
+ */
+export type BackendKind = "wasm" | "webgpu";
+
+/**
  * Embedding layer abstraction. One `EmbeddingProvider` per model;
  * the store registry and indexer are keyed on `providerKey`.
  *
@@ -11,7 +22,18 @@ import { type } from "arktype";
 export interface EmbeddingProvider {
   readonly providerKey: string;
   readonly dimensions: number;
+  /**
+   * Conservative (WASM) cap. Synchronous getter for pre-resolution
+   * callers (settings UI, status displays). Use `getMaxInputTokens()`
+   * for the backend-resolved value.
+   */
   readonly maxInputTokens: number;
+  /**
+   * Resolves the backend-dependent input-token cap. WebGPU providers
+   * may expose a larger context here than `maxInputTokens` advertises.
+   * Cached after the first call.
+   */
+  getMaxInputTokens(): Promise<number>;
   embed(texts: string[], role: "document" | "query"): Promise<Float32Array[]>;
   isAvailable(): Promise<boolean>;
   getModelSizeBytes(): number;

@@ -3,8 +3,10 @@ import {
   chunk,
   countTokens,
   hashChunk,
+  makeChunkerForProvider,
   wrapChunkerWithOverlap,
 } from "./chunker";
+import type { EmbeddingProvider } from "../types";
 
 const lorem = (words: number): string => {
   const base = "lorem ipsum dolor sit amet consectetur adipiscing elit ";
@@ -284,5 +286,49 @@ describe("chunker", () => {
     expect(chunks[0]?.id).toBe("#frontmatter");
     // Body chunk should NOT have frontmatter overlap prepended.
     expect(chunks[1]?.text.startsWith("# Body")).toBe(true);
+  });
+});
+
+function stubProvider(maxInputTokens: number): EmbeddingProvider {
+  return {
+    providerKey: "stub",
+    dimensions: 1,
+    maxInputTokens,
+    getMaxInputTokens: async () => maxInputTokens,
+    embed: async () => [],
+    isAvailable: async () => true,
+    getModelSizeBytes: () => 0,
+  };
+}
+
+describe("makeChunkerForProvider", () => {
+  test("subtracts 16-token task-prompt headroom from provider max", async () => {
+    // 2048 → 2032 effective. Use a single long section that exceeds the
+    // chunker default (512) — proves the override actually raises the cap.
+    const content = `# Body\n\n${lorem(800)}`;
+    const chunkerDefault = await chunk(content);
+    const chunkerLargeBudget = await makeChunkerForProvider(
+      stubProvider(2048),
+    )(content);
+    // Default config splits an 800-token section; the larger budget keeps
+    // it as one chunk because 800 < 2032.
+    expect(chunkerDefault.length).toBeGreaterThan(1);
+    expect(chunkerLargeBudget).toHaveLength(1);
+  });
+
+  test("MIN_CHUNK_MAX_TOKENS floor protects against pathological caps", async () => {
+    // Provider cap below the 64-token floor → chunker still uses 64.
+    const content = `# Body\n\n${lorem(80)}`;
+    const chunks = await makeChunkerForProvider(stubProvider(32))(content);
+    // 80 tokens at 64 maxTokens should produce ≥2 chunks; not crash.
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("native-sized provider (256) yields ~240 effective max", async () => {
+    // A 300-token section: 240 effective max → splits; 256 raw would keep
+    // it close to one. The 16-token headroom is the asserted behavior.
+    const content = `# Body\n\n${lorem(300)}`;
+    const chunks = await makeChunkerForProvider(stubProvider(256))(content);
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
   });
 });

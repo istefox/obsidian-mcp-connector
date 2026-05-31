@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createTransformersProvider } from "./transformersProvider";
 import { createEmbeddingGemmaProvider } from "./embeddingGemmaProvider";
 import { createMultilingualE5Provider } from "./multilingualE5Provider";
 import { createNativeEmbeddingProvider } from "./nativeEmbeddingProvider";
-import type { Embedder } from "./embedder";
+import {
+  __resetBackendForTesting,
+  resolveBackend,
+  type Embedder,
+} from "./embedder";
 
 type MockPipelineFn = (
   input: string | string[],
@@ -48,6 +52,15 @@ function makeMockEmbedder(loaded = true): Embedder {
   };
 }
 
+// Reset the cached backend resolution between tests so the wasm/webgpu
+// dispatch tests below don't bleed cached state into each other.
+beforeEach(() => {
+  __resetBackendForTesting();
+});
+afterEach(() => {
+  __resetBackendForTesting();
+});
+
 describe("TransformersProviderImpl", () => {
   test("applies task prompt before calling pipeline", async () => {
     const { factory, calls } = makeMockFactory(768);
@@ -55,7 +68,7 @@ describe("TransformersProviderImpl", () => {
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 1_000_000,
       taskPrompt: (text, role) => `${role}: ${text}`,
       pipelineFactory: factory,
@@ -74,7 +87,7 @@ describe("TransformersProviderImpl", () => {
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 1_000_000,
       taskPrompt: (t) => t,
       pipelineFactory: factory,
@@ -91,7 +104,7 @@ describe("TransformersProviderImpl", () => {
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 1_000_000,
       taskPrompt: (t) => t,
       pipelineFactory: factory,
@@ -109,7 +122,7 @@ describe("TransformersProviderImpl", () => {
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 42_000_000,
       taskPrompt: (t) => t,
       pipelineFactory: factory,
@@ -129,7 +142,7 @@ describe("TransformersProviderImpl", () => {
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 1_000_000,
       taskPrompt: (t) => t,
       pipelineFactory: factory,
@@ -143,14 +156,84 @@ describe("TransformersProviderImpl", () => {
   });
 });
 
-describe("TransformersProviderImpl — truncation opts", () => {
-  test("passes truncation: true and max_length to pipeline", async () => {
+describe("TransformersProviderImpl — backend-resolved maxInputTokens", () => {
+  test("synchronous maxInputTokens always returns the wasm value", () => {
+    const { factory } = makeMockFactory(768);
+    const provider = createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 768,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
+      modelSizeBytes: 1_000_000,
+      taskPrompt: (t) => t,
+      pipelineFactory: factory,
+    });
+    expect(provider.maxInputTokens).toBe(512);
+  });
+
+  test("getMaxInputTokens returns wasm value when navigator.gpu absent", async () => {
+    const { factory } = makeMockFactory(768);
+    const provider = createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 768,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
+      modelSizeBytes: 1_000_000,
+      taskPrompt: (t) => t,
+      pipelineFactory: factory,
+    });
+    // Pre-resolve the backend with an explicit "no gpu" navigator.
+    expect(await resolveBackend(undefined)).toBe("wasm");
+    expect(await provider.getMaxInputTokens()).toBe(512);
+  });
+
+  test("getMaxInputTokens returns webgpu value when adapter available", async () => {
+    const { factory } = makeMockFactory(768);
+    const provider = createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 768,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
+      modelSizeBytes: 1_000_000,
+      taskPrompt: (t) => t,
+      pipelineFactory: factory,
+    });
+    expect(
+      await resolveBackend({
+        gpu: { requestAdapter: async () => ({}) },
+      }),
+    ).toBe("webgpu");
+    expect(await provider.getMaxInputTokens()).toBe(2048);
+  });
+
+  test("embed forwards backend-resolved max_length to pipeline", async () => {
     const { factory, optsLog } = makeMockFactoryWithOpts(768);
     const provider = createTransformersProvider({
       modelId: "test-model",
       providerKey: "test",
       dimensions: 768,
-      maxInputTokens: 512,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
+      modelSizeBytes: 1_000_000,
+      taskPrompt: (t) => t,
+      pipelineFactory: factory,
+    });
+    // Force webgpu resolution.
+    await resolveBackend({
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    await provider.embed(["hello"], "document");
+    expect(optsLog[0]).toMatchObject({ truncation: true, max_length: 2048 });
+  });
+});
+
+describe("TransformersProviderImpl — truncation opts", () => {
+  test("passes truncation: true and max_length to pipeline (wasm path)", async () => {
+    const { factory, optsLog } = makeMockFactoryWithOpts(768);
+    const provider = createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 768,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
       modelSizeBytes: 1_000_000,
       taskPrompt: (t) => t,
       pipelineFactory: factory,
@@ -162,12 +245,21 @@ describe("TransformersProviderImpl — truncation opts", () => {
 });
 
 describe("EmbeddingGemmaProvider", () => {
-  test("providerKey, dimensions, maxInputTokens", () => {
+  test("providerKey, dimensions, sync maxInputTokens (wasm cap)", () => {
     const { factory } = makeMockFactory(768);
     const provider = createEmbeddingGemmaProvider(factory);
     expect(provider.providerKey).toBe("embedding-gemma-300m");
     expect(provider.dimensions).toBe(768);
     expect(provider.maxInputTokens).toBe(512);
+  });
+
+  test("getMaxInputTokens unlocks 2048 on webgpu", async () => {
+    const { factory } = makeMockFactory(768);
+    const provider = createEmbeddingGemmaProvider(factory);
+    await resolveBackend({
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    expect(await provider.getMaxInputTokens()).toBe(2048);
   });
 
   test("getModelSizeBytes returns 190 MB", () => {
@@ -194,13 +286,23 @@ describe("EmbeddingGemmaProvider", () => {
 });
 
 describe("MultilingualE5Provider", () => {
-  test("providerKey, dimensions, maxInputTokens", () => {
+  test("providerKey, dimensions, sync maxInputTokens", () => {
     const { factory } = makeMockFactory(768);
     const provider = createMultilingualE5Provider(factory);
     expect(provider.providerKey).toBe("multilingual-e5-base");
     expect(provider.dimensions).toBe(768);
     expect(provider.maxInputTokens).toBe(512);
   });
+
+  test("getMaxInputTokens returns 512 on both backends (model intrinsic cap)", async () => {
+    const { factory } = makeMockFactory(768);
+    const provider = createMultilingualE5Provider(factory);
+    await resolveBackend({
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    expect(await provider.getMaxInputTokens()).toBe(512);
+  });
+
 
   test("getModelSizeBytes returns 60 MB", () => {
     const { factory } = makeMockFactory(768);
@@ -231,6 +333,14 @@ describe("NativeEmbeddingProvider", () => {
     expect(provider.providerKey).toBe("native-minilm-l6-v2");
     expect(provider.dimensions).toBe(384);
     expect(provider.maxInputTokens).toBe(256);
+  });
+
+  test("getMaxInputTokens returns 256 regardless of backend", async () => {
+    const provider = createNativeEmbeddingProvider(makeMockEmbedder());
+    await resolveBackend({
+      gpu: { requestAdapter: async () => ({}) },
+    });
+    expect(await provider.getMaxInputTokens()).toBe(256);
   });
 
   test("getModelSizeBytes returns 25 MB", () => {

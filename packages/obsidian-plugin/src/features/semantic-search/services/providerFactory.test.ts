@@ -112,6 +112,7 @@ function fakeEmbeddingProvider(dim: number): EmbeddingProvider {
     providerKey: `fake-${dim}d`,
     dimensions: dim,
     maxInputTokens: 512,
+    getMaxInputTokens: async () => 512,
     embed: async (texts, _role) => texts.map(() => new Float32Array(dim)),
     isAvailable: async () => true,
     getModelSizeBytes: () => 0,

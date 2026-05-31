@@ -65,7 +65,10 @@ export type EmbeddingStoreOpts = {
   vectorDim?: number;
 };
 
-export const FORMAT_VERSION = 3;
+// v4: chunk size now derived from provider.getMaxInputTokens() (WebGPU lets
+// EmbeddingGemma use its full 2K context). Stored hashes from v3 differ from
+// v4 for the same source files, so the index is wiped on upgrade.
+export const FORMAT_VERSION = 4;
 const DEFAULT_VECTOR_DIM = 384;
 
 type IndexRecord = {
