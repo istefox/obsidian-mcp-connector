@@ -221,6 +221,7 @@ export function createEmbedder(opts: EmbedderOpts): Embedder {
 import { pipeline as _hfPipeline } from "@huggingface/transformers";
 import type { BackendKind } from "../types";
 import { configureEnv, configureEnvForWebGpu } from "./onnxEnv";
+import { logger } from "$/shared/logger";
 
 export type { BackendKind } from "../types";
 

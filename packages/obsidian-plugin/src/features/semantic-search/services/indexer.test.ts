@@ -496,6 +496,7 @@ function wrapStoreWithFlushSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     init: () => store.init(),
     size: () => store.size(),
     scan: () => store.scan(),
+    recordsFor: (path) => store.recordsFor(path),
     upsert: (records) => store.upsert(records),
     delete: (path) => store.delete(path),
     close: () => store.close(),
