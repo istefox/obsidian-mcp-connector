@@ -220,7 +220,6 @@ export function createEmbedder(opts: EmbedderOpts): Embedder {
 // and use "cpu". Valid v4.2.0 devices: "coreml" | "webgpu" | "cpu".
 import { pipeline as _hfPipeline } from "@huggingface/transformers";
 import { configureEnv, configureEnvForWebGpu } from "./onnxEnv";
-import { logger } from "$/shared/logger";
 
 // Resolved once: "webgpu" if requestAdapter() returns a non-null adapter,
 // "cpu" otherwise. Cached so all subsequent factory calls share the same

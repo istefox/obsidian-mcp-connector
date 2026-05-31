@@ -22,7 +22,7 @@
  */
 
 import { logger } from "$/shared/logger";
-import type { Chunk, ChunkerFn } from "./chunker";
+import type { ChunkerFn } from "./chunker";
 import { wrapChunkerWithOverlap } from "./chunker";
 import type { EmbeddingRecord, EmbeddingStore } from "./store";
 import type { EmbeddingProvider } from "../types";

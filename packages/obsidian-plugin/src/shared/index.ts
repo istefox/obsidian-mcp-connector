@@ -275,9 +275,4 @@ export const loadDependencies = (plugin: McpToolsPlugin) => {
   );
 };
 
-export const loadDependenciesArray = (plugin: McpToolsPlugin) =>
-  loadDependencies(plugin).pipe(
-    map((deps) => Object.values(deps) as Dependencies[keyof Dependencies][]),
-  );
-
 export * from "./logger";
