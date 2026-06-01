@@ -24,7 +24,7 @@
 		"@types/fs-extra": "^11.0.4",
 		"onnxruntime-web": "1.26.0",
 		"arktype": "^2.0.0-rc.30",
-		"express": "^4.21.2",
+		"express": "^5.0.0",
 		"fs-extra": "^11.2.0",
 		"obsidian-daily-notes-interface": "^0.9.4",
 		"obsidian-local-rest-api": "^2.5.4",

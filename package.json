@@ -30,10 +30,15 @@
   },
   "overrides": {
     "vite": "5.4.11",
-    "onnxruntime-web": "1.26.0"
+    "onnxruntime-web": "1.26.0",
+    "hono": "^4.12.23",
+    "fast-uri": "^3.1.2",
+    "ip-address": "^10.1.1"
   },
   "dependencies": {
-    "caniuse-lite": "^1.0.30001724"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "caniuse-lite": "^1.0.30001724",
+    "hono": "^4.12.23"
   },
   "devDependencies": {
     "prettier": "^3.8.3"
