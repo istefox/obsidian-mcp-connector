@@ -1,9 +1,25 @@
 import { type } from "arktype";
 import type { App, TFile } from "obsidian";
+import { moment } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { Templater, type PromptArgAccessor } from "shared";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
 import { createMutex } from "$/features/command-permissions";
+
+// Runtime shape of the core Templates internal plugin. `app.internalPlugins`
+// is not typed in obsidian.d.ts — same cast pattern as AppWithPlugins above.
+interface AppWithInternalPlugins {
+  internalPlugins?: {
+    plugins?: {
+      templates?: {
+        enabled?: boolean;
+        instance?: {
+          options?: { dateFormat?: string; timeFormat?: string };
+        };
+      };
+    };
+  };
+}
 
 // Serializes the global monkey-patch of `generate_object`: concurrent
 // execute_template calls would otherwise restore each other's patch
@@ -30,7 +46,7 @@ export const executeTemplateSchema = type({
     ),
   },
 }).describe(
-  'Renders a Templater template. If targetPath is given and createFile="true", creates a new note at that path and returns the rendered content. Requires the Templater community plugin: `errorCode: "templater_not_installed"` if absent, `template_not_found` if the template file does not exist in the vault, `template_execution_failed` if Templater throws during rendering (the underlying error is surfaced verbatim).',
+  'Renders a template. If targetPath is given and createFile="true", creates a new note at that path and returns the rendered content. Two-tier template engine: Templater (community plugin) when installed; falls back to the core Templates plugin for basic {{title}}/{{date}}/{{time}} substitution. `errorCode: "templater_not_installed"` when neither engine is available, `template_not_found` if the template file is missing, `template_execution_failed` on a Templater render error, `core_templates_execution_failed` on a core-Templates read error. The `arguments` map is Templater-specific and is ignored (with a warning) on the core-Templates path.',
 );
 
 export type ExecuteTemplateContext = {
@@ -65,8 +81,14 @@ export async function executeTemplateHandler(
   ).plugins.plugins["templater-obsidian"]?.templater;
 
   if (!templater) {
+    // Fallback to core Templates when Templater is absent.
+    const coreTemplates = (ctx.app as unknown as AppWithInternalPlugins)
+      .internalPlugins?.plugins?.templates;
+    if (coreTemplates?.enabled) {
+      return runCoreTemplates(ctx, coreTemplates.instance?.options);
+    }
     return errorPayload(
-      "Templater plugin is not installed or not yet loaded. Install Templater from Obsidian community plugins, restart Obsidian, then retry.",
+      "No template engine found. Install Templater for dynamic templates, or enable the core Templates plugin for basic {{title}}/{{date}}/{{time}} substitution.",
       "templater_not_installed",
       { templatePath: ctx.arguments.templatePath },
     );
@@ -194,6 +216,99 @@ export async function executeTemplateHandler(
       templater.functions_generator.generate_object = oldGenerateObject;
     }
   });
+}
+
+async function runCoreTemplates(
+  ctx: ExecuteTemplateContext,
+  options: { dateFormat?: string; timeFormat?: string } | undefined,
+): Promise<ToolResult> {
+  const {
+    templatePath,
+    targetPath,
+    createFile: createFileArg,
+    arguments: argMap,
+  } = ctx.arguments;
+
+  const templateFile = ctx.app.vault.getAbstractFileByPath(templatePath);
+  if (!templateFile) {
+    return errorPayload(
+      `Template not found: ${templatePath}`,
+      "template_not_found",
+      { templatePath },
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = await ctx.app.vault.read(templateFile as TFile);
+  } catch (err) {
+    return errorPayload(
+      `Core Templates could not read template file: ${err instanceof Error ? err.message : String(err)}`,
+      "core_templates_execution_failed",
+      { templatePath },
+    );
+  }
+
+  // Compute the three substitution values core Templates supports.
+  const dateFormat = options?.dateFormat ?? "YYYY-MM-DD";
+  const timeFormat = options?.timeFormat ?? "HH:mm";
+
+  // {{title}}: targetPath basename without extension when provided, else template basename.
+  const baseName = (p: string) => {
+    const name = p.split("/").pop() ?? p;
+    return name.replace(/\.[^.]+$/, "");
+  };
+  const title = targetPath ? baseName(targetPath) : baseName(templatePath);
+
+  const processed = raw
+    .replace(/\{\{title\}\}/g, title)
+    .replace(/\{\{date\}\}/g, moment().format(dateFormat))
+    .replace(/\{\{time\}\}/g, moment().format(timeFormat));
+
+  const createFile = createFileArg === "true";
+  const hasArgs = argMap && Object.keys(argMap).length > 0;
+  const warning = hasArgs
+    ? "arguments map is ignored by the core Templates engine (Templater-specific)"
+    : undefined;
+
+  if (createFile && targetPath) {
+    await ensureParentFolderExists(ctx.app, targetPath);
+    await ctx.app.vault.create(targetPath, processed);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "Template executed and file created successfully",
+              content: processed,
+              path: targetPath,
+              ...(warning ? { warning } : {}),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            message: "Template executed without creating a file",
+            content: processed,
+            ...(warning ? { warning } : {}),
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  };
 }
 
 function errorPayload(

@@ -3,7 +3,13 @@ import {
   executeTemplateHandler,
   executeTemplateSchema,
 } from "./executeTemplate";
-import { mockApp, mockPlugin, resetMockVault, setMockFile } from "$/test-setup";
+import {
+  mockApp,
+  mockPlugin,
+  resetMockVault,
+  setMockFile,
+  setMockCoreTemplatesState,
+} from "$/test-setup";
 
 beforeEach(() => resetMockVault());
 
@@ -354,5 +360,170 @@ describe("execute_template tool", () => {
       undefined,
     );
     expect((restored as Record<string, unknown>).mcpTools).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Core Templates fallback (issue #228)
+// ---------------------------------------------------------------------------
+
+// Build a plugin where Templater is absent (plugin key missing) but
+// internalPlugins is backed by the mock state seeded via
+// setMockCoreTemplatesState(). The mockApp() already wires the templates slot.
+function mockPluginWithoutTemplater() {
+  const app = mockApp();
+  (
+    app as unknown as {
+      plugins: { plugins: Record<string, unknown> };
+    }
+  ).plugins = { plugins: {} };
+  return mockPlugin({ app } as never);
+}
+
+describe("execute_template — core Templates fallback", () => {
+  test("returns templater_not_installed when both Templater and core Templates are absent", async () => {
+    // core Templates disabled by default (resetMockVault already called it)
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "Templates/foo.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("templater_not_installed");
+    expect(payload.error).toMatch(/no template engine/i);
+  });
+
+  test("renders via core Templates when Templater absent and core Templates enabled", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    setMockFile("Templates/foo.md", "Hello {{title}}");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "Templates/foo.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.content).toContain("Hello");
+    expect(parsed.message).toMatch(/without creating/i);
+  });
+
+  test("creates file via core Templates when createFile='true' and targetPath given", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    setMockFile("Templates/foo.md", "content");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/foo.md",
+        targetPath: "Output/note.md",
+        createFile: "true",
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.message).toMatch(/created successfully/i);
+    expect(parsed.path).toBe("Output/note.md");
+    expect(
+      plugin.app.vault.getAbstractFileByPath("Output/note.md"),
+    ).not.toBeNull();
+  });
+
+  test("{{title}} uses targetPath basename when targetPath provided", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    setMockFile("Templates/foo.md", "# {{title}}");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/foo.md",
+        targetPath: "Notes/My Note.md",
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.content).toBe("# My Note");
+  });
+
+  test("{{title}} uses template basename when no targetPath", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    setMockFile("Templates/weekly-review.md", "# {{title}}");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "Templates/weekly-review.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.content).toBe("# weekly-review");
+  });
+
+  test("{{date}} and {{time}} use formats from core Templates settings", async () => {
+    setMockCoreTemplatesState({
+      enabled: true,
+      dateFormat: "DD/MM/YYYY",
+      timeFormat: "HH:mm:ss",
+    });
+    setMockFile("t.md", "date={{date}} time={{time}}");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "t.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    const parsed = JSON.parse(result.content[0].text);
+    // DD/MM/YYYY → matches \d{2}/\d{2}/\d{4}
+    expect(parsed.content).toMatch(/date=\d{2}\/\d{2}\/\d{4}/);
+    // HH:mm:ss → matches \d{2}:\d{2}:\d{2}
+    expect(parsed.content).toMatch(/time=\d{2}:\d{2}:\d{2}/);
+  });
+
+  test("ignores arguments map and includes warning in response", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    setMockFile("t.md", "{{title}}");
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "t.md",
+        arguments: { name: "ignored" },
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.warning).toMatch(/arguments map is ignored/i);
+  });
+
+  test("returns template_not_found via core Templates path when file missing", async () => {
+    setMockCoreTemplatesState({ enabled: true });
+    const plugin = mockPluginWithoutTemplater();
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "Templates/missing.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("template_not_found");
   });
 });

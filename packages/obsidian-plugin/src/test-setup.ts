@@ -511,6 +511,33 @@ export function resetMockBookmarks(): void {
   _mockBookmarks.items = [];
 }
 
+// === Mock for Obsidian core Templates plugin (issue #228) =================
+// execute_template reads app.internalPlugins.plugins["templates"] when
+// Templater is absent. Tests seed via setMockCoreTemplatesState(...).
+// Default: disabled (matches a vault without the core plugin enabled).
+
+const _mockCoreTemplates = {
+  enabled: false,
+  dateFormat: "YYYY-MM-DD",
+  timeFormat: "HH:mm",
+};
+
+export function setMockCoreTemplatesState(state: {
+  enabled: boolean;
+  dateFormat?: string;
+  timeFormat?: string;
+}): void {
+  _mockCoreTemplates.enabled = state.enabled;
+  _mockCoreTemplates.dateFormat = state.dateFormat ?? "YYYY-MM-DD";
+  _mockCoreTemplates.timeFormat = state.timeFormat ?? "HH:mm";
+}
+
+export function resetMockCoreTemplates(): void {
+  _mockCoreTemplates.enabled = false;
+  _mockCoreTemplates.dateFormat = "YYYY-MM-DD";
+  _mockCoreTemplates.timeFormat = "HH:mm";
+}
+
 // === Phase 2 mock vault state for tool tests ===
 
 type MockVaultState = {
@@ -651,6 +678,7 @@ export function resetMockVault(): void {
   resetMockPeriodicNotes();
   resetMockDataview();
   resetMockBookmarks();
+  resetMockCoreTemplates();
 }
 
 /**
@@ -1236,6 +1264,21 @@ export function mockApp(): App {
         get instance() {
           return _mockBookmarks.enabled
             ? { items: _mockBookmarks.items }
+            : undefined;
+        },
+      },
+      templates: {
+        get enabled() {
+          return _mockCoreTemplates.enabled;
+        },
+        get instance() {
+          return _mockCoreTemplates.enabled
+            ? {
+                options: {
+                  dateFormat: _mockCoreTemplates.dateFormat,
+                  timeFormat: _mockCoreTemplates.timeFormat,
+                },
+              }
             : undefined;
         },
       },
