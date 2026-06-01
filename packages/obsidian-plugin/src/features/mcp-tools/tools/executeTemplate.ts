@@ -30,7 +30,7 @@ export const executeTemplateSchema = type({
     ),
   },
 }).describe(
-  'Renders a Templater template. If targetPath is given and createFile="true", creates a new note at that path and returns the rendered content.',
+  'Renders a Templater template. If targetPath is given and createFile="true", creates a new note at that path and returns the rendered content. Requires the Templater community plugin: `errorCode: "templater_not_installed"` if absent, `template_not_found` if the template file does not exist in the vault, `template_execution_failed` if Templater throws during rendering (the underlying error is surfaced verbatim).',
 );
 
 export type ExecuteTemplateContext = {
@@ -65,15 +65,11 @@ export async function executeTemplateHandler(
   ).plugins.plugins["templater-obsidian"]?.templater;
 
   if (!templater) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Templater plugin is not installed or not yet loaded. Install Templater from Obsidian community plugins, restart Obsidian, then retry.",
-        },
-      ],
-      isError: true,
-    };
+    return errorPayload(
+      "Templater plugin is not installed or not yet loaded. Install Templater from Obsidian community plugins, restart Obsidian, then retry.",
+      "templater_not_installed",
+      { templatePath: ctx.arguments.templatePath },
+    );
   }
 
   // Resolve template file from vault
@@ -81,15 +77,11 @@ export async function executeTemplateHandler(
     ctx.arguments.templatePath,
   );
   if (!templateFile) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Template not found: ${ctx.arguments.templatePath}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorPayload(
+      `Template not found: ${ctx.arguments.templatePath}`,
+      "template_not_found",
+      { templatePath: ctx.arguments.templatePath },
+    );
   }
 
   // createFile coercion — belt-and-suspenders: accept both boolean string "true" and missing
@@ -189,19 +181,36 @@ export async function executeTemplateHandler(
       // <text>`. Returning `isError: true` keeps the message clean and matches
       // the convention used by the other vault tools.
       const message = error instanceof Error ? error.message : String(error);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Template execution failed: ${message}`,
-          },
-        ],
-        isError: true,
-      };
+      return errorPayload(
+        `Template execution failed: ${message}`,
+        "template_execution_failed",
+        {
+          templatePath: ctx.arguments.templatePath,
+        },
+      );
     } finally {
       // Always restore generate_object — even when an error is thrown — to
       // avoid leaking the mcpTools injection into subsequent template runs.
       templater.functions_generator.generate_object = oldGenerateObject;
     }
   });
+}
+
+function errorPayload(
+  message: string,
+  errorCode: string,
+  extras: Record<string, unknown>,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  isError: true;
+} {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
+      },
+    ],
+    isError: true,
+  };
 }

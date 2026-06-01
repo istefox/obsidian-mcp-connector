@@ -95,9 +95,10 @@ describe("execute_template tool", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(
-      /templater|not available|not installed/i,
-    );
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("templater_not_installed");
+    expect(payload.templatePath).toBe("Templates/foo.md");
+    expect(payload.error).toMatch(/templater|not installed/i);
   });
 
   test("returns error when template file not found in vault", async () => {
@@ -112,7 +113,9 @@ describe("execute_template tool", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Templates/missing.md");
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("template_not_found");
+    expect(payload.templatePath).toBe("Templates/missing.md");
   });
 
   test("renders template and returns content without creating a file", async () => {
@@ -336,11 +339,14 @@ describe("execute_template tool", () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Templater internal error");
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("template_execution_failed");
+    expect(payload.error).toContain("Templater internal error");
+    expect(payload.templatePath).toBe("a.md");
     // The handler must NOT wrap the message in `MCP error -<code>:` itself —
     // the registry would then wrap again, producing the double prefix folotp
     // reported.
-    expect(result.content[0].text).not.toMatch(/MCP error -?\d+:.*MCP error/);
+    expect(payload.error).not.toMatch(/MCP error -?\d+:.*MCP error/);
 
     // generate_object must be restored to the non-injecting version
     const restored = await fakeTemplater.functions_generator.generate_object(
