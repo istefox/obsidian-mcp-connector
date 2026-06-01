@@ -140,16 +140,10 @@ jobs:
           tag: ${{ github.ref_name }}
           # styles.css intentionally omitted — Svelte 5 inlines
           # component CSS into main.js, no separate stylesheet is
-          # emitted by this build. The zip is globbed because
-          # ncipollo/release-action errors out on a missing literal
-          # (non-glob) artifact.
-          # Convenience zip restored: it was dropped at 0.4.7 only to
-          # satisfy the store's automated reviewer. The plugin is now
-          # accepted, so that constraint is moot — and dropping the zip
-          # broke release-asset parity with 0.4.0–0.4.6 (issue #124,
-          # BRAT install regression). `bun run release` already emits
-          # it via scripts/zip.ts on every line.
-          artifacts: "packages/obsidian-plugin/releases/obsidian-plugin-*.zip,main.js,manifest.json"
+          # emitted by this build. ZIP excluded: the Obsidian store
+          # reviewer rejects releases that have assets beyond main.js
+          # and manifest.json (GH013 rule violation on 0.12.0).
+          artifacts: "main.js,manifest.json"
           body: |
             ${{ steps.get_release_body.outputs.result }}
 
