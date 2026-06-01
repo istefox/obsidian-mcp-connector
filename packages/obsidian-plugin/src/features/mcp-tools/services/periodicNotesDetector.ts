@@ -85,81 +85,53 @@ export function resolvePeriodicNote(
 
 // ── Period <-> lib function dispatch ─────────────────────────────────────
 //
-// The shipped `obsidian-daily-notes-interface@0.9.4` .d.ts only declares
-// the daily surface (`appHasDailyNotesPluginLoaded`, `createDailyNote`,
-// etc.), but the runtime ships the full per-period set
-// (`appHasWeeklyNotesPluginLoaded`, `createWeeklyNote`, …). Cast the
-// import as a typed bag — same pattern CLAUDE.md prescribes for stale /
-// runtime-only Obsidian APIs (`listTags.ts:30` cast for `getTags`).
-
-interface PeriodicNoteSettings {
-  folder?: string;
-  format?: string;
-  template?: string;
-}
-
-interface PeriodicNotesLibRuntime {
-  appHasDailyNotesPluginLoaded: () => boolean;
-  appHasWeeklyNotesPluginLoaded: () => boolean;
-  appHasMonthlyNotesPluginLoaded: () => boolean;
-  appHasQuarterlyNotesPluginLoaded: () => boolean;
-  appHasYearlyNotesPluginLoaded: () => boolean;
-  getDailyNoteSettings: () => PeriodicNoteSettings;
-  getWeeklyNoteSettings: () => PeriodicNoteSettings;
-  getMonthlyNoteSettings: () => PeriodicNoteSettings;
-  getQuarterlyNoteSettings: () => PeriodicNoteSettings;
-  getYearlyNoteSettings: () => PeriodicNoteSettings;
-  createDailyNote: (date: Moment) => Promise<TFile>;
-  createWeeklyNote: (date: Moment) => Promise<TFile>;
-  createMonthlyNote: (date: Moment) => Promise<TFile>;
-  createQuarterlyNote: (date: Moment) => Promise<TFile>;
-  createYearlyNote: (date: Moment) => Promise<TFile>;
-}
-
-const lib = periodicNotesLib as unknown as PeriodicNotesLibRuntime;
+// Upstream `.d.ts` still only ships the daily surface; the full per-period
+// set is declared via augmentation in `src/types.ts`.
 
 function pluginLoadedFor(period: PeriodType): boolean {
   switch (period) {
     case "daily":
-      return lib.appHasDailyNotesPluginLoaded();
+      return periodicNotesLib.appHasDailyNotesPluginLoaded();
     case "weekly":
-      return lib.appHasWeeklyNotesPluginLoaded();
+      return periodicNotesLib.appHasWeeklyNotesPluginLoaded();
     case "monthly":
-      return lib.appHasMonthlyNotesPluginLoaded();
+      return periodicNotesLib.appHasMonthlyNotesPluginLoaded();
     case "quarterly":
-      return lib.appHasQuarterlyNotesPluginLoaded();
+      return periodicNotesLib.appHasQuarterlyNotesPluginLoaded();
     case "yearly":
-      return lib.appHasYearlyNotesPluginLoaded();
+      return periodicNotesLib.appHasYearlyNotesPluginLoaded();
   }
 }
 
-function settingsFor(period: PeriodType): PeriodicNoteSettings {
+function settingsFor(
+  period: PeriodType,
+): periodicNotesLib.PeriodicNoteSettings {
   switch (period) {
     case "daily":
-      return lib.getDailyNoteSettings();
+      return periodicNotesLib.getDailyNoteSettings();
     case "weekly":
-      return lib.getWeeklyNoteSettings();
+      return periodicNotesLib.getWeeklyNoteSettings();
     case "monthly":
-      return lib.getMonthlyNoteSettings();
+      return periodicNotesLib.getMonthlyNoteSettings();
     case "quarterly":
-      return lib.getQuarterlyNoteSettings();
+      return periodicNotesLib.getQuarterlyNoteSettings();
     case "yearly":
-      return lib.getYearlyNoteSettings();
+      return periodicNotesLib.getYearlyNoteSettings();
   }
 }
 
 function createForPeriod(period: PeriodType, m: Moment): Promise<TFile> {
   switch (period) {
     case "daily":
-      return lib.createDailyNote(m);
+      return periodicNotesLib.createDailyNote(m);
     case "weekly":
-      return lib.createWeeklyNote(m);
+      return periodicNotesLib.createWeeklyNote(m);
     case "monthly":
-      return lib.createMonthlyNote(m);
+      return periodicNotesLib.createMonthlyNote(m);
     case "quarterly":
-      return lib.createQuarterlyNote(m);
+      return periodicNotesLib.createQuarterlyNote(m);
     case "yearly":
-      return lib.createYearlyNote(m);
+      return periodicNotesLib.createYearlyNote(m);
   }
 }
 
@@ -255,7 +227,7 @@ function defaultIsoForPeriod(period: PeriodType): string {
 function computePath(
   period: PeriodType,
   m: Moment,
-  settings: PeriodicNoteSettings | null,
+  settings: periodicNotesLib.PeriodicNoteSettings | null,
 ): string {
   const format = settings?.format ?? DEFAULT_FORMAT_BY_PERIOD[period];
   // Trim leading/trailing slashes so a settings folder of `Daily/` or
