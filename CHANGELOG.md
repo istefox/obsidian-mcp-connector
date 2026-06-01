@@ -5,14 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
-### Security
+## [0.13.0] — 2026-06-01
 
-- **Removed `obsidian-local-rest-api` dependency, eliminating all associated CVEs** (`node-forge` GHSA-554w-wpv2-vw27 / GHSA-5gfm-wpxj-wjgq / GHSA-65ch-62r8-g69g / GHSA-2328-f5f3-gj25 / GHSA-q67f-28xg-22rw / GHSA-5m6q-g25r-mvwx / GHSA-ppp5-5v6c-4jwp, `uuid` GHSA-w5hq-g745-h8pq, `on-headers` GHSA-76c9-3jph-rj3q, `minimatch` multiple ranges).
+### Added
+
+- **`execute_template` falls back to the core Templates plugin when Templater is absent.** Vaults that use Obsidian's built-in Templates plugin instead of the Templater community plugin now get `{{title}}`, `{{date}}`, and `{{time}}` substitution out of the box, using the formats configured in Templates settings. The `arguments` map is Templater-specific and is ignored on this path (a `warning` field is included in the response). When neither engine is available the error reads "No template engine found." (PR #233)
 
 ### Changed
 
-- **`search_vault` is now fully in-process.** The DQL path delegates to the Dataview plugin API directly (`app.plugins.plugins.dataview.api.query`) — same engine as `execute_dataview_query`. The JsonLogic path iterates the vault via `MetadataCache` with `json-logic-js`. No Local REST API plugin required. **Breaking:** the DQL response format changes from the Local REST API envelope to the native Dataview result shape (`{type, headers, values}` for TABLE, etc.).
+- **`execute_template` now returns structured JSON error codes** matching the pattern used by `execute_dataview_query`. MCP clients and LLM agents can branch on `errorCode` without parsing text: `templater_not_installed`, `template_not_found`, `template_execution_failed`, `core_templates_execution_failed`. (PR #232)
+- **`search_vault` is now fully in-process.** The DQL path delegates to the Dataview plugin API directly (`app.plugins.plugins.dataview.api.query`) — same engine as `execute_dataview_query`. The JsonLogic path iterates the vault via `MetadataCache` with `json-logic-js`. No Local REST API plugin required. **Breaking:** the DQL response format changes from the Local REST API envelope to the native Dataview result shape (`{type, headers, values}` for TABLE, etc.). (PR #227)
 - **Removed 0.3.x binary compat shim** (`POST /templates/execute` route). Users still on the pre-0.4.0 standalone binary should upgrade to the current plugin version.
+
+### Security
+
+- **Removed `obsidian-local-rest-api` dependency, eliminating all associated CVEs** (`node-forge` GHSA-554w-wpv2-vw27 / GHSA-5gfm-wpxj-wjgq / GHSA-65ch-62r8-g69g / GHSA-2328-f5f3-gj25 / GHSA-q67f-28xg-22rw / GHSA-5m6q-g25r-mvwx / GHSA-ppp5-5v6c-4jwp, `uuid` GHSA-w5hq-g745-h8pq, `on-headers` GHSA-76c9-3jph-rj3q, `minimatch` multiple ranges). (PR #227)
+
+### Fixed
+
+- **Cleaned up stale `obsidian-daily-notes-interface` type declarations.** Added a `declare module` augmentation in `src/types.ts` for the weekly, monthly, quarterly, and yearly functions that the library exports at runtime but omits from its `.d.ts`. Removed the local `PeriodicNotesLibRuntime` cast from `periodicNotesDetector.ts`. (PR #231)
 
 ## [0.12.0] — 2026-05-31
 
