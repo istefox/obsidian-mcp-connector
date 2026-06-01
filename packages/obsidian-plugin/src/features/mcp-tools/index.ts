@@ -299,7 +299,6 @@ export async function registerTools(
     searchVaultHandler({
       arguments: args,
       app: ctx.app,
-      plugin: ctx.plugin,
     }),
   );
   registry.register(searchVaultSimpleSchema, async ({ arguments: args }) =>

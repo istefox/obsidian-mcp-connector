@@ -26,8 +26,8 @@
 		"arktype": "^2.0.0-rc.30",
 		"express": "^5.0.0",
 		"fs-extra": "^11.2.0",
+		"json-logic-js": "^2.0.5",
 		"obsidian-daily-notes-interface": "^0.9.4",
-		"obsidian-local-rest-api": "^2.5.4",
 		"radash": "^12.1.0",
 		"rxjs": "^7.8.1",
 		"semver": "^7.6.3",
@@ -37,6 +37,7 @@
 		"turndown": "^7.2.0"
 	},
 	"devDependencies": {
+		"@types/json-logic-js": "^2.0.8",
 		"@types/node": "^16.11.6",
 		"@types/semver": "^7.5.8",
 		"@types/turndown": "^5.0.5",

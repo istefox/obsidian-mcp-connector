@@ -12,7 +12,7 @@ export const executeDataviewQuerySchema = type({
     ),
   },
 }).describe(
-  'Run a Dataview DQL query against the vault and return the native typed result. In-process via the Dataview plugin API (`app.plugins.plugins.dataview.api.query`) — no Local REST API required. Returns the typed shape per query type: TABLE → `{type:"table", headers, values}`, LIST → `{type:"list", values}`, TASK → `{type:"task", values}`, CALENDAR → `{type:"calendar", values}`. Requires the Dataview community plugin: `errorCode: "dataview_not_installed"` if absent, `dataview_not_ready` if loaded but the index has not finished building (retry shortly — Dataview fires `dataview:index-ready` when done), `dataview_query_failed` if the DQL itself is rejected (the underlying error is surfaced verbatim). Coexists with `search_vault` (which keeps its LRA-coupled DQL + JsonLogic path) — prefer this tool for new DQL workflows.',
+  'Run a Dataview DQL query against the vault and return the native typed result. In-process via the Dataview plugin API (`app.plugins.plugins.dataview.api.query`) — no Local REST API required. Returns the typed shape per query type: TABLE → `{type:"table", headers, values}`, LIST → `{type:"list", values}`, TASK → `{type:"task", values}`, CALENDAR → `{type:"calendar", values}`. Requires the Dataview community plugin: `errorCode: "dataview_not_installed"` if absent, `dataview_not_ready` if loaded but the index has not finished building (retry shortly — Dataview fires `dataview:index-ready` when done), `dataview_query_failed` if the DQL itself is rejected (the underlying error is surfaced verbatim).',
 );
 
 export type ExecuteDataviewQueryContext = {

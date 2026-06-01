@@ -17,7 +17,6 @@ import {
   teardown as mcpTransportTeardown,
   type McpTransportState,
 } from "./features/mcp-transport";
-import { registerTemplatesCompatRoute } from "./features/mcp-tools/services/templatesCompat";
 import { setupMigration } from "./features/migration";
 import {
   setup as promptsSetup,
@@ -59,11 +58,7 @@ import {
 } from "./features/semantic-search/services/indexer";
 import { makeChunkerForProvider } from "./features/semantic-search/services/chunker";
 import type { ExcerptResolver } from "./features/semantic-search/services/nativeProvider";
-import {
-  loadLocalRestAPI,
-  loadSmartSearchAPI,
-  type Dependencies,
-} from "./shared";
+import { loadSmartSearchAPI } from "./shared";
 import { logger } from "./shared/logger";
 
 // Soft-rate counter for the in-process permission-check path. The
@@ -74,13 +69,6 @@ const _inProcessRateCounter = createRuntimeRateCounter();
 const IN_PROCESS_MODAL_TIMEOUT_MS = 30_000;
 
 export default class McpToolsPlugin extends Plugin {
-  localRestApi: Dependencies["obsidian-local-rest-api"] = {
-    id: "obsidian-local-rest-api",
-    name: "Local REST API",
-    required: true,
-    installed: false,
-  };
-
   mcpTransportState?: McpTransportState;
 
   promptsState?: PromptsFeatureState;
@@ -97,39 +85,6 @@ export default class McpToolsPlugin extends Plugin {
    * Connections is not installed (#99).
    */
   smartSearch?: SmartConnections.SmartSearch;
-
-  getLocalRestApiKey(): string | undefined {
-    return this.localRestApi.plugin?.settings?.apiKey;
-  }
-
-  /**
-   * Resolve the Local REST API base URL from the LRA plugin's settings.
-   *
-   * LRA exposes `bindingHost` (default `127.0.0.1`) and `port` (default
-   * `27124` for HTTPS). Reading from the live settings means a user who
-   * runs LRA on a non-default port — common when 27124 is taken by
-   * another service — gets a working `search_vault` instead of a hard
-   * connection error against the previously hardcoded URL.
-   *
-   * Protocol is fixed to HTTPS: LRA serves HTTPS on `port` by default
-   * and HTTP on `port - 1` only when `enableInsecureServer` is opted
-   * in. Supporting that branch is out of scope here; the historical
-   * pin to HTTPS preserves the previous default behavior.
-   *
-   * Falls back to `https://127.0.0.1:27124` when the LRA plugin is
-   * loaded but its settings aren't readable yet — unusual in practice
-   * (the plugin polls until LRA is ready before this can be called)
-   * but cheap to handle so the tool returns a sensible URL rather
-   * than `undefined`.
-   */
-  getLocalRestApiUrl(): string {
-    const settings = this.localRestApi.plugin?.settings as
-      | { port?: number; bindingHost?: string }
-      | undefined;
-    const host = settings?.bindingHost ?? "127.0.0.1";
-    const port = settings?.port ?? 27124;
-    return `https://${host}:${port}`;
-  }
 
   /**
    * In-process permission check for the `execute_obsidian_command`
@@ -624,9 +579,7 @@ export default class McpToolsPlugin extends Plugin {
             state.dlcIndexers?.set(providerKey, dlcIndexer);
           }
 
-          const work = existing
-            ? dlcIndexer.rebuildAll()
-            : dlcIndexer.start();
+          const work = existing ? dlcIndexer.rebuildAll() : dlcIndexer.start();
 
           work
             .then(async () => {
@@ -771,44 +724,6 @@ export default class McpToolsPlugin extends Plugin {
       });
     }
 
-    // Local REST API: optional in 0.4.0.
-    //
-    // In 0.3.x the binary mcp-server called back into the plugin via
-    // three LRA-mounted endpoints (/search/smart, /templates/execute,
-    // /mcp-tools/command-permission/). In 0.4.0 the MCP server runs
-    // in-process and calls Obsidian APIs directly — most of those
-    // endpoints are dead. One exception: `/templates/execute` is
-    // re-registered as a thin compat shim onto the in-process
-    // `executeTemplateHandler`, because users who upgrade silently can
-    // keep a residual custom-id MCP server entry in their Claude
-    // Desktop config that still spawns the 0.3.x binary, and that
-    // binary's only path to render a template is the LRA route. See
-    // `features/mcp-tools/services/templatesCompat.ts` and issue #73.
-    //
-    // The single LRA consumer that survives directly is the
-    // `search_vault` tool (DQL / JsonLogic via Dataview), which uses
-    // LRA's `/search/` endpoint with an apiKey. If LRA is not
-    // installed, that tool returns an actionable error to the MCP
-    // client; the rest of the 19 tools work without LRA. Hence: load
-    // best-effort, log debug, never show a "required" Notice.
-    lastValueFrom(loadLocalRestAPI(this))
-      .then((localRestApi) => {
-        this.localRestApi = localRestApi;
-        if (this.localRestApi.api) {
-          logger.info("Local REST API detected — `search_vault` is available");
-          registerTemplatesCompatRoute(this);
-        } else {
-          logger.debug(
-            "Local REST API not installed — `search_vault` will return an actionable error if invoked; the other 19 tools are unaffected",
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        logger.debug("Local REST API load skipped", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-
     // Smart Connections: resolve the search API best-effort and bind
     // it onto the plugin instance. The SmartConnectionsProvider and
     // the provider factory read `this.smartSearch` to decide readiness
@@ -853,6 +768,5 @@ export default class McpToolsPlugin extends Plugin {
       await semanticSearchTeardown(this.semanticSearchState);
       this.semanticSearchState = undefined;
     }
-    this.localRestApi.api?.unregister();
   }
 }

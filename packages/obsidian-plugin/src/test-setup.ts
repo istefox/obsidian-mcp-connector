@@ -1299,11 +1299,6 @@ export function mockPlugin(
     manifest: { version: "0.4.0-alpha.2", id: "mcp-tools-istefox" },
     loadData: async () => ({}),
     saveData: async (_data: unknown) => undefined,
-    // Default to the historical hardcoded URL so pre-existing tests
-    // that don't override it keep matching `setMockRequestUrl(...)`
-    // entries keyed at `https://127.0.0.1:27124/...`. Tests for
-    // non-default LRA ports must override `getLocalRestApiUrl`.
-    getLocalRestApiUrl: () => "https://127.0.0.1:27124",
     ...overrides,
   };
   return plugin as unknown as McpToolsPlugin;

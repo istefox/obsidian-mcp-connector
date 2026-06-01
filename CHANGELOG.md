@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Security
+
+- **Removed `obsidian-local-rest-api` dependency, eliminating all associated CVEs** (`node-forge` GHSA-554w-wpv2-vw27 / GHSA-5gfm-wpxj-wjgq / GHSA-65ch-62r8-g69g / GHSA-2328-f5f3-gj25 / GHSA-q67f-28xg-22rw / GHSA-5m6q-g25r-mvwx / GHSA-ppp5-5v6c-4jwp, `uuid` GHSA-w5hq-g745-h8pq, `on-headers` GHSA-76c9-3jph-rj3q, `minimatch` multiple ranges).
+
+### Changed
+
+- **`search_vault` is now fully in-process.** The DQL path delegates to the Dataview plugin API directly (`app.plugins.plugins.dataview.api.query`) — same engine as `execute_dataview_query`. The JsonLogic path iterates the vault via `MetadataCache` with `json-logic-js`. No Local REST API plugin required. **Breaking:** the DQL response format changes from the Local REST API envelope to the native Dataview result shape (`{type, headers, values}` for TABLE, etc.).
+- **Removed 0.3.x binary compat shim** (`POST /templates/execute` route). Users still on the pre-0.4.0 standalone binary should upgrade to the current plugin version.
+
 ## [0.12.0] — 2026-05-31
 
 ### Added

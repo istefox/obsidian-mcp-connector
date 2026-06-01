@@ -1,5 +1,4 @@
 import type { App, Plugin } from "obsidian";
-import { getAPI, LocalRestApiPublicApi } from "obsidian-local-rest-api";
 import {
   distinct,
   interval,
@@ -23,11 +22,6 @@ declare module "obsidian" {
   interface App {
     plugins: {
       plugins: {
-        ["obsidian-local-rest-api"]?: {
-          settings?: {
-            apiKey?: string;
-          };
-        };
         ["smart-connections"]?: {
           env?: SmartConnections.SmartSearch;
         } & Plugin;
@@ -50,10 +44,6 @@ export interface Dependency<ID extends keyof App["plugins"]["plugins"], API> {
 }
 
 export interface Dependencies {
-  "obsidian-local-rest-api": Dependency<
-    "obsidian-local-rest-api",
-    LocalRestApiPublicApi
-  >;
   "smart-connections": Dependency<
     "smart-connections",
     SmartConnections.SmartSearch
@@ -198,24 +188,6 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
     distinct(({ installed }) => installed),
   );
 
-export const loadLocalRestAPI = (plugin: McpToolsPlugin) =>
-  interval(200).pipe(
-    takeUntil(timer(5000)),
-    map((): Dependencies["obsidian-local-rest-api"] => {
-      const api = getAPI(plugin.app, plugin.manifest);
-      return {
-        id: "obsidian-local-rest-api",
-        name: "Local REST API",
-        required: true,
-        installed: !!api,
-        api,
-        plugin: plugin.app.plugins.plugins["obsidian-local-rest-api"],
-      };
-    }),
-    takeWhile((dependency) => !dependency.installed, true),
-    distinct(({ installed }) => installed),
-  );
-
 export const loadTemplaterAPI = (plugin: McpToolsPlugin) =>
   interval(200).pipe(
     takeUntil(timer(5000)),
@@ -236,13 +208,6 @@ export const loadTemplaterAPI = (plugin: McpToolsPlugin) =>
 
 export const loadDependencies = (plugin: McpToolsPlugin) => {
   const dependencies: Dependencies = {
-    "obsidian-local-rest-api": {
-      id: "obsidian-local-rest-api",
-      name: "Local REST API",
-      required: true,
-      installed: false,
-      url: "https://github.com/coddingtonbear/obsidian-local-rest-api",
-    },
     "smart-connections": {
       id: "smart-connections",
       name: "Smart Connections",
@@ -258,11 +223,7 @@ export const loadDependencies = (plugin: McpToolsPlugin) => {
       url: "https://silentvoid13.github.io/Templater/",
     },
   };
-  return merge(
-    loadLocalRestAPI(plugin),
-    loadTemplaterAPI(plugin),
-    loadSmartSearchAPI(plugin),
-  ).pipe(
+  return merge(loadTemplaterAPI(plugin), loadSmartSearchAPI(plugin)).pipe(
     scan((acc, dependency) => {
       // @ts-expect-error Dynamic key assignment
       acc[dependency.id] = {
