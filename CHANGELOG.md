@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-06-03
+
+### Fixed
+
+- **`search_vault_smart` excerpt quality improved.** The `excerpt` field no longer duplicates the `heading` (which is already a separate result key). Maximum length raised from 200 to 500 characters. Truncation now breaks at a word boundary and appends `...` instead of cutting mid-character. (PR #236, proposed by @folotp)
+
 ## [0.13.0] — 2026-06-01
 
 ### Added
