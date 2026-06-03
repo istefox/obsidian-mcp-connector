@@ -148,7 +148,7 @@ describe("SmartConnectionsProvider", () => {
     expect(results[0]).toEqual({
       filePath: "Zettelkasten/idea.md",
       heading: "Zettelkasten > idea",
-      excerpt: "Zettelkasten > idea: Body content of the idea note.",
+      excerpt: "Body content of the idea note.",
       score: 0.95,
     });
 
@@ -158,7 +158,7 @@ describe("SmartConnectionsProvider", () => {
     expect(results[1]?.score).toBe(0.42);
   });
 
-  test("excerpt is bounded to 200 chars (with heading prefix counted)", async () => {
+  test("excerpt is bounded to 500 chars", async () => {
     const longBody = "x".repeat(500);
     const fakeSC: FakeSmartSearch = {
       search: async () => [
@@ -184,9 +184,9 @@ describe("SmartConnectionsProvider", () => {
     const results = await provider.search("q", {});
 
     for (const r of results) {
-      expect(r.excerpt.length).toBeLessThanOrEqual(200);
+      expect(r.excerpt.length).toBeLessThanOrEqual(500);
     }
-    expect(results[0]?.excerpt.startsWith("Long: ")).toBe(true);
+    expect(results[0]?.excerpt.startsWith("Long: ")).toBe(false);
   });
 
   test("empty body without heading falls back to (no preview)", async () => {
