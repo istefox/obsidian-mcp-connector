@@ -30,7 +30,7 @@ import type {
 } from "$/features/semantic-search";
 
 const DEFAULT_LIMIT = 10;
-const EXCERPT_MAX_LENGTH = 200;
+const EXCERPT_MAX_LENGTH = 500;
 
 export type ExcerptResolver = (
   filePath: string,
@@ -92,26 +92,10 @@ class NativeProviderImpl implements SemanticSearchProvider {
           EXCERPT_MAX_LENGTH,
         );
       } catch {
-        // Failure to read the file should not fail the whole search;
-        // the excerpt degrades to heading-only.
         body = "";
       }
     }
-
-    if (record.heading) {
-      const prefix = `${record.heading}: `;
-      const remaining = Math.max(0, EXCERPT_MAX_LENGTH - prefix.length);
-      const tail = body.slice(0, remaining);
-      const out = prefix + tail;
-      return out.length > EXCERPT_MAX_LENGTH
-        ? out.slice(0, EXCERPT_MAX_LENGTH)
-        : out;
-    }
-
-    if (body.length === 0) return "(no preview)";
-    return body.length > EXCERPT_MAX_LENGTH
-      ? body.slice(0, EXCERPT_MAX_LENGTH)
-      : body;
+    return truncateExcerpt(body);
   }
 }
 
@@ -161,6 +145,15 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
+}
+
+function truncateExcerpt(body: string): string {
+  if (body.length === 0) return "(no preview)";
+  if (body.length <= EXCERPT_MAX_LENGTH) return body;
+  const cut = body.lastIndexOf(" ", EXCERPT_MAX_LENGTH);
+  return (
+    (cut > 0 ? body.slice(0, cut) : body.slice(0, EXCERPT_MAX_LENGTH)) + "..."
+  );
 }
 
 export function createNativeProvider(

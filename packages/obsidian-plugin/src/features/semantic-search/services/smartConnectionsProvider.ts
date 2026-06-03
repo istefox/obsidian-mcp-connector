@@ -27,7 +27,7 @@ import type {
   SemanticSearchProvider,
 } from "$/features/semantic-search";
 
-const EXCERPT_MAX_LENGTH = 200;
+const EXCERPT_MAX_LENGTH = 500;
 
 /**
  * Pure helper: convert the user-facing `SearchOpts` shape into the
@@ -105,7 +105,7 @@ class SmartConnectionsProviderImpl implements SemanticSearchProvider {
         return {
           filePath: r.item.path,
           heading,
-          excerpt: makeExcerpt(heading, body),
+          excerpt: makeExcerpt(body),
           score: r.score,
         };
       }),
@@ -113,20 +113,13 @@ class SmartConnectionsProviderImpl implements SemanticSearchProvider {
   }
 }
 
-function makeExcerpt(heading: string | null, body: string): string {
-  if (heading) {
-    const prefix = `${heading}: `;
-    const remaining = Math.max(0, EXCERPT_MAX_LENGTH - prefix.length);
-    const tail = body.slice(0, remaining);
-    const out = prefix + tail;
-    return out.length > EXCERPT_MAX_LENGTH
-      ? out.slice(0, EXCERPT_MAX_LENGTH)
-      : out;
-  }
+function makeExcerpt(body: string): string {
   if (body.length === 0) return "(no preview)";
-  return body.length > EXCERPT_MAX_LENGTH
-    ? body.slice(0, EXCERPT_MAX_LENGTH)
-    : body;
+  if (body.length <= EXCERPT_MAX_LENGTH) return body;
+  const cut = body.lastIndexOf(" ", EXCERPT_MAX_LENGTH);
+  return (
+    (cut > 0 ? body.slice(0, cut) : body.slice(0, EXCERPT_MAX_LENGTH)) + "..."
+  );
 }
 
 export function createSmartConnectionsProvider(

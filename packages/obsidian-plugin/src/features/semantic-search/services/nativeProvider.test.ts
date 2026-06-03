@@ -188,7 +188,7 @@ describe("native provider", () => {
     expect(out.map((r) => r.filePath)).toEqual(["1.md", "2.md"]);
   });
 
-  test("excerpt is bounded to 200 chars", async () => {
+  test("excerpt is bounded to 500 chars", async () => {
     const longBody = "x".repeat(1000);
     const store = await makeStore([
       rec({
@@ -211,8 +211,8 @@ describe("native provider", () => {
 
     const out = await provider.search("q", {});
     expect(out).toHaveLength(1);
-    expect(out[0]!.excerpt.length).toBeLessThanOrEqual(200);
-    expect(out[0]!.excerpt.startsWith("H: ")).toBe(true);
+    expect(out[0]!.excerpt.length).toBeLessThanOrEqual(500);
+    expect(out[0]!.excerpt.startsWith("H: ")).toBe(false);
   });
 
   test("excerpt without resolver falls back to heading + sentinel or sentinel only", async () => {
@@ -235,7 +235,7 @@ describe("native provider", () => {
 
     const out = await provider.search("q", { limit: 2 });
     const byPath = Object.fromEntries(out.map((r) => [r.filePath, r]));
-    expect(byPath["h.md"]?.excerpt.startsWith("Heading: ")).toBe(true);
+    expect(byPath["h.md"]?.excerpt).toBe("(no preview)");
     expect(byPath["n.md"]?.excerpt).toBe("(no preview)");
   });
 
@@ -272,8 +272,6 @@ describe("native provider", () => {
 
     const out = await provider.search("q", {});
     expect(out).toHaveLength(1);
-    // Falls back to heading-only excerpt (with empty body) — does
-    // not throw.
-    expect(out[0]!.excerpt.startsWith("H: ")).toBe(true);
+    expect(out[0]!.excerpt).toBe("(no preview)");
   });
 });
