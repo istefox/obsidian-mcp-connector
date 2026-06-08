@@ -1,6 +1,5 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync } from "fs";
 import os from "os";
 
 /**
@@ -103,7 +102,8 @@ function defaultNodePaths(): string[] {
  *   forceRefresh: bypass the cache. Used by the "Verify again" button.
  *   runner: override the exec runner. Tests use this.
  *   candidatePaths: override the path scan. Tests use this.
- *   pathExists: override the fs probe. Tests use this.
+ *   pathExists: optional pre-filter; if absent, every candidate is tried
+ *               and ENOENT is absorbed by the catch. Tests use this.
  */
 export async function detectNode(opts?: {
   forceRefresh?: boolean;
@@ -114,7 +114,7 @@ export async function detectNode(opts?: {
   if (!opts?.forceRefresh && cached !== null) return cached;
   const runner = opts?.runner ?? defaultRunner;
   const candidates = opts?.candidatePaths ?? defaultNodePaths();
-  const probe = opts?.pathExists ?? existsSync;
+  const probe = opts?.pathExists;
 
   // 1. Try PATH-based lookup first — fastest on systems where it works.
   let lastError: string | null = null;
@@ -134,7 +134,7 @@ export async function detectNode(opts?: {
   // 2. Fallback: scan canonical absolute paths. Avoids the launchctl
   // PATH gotcha on macOS Obsidian.
   for (const candidate of candidates) {
-    if (!probe(candidate)) continue;
+    if (probe && !probe(candidate)) continue;
     try {
       // No-shell invocation: the absolute path is argv[0], not embedded
       // in a shell string, so spaces/metacharacters cannot break out.
@@ -248,7 +248,7 @@ export async function detectBrew(opts?: {
   if (!opts?.forceRefresh && cachedBrew !== null) return cachedBrew;
   const runner = opts?.runner ?? defaultRunner;
   const candidates = opts?.candidatePaths ?? defaultBrewPaths();
-  const probe = opts?.pathExists ?? existsSync;
+  const probe = opts?.pathExists;
 
   const tryParse = (stdout: string): BrewDetectResult => {
     const m = /Homebrew\s+(\d+\.\d+\.\d+)/.exec(stdout);
@@ -269,7 +269,7 @@ export async function detectBrew(opts?: {
 
   // 2. Canonical paths.
   for (const candidate of candidates) {
-    if (!probe(candidate)) continue;
+    if (probe && !probe(candidate)) continue;
     try {
       const { stdout } = await runner(candidate, ["--version"]);
       cachedBrew = tryParse(stdout);

@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-06-08
+
+### Fixed
+
+- **Removed `fs` module import from node detection.** `existsSync` was used as a path pre-filter before spawning candidate binaries. The spawning loops already handle `ENOENT` via a catch block, so the check was redundant. Dropping the import eliminates the Direct Filesystem Access warning in the Obsidian plugin store scanner. The `pathExists` option in `detectNode`/`detectBrew` is kept for test injection. (commit a53d107)
+
 ## [0.14.0] — 2026-06-08
 
 ### Added
