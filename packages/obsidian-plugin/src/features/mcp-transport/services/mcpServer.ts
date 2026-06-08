@@ -16,6 +16,19 @@ import { PromptRegistryClass } from "./promptRegistry";
 import type { PromptRegistry } from "./promptRegistry";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
+import {
+  applyAdaptiveFilter,
+  ToolLoadingManager,
+  META_TOOLS,
+} from "$/features/adaptive-tool-loading";
+import {
+  toolCatalogSchema,
+  toolCatalogHandler,
+} from "$/features/mcp-tools/tools/toolCatalog";
+import {
+  activateToolSchema,
+  activateToolHandler,
+} from "$/features/mcp-tools/tools/activateTool";
 
 export type McpServiceConfig = {
   app: App;
@@ -54,6 +67,7 @@ export type McpService = {
 export async function createMcpService(
   config: McpServiceConfig,
 ): Promise<McpService> {
+  const toolLoadingManager = new ToolLoadingManager();
   const registry = new ToolRegistryClass();
   const promptRegistry = new PromptRegistryClass();
   await registerTools(registry, {
@@ -61,6 +75,25 @@ export async function createMcpService(
     plugin: config.plugin,
     pluginVersion: config.pluginVersion,
   });
+
+  // Register adaptive-loading meta-tools. These need access to the
+  // registry itself (for listing/status) and are always active regardless
+  // of profile, so they are registered here rather than in registerTools.
+  registry.register(toolCatalogSchema, () =>
+    toolCatalogHandler({ registry, plugin: config.plugin }),
+  );
+  registry.register(activateToolSchema, async (request, { server }) =>
+    activateToolHandler({
+      arguments: (request as { arguments: { name: string } }).arguments,
+      registry,
+      plugin: config.plugin,
+      server,
+    }),
+  );
+
+  // Apply the adaptive profile filter (All/Core/Adaptive).
+  // Runs before toolToggle so the user-controlled disable list still wins.
+  await applyAdaptiveFilter(registry, config.plugin);
 
   // Apply the user's `toolToggle.disabled` filter.
   // Disabled tools stay registered but are flipped off the registry's
@@ -83,7 +116,9 @@ export async function createMcpService(
           // tools/call request handler registration. Without this the
           // SDK throws "Server does not support tools" at
           // setRequestHandler time.
-          tools: {},
+          // listChanged: true signals support for notifications/tools/list_changed
+          // (MCP spec 2025-06-18), emitted by activate_tool.
+          tools: { listChanged: true },
           prompts: {},
         },
       },
@@ -93,9 +128,16 @@ export async function createMcpService(
     // Server so tools/list and tools/call go through our boolean
     // coercion + error formatting + disableByName support.
     server.server.setRequestHandler(ListToolsRequestSchema, registry.list);
-    server.server.setRequestHandler(CallToolRequestSchema, async (request) =>
-      registry.dispatch(request.params, { server }),
-    );
+    server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const result = await registry.dispatch(request.params, { server });
+      // Record the call for frequency-based promotion (meta-tools are excluded).
+      if (!(META_TOOLS as string[]).includes(request.params.name)) {
+        toolLoadingManager
+          .recordCall(request.params.name, config.plugin)
+          .catch(() => {});
+      }
+      return result;
+    });
     server.server.setRequestHandler(
       ListPromptsRequestSchema,
       promptRegistry.list,

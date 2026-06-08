@@ -106,6 +106,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         .map((t) => t.name)
         .sort();
       expect(names).toEqual([
+        "activate_tool",
         "append_to_active_file",
         "append_to_periodic_note",
         "append_to_vault_file",
@@ -148,9 +149,10 @@ describe("end-to-end: HTTP → McpServer", () => {
         "search_vault_smart",
         "set_note_property",
         "show_file_in_obsidian",
+        "tool_catalog",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(43);
+      expect(names).toHaveLength(45);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }

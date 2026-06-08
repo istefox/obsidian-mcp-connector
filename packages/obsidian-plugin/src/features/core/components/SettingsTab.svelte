@@ -1,6 +1,7 @@
 <script lang="ts">
   import { FeatureSettings as CommandPermissionsSettings } from "src/features/command-permissions";
   import { FeatureSettings as SemanticSearchSettings } from "src/features/semantic-search";
+  import { FeatureSettings as AdaptiveToolLoadingSettings } from "src/features/adaptive-tool-loading";
   import { AccessControlSection } from "src/features/mcp-transport";
   import { ClientConfigSection } from "src/features/mcp-client-config";
   import type McpServerPlugin from "src/main";
@@ -31,4 +32,5 @@
   <ClientConfigSection {plugin} />
   <CommandPermissionsSettings {plugin} />
   <SemanticSearchSettings {plugin} />
+  <AdaptiveToolLoadingSettings {plugin} />
 </div>
