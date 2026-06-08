@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-08
+
+### Added
+
+- **Adaptive tool loading: profile selector, `tool_catalog`, and `activate_tool`.** The plugin exposes all 43 tools by default (no change from prior behavior). A new profile selector in settings lets you reduce the per-session token cost. Three profiles: **All** (default, unchanged), **Core** (13 essential tools always active), **Adaptive** (Core plus frequency-promoted tools). Two meta-tools are always active regardless of profile: `tool_catalog` returns the full inventory with active/inactive/promoted status and call count; `activate_tool` promotes an inactive tool to `data.json` and emits `notifications/tools/list_changed`. In Adaptive mode, tools called 3 or more times auto-promote on the next connect. (PR #239, closes #235)
+
 ## [0.13.1] — 2026-06-03
 
 ### Fixed
