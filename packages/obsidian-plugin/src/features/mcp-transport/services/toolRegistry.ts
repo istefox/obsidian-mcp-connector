@@ -183,6 +183,14 @@ export class ToolRegistryClass<
     };
   };
 
+  listAll = (): { name: string; description: string; enabled: boolean }[] =>
+    Array.from(this.keys()).map((schema) => ({
+      // @ts-expect-error We know the const property is present for a string
+      name: schema.get("name").toJsonSchema().const as string,
+      description: schema.description ?? "",
+      enabled: this.enabled.has(schema),
+    }));
+
   /**
    * MCP SDK sends boolean values as "true" or "false". This method coerces the boolean
    * values in the request parameters to the expected type.
