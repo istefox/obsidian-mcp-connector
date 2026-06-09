@@ -1,4 +1,4 @@
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { PromptFrontmatterSchema } from "shared";
 import type { PromptRegistry } from "$/features/mcp-transport/services/promptRegistry";
@@ -27,7 +27,13 @@ export async function setup(
           `Prompt not found: ${name}`,
         );
       }
-      const file = abstractFile as unknown as TFile;
+      if (!(abstractFile instanceof TFile)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Prompt not found: ${name}`,
+        );
+      }
+      const file = abstractFile;
 
       const cache = app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter;

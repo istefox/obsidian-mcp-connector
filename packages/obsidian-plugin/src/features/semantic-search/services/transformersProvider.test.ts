@@ -303,7 +303,6 @@ describe("MultilingualE5Provider", () => {
     expect(await provider.getMaxInputTokens()).toBe(512);
   });
 
-
   test("getModelSizeBytes returns 60 MB", () => {
     const { factory } = makeMockFactory(768);
     expect(createMultilingualE5Provider(factory).getModelSizeBytes()).toBe(

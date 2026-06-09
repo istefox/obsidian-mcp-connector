@@ -132,28 +132,46 @@ describe("recordCall", () => {
     const data = plugin._store() as Record<string, unknown>;
     const state = data.toolLoading as { promoted: string[] };
     // Should appear exactly once
-    expect(state.promoted.filter((n) => n === "search_and_replace").length).toBe(1);
+    expect(
+      state.promoted.filter((n) => n === "search_and_replace").length,
+    ).toBe(1);
   });
 });
 
 describe("activateTool", () => {
   test("returns 'not_found' for unknown tool names", async () => {
     const plugin = makePlugin();
-    const result = await mgr.activateTool("nonexistent_tool", ALL_NAMES, plugin);
+    const result = await mgr.activateTool(
+      "nonexistent_tool",
+      ALL_NAMES,
+      plugin,
+    );
     expect(result).toBe("not_found");
   });
 
   test("returns 'already_active' if already in promoted list", async () => {
     const plugin = makePlugin({
-      toolLoading: { profile: "adaptive", counters: {}, promoted: ["search_and_replace"] },
+      toolLoading: {
+        profile: "adaptive",
+        counters: {},
+        promoted: ["search_and_replace"],
+      },
     });
-    const result = await mgr.activateTool("search_and_replace", ALL_NAMES, plugin);
+    const result = await mgr.activateTool(
+      "search_and_replace",
+      ALL_NAMES,
+      plugin,
+    );
     expect(result).toBe("already_active");
   });
 
   test("returns 'activated' and writes to promoted list", async () => {
     const plugin = makePlugin();
-    const result = await mgr.activateTool("search_and_replace", ALL_NAMES, plugin);
+    const result = await mgr.activateTool(
+      "search_and_replace",
+      ALL_NAMES,
+      plugin,
+    );
     expect(result).toBe("activated");
     const data = plugin._store() as Record<string, unknown>;
     const state = data.toolLoading as { promoted: string[] };

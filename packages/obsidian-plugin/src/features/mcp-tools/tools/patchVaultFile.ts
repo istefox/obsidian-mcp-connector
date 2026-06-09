@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import {
   applyPatch,
   type PatchArgs,
@@ -63,9 +63,20 @@ export async function patchVaultFileHandler(
       isError: true,
     };
   }
+  if (!(file instanceof TFile)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Path is a folder: ${ctx.arguments.path}`,
+        },
+      ],
+      isError: true,
+    };
+  }
 
   // Strip `path` from the arguments before forwarding — applyPatch only needs
   // the patch-specific fields (operation, targetType, target, content, …).
-  const { path: _path, ...patchArgs } = ctx.arguments;
-  return await applyPatch(ctx.app, file as TFile, patchArgs as PatchArgs);
+  const { path: _, ...patchArgs } = ctx.arguments;
+  return await applyPatch(ctx.app, file, patchArgs as PatchArgs);
 }

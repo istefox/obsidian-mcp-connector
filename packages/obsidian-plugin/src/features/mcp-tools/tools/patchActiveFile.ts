@@ -59,7 +59,7 @@ export async function patchActiveFileHandler(
       isError: true,
     };
   }
-  return await applyPatch(ctx.app, file as TFile, ctx.arguments);
+  return await applyPatch(ctx.app, file, ctx.arguments);
 }
 
 // Per-target-type default for createTargetIfMissing (0.3.7 fix + issue #71):
@@ -87,7 +87,8 @@ export async function applyPatch(
   // currently duplicated; consolidating them is a separate refactor.
   if (args.targetType === "frontmatter") {
     let rejection: string | null = null;
-    await app.fileManager.processFrontMatter(file, (fm) => {
+    await app.fileManager.processFrontMatter(file, (rawFm) => {
+      const fm = rawFm as Record<string, unknown>;
       const existing = fm[args.target];
       if (args.operation === "replace") {
         const plan = planFrontmatterReplace(

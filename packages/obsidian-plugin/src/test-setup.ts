@@ -22,6 +22,11 @@
 import { mock } from "bun:test";
 import moment from "moment";
 
+// Bun's test runner has no `window` global; production code that calls
+// window.setTimeout/clearTimeout (required for Obsidian popout-window compat)
+// needs it to exist. Assign before any module that uses window.* loads.
+(globalThis as Record<string, unknown>).window = globalThis;
+
 // Obsidian injects `activeWindow` as a global (points to the focused Window
 // in popout-window scenarios). Tests run outside Obsidian, so we stub it to
 // the global timer functions so timer-dependent production code still works.
@@ -80,6 +85,7 @@ void mock.module("obsidian", () => {
   }
 
   class TFile {}
+  Object.setPrototypeOf(MockTFile.prototype, TFile.prototype);
 
   class PluginSettingTab {}
 

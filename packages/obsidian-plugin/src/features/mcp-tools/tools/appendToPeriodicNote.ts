@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import {
   DATE_REGEX_BY_PERIOD,
   describeFormat,
@@ -83,7 +83,14 @@ export async function appendToPeriodicNoteHandler(
       { period, path: resolved.path },
     );
   }
-  const tfile = file as TFile;
+  if (!(file instanceof TFile)) {
+    return errorPayload(
+      "Internal: periodic note resolved to a folder, not a file.",
+      "internal_error",
+      { period, path: resolved.path },
+    );
+  }
+  const tfile = file;
   const normalized = normalizeAppendBody(content, "append");
 
   if (underHeading !== undefined) {

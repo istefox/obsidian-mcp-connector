@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 
 export const searchAndReplaceSchema = type({
@@ -129,7 +129,7 @@ export async function searchAndReplaceHandler(
   let totalReplacements = 0;
 
   for (const file of files) {
-    const content = await ctx.app.vault.read(file as TFile);
+    const content = await ctx.app.vault.read(file);
 
     // Count matches.
     const matchCount = (content.match(regex) ?? []).length;
@@ -163,7 +163,7 @@ export async function searchAndReplaceHandler(
     if (!dryRun) {
       const newContent = content.replace(regex, replacement);
       regex.lastIndex = 0;
-      await ctx.app.vault.modify(file as TFile, newContent);
+      await ctx.app.vault.modify(file, newContent);
     }
 
     totalReplacements += matchCount;

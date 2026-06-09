@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 
 export const getFilesByTagSchema = type({
   name: '"get_files_by_tag"',
@@ -60,7 +60,7 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
 
   const counts: Array<{ path: string; count: number }> = [];
   for (const file of ctx.app.vault.getMarkdownFiles()) {
-    const cache = ctx.app.metadataCache.getFileCache(file as TFile);
+    const cache = ctx.app.metadataCache.getFileCache(file);
     if (!cache) continue;
 
     let n = 0;

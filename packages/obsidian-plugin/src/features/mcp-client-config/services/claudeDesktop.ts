@@ -148,7 +148,7 @@ export async function updateClaudeDesktopConfig(
   // Optionally drop the legacy entry. Skipped if the legacy key equals
   // the new pluginId (e.g. tests using the legacy id directly).
   if (removeLegacyKey && pluginId !== LEGACY_PLUGIN_ID) {
-    delete (config.mcpServers as Record<string, unknown>)[LEGACY_PLUGIN_ID];
+    delete config.mcpServers[LEGACY_PLUGIN_ID];
   }
 
   // Write the new entry.
@@ -265,7 +265,7 @@ function expandHomePath(template: string): string {
   }
   expanded = expanded.replace(
     /%([^%]+)%/g,
-    (_, name) => process.env[name] || "",
+    (_, name: string) => process.env[name] || "",
   );
   return expanded;
 }

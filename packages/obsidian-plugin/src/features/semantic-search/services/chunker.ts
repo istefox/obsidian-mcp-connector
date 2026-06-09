@@ -68,7 +68,7 @@ export async function hashChunk(text: string): Promise<string> {
   const bytes = new Uint8Array(buf);
   let hex = "";
   for (let i = 0; i < 8; i++) {
-    hex += bytes[i]!.toString(16).padStart(2, "0");
+    hex += bytes[i].toString(16).padStart(2, "0");
   }
   return hex;
 }
@@ -360,7 +360,7 @@ export function wrapChunkerWithOverlap(chunker: ChunkerFn): ChunkerFn {
     const chunks = await chunker(content);
     return chunks.map((c, i) => {
       if (i === 0) return c;
-      const prev = chunks[i - 1]!;
+      const prev = chunks[i - 1];
       if (prev.id === "#frontmatter") return c;
       const overlap = extractLastSentence(prev.text);
       if (!overlap) return c;
@@ -440,9 +440,7 @@ const MIN_CHUNK_MAX_TOKENS = 64;
  * accounts for the task-prompt prefix prepended at embed time, so the
  * rendered prompted text stays within the model's hard cap.
  */
-export function makeChunkerForProvider(
-  provider: EmbeddingProvider,
-): ChunkerFn {
+export function makeChunkerForProvider(provider: EmbeddingProvider): ChunkerFn {
   let logged = false;
   return async (content: string): Promise<Chunk[]> => {
     const maxInputTokens = await provider.getMaxInputTokens();
