@@ -1,4 +1,10 @@
-import { CORE_SET, META_TOOLS, PROMOTION_THRESHOLD } from "./constants";
+import {
+  ADAPTIVE_META_TOOLS,
+  ALWAYS_ACTIVE_TOOLS,
+  CORE_SET,
+  META_TOOLS,
+  PROMOTION_THRESHOLD,
+} from "./constants";
 
 export type ToolLoadingState = {
   profile: "all" | "core" | "adaptive";
@@ -42,13 +48,13 @@ export class ToolLoadingManager {
   }
 
   getActiveToolNames(allNames: string[], state: ToolLoadingState): Set<string> {
-    const base = new Set<string>(META_TOOLS);
     if (state.profile === "all") {
-      for (const n of allNames) base.add(n);
-      return base;
+      return new Set<string>([...META_TOOLS, ...allNames]);
     }
+    const base = new Set<string>(ALWAYS_ACTIVE_TOOLS);
     for (const n of CORE_SET) base.add(n);
     if (state.profile === "adaptive") {
+      for (const n of ADAPTIVE_META_TOOLS) base.add(n);
       for (const n of state.promoted) base.add(n);
     }
     return base;
