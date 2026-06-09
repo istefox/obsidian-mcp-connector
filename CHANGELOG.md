@@ -3,11 +3,21 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.15.0] — 2026-06-09
 
 ### Changed
 
-- **Semantic search honours `Files & Links → Excluded files`.** The embedding indexer now skips files the user has excluded via Obsidian's exclusion setting (`MetadataCache.isUserIgnored`), matching the behaviour already established by `get_recent_files`. The filter applies in **both** the full rebuild path and the live vault-event listener, so a file in an excluded folder neither enters the index on a rebuild nor re-enters it when edited. Existing chunks indexed before a folder was excluded are left in place (no destructive purge on a settings change) and filtered out of `search_vault_smart` results at query time; physical cleanup happens on the next manual Rebuild. No new setting or UI. (RFC #238, option A + D3)
+- **Semantic search honours `Files & Links → Excluded files`.** The embedding indexer now skips files the user has excluded via Obsidian's exclusion setting (`MetadataCache.isUserIgnored`), matching the behaviour already established by `get_recent_files`. The filter applies in **both** the full rebuild path and the live vault-event listener, so a file in an excluded folder neither enters the index on a rebuild nor re-enters it when edited. Existing chunks indexed before a folder was excluded are left in place (no destructive purge on a settings change) and filtered out of `search_vault_smart` results at query time; physical cleanup happens on the next manual Rebuild. No new setting or UI. (RFC #238, option A + D3, PR #244 by @marcoaperez)
+
+### Fixed
+
+- **Type-safe frontmatter and cache iterator casts.** `processFrontMatter` callback parameters and `MetadataCache.frontmatter` accesses are now cast to `Record<string, unknown>` at the point of use; `Map.keys().next().value` in the embedder LRU cache is annotated as `string | undefined`; `JSON.parse` return in the test mock is cast to `unknown`. Reduces Obsidian plugin review scanner warning count with no behaviour change.
+
+## [0.14.2] — 2026-06-09
+
+### Fixed
+
+- **Obsidian plugin review scanner: zero Errors.** Resolved two blocker Errors that were preventing store review: removed bare `eslint-disable` directives flagged as policy violations; replaced them with typed casts (`as unknown as { on: ... }`) so the vault event subscription compiles cleanly. Reduced Warning count: replaced all bare `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval` calls with `window.*` equivalents across `main.ts`, `fetch.ts`, `embedder.ts`, and `indexer.ts` for popout-window compatibility; replaced 20+ `as TFile` casts with `instanceof TFile` guards across the tools layer; narrowed `any`-typed frontmatter values and regex callback results with explicit casts. No behaviour changes.
 
 ## [0.14.1] — 2026-06-08
 
