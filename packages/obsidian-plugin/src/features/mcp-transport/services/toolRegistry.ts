@@ -172,8 +172,7 @@ export class ToolRegistryClass<
     return {
       tools: Array.from(this.enabled.values()).map((schema) => {
         return {
-          // @ts-expect-error We know the const property is present for a string
-          name: schema.get("name").toJsonSchema().const,
+          name: (schema.get("name").toJsonSchema() as { const: string }).const,
           description: schema.description,
           inputSchema: normalizeInputSchema(
             schema.get("arguments").toJsonSchema(),

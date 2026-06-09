@@ -51,7 +51,7 @@ export type PipelineFactory = (model: string) => Promise<PipelineFn>;
  * progress bar.
  */
 export type ProgressEvent = {
-  status: "initiate" | "download" | "progress" | "done" | "ready" | string;
+  status: "initiate" | "download" | "progress" | "done" | "ready";
   progress?: number; // 0-100
   file?: string;
 };
@@ -94,7 +94,7 @@ class EmbedderImpl implements Embedder {
   // duplicates within an embedBatch call, which the indexer relies on
   // when chunk-delta detection re-embeds a partial set.
   private cache = new Map<string, Promise<Float32Array>>();
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleTimer: number | null = null;
 
   constructor(private opts: EmbedderOpts) {}
 
@@ -145,7 +145,7 @@ class EmbedderImpl implements Embedder {
     // freshly constructed pipeline.
     this.cache.clear();
     if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
+      window.clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
   }
@@ -174,7 +174,7 @@ class EmbedderImpl implements Embedder {
   private touchIdle(): void {
     if (this.opts.unloadWhenIdle === false) return;
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
+    this.idleTimer = window.setTimeout(() => {
       this.pipeline = null;
       this.loadPromise = null;
       this.idleTimer = null;

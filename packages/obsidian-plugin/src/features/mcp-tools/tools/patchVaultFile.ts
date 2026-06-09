@@ -66,6 +66,6 @@ export async function patchVaultFileHandler(
 
   // Strip `path` from the arguments before forwarding — applyPatch only needs
   // the patch-specific fields (operation, targetType, target, content, …).
-  const { path: _path, ...patchArgs } = ctx.arguments;
+  const { path: _, ...patchArgs } = ctx.arguments;
   return await applyPatch(ctx.app, file as TFile, patchArgs as PatchArgs);
 }
