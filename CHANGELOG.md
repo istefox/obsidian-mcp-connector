@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.15.1] — 2026-06-09
+
+### Fixed
+
+- **`activate_tool` trust model: three improvements.** Core profile users no longer see `activate_tool` in the active tool set (`tool_catalog` remains always active). Adaptive and All profiles are unchanged. When `activate_tool` promotes a tool, Obsidian now shows a Notice: `MCP Connector: "<tool_name>" promoted to active`. Added `persist` boolean parameter (default `false`): with `persist=false` the tool is enabled immediately in the current session only with no `data.json` write; with `persist=true` the promotion is saved and survives reconnects (previous behavior). (PR #248, #249, #250, closes #247)
+
 ## [0.15.0] — 2026-06-09
 
 ### Changed
