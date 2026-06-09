@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { App } from "obsidian";
+import { Notice, type App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { logger } from "$/shared";
 import { ToolRegistryClass } from "./toolRegistry";
@@ -88,6 +88,8 @@ export async function createMcpService(
       registry,
       plugin: config.plugin,
       server,
+      onActivated: (name) =>
+        new Notice(`MCP Connector: "${name}" promoted to active`),
     }),
   );
 

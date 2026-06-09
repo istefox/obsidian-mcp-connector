@@ -25,11 +25,13 @@ export async function activateToolHandler({
   registry,
   plugin,
   server,
+  onActivated,
 }: {
   arguments: { name: string };
   registry: RegistryLike;
   plugin: PluginLike;
   server: McpServer;
+  onActivated?: (toolName: string) => void;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -63,6 +65,7 @@ export async function activateToolHandler({
   const allNames = allEntries.map((e) => e.name);
   const mgr = new ToolLoadingManager();
   await mgr.activateTool(args.name, allNames, plugin);
+  onActivated?.(args.name);
 
   try {
     await server.server.notification({
