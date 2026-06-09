@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { ToolLoadingManager } from "./toolLoadingManager";
-import { CORE_SET, META_TOOLS, PROMOTION_THRESHOLD } from "./constants";
+import {
+  ADAPTIVE_META_TOOLS,
+  ALWAYS_ACTIVE_TOOLS,
+  CORE_SET,
+  META_TOOLS,
+  PROMOTION_THRESHOLD,
+} from "./constants";
 
 const ALL_NAMES = [
   "get_server_info",
@@ -36,12 +42,16 @@ describe("getActiveToolNames", () => {
     }
   });
 
-  test("core profile: returns only CORE_SET and META_TOOLS", () => {
+  test("core profile: returns CORE_SET plus tool_catalog only", () => {
     const state = { profile: "core" as const, counters: {}, promoted: [] };
     const active = mgr.getActiveToolNames(ALL_NAMES, state);
-    // Every meta-tool must be active
-    for (const m of META_TOOLS) {
+    // tool_catalog always active
+    for (const m of ALWAYS_ACTIVE_TOOLS) {
       expect(active.has(m)).toBe(true);
+    }
+    // activate_tool must NOT be active in core
+    for (const m of ADAPTIVE_META_TOOLS) {
+      expect(active.has(m)).toBe(false);
     }
     // Non-core, non-meta tools must be inactive
     expect(active.has("search_and_replace")).toBe(false);
@@ -64,13 +74,28 @@ describe("getActiveToolNames", () => {
     }
   });
 
-  test("meta-tools always active regardless of profile", () => {
+  test("tool_catalog always active regardless of profile", () => {
     for (const profile of ["all", "core", "adaptive"] as const) {
       const state = { profile, counters: {}, promoted: [] };
       const active = mgr.getActiveToolNames(ALL_NAMES, state);
-      for (const m of META_TOOLS) {
+      for (const m of ALWAYS_ACTIVE_TOOLS) {
         expect(active.has(m)).toBe(true);
       }
+    }
+  });
+
+  test("activate_tool active for all and adaptive profiles, not core", () => {
+    for (const profile of ["all", "adaptive"] as const) {
+      const state = { profile, counters: {}, promoted: [] };
+      const active = mgr.getActiveToolNames(ALL_NAMES, state);
+      for (const m of ADAPTIVE_META_TOOLS) {
+        expect(active.has(m)).toBe(true);
+      }
+    }
+    const coreState = { profile: "core" as const, counters: {}, promoted: [] };
+    const coreActive = mgr.getActiveToolNames(ALL_NAMES, coreState);
+    for (const m of ADAPTIVE_META_TOOLS) {
+      expect(coreActive.has(m)).toBe(false);
     }
   });
 });
