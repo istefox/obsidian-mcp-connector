@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
+import { createExclusionFilter } from "$/shared/isUserIgnored";
 
 export const searchVaultSmartSchema = type({
   name: '"search_vault_smart"',
@@ -129,6 +130,16 @@ export async function searchVaultSmartHandler(
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(`Semantic search failed: ${message}`);
   }
+
+  // Query-time exclusion (RFC #238, D3): drop hits in folders the user
+  // has excluded via `Files & Links → Excluded files`. The indexer no
+  // longer admits excluded files, but chunks indexed *before* a folder
+  // was excluded can linger until the next manual Rebuild — this filter
+  // keeps them from surfacing meanwhile. Applied uniformly across
+  // providers (native / DLC / Smart Connections, which keeps its own
+  // index) so the exclusion setting is honoured regardless of backend.
+  const isExcluded = createExclusionFilter(ctx.app);
+  results = results.filter((r) => !isExcluded(r.filePath));
 
   return {
     content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],

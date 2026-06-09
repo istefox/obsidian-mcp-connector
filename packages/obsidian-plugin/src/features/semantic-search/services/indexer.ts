@@ -51,6 +51,16 @@ export type LiveIndexerOpts = {
   chunker: ChunkerFn;
   embedder: EmbeddingProvider;
   store: EmbeddingStore;
+  /**
+   * Excluded-path predicate. Returns `true` for paths Obsidian's
+   * `Files & Links → Excluded files` setting hides (built from
+   * `MetadataCache.isUserIgnored` in production wiring). Excluded paths
+   * are skipped by both the full rebuild and the live event listener, so
+   * a file in an excluded folder never enters the index and a later edit
+   * to it does not re-enter it. Omitted in tests / early lifecycle →
+   * nothing is excluded.
+   */
+  isExcluded?: (path: string) => boolean;
   /** Per-file inactivity window before re-processing. Default 2000ms. */
   debounceMs?: number;
   /**
@@ -137,6 +147,10 @@ class LiveIndexerImpl implements SemanticIndexer {
     await this.drainFlush();
   }
 
+  private isExcluded(path: string): boolean {
+    return this.opts.isExcluded?.(path) ?? false;
+  }
+
   async rebuildAll(): Promise<void> {
     if (!(await this.opts.embedder.isAvailable())) {
       logger.warn(
@@ -144,7 +158,9 @@ class LiveIndexerImpl implements SemanticIndexer {
       );
       return;
     }
-    const files = this.opts.vault.getMarkdownFiles();
+    const files = this.opts.vault
+      .getMarkdownFiles()
+      .filter((f) => !this.isExcluded(f.path));
     logger.info("live indexer: rebuildAll starting", {
       providerKey: this.opts.embedder.providerKey,
       fileCount: files.length,
@@ -182,6 +198,14 @@ class LiveIndexerImpl implements SemanticIndexer {
 
   private schedule(path: string): void {
     if (!this.running) return;
+    // The live event listener (modify/create/delete) bypasses
+    // `getMarkdownFiles()`, so the rebuild-loop filter alone would let an
+    // edit to a file in an excluded folder re-enter the index on the next
+    // vault event. Guard the event path here too. Stale chunks from a
+    // file excluded after indexing are left in place (no destructive
+    // delete on a setting change) and hidden at query time; physical
+    // cleanup is the manual Rebuild.
+    if (this.isExcluded(path)) return;
     const existing = this.timers.get(path);
     if (existing) clearTimeout(existing);
     const handle = setTimeout(() => {
@@ -281,6 +305,8 @@ export type LowPowerIndexerOpts = {
   chunker: ChunkerFn;
   embedder: EmbeddingProvider;
   store: EmbeddingStore;
+  /** See {@link LiveIndexerOpts.isExcluded}. */
+  isExcluded?: (path: string) => boolean;
   /** Scan interval. Default 5 minutes (300_000 ms). */
   intervalMs?: number;
 };
@@ -348,6 +374,10 @@ class LowPowerIndexerImpl implements SemanticIndexer {
     if (this.cycleInFlight) await this.cycleInFlight;
   }
 
+  private isExcluded(path: string): boolean {
+    return this.opts.isExcluded?.(path) ?? false;
+  }
+
   async rebuildAll(): Promise<void> {
     if (!(await this.opts.embedder.isAvailable())) {
       logger.warn(
@@ -379,7 +409,14 @@ class LowPowerIndexerImpl implements SemanticIndexer {
       const seenPaths = new Set<string>();
 
       for (const f of files) {
+        // Add to `seenPaths` before the exclusion check so an
+        // already-indexed file that becomes excluded is treated as
+        // "seen but skipped", not "vanished" — that keeps the
+        // vanished-file cleanup below from destructively purging its
+        // stale chunks on a settings change (D3: leave them in place,
+        // hide at query time, physical cleanup only via manual Rebuild).
         seenPaths.add(f.path);
+        if (this.isExcluded(f.path)) continue;
         const prev = this.lastSeenMtime.get(f.path);
         const cur = f.mtime ?? Number.POSITIVE_INFINITY; // unknown mtime → process every cycle
         if (prev !== undefined && cur <= prev) continue;
