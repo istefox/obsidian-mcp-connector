@@ -275,7 +275,7 @@ function expandHomePath(template: string): string {
   }
   expanded = expanded.replace(
     /%([^%]+)%/g,
-    (_, name) => process.env[name] || "",
+    (_, name: string) => process.env[name] || "",
   );
   return expanded;
 }

@@ -253,7 +253,7 @@ export async function detectBrew(opts?: {
   const tryParse = (stdout: string): BrewDetectResult => {
     const m = /Homebrew\s+(\d+\.\d+\.\d+)/.exec(stdout);
     return m
-      ? { found: true, version: m[1]! }
+      ? { found: true, version: m[1] }
       : { found: true, version: "unknown" };
   };
 

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const getNotePropertySchema = type({
   name: '"get_note_property"',
@@ -44,9 +44,7 @@ export async function getNotePropertyHandler(
       isError: true,
     };
   }
-  // A folder path resolves to a TFolder (duck-typed via `children`), not a
-  // TFile — guard before casting so we don't read a folder as a note.
-  if ((abstract as { children?: unknown }).children !== undefined) {
+  if (!(abstract instanceof TFile)) {
     return {
       content: [
         {
@@ -65,7 +63,7 @@ export async function getNotePropertyHandler(
       isError: true,
     };
   }
-  const file = abstract as TFile;
+  const file = abstract;
   const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter as
     | Record<string, unknown>
     | undefined;

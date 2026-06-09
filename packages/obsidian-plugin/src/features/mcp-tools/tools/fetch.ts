@@ -131,9 +131,9 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
 
   let response;
   try {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
+      timer = window.setTimeout(
         () => reject(new Error("__FETCH_TIMEOUT__")),
         REQUEST_TIMEOUT_MS,
       );
@@ -144,7 +144,7 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
         timeout,
       ]);
     } finally {
-      if (timer) clearTimeout(timer);
+      if (timer) window.clearTimeout(timer);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

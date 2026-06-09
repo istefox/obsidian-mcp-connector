@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const getOutgoingLinksSchema = type({
   name: '"get_outgoing_links"',
@@ -55,7 +55,13 @@ export async function getOutgoingLinksHandler(
       isError: true,
     };
   }
-  const file = abstract as TFile;
+  if (!(abstract instanceof TFile)) {
+    return {
+      content: [{ type: "text", text: `Path is a folder: ${sourcePath}` }],
+      isError: true,
+    };
+  }
+  const file = abstract;
 
   const cache = ctx.app.metadataCache.getFileCache(file) as {
     links?: RawLink[];

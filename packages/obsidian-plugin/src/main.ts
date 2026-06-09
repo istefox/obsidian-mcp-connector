@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile } from "obsidian";
+import { type EventRef, Notice, Plugin, TFile } from "obsidian";
 import { lastValueFrom } from "rxjs";
 import { type SmartConnections } from "shared";
 import {
@@ -196,7 +196,7 @@ export default class McpToolsPlugin extends Plugin {
     modal.open();
 
     // Race the modal decision against the timeout.
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let timeoutHandle: number | undefined;
     type ModalOutcome =
       | {
           kind: "decided";
@@ -209,14 +209,14 @@ export default class McpToolsPlugin extends Plugin {
         .waitForDecision()
         .then((d) => ({ kind: "decided" as const, decision: d })),
       new Promise<ModalOutcome>((resolve) => {
-        timeoutHandle = setTimeout(
+        timeoutHandle = window.setTimeout(
           () => resolve({ kind: "timeout" }),
           IN_PROCESS_MODAL_TIMEOUT_MS,
         );
       }),
     ]);
 
-    if (timeoutHandle) clearTimeout(timeoutHandle);
+    if (timeoutHandle) window.clearTimeout(timeoutHandle);
     if (outcome.kind === "timeout") modal.close();
 
     let finalOutcome: "allow" | "deny";
@@ -331,8 +331,11 @@ export default class McpToolsPlugin extends Plugin {
           // Obsidian's vault.on signatures are event-specific. The
           // unsubscribe is offref(EventRef). Wrap so our VaultLike
           // contract stays clean.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const ref = (this.app.vault as any).on(event, (f: unknown) => {
+          const ref = (
+            this.app.vault as unknown as {
+              on: (event: string, handler: (f: unknown) => void) => EventRef;
+            }
+          ).on(event, (f: unknown) => {
             if (f instanceof TFile) handler(f.path);
           });
           return () => this.app.vault.offref(ref);
@@ -754,7 +757,7 @@ export default class McpToolsPlugin extends Plugin {
     logger.info("MCP Tools Plugin loaded");
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Obsidian calls onunload synchronously; the returned Promise is not awaited by the plugin lifecycle
   async onunload() {
     if (this.promptsState) {
       promptsTeardown(this.promptsState);

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 
 export const listPropertyValuesSchema = type({
   name: '"list_property_values"',
@@ -50,8 +50,9 @@ export async function listPropertyValuesHandler(
 
   for (const file of ctx.app.vault.getMarkdownFiles()) {
     if (prefix && !file.path.startsWith(prefix)) continue;
-    const fm = ctx.app.metadataCache.getFileCache(file as TFile)
-      ?.frontmatter as Record<string, unknown> | undefined;
+    const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter as
+      | Record<string, unknown>
+      | undefined;
     if (!fm || !Object.prototype.hasOwnProperty.call(fm, key)) continue;
     const raw = fm[key];
     if (Array.isArray(raw)) {

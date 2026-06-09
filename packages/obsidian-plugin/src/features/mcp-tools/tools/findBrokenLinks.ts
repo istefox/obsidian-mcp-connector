@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 
 export const findBrokenLinksSchema = type({
@@ -63,7 +63,7 @@ export async function findBrokenLinksHandler(
     if (!inScope(file.path)) continue;
     scannedFiles++;
 
-    const cache = ctx.app.metadataCache.getFileCache(file as TFile);
+    const cache = ctx.app.metadataCache.getFileCache(file);
     if (!cache) {
       logger.warn("find_broken_links: no cache for file, skipping", {
         path: file.path,

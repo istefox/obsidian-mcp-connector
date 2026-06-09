@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const setNotePropertySchema = type({
   name: '"set_note_property"',
@@ -99,7 +99,7 @@ export async function setNotePropertyHandler(
       isError: true,
     };
   }
-  if ((abstract as { children?: unknown }).children !== undefined) {
+  if (!(abstract instanceof TFile)) {
     return {
       content: [
         {
@@ -118,7 +118,7 @@ export async function setNotePropertyHandler(
       isError: true,
     };
   }
-  const file = abstract as TFile;
+  const file = abstract;
 
   await ctx.app.fileManager.processFrontMatter(file, (fm) => {
     if (value === null) {

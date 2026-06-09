@@ -92,11 +92,11 @@ const DEFAULT_DEBOUNCE_MS = 2000;
 const DEFAULT_FLUSH_DEBOUNCE_MS = 5000;
 
 class LiveIndexerImpl implements SemanticIndexer {
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private timers = new Map<string, number>();
   private inFlight = new Map<string, Promise<void>>();
   private unsubs: Array<() => void> = [];
   private running = false;
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushTimer: number | null = null;
   private flushInFlight: Promise<void> | null = null;
   private readonly debounceMs: number;
   private readonly flushDebounceMs: number;
@@ -125,7 +125,7 @@ class LiveIndexerImpl implements SemanticIndexer {
 
   async stop(): Promise<void> {
     this.running = false;
-    for (const t of this.timers.values()) clearTimeout(t);
+    for (const t of this.timers.values()) window.clearTimeout(t);
     this.timers.clear();
     for (const u of this.unsubs) u();
     this.unsubs = [];
@@ -162,7 +162,7 @@ class LiveIndexerImpl implements SemanticIndexer {
     // Fire every pending timer immediately and wait for all the
     // resulting processing to settle.
     const pending = Array.from(this.timers.entries());
-    for (const [, t] of pending) clearTimeout(t);
+    for (const [, t] of pending) window.clearTimeout(t);
     this.timers.clear();
     await Promise.all(
       pending.map(async ([path]) => {
@@ -183,8 +183,8 @@ class LiveIndexerImpl implements SemanticIndexer {
   private schedule(path: string): void {
     if (!this.running) return;
     const existing = this.timers.get(path);
-    if (existing) clearTimeout(existing);
-    const handle = setTimeout(() => {
+    if (existing) window.clearTimeout(existing);
+    const handle = window.setTimeout(() => {
       this.timers.delete(path);
       this.processFile(path).catch((err) => {
         logger.error("live indexer: process failed", {
@@ -222,8 +222,8 @@ class LiveIndexerImpl implements SemanticIndexer {
   }
 
   private scheduleFlush(): void {
-    if (this.flushTimer) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(() => {
+    if (this.flushTimer) window.clearTimeout(this.flushTimer);
+    this.flushTimer = window.setTimeout(() => {
       this.flushTimer = null;
       this.flushInFlight = this.runFlush();
     }, this.flushDebounceMs);
@@ -258,7 +258,7 @@ class LiveIndexerImpl implements SemanticIndexer {
    */
   private async drainFlush(): Promise<void> {
     if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
+      window.clearTimeout(this.flushTimer);
       this.flushTimer = null;
       this.flushInFlight = this.runFlush();
     }
@@ -307,7 +307,7 @@ const DEFAULT_LOW_POWER_INTERVAL_MS = 5 * 60 * 1000;
  * skipped because the hash matches an existing record).
  */
 class LowPowerIndexerImpl implements SemanticIndexer {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: number | null = null;
   private running = false;
   private cycleInFlight: Promise<void> | null = null;
   private lastSeenMtime = new Map<string, number>();
@@ -328,7 +328,7 @@ class LowPowerIndexerImpl implements SemanticIndexer {
     if (opts.initialRebuild !== false) {
       await this.runCycle();
     }
-    this.timer = setInterval(() => {
+    this.timer = window.setInterval(() => {
       // Skip if a cycle is still in flight to avoid stacking.
       if (this.cycleInFlight) return;
       this.runCycle().catch((err) => {
@@ -342,7 +342,7 @@ class LowPowerIndexerImpl implements SemanticIndexer {
   async stop(): Promise<void> {
     this.running = false;
     if (this.timer) {
-      clearInterval(this.timer);
+      window.clearInterval(this.timer);
       this.timer = null;
     }
     if (this.cycleInFlight) await this.cycleInFlight;
@@ -475,7 +475,7 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
   for (const c of chunks) {
     const reused = existingByHash.get(c.contentHash);
     const vector =
-      reused?.vector ?? (await deps.embedder.embed([c.text], "document"))[0]!;
+      reused?.vector ?? (await deps.embedder.embed([c.text], "document"))[0];
     records.push({
       chunkId: `${path}#${c.id}`,
       filePath: path,

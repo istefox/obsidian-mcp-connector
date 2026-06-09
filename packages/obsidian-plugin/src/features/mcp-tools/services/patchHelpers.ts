@@ -190,7 +190,7 @@ export function hasAnyH1(lines: string[]): boolean {
  * Used so a range scan does not rescan from line 0 per line (was O(n²)).
  */
 function computeFenceOpenState(lines: string[]): boolean[] {
-  const fenceOpen: boolean[] = new Array(lines.length);
+  const fenceOpen = new Array<boolean>(lines.length);
   let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     // The toggle at line `i` affects lines AFTER `i`, exactly matching
@@ -617,7 +617,8 @@ export async function applyPatch(
   // mutation keeps the file untouched while letting us return a typed error.
   if (args.targetType === "frontmatter") {
     let rejection: string | null = null;
-    await app.fileManager.processFrontMatter(file, (fm) => {
+    await app.fileManager.processFrontMatter(file, (rawFm) => {
+      const fm = rawFm as Record<string, unknown>;
       const existing = fm[args.target];
       if (args.operation === "replace") {
         const plan = planFrontmatterReplace(

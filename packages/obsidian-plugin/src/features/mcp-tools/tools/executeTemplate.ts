@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import { moment } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { Templater, type PromptArgAccessor } from "shared";
@@ -105,6 +105,13 @@ export async function executeTemplateHandler(
       { templatePath: ctx.arguments.templatePath },
     );
   }
+  if (!(templateFile instanceof TFile)) {
+    return errorPayload(
+      `Template path is a folder: ${ctx.arguments.templatePath}`,
+      "template_not_found",
+      { templatePath: ctx.arguments.templatePath },
+    );
+  }
 
   // createFile coercion — belt-and-suspenders: accept both boolean string "true" and missing
   const createFile = ctx.arguments.createFile === "true";
@@ -139,8 +146,8 @@ export async function executeTemplateHandler(
       // create_running_config needs a target file — use the template itself as a
       // stand-in when no targetPath is provided (same pattern as main.ts).
       const config = templater.create_running_config(
-        templateFile as unknown as TFile,
-        templateFile as unknown as TFile,
+        templateFile,
+        templateFile,
         Templater.RunMode.CreateNewFromTemplate,
       );
 
@@ -237,10 +244,17 @@ async function runCoreTemplates(
       { templatePath },
     );
   }
+  if (!(templateFile instanceof TFile)) {
+    return errorPayload(
+      `Template path is a folder: ${templatePath}`,
+      "template_not_found",
+      { templatePath },
+    );
+  }
 
   let raw: string;
   try {
-    raw = await ctx.app.vault.read(templateFile as TFile);
+    raw = await ctx.app.vault.read(templateFile);
   } catch (err) {
     return errorPayload(
       `Core Templates could not read template file: ${err instanceof Error ? err.message : String(err)}`,
