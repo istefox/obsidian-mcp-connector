@@ -87,7 +87,8 @@ export async function applyPatch(
   // currently duplicated; consolidating them is a separate refactor.
   if (args.targetType === "frontmatter") {
     let rejection: string | null = null;
-    await app.fileManager.processFrontMatter(file, (fm) => {
+    await app.fileManager.processFrontMatter(file, (rawFm) => {
+      const fm = rawFm as Record<string, unknown>;
       const existing = fm[args.target];
       if (args.operation === "replace") {
         const plan = planFrontmatterReplace(
