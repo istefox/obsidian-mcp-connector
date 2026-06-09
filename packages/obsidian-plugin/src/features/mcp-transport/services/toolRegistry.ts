@@ -156,6 +156,18 @@ export class ToolRegistryClass<
    * Useful for applying user-controlled disable lists (e.g. from an
    * env var) after all features have registered their tools.
    */
+  enableByName = (name: string): boolean => {
+    for (const schema of this.keys()) {
+      // @ts-expect-error We know the const property is present for a string
+      const toolName = schema.get("name").toJsonSchema().const as string;
+      if (toolName === name) {
+        this.enable(schema);
+        return true;
+      }
+    }
+    return false;
+  };
+
   disableByName = (name: string): boolean => {
     for (const schema of this.keys()) {
       // @ts-expect-error We know the const property is present for a string

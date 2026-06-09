@@ -6,9 +6,12 @@ export const activateToolSchema = type({
   name: '"activate_tool"',
   arguments: {
     name: type("string").describe("Exact name of the tool to activate."),
+    "persist?": type("boolean").describe(
+      "If true, write the promotion to data.json so it survives the session. Defaults to false (session-only, no reconnect needed).",
+    ),
   },
 }).describe(
-  "Promotes an inactive tool to active status so it appears in the next MCP session. Run tool_catalog first to see available tool names and their current status.",
+  "Promotes an inactive tool to active status. With persist=false (default) the tool is available immediately in this session only. With persist=true the promotion is saved and survives reconnects. Run tool_catalog first to see available tool names.",
 );
 
 type RegistryLike = {
@@ -26,12 +29,14 @@ export async function activateToolHandler({
   plugin,
   server,
   onActivated,
+  enableInRegistry,
 }: {
-  arguments: { name: string };
+  arguments: { name: string; persist?: boolean };
   registry: RegistryLike;
   plugin: PluginLike;
   server: McpServer;
   onActivated?: (toolName: string) => void;
+  enableInRegistry?: (name: string) => boolean;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -62,10 +67,33 @@ export async function activateToolHandler({
     };
   }
 
-  const allNames = allEntries.map((e) => e.name);
-  const mgr = new ToolLoadingManager();
-  await mgr.activateTool(args.name, allNames, plugin);
   onActivated?.(args.name);
+
+  if (args.persist === true) {
+    const allNames = allEntries.map((e) => e.name);
+    const mgr = new ToolLoadingManager();
+    await mgr.activateTool(args.name, allNames, plugin);
+
+    try {
+      await server.server.notification({
+        method: "notifications/tools/list_changed",
+      });
+    } catch {
+      // Stateless JSON transport may not support server-initiated notifications.
+      // The reconnect message in the response covers this case.
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Tool activated and saved. Reconnect the MCP server to use it in this session.",
+        },
+      ],
+    };
+  }
+
+  enableInRegistry?.(args.name);
 
   try {
     await server.server.notification({
@@ -73,14 +101,13 @@ export async function activateToolHandler({
     });
   } catch {
     // Stateless JSON transport may not support server-initiated notifications.
-    // The reconnect message in the response covers this case.
   }
 
   return {
     content: [
       {
         type: "text",
-        text: "Tool activated. Reconnect the MCP server to use it in this session.",
+        text: "Tool activated for this session. Available immediately — no reconnect needed.",
       },
     ],
   };

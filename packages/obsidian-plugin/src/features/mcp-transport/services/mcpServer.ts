@@ -84,12 +84,14 @@ export async function createMcpService(
   );
   registry.register(activateToolSchema, async (request, { server }) =>
     activateToolHandler({
-      arguments: (request as { arguments: { name: string } }).arguments,
+      arguments: (request as { arguments: { name: string; persist?: boolean } })
+        .arguments,
       registry,
       plugin: config.plugin,
       server,
       onActivated: (name) =>
         new Notice(`MCP Connector: "${name}" promoted to active`),
+      enableInRegistry: (name) => registry.enableByName(name),
     }),
   );
 
