@@ -13,7 +13,8 @@ function makeRegistry(names: string[]) {
   const disabled: string[] = [];
 
   return {
-    listAll: () => entries.map((e) => ({ ...e, enabled: !disabled.includes(e.name) })),
+    listAll: () =>
+      entries.map((e) => ({ ...e, enabled: !disabled.includes(e.name) })),
     disableByName: (name: string) => {
       const found = entries.find((e) => e.name === name);
       if (!found) return false;

@@ -41,10 +41,7 @@ export class ToolLoadingManager {
     return mergeState(raw);
   }
 
-  getActiveToolNames(
-    allNames: string[],
-    state: ToolLoadingState,
-  ): Set<string> {
+  getActiveToolNames(allNames: string[], state: ToolLoadingState): Set<string> {
     const base = new Set<string>(META_TOOLS);
     if (state.profile === "all") {
       for (const n of allNames) base.add(n);

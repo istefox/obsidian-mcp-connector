@@ -440,9 +440,7 @@ const MIN_CHUNK_MAX_TOKENS = 64;
  * accounts for the task-prompt prefix prepended at embed time, so the
  * rendered prompted text stays within the model's hard cap.
  */
-export function makeChunkerForProvider(
-  provider: EmbeddingProvider,
-): ChunkerFn {
+export function makeChunkerForProvider(provider: EmbeddingProvider): ChunkerFn {
   let logged = false;
   return async (content: string): Promise<Chunk[]> => {
     const maxInputTokens = await provider.getMaxInputTokens();

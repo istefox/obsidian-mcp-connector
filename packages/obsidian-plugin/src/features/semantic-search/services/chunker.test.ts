@@ -307,9 +307,9 @@ describe("makeChunkerForProvider", () => {
     // chunker default (512) — proves the override actually raises the cap.
     const content = `# Body\n\n${lorem(800)}`;
     const chunkerDefault = await chunk(content);
-    const chunkerLargeBudget = await makeChunkerForProvider(
-      stubProvider(2048),
-    )(content);
+    const chunkerLargeBudget = await makeChunkerForProvider(stubProvider(2048))(
+      content,
+    );
     // Default config splits an 800-token section; the larger budget keeps
     // it as one chunk because 800 < 2032.
     expect(chunkerDefault.length).toBeGreaterThan(1);
