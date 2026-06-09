@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **Semantic search honours `Files & Links → Excluded files`.** The embedding indexer now skips files the user has excluded via Obsidian's exclusion setting (`MetadataCache.isUserIgnored`), matching the behaviour already established by `get_recent_files`. The filter applies in **both** the full rebuild path and the live vault-event listener, so a file in an excluded folder neither enters the index on a rebuild nor re-enters it when edited. Existing chunks indexed before a folder was excluded are left in place (no destructive purge on a settings change) and filtered out of `search_vault_smart` results at query time; physical cleanup happens on the next manual Rebuild. No new setting or UI. (RFC #238, option A + D3)
+
 ## [0.14.1] — 2026-06-08
 
 ### Fixed

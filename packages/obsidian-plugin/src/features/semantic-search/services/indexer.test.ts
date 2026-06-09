@@ -979,3 +979,102 @@ describe("low-power indexer", () => {
     expect(localStore.size()).toBe(sizeAfterStop);
   });
 });
+
+// RFC #238 — honour `Files & Links → Excluded files` in the indexer.
+// The exclusion predicate (built from `MetadataCache.isUserIgnored` in
+// production) must apply in BOTH the full rebuild path AND the live
+// event listener, otherwise a newly edited file in an excluded folder
+// re-enters the index on the next vault event.
+describe("indexer — isUserIgnored exclusion (#238)", () => {
+  function pathsOf(recs: EmbeddingRecord[]): Set<string> {
+    return new Set(recs.map((r) => r.filePath));
+  }
+
+  test("rebuild path: excluded files are not indexed", async () => {
+    const store = await makeStore();
+    const { vault } = makeVault({
+      "keep.md": "alpha",
+      "secret/a.md": "bravo",
+      "secret/b.md": "charlie",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      isExcluded: (p) => p.startsWith("secret/"),
+      debounceMs: 30,
+    });
+    await indexer.start();
+    await indexer.stop();
+
+    // Only the non-excluded file's chunk is indexed (3 files → 1 chunk).
+    expect(store.size()).toBe(1);
+    expect(pathsOf(await collect(store))).toEqual(new Set(["keep.md"]));
+  });
+
+  test("live path: an edit to a file in an excluded folder does NOT re-enter the index", async () => {
+    const store = await makeStore();
+    const { vault, files, emit } = makeVault({ "keep.md": "alpha" });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      isExcluded: (p) => p.startsWith("secret/"),
+      debounceMs: 30,
+    });
+    await indexer.start();
+    expect(store.size()).toBe(1);
+
+    // A file appears in an excluded folder and is then edited — the exact
+    // follow-on vault event STE flagged. The live listener must drop it.
+    files.set("secret/leak.md", "bravo");
+    emit("create", "secret/leak.md");
+    emit("modify", "secret/leak.md");
+    await indexer.flush();
+
+    expect(store.size()).toBe(1);
+    expect(pathsOf(await collect(store))).toEqual(new Set(["keep.md"]));
+    // No debounce timer was ever armed for the excluded path.
+    expect(indexer.pending()).toBe(0);
+
+    await indexer.stop();
+  });
+
+  test("low-power path: excluded file skipped, and excluding an already-indexed file does not destructively purge it", async () => {
+    const store = await makeStore();
+    const { vault } = makeMtimeVault({
+      "keep.md": { content: "alpha", mtime: 100 },
+      "later.md": { content: "bravo", mtime: 100 },
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const excluded = new Set<string>();
+    const indexer = createLowPowerIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      isExcluded: (p) => excluded.has(p),
+      intervalMs: 1_000_000, // never auto-ticks; we drive cycles via flush()
+    });
+    await indexer.start();
+    expect(pathsOf(await collect(store))).toEqual(
+      new Set(["keep.md", "later.md"]),
+    );
+
+    // Exclude an already-indexed file, then run another scan cycle. D3:
+    // its stale chunks stay in place (hidden at query time, physical
+    // cleanup only via manual Rebuild) — the vanished-file cleanup must
+    // NOT treat an excluded file as deleted.
+    excluded.add("later.md");
+    await indexer.flush();
+    expect(pathsOf(await collect(store))).toEqual(
+      new Set(["keep.md", "later.md"]),
+    );
+
+    await indexer.stop();
+  });
+});

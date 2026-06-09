@@ -60,6 +60,7 @@ import { makeChunkerForProvider } from "./features/semantic-search/services/chun
 import type { ExcerptResolver } from "./features/semantic-search/services/nativeProvider";
 import { loadSmartSearchAPI } from "./shared";
 import { logger } from "./shared/logger";
+import { createExclusionFilter } from "./shared/isUserIgnored";
 
 // Soft-rate counter for the in-process permission-check path. The
 // settings load/modify/save cycle is serialized through the shared
@@ -342,6 +343,13 @@ export default class McpToolsPlugin extends Plugin {
         },
       };
 
+      // Honour `Files & Links → Excluded files`: files the user has
+      // excluded never enter any embedding store, in both the full
+      // rebuild and the live event listener (RFC #238). Built once here
+      // where `app.metadataCache` is in scope and injected into every
+      // indexer below.
+      const ssIsExcluded = createExclusionFilter(this.app);
+
       const ssExcerpt: ExcerptResolver = async (path, _offset, maxLen) => {
         const f = this.app.vault.getAbstractFileByPath(path);
         if (!(f instanceof TFile)) return "";
@@ -487,12 +495,14 @@ export default class McpToolsPlugin extends Plugin {
                 chunker: nativeChunker,
                 embedder: nativeEp,
                 store: nativeStore,
+                isExcluded: ssIsExcluded,
               })
             : createLiveIndexer({
                 vault: ssVault,
                 chunker: nativeChunker,
                 embedder: nativeEp,
                 store: nativeStore,
+                isExcluded: ssIsExcluded,
               });
         state.indexer = indexer;
 
@@ -553,6 +563,7 @@ export default class McpToolsPlugin extends Plugin {
             chunker: makeChunkerForProvider(ep),
             embedder: ep,
             store: dlcStore,
+            isExcluded: ssIsExcluded,
           });
         };
 

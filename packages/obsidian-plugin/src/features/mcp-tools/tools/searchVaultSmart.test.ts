@@ -3,7 +3,13 @@ import {
   searchVaultSmartHandler,
   searchVaultSmartSchema,
 } from "./searchVaultSmart";
-import { mockApp, mockPlugin, resetMockVault } from "$/test-setup";
+import {
+  mockApp,
+  mockPlugin,
+  resetMockVault,
+  setMockIgnored,
+} from "$/test-setup";
+import { _resetIsUserIgnoredWarning } from "$/shared/isUserIgnored";
 import type {
   SearchOpts,
   SearchResult,
@@ -162,6 +168,68 @@ describe("search_vault_smart tool — dispatch contract (T11)", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/Semantic search failed/);
     expect(result.content[0]?.text).toMatch(/transient backend hiccup/);
+  });
+});
+
+// RFC #238, D3 — query-time exclusion. Even after the indexer stops
+// admitting excluded files, chunks indexed before a folder was excluded
+// can linger until the next manual Rebuild; the handler filters them out
+// of results so they never surface.
+describe("search_vault_smart — query-time exclusion filter (#238)", () => {
+  const sampleResults: SearchResult[] = [
+    {
+      filePath: "Notes/keep.md",
+      heading: null,
+      excerpt: "kept",
+      score: 0.91,
+    },
+    {
+      filePath: "Archive/old.md",
+      heading: null,
+      excerpt: "stale",
+      score: 0.84,
+    },
+  ];
+
+  test("drops results whose path is user-ignored", async () => {
+    setMockIgnored("Archive/old.md");
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.results.map((r: SearchResult) => r.filePath)).toEqual([
+      "Notes/keep.md",
+    ]);
+  });
+
+  test("gracefully degrades when isUserIgnored is unavailable (no filtering, no throw)", async () => {
+    _resetIsUserIgnoredWarning();
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const app = mockApp();
+    delete (app.metadataCache as unknown as { isUserIgnored?: unknown })
+      .isUserIgnored;
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app,
+      plugin,
+    });
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    // Accessor absent → exclusion disabled → all results flow through.
+    expect(parsed.results).toEqual(sampleResults);
   });
 });
 
