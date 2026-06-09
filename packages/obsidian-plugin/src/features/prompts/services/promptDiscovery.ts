@@ -44,7 +44,7 @@ export async function discoverPrompts(app: App): Promise<PromptListEntry[]> {
     const cache = app.metadataCache.getFileCache(
       file as unknown as InstanceType<typeof TFile>,
     );
-    const fm = cache?.frontmatter;
+    const fm = cache?.frontmatter as Record<string, unknown> | undefined;
     if (!fm) continue;
 
     const rawTags = fm.tags;

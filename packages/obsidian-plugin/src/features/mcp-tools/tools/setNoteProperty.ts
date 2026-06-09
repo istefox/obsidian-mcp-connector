@@ -120,7 +120,8 @@ export async function setNotePropertyHandler(
   }
   const file = abstract;
 
-  await ctx.app.fileManager.processFrontMatter(file, (fm) => {
+  await ctx.app.fileManager.processFrontMatter(file, (rawFm) => {
+    const fm = rawFm as Record<string, unknown>;
     if (value === null) {
       delete fm[key];
     } else {

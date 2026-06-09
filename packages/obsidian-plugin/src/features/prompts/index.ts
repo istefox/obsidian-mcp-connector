@@ -36,7 +36,7 @@ export async function setup(
       const file = abstractFile;
 
       const cache = app.metadataCache.getFileCache(file);
-      const fm = cache?.frontmatter;
+      const fm = cache?.frontmatter as Record<string, unknown> | undefined;
       const rawTags = fm?.tags;
       const tagsArray = Array.isArray(rawTags)
         ? rawTags
