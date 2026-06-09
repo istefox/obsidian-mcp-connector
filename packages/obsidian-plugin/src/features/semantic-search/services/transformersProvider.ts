@@ -13,7 +13,7 @@
 
 import type { BackendKind, EmbeddingProvider } from "../types";
 import { resolveBackend } from "./embedder";
-import type { EmbedTensor, PipelineFactory, PipelineFn } from "./embedder";
+import type { PipelineFactory, PipelineFn } from "./embedder";
 
 export type TaskPromptFn = (text: string, role: "document" | "query") => string;
 
@@ -85,7 +85,7 @@ class TransformersProviderImpl implements EmbeddingProvider {
           truncation: true,
           max_length: maxLen,
         });
-        return new Float32Array((result as EmbedTensor).data);
+        return new Float32Array(result.data);
       }),
     );
   }

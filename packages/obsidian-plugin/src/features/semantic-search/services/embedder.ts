@@ -173,7 +173,7 @@ class EmbedderImpl implements Embedder {
 
   private touchIdle(): void {
     if (this.opts.unloadWhenIdle === false) return;
-    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (this.idleTimer) window.clearTimeout(this.idleTimer);
     this.idleTimer = window.setTimeout(() => {
       this.pipeline = null;
       this.loadPromise = null;

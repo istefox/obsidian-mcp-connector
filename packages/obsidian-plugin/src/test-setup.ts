@@ -85,6 +85,7 @@ void mock.module("obsidian", () => {
   }
 
   class TFile {}
+  Object.setPrototypeOf(MockTFile.prototype, TFile.prototype);
 
   class PluginSettingTab {}
 

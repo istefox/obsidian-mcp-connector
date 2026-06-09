@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import {
   DATE_REGEX_BY_PERIOD,
   describeFormat,
@@ -107,7 +107,28 @@ export async function getOrCreatePeriodicNoteHandler(
       isError: true,
     };
   }
-  const tfile = file as TFile;
+  if (!(file instanceof TFile)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error:
+                "Internal: periodic note resolved to a folder, not a file.",
+              errorCode: "internal_error",
+              period,
+              path: resolved.path,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+  const tfile = file;
   const content = await ctx.app.vault.cachedRead(tfile);
 
   return {

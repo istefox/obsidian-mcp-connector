@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const getVaultFilePartialSchema = type({
   name: '"get_vault_file_partial"',
@@ -177,7 +177,10 @@ export async function getVaultFilePartialHandler(
   if (!abstract) {
     return errorResponse(`File not found: ${filename}`);
   }
-  const file = abstract as TFile;
+  if (!(abstract instanceof TFile)) {
+    return errorResponse(`Path is a folder: ${filename}`);
+  }
+  const file = abstract;
 
   // Schema-level guard: `target` is required for every mode except
   // `document-map`. We enforce this at the handler level (rather than via

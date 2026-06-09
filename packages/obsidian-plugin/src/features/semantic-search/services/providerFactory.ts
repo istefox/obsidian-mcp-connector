@@ -73,7 +73,7 @@ function makeSearchEmbedder(provider: EmbeddingProvider): Embedder {
   return {
     embed: async (text: string): Promise<Float32Array> => {
       const vecs = await provider.embed([text], "query");
-      return vecs[0]!;
+      return vecs[0];
     },
     embedBatch: async (texts: string[]): Promise<Float32Array[]> =>
       provider.embed(texts, "query"),

@@ -475,7 +475,7 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
   for (const c of chunks) {
     const reused = existingByHash.get(c.contentHash);
     const vector =
-      reused?.vector ?? (await deps.embedder.embed([c.text], "document"))[0]!;
+      reused?.vector ?? (await deps.embedder.embed([c.text], "document"))[0];
     records.push({
       chunkId: `${path}#${c.id}`,
       filePath: path,

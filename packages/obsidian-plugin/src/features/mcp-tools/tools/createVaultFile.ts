@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
 
 export const createVaultFileSchema = type({
@@ -29,10 +29,7 @@ export async function createVaultFileHandler(
 }> {
   const existing = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
   if (existing) {
-    // A folder at this path would make `vault.modify(... as TFile)` throw
-    // an uncaught error, bypassing the isError contract. Duck-type the
-    // same way the directory tools do (TFolder has `children`).
-    if ((existing as { children?: unknown }).children !== undefined) {
+    if (!(existing instanceof TFile)) {
       return {
         content: [
           {
@@ -43,7 +40,7 @@ export async function createVaultFileHandler(
         isError: true,
       };
     }
-    await ctx.app.vault.modify(existing as TFile, ctx.arguments.content);
+    await ctx.app.vault.modify(existing, ctx.arguments.content);
   } else {
     await ensureParentFolderExists(ctx.app, ctx.arguments.path);
     await ctx.app.vault.create(ctx.arguments.path, ctx.arguments.content);

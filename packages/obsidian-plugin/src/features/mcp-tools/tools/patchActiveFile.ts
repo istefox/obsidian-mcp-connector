@@ -59,7 +59,7 @@ export async function patchActiveFileHandler(
       isError: true,
     };
   }
-  return await applyPatch(ctx.app, file as TFile, ctx.arguments);
+  return await applyPatch(ctx.app, file, ctx.arguments);
 }
 
 // Per-target-type default for createTargetIfMissing (0.3.7 fix + issue #71):

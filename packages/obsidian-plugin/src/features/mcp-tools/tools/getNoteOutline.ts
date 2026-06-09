@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const getNoteOutlineSchema = type({
   name: '"get_note_outline"',
@@ -50,8 +50,27 @@ export async function getNoteOutlineHandler(
       isError: true,
     };
   }
+  if (!(abstract instanceof TFile)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: `Path is a folder: ${path}`,
+              errorCode: "not_a_file",
+              path,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
 
-  const cache = ctx.app.metadataCache.getFileCache(abstract as TFile);
+  const cache = ctx.app.metadataCache.getFileCache(abstract);
   const raw = cache?.headings ?? [];
 
   const headings = raw.map((h) => ({
