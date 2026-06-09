@@ -30,7 +30,10 @@ export async function activateToolHandler({
   registry: RegistryLike;
   plugin: PluginLike;
   server: McpServer;
-}): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+}): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   const allEntries = registry.listAll();
   const found = allEntries.find((e) => e.name === args.name);
 
@@ -49,7 +52,10 @@ export async function activateToolHandler({
   if (found.enabled) {
     return {
       content: [
-        { type: "text", text: "Tool is already active in the current session." },
+        {
+          type: "text",
+          text: "Tool is already active in the current session.",
+        },
       ],
     };
   }
