@@ -165,7 +165,7 @@ class EmbedderImpl implements Embedder {
   private cacheSet(text: string, promise: Promise<Float32Array>): void {
     const max = this.opts.cacheSize ?? DEFAULT_CACHE_SIZE;
     if (this.cache.size >= max) {
-      const oldest = this.cache.keys().next().value;
+      const oldest = this.cache.keys().next().value as string | undefined;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
     this.cache.set(text, promise);

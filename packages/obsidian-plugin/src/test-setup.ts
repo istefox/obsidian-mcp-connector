@@ -242,7 +242,7 @@ void mock.module("obsidian", () => {
         json: r.text
           ? (() => {
               try {
-                return JSON.parse(r.text);
+                return JSON.parse(r.text) as unknown;
               } catch {
                 return null;
               }
