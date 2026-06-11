@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.15.3] — 2026-06-11
+
+### Fixed
+
+- **Plugin review scanner warnings resolved in plugin source.** `Moment` type now derives from Obsidian's bundled `moment` export instead of importing the restricted `moment` package; four remaining `as TFile` casts replaced with `instanceof TFile` guards (`renameHeading`, `getOrCreateDailyNote`); unused `_` destructuring binding removed (`patchVaultFile`). Remaining scanner items are bundled third-party code or documented intrinsic capabilities — see `AUDIT.md`. (PR #260)
+
 ## [0.15.2] — 2026-06-11
 
 ### Fixed
