@@ -1,4 +1,4 @@
-import { create } from "archiver";
+import { ZipArchive } from "archiver";
 import { createWriteStream, existsSync } from "fs";
 import fs from "fs-extra";
 import { join, resolve } from "path";
@@ -32,7 +32,8 @@ async function zipPlugin() {
   const zipFilePath = join(releaseDir, `obsidian-plugin-${version}.zip`);
   const output = createWriteStream(zipFilePath);
 
-  const archive = create("zip", { zlib: { level: 9 } });
+  // archiver 8.x replaced the create() factory with format classes.
+  const archive = new ZipArchive({ zlib: { level: 9 } });
   archive.pipe(output);
 
   // Required files — fail loudly if either is missing instead of
