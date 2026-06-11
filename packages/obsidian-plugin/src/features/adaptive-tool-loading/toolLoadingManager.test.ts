@@ -145,6 +145,21 @@ describe("recordCall", () => {
     expect(state.promoted).not.toContain("tool_catalog");
   });
 
+  test("concurrent recordCalls do not lose counter updates", async () => {
+    const plugin = makePlugin();
+    // Fire two read-modify-write cycles concurrently. Without the
+    // settings mutex both read the same "before" snapshot and the
+    // last writer clobbers the first one's counter (lost update).
+    await Promise.all([
+      mgr.recordCall("search_vault", plugin),
+      mgr.recordCall("get_active_file", plugin),
+    ]);
+    const data = plugin._store() as Record<string, unknown>;
+    const state = data.toolLoading as { counters: Record<string, number> };
+    expect(state.counters["search_vault"]).toBe(1);
+    expect(state.counters["get_active_file"]).toBe(1);
+  });
+
   test("does not re-promote an already-promoted tool", async () => {
     const plugin = makePlugin({
       toolLoading: {

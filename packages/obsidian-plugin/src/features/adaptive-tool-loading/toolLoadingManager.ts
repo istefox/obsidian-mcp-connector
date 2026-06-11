@@ -1,3 +1,4 @@
+import { globalSettingsMutex } from "$/features/command-permissions/services/settingsLock";
 import {
   ADAPTIVE_META_TOOLS,
   ALWAYS_ACTIVE_TOOLS,
@@ -60,19 +61,26 @@ export class ToolLoadingManager {
     return base;
   }
 
+  // All mutating methods serialize their load→modify→save cycle through
+  // globalSettingsMutex: data.json is shared with every other feature, so
+  // an unserialized read-modify-write here can clobber another feature's
+  // slice (or lose a concurrent counter increment). See settingsLock.ts.
+
   async recordCall(toolName: string, plugin: PluginLike): Promise<void> {
-    const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-    const state = mergeState(raw);
-    state.counters[toolName] = (state.counters[toolName] ?? 0) + 1;
-    if (
-      state.profile === "adaptive" &&
-      state.counters[toolName] >= PROMOTION_THRESHOLD &&
-      !state.promoted.includes(toolName) &&
-      !(META_TOOLS as string[]).includes(toolName)
-    ) {
-      state.promoted = [...state.promoted, toolName];
-    }
-    await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    await globalSettingsMutex.run(async () => {
+      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
+      const state = mergeState(raw);
+      state.counters[toolName] = (state.counters[toolName] ?? 0) + 1;
+      if (
+        state.profile === "adaptive" &&
+        state.counters[toolName] >= PROMOTION_THRESHOLD &&
+        !state.promoted.includes(toolName) &&
+        !(META_TOOLS as string[]).includes(toolName)
+      ) {
+        state.promoted = [...state.promoted, toolName];
+      }
+      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    });
   }
 
   async activateTool(
@@ -81,26 +89,32 @@ export class ToolLoadingManager {
     plugin: PluginLike,
   ): Promise<"activated" | "already_active" | "not_found"> {
     if (!allNames.includes(name)) return "not_found";
-    const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-    const state = mergeState(raw);
-    if (state.promoted.includes(name)) return "already_active";
-    state.promoted = [...state.promoted, name];
-    await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
-    return "activated";
+    return globalSettingsMutex.run(async () => {
+      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
+      const state = mergeState(raw);
+      if (state.promoted.includes(name)) return "already_active" as const;
+      state.promoted = [...state.promoted, name];
+      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+      return "activated" as const;
+    });
   }
 
   async deactivateTool(name: string, plugin: PluginLike): Promise<void> {
-    const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-    const state = mergeState(raw);
-    state.promoted = state.promoted.filter((n) => n !== name);
-    await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    await globalSettingsMutex.run(async () => {
+      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
+      const state = mergeState(raw);
+      state.promoted = state.promoted.filter((n) => n !== name);
+      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    });
   }
 
   async resetAll(plugin: PluginLike): Promise<void> {
-    const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-    const state = mergeState(raw);
-    state.counters = {};
-    state.promoted = [];
-    await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    await globalSettingsMutex.run(async () => {
+      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
+      const state = mergeState(raw);
+      state.counters = {};
+      state.promoted = [];
+      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+    });
   }
 }
