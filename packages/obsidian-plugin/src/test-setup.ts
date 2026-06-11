@@ -20,21 +20,27 @@
  */
 
 import { mock } from "bun:test";
+// Real moment package, declared in devDependencies. Test-only: at
+// production runtime Obsidian injects its own bundled moment via the
+// "obsidian" module; this import backs the mock's `moment` re-export
+// so periodic-notes date logic behaves identically under test.
 import moment from "moment";
 
 // Bun's test runner has no `window` global; production code that calls
 // window.setTimeout/clearTimeout (required for Obsidian popout-window compat)
 // needs it to exist. Assign before any module that uses window.* loads.
-(globalThis as Record<string, unknown>).window = globalThis;
+// `global` is Node/Bun's name for the global object — the same object the
+// production code reaches as `window` once this assignment runs.
+(global as unknown as Record<string, unknown>).window = global;
 
 // Obsidian injects `activeWindow` as a global (points to the focused Window
 // in popout-window scenarios). Tests run outside Obsidian, so we stub it to
 // the global timer functions so timer-dependent production code still works.
-// We delegate through an accessor so tests that swap `globalThis.setTimeout`
+// We delegate through an accessor so tests that swap the global setTimeout
 // (e.g. the modal-timeout test) still take effect — activeWindow.setTimeout
-// reads the live globalThis binding at call time, not the one at setup time.
+// reads the live global binding at call time, not the one at setup time.
 (
-  globalThis as unknown as {
+  window as unknown as {
     activeWindow: {
       setTimeout: typeof setTimeout;
       clearTimeout: typeof clearTimeout;
@@ -42,13 +48,13 @@ import moment from "moment";
   }
 ).activeWindow = {
   setTimeout: ((...args: Parameters<typeof setTimeout>) =>
-    (globalThis as unknown as { setTimeout: typeof setTimeout }).setTimeout(
+    (window as unknown as { setTimeout: typeof setTimeout }).setTimeout(
       ...args,
     )) as typeof setTimeout,
   clearTimeout: (...args: Parameters<typeof clearTimeout>) =>
-    (
-      globalThis as unknown as { clearTimeout: typeof clearTimeout }
-    ).clearTimeout(...args),
+    (window as unknown as { clearTimeout: typeof clearTimeout }).clearTimeout(
+      ...args,
+    ),
 };
 
 void mock.module("obsidian", () => {
@@ -971,7 +977,12 @@ export function getMockFolders(): string[] {
   return Array.from(_mockState.folders).sort();
 }
 
-import type { App, TAbstractFile, TFile, TFolder } from "obsidian";
+import type {
+  App,
+  TAbstractFile,
+  TFile as ApiTFile,
+  TFolder as ApiTFolder,
+} from "obsidian";
 
 export function mockApp(): App {
   const vault = {
@@ -982,16 +993,16 @@ export function mockApp(): App {
       if (d) return d as unknown as TAbstractFile;
       return null;
     },
-    getFiles: (): TFile[] =>
+    getFiles: (): ApiTFile[] =>
       Array.from(_mockState.files.keys())
         .map((p) => fileFromPath(p))
-        .filter((f): f is MockTFile => f !== null) as unknown as TFile[],
-    getMarkdownFiles: (): TFile[] =>
+        .filter((f): f is MockTFile => f !== null) as unknown as ApiTFile[],
+    getMarkdownFiles: (): ApiTFile[] =>
       Array.from(_mockState.files.keys())
         .filter((p) => p.endsWith(".md"))
         .map((p) => fileFromPath(p))
-        .filter((f): f is MockTFile => f !== null) as unknown as TFile[],
-    read: async (file: TFile): Promise<string> => {
+        .filter((f): f is MockTFile => f !== null) as unknown as ApiTFile[],
+    read: async (file: ApiTFile): Promise<string> => {
       const path = (file as unknown as MockTFile).path;
       const content = _mockState.files.get(path);
       if (content === undefined) throw new Error(`ENOENT: ${path}`);
@@ -1002,16 +1013,16 @@ export function mockApp(): App {
       }
       return content;
     },
-    cachedRead: async (file: TFile): Promise<string> => {
+    cachedRead: async (file: ApiTFile): Promise<string> => {
       return vault.read(file);
     },
-    readBinary: async (file: TFile): Promise<ArrayBuffer> => {
+    readBinary: async (file: ApiTFile): Promise<ArrayBuffer> => {
       const path = (file as unknown as MockTFile).path;
       const content = _mockState.files.get(path) ?? "";
       const buf = new TextEncoder().encode(content).buffer;
       return buf as ArrayBuffer;
     },
-    create: async (path: string, content: string): Promise<TFile> => {
+    create: async (path: string, content: string): Promise<ApiTFile> => {
       // Mirror Obsidian semantics: bottom-level fs operation throws
       // ENOENT when the parent directory doesn't exist. The mock walks
       // every ancestor segment (excluding the leaf filename) and
@@ -1026,9 +1037,9 @@ export function mockApp(): App {
         }
       }
       _mockState.files.set(path, content);
-      return fileFromPath(path) as unknown as TFile;
+      return fileFromPath(path) as unknown as ApiTFile;
     },
-    createFolder: async (path: string): Promise<TFolder> => {
+    createFolder: async (path: string): Promise<ApiTFolder> => {
       // Real Obsidian throws "Folder already exists" on a duplicate.
       // The production helper swallows that case, so the mock must
       // throw to exercise that swallow path.
@@ -1036,16 +1047,16 @@ export function mockApp(): App {
         throw new Error(`Folder already exists: ${path}`);
       }
       _mockState.folders.add(path);
-      return folderFromPath(path) as unknown as TFolder;
+      return folderFromPath(path) as unknown as ApiTFolder;
     },
-    modify: async (file: TFile, content: string): Promise<void> => {
+    modify: async (file: ApiTFile, content: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
       if (_mockState.modifyFailPaths.has(path)) {
         throw new Error(`mock modify failure: ${path}`);
       }
       _mockState.files.set(path, content);
     },
-    append: async (file: TFile, content: string): Promise<void> => {
+    append: async (file: ApiTFile, content: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
       const existing = _mockState.files.get(path) ?? "";
       _mockState.files.set(path, existing + content);
@@ -1111,9 +1122,11 @@ export function mockApp(): App {
   };
 
   const workspace = {
-    getActiveFile: (): TFile | null => {
+    getActiveFile: (): ApiTFile | null => {
       if (!_mockState.activeFilePath) return null;
-      return fileFromPath(_mockState.activeFilePath) as unknown as TFile | null;
+      return fileFromPath(
+        _mockState.activeFilePath,
+      ) as unknown as ApiTFile | null;
     },
     openLinkText: async (
       linktext: string,
@@ -1126,14 +1139,14 @@ export function mockApp(): App {
       _mockState.activeFilePath = linktext;
     },
     getLeaf: () => ({
-      openFile: async (file: TFile) => {
+      openFile: async (file: ApiTFile) => {
         _mockState.activeFilePath = (file as unknown as MockTFile).path;
       },
     }),
   };
 
   const metadataCache = {
-    getFileCache: (file: TFile) => {
+    getFileCache: (file: ApiTFile) => {
       const path = (file as unknown as MockTFile).path;
       return _mockState.metadataCache.get(path) ?? null;
     },
@@ -1158,19 +1171,19 @@ export function mockApp(): App {
     getFirstLinkpathDest: (
       linkpath: string,
       _sourcePath: string,
-    ): TFile | null => {
+    ): ApiTFile | null => {
       if (_mockState.files.has(linkpath)) {
-        return fileFromPath(linkpath) as unknown as TFile | null;
+        return fileFromPath(linkpath) as unknown as ApiTFile | null;
       }
       const withMd = linkpath.endsWith(".md") ? linkpath : `${linkpath}.md`;
       if (_mockState.files.has(withMd)) {
-        return fileFromPath(withMd) as unknown as TFile | null;
+        return fileFromPath(withMd) as unknown as ApiTFile | null;
       }
       for (const path of _mockState.files.keys()) {
         const name = path.split("/").pop() ?? path;
         const base = name.replace(/\.md$/, "");
         if (base === linkpath || name === linkpath) {
-          return fileFromPath(path) as unknown as TFile | null;
+          return fileFromPath(path) as unknown as ApiTFile | null;
         }
       }
       return null;
@@ -1179,7 +1192,7 @@ export function mockApp(): App {
 
   const fileManager = {
     processFrontMatter: async (
-      file: TFile,
+      file: ApiTFile,
       fn: (frontmatter: Record<string, unknown>) => void,
     ): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
