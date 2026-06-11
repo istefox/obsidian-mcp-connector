@@ -1,15 +1,5 @@
 import type { App, Plugin } from "obsidian";
-import {
-  distinct,
-  interval,
-  map,
-  merge,
-  scan,
-  startWith,
-  takeUntil,
-  takeWhile,
-  timer,
-} from "rxjs";
+import { distinct, interval, map, takeUntil, takeWhile, timer } from "rxjs";
 import type { SmartConnections, Templater } from "shared";
 import type McpToolsPlugin from "src/main";
 
@@ -187,53 +177,5 @@ export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
     takeWhile((dep) => typeof dep.api?.search !== "function", true),
     distinct(({ installed }) => installed),
   );
-
-export const loadTemplaterAPI = (plugin: McpToolsPlugin) =>
-  interval(200).pipe(
-    takeUntil(timer(5000)),
-    map((): Dependencies["templater-obsidian"] => {
-      const api = plugin.app.plugins.plugins["templater-obsidian"]?.templater;
-      return {
-        id: "templater-obsidian",
-        name: "Templater",
-        required: false,
-        installed: !!api,
-        api,
-        plugin: plugin.app.plugins.plugins["templater-obsidian"],
-      };
-    }),
-    takeWhile((dependency) => !dependency.installed, true),
-    distinct(({ installed }) => installed),
-  );
-
-export const loadDependencies = (plugin: McpToolsPlugin) => {
-  const dependencies: Dependencies = {
-    "smart-connections": {
-      id: "smart-connections",
-      name: "Smart Connections",
-      required: false,
-      installed: false,
-      url: "https://smartconnections.app/",
-    },
-    "templater-obsidian": {
-      id: "templater-obsidian",
-      name: "Templater",
-      required: false,
-      installed: false,
-      url: "https://silentvoid13.github.io/Templater/",
-    },
-  };
-  return merge(loadTemplaterAPI(plugin), loadSmartSearchAPI(plugin)).pipe(
-    scan((acc, dependency) => {
-      // @ts-expect-error Dynamic key assignment
-      acc[dependency.id] = {
-        ...dependencies[dependency.id],
-        ...dependency,
-      };
-      return acc;
-    }, dependencies),
-    startWith(dependencies),
-  );
-};
 
 export * from "./logger";
