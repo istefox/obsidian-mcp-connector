@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const toolCatalogSchema = type({
@@ -56,7 +57,5 @@ export async function toolCatalogHandler({
     };
   });
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(catalog, null, 2) }],
-  };
+  return successText(JSON.stringify(catalog, null, 2));
 }

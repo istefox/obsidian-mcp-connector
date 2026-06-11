@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const getBacklinksSchema = type({
@@ -88,7 +89,5 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
     backlinks,
   };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-  };
+  return successText(JSON.stringify(output, null, 2));
 }

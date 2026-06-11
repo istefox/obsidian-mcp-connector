@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const deleteVaultDirectorySchema = type({
@@ -28,15 +29,7 @@ export async function deleteVaultDirectoryHandler(
 }> {
   const trimmed = ctx.arguments.path.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Path is empty after normalisation; refusing to delete the vault root.",
-        },
-      ],
-      isError: true,
-    };
+    return errorText("Path is empty after normalisation; refusing to delete the vault root.");
   }
 
   const recursive = (ctx.arguments.recursive ?? "false") === "true";
@@ -48,15 +41,7 @@ export async function deleteVaultDirectoryHandler(
     const isFolder =
       (existing as { children?: unknown }).children !== undefined;
     if (!isFolder) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Path ${trimmed} is a file, not a directory. Use delete_vault_file instead.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Path ${trimmed} is a file, not a directory. Use delete_vault_file instead.`);
     }
   }
 
@@ -90,5 +75,5 @@ export async function deleteVaultDirectoryHandler(
     };
   }
 
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }

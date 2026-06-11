@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { apply as applyJsonLogic } from "json-logic-js";
 import { executeDataviewQueryHandler } from "./executeDataviewQuery";
@@ -33,15 +34,7 @@ export async function searchVaultHandler(ctx: SearchVaultContext): Promise<{
     try {
       rule = JSON.parse(query);
     } catch {
-      return {
-        content: [
-          {
-            type: "text",
-            text: 'JsonLogic query must be a valid JSON string. Example: {"==": [{"var": "frontmatter.status"}, "active"]}',
-          },
-        ],
-        isError: true,
-      };
+      return errorText('JsonLogic query must be a valid JSON string. Example: {"==": [{"var": "frontmatter.status"}, "active"]}');
     }
 
     const results = ctx.app.vault
@@ -65,9 +58,7 @@ export async function searchVaultHandler(ctx: SearchVaultContext): Promise<{
       })
       .map((f) => ({ path: f.path }));
 
-    return {
-      content: [{ type: "text", text: JSON.stringify(results) }],
-    };
+    return successText(JSON.stringify(results));
   }
 
   return executeDataviewQueryHandler({ arguments: { query }, app: ctx.app });

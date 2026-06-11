@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import {
   applyPatch,
@@ -53,26 +54,10 @@ export async function patchVaultFileHandler(
 }> {
   const file = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
   if (!file) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `File not found: ${ctx.arguments.path}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`File not found: ${ctx.arguments.path}`);
   }
   if (!(file instanceof TFile)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Path is a folder: ${ctx.arguments.path}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Path is a folder: ${ctx.arguments.path}`);
   }
 
   // Strip `path` from the arguments before forwarding — applyPatch only needs

@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 
 import {
@@ -51,10 +52,7 @@ function errorResponse(payload: {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    isError: true,
-  };
+  return errorText(JSON.stringify(payload, null, 2));
 }
 
 function successResponse(payload: {
@@ -62,9 +60,7 @@ function successResponse(payload: {
   updatedFiles: string[];
   linkRewriteCount: number;
 }): { content: Array<{ type: "text"; text: string }> } {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-  };
+  return successText(JSON.stringify(payload, null, 2));
 }
 
 function partialFailureResponse(payload: {
@@ -74,10 +70,7 @@ function partialFailureResponse(payload: {
   failedFiles: Array<{ path: string; error: string }>;
   linkRewriteCount: number;
 }): { content: Array<{ type: "text"; text: string }>; isError: true } {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-    isError: true,
-  };
+  return errorText(JSON.stringify(payload, null, 2));
 }
 
 /**

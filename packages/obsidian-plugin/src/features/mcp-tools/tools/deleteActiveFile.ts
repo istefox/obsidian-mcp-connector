@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const deleteActiveFileSchema = type({
@@ -21,11 +22,8 @@ export async function deleteActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return {
-      content: [{ type: "text", text: "No active file." }],
-      isError: true,
-    };
+    return errorText("No active file.");
   }
   await ctx.app.fileManager.trashFile(file);
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }

@@ -30,6 +30,7 @@
  */
 
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { rateLimitTake } from "$/features/mcp-tools/services/rateLimit";
@@ -72,15 +73,7 @@ export async function executeObsidianCommandHandler(
   const rl = rateLimitTake();
   if (!rl.ok) {
     const waitSec = Math.ceil((rl.retryAfterMs ?? 0) / 1000);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Rate limit exceeded: too many command executions in the last minute. Retry in ${waitSec}s.`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Rate limit exceeded: too many command executions in the last minute. Retry in ${waitSec}s.`);
   }
 
   // --- 2. Permission check ---
@@ -96,15 +89,7 @@ export async function executeObsidianCommandHandler(
   };
 
   if (typeof pluginWithPermCheck.checkCommandPermission !== "function") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Internal error: permission check not available on plugin.",
-        },
-      ],
-      isError: true,
-    };
+    return errorText("Internal error: permission check not available on plugin.");
   }
 
   const decision = await pluginWithPermCheck.checkCommandPermission(
@@ -115,15 +100,7 @@ export async function executeObsidianCommandHandler(
     const reason = decision.reason
       ? `: ${decision.reason}`
       : ". Command is denied or not allowed by plugin settings.";
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Command denied${reason}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Command denied${reason}`);
   }
 
   // --- 3. Execute ---
@@ -138,23 +115,8 @@ export async function executeObsidianCommandHandler(
   const success = commandsApi.executeCommandById(ctx.arguments.commandId);
 
   if (!success) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Command not found: '${ctx.arguments.commandId}'. Use list_obsidian_commands to discover available commands.`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Command not found: '${ctx.arguments.commandId}'. Use list_obsidian_commands to discover available commands.`);
   }
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Executed Obsidian command '${ctx.arguments.commandId}'.`,
-      },
-    ],
-  };
+  return successText(`Executed Obsidian command '${ctx.arguments.commandId}'.`);
 }

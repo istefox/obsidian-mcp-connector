@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 
 export const getServerInfoSchema = type({
   name: '"get_server_info"',
@@ -35,7 +36,5 @@ export async function getServerInfoHandler(
     transport: "streamable-http",
     ...(localTransport ? { localTransport } : {}),
   };
-  return {
-    content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
-  };
+  return successText(JSON.stringify(body, null, 2));
 }

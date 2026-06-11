@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 const DEFAULT_CONTEXT = 100;
@@ -71,7 +72,5 @@ export async function searchVaultSimpleHandler(
     }
   }
 
-  return {
-    content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
-  };
+  return successText(JSON.stringify({ results }, null, 2));
 }

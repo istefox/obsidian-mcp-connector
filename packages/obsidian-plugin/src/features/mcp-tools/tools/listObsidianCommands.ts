@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const listObsidianCommandsSchema = type({
@@ -39,7 +40,5 @@ export async function listObsidianCommandsHandler(
       )
     : all;
 
-  return {
-    content: [{ type: "text", text: JSON.stringify({ commands }, null, 2) }],
-  };
+  return successText(JSON.stringify({ commands }, null, 2));
 }

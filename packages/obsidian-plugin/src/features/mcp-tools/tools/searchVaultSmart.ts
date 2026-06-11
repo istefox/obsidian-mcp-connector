@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
@@ -141,7 +142,5 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
-  return {
-    content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }],
-  };
+  return successText(JSON.stringify({ results }, null, 2));
 }

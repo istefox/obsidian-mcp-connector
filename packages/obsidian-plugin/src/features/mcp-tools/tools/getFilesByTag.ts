@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const getFilesByTagSchema = type({
@@ -29,15 +30,7 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
   // the lookup contract.
   const normalized = ctx.arguments.tag.trim().replace(/^#+/, "").toLowerCase();
   if (!normalized) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: 'Invalid tag: input is empty or contains only "#" characters.',
-        },
-      ],
-      isError: true,
-    };
+    return errorText('Invalid tag: input is empty or contains only "#" characters.');
   }
 
   const includeNested = (ctx.arguments.includeNested ?? "true") === "true";
@@ -99,7 +92,5 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
     files: counts,
   };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-  };
+  return successText(JSON.stringify(output, null, 2));
 }

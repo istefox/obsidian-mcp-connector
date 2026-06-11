@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText } from "../services/responseBuilders";
 import type { App, TAbstractFile } from "obsidian";
 
 export const renameVaultFileSchema = type({
@@ -39,17 +40,11 @@ export async function renameVaultFileHandler(
 
   const source = ctx.app.vault.getAbstractFileByPath(from);
   if (!source) {
-    return {
-      content: [{ type: "text", text: `Source file not found: ${from}` }],
-      isError: true,
-    };
+    return errorText(`Source file not found: ${from}`);
   }
 
   if (ctx.app.vault.getAbstractFileByPath(to)) {
-    return {
-      content: [{ type: "text", text: `Destination already exists: ${to}` }],
-      isError: true,
-    };
+    return errorText(`Destination already exists: ${to}`);
   }
 
   // Fail-loud on missing destination parent. Mirrors the bias established
@@ -60,15 +55,7 @@ export async function renameVaultFileHandler(
   if (slash > 0) {
     const parent = to.slice(0, slash);
     if (!ctx.app.vault.getAbstractFileByPath(parent)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Destination parent directory does not exist: ${parent}`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Destination parent directory does not exist: ${parent}`);
     }
   }
 
@@ -83,15 +70,7 @@ export async function renameVaultFileHandler(
       }
     ).renameFile(source, to);
   } catch (e) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Failed to rename: ${e instanceof Error ? e.message : String(e)}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Failed to rename: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return {

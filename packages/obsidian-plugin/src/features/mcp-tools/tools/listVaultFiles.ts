@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const listVaultFilesSchema = type({
@@ -29,7 +30,5 @@ export async function listVaultFilesHandler(
     ? all.filter((f) => f.path.startsWith(prefix)).map((f) => f.path)
     : all.map((f) => f.path);
 
-  return {
-    content: [{ type: "text", text: JSON.stringify({ files }, null, 2) }],
-  };
+  return successText(JSON.stringify({ files }, null, 2));
 }

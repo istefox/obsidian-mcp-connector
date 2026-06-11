@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { ensureFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
 
@@ -26,15 +27,7 @@ export async function createVaultDirectoryHandler(
 }> {
   const trimmed = ctx.arguments.path.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Path is empty after normalisation; cannot create the vault root.",
-        },
-      ],
-      isError: true,
-    };
+    return errorText("Path is empty after normalisation; cannot create the vault root.");
   }
 
   // If a file already exists at this path the request is ambiguous —
@@ -44,19 +37,11 @@ export async function createVaultDirectoryHandler(
     const isFolder =
       (existing as { children?: unknown }).children !== undefined;
     if (!isFolder) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `A file already exists at ${trimmed}; cannot create directory with the same path.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`A file already exists at ${trimmed}; cannot create directory with the same path.`);
     }
-    return { content: [{ type: "text", text: "OK" }] };
+    return successText("OK");
   }
 
   await ensureFolderExists(ctx.app, trimmed);
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }

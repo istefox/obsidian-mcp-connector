@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import { moment } from "obsidian";
 import type McpToolsPlugin from "$/main";
@@ -333,13 +334,5 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
-      },
-    ],
-    isError: true,
-  };
+  return errorText(JSON.stringify({ error: message, errorCode, ...extras }, null, 2));
 }

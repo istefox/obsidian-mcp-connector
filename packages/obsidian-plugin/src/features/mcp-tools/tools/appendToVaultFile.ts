@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import { normalizeAppendBody } from "$/features/mcp-tools/services/patchHelpers";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
@@ -31,15 +32,7 @@ export async function appendToVaultFileHandler(
 
   if (existing) {
     if (!(existing instanceof TFile)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Path ${ctx.arguments.path} is a folder, not a file.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Path ${ctx.arguments.path} is a folder, not a file.`);
     }
     const current = await ctx.app.vault.read(existing);
     await ctx.app.vault.modify(existing, current + normalized);
@@ -47,5 +40,5 @@ export async function appendToVaultFileHandler(
     await ensureParentFolderExists(ctx.app, ctx.arguments.path);
     await ctx.app.vault.create(ctx.arguments.path, normalized);
   }
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }
