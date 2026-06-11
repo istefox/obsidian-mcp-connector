@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { TFile, type App } from "obsidian";
+import { errorText, successJson } from "../services/responseBuilders";
 
 export const getOutgoingLinksSchema = type({
   name: '"get_outgoing_links"',
@@ -50,16 +51,10 @@ export async function getOutgoingLinksHandler(
   const sourcePath = ctx.arguments.path;
   const abstract = ctx.app.vault.getAbstractFileByPath(sourcePath);
   if (!abstract) {
-    return {
-      content: [{ type: "text", text: `File not found: ${sourcePath}` }],
-      isError: true,
-    };
+    return errorText(`File not found: ${sourcePath}`);
   }
   if (!(abstract instanceof TFile)) {
-    return {
-      content: [{ type: "text", text: `Path is a folder: ${sourcePath}` }],
-      isError: true,
-    };
+    return errorText(`Path is a folder: ${sourcePath}`);
   }
   const file = abstract;
 
@@ -127,7 +122,5 @@ export async function getOutgoingLinksHandler(
     links: filtered,
   };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-  };
+  return successJson(output);
 }

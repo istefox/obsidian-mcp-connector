@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import type { App } from "obsidian";
+import { errorText, successText } from "../services/responseBuilders";
 
 export const deleteVaultFileSchema = type({
   name: '"delete_vault_file"',
@@ -23,13 +24,8 @@ export async function deleteVaultFileHandler(
 }> {
   const file = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
   if (!file) {
-    return {
-      content: [
-        { type: "text", text: `File not found: ${ctx.arguments.path}` },
-      ],
-      isError: true,
-    };
+    return errorText(`File not found: ${ctx.arguments.path}`);
   }
   await ctx.app.fileManager.trashFile(file);
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }
