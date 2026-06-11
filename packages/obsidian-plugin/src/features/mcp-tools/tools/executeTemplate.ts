@@ -47,7 +47,7 @@ export const executeTemplateSchema = type({
     ),
   },
 }).describe(
-  'Renders a template. If targetPath is given and createFile="true", creates a new note at that path and returns the rendered content. Two-tier template engine: Templater (community plugin) when installed; falls back to the core Templates plugin for basic {{title}}/{{date}}/{{time}} substitution. `errorCode: "templater_not_installed"` when neither engine is available, `template_not_found` if the template file is missing, `template_execution_failed` on a Templater render error, `core_templates_execution_failed` on a core-Templates read error. The `arguments` map is Templater-specific and is ignored (with a warning) on the core-Templates path.',
+  'Renders a template via Templater when installed, else the core Templates plugin ({{title}}/{{date}}/{{time}} only). With targetPath and createFile="true" also creates the note at targetPath. Error codes: templater_not_installed, template_not_found, template_execution_failed, core_templates_execution_failed. `arguments` is Templater-only (warning on the core path).',
 );
 
 export type ExecuteTemplateContext = {
@@ -334,5 +334,7 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }, null, 2));
+  return errorText(
+    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
+  );
 }

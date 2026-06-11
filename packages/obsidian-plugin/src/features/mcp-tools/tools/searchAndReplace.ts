@@ -22,7 +22,7 @@ export const searchAndReplaceSchema = type({
     ),
   },
 }).describe(
-  'Regex find-and-replace across the vault or a scoped file list. Safe by default: `dry_run` is `true` — no files are modified unless you explicitly pass `dry_run:"false"`. Validates the regex before any file access. Returns files_matched, total_replacements, and per-file preview (max 5 match contexts). In preview entries, `line_number: 0` is a sentinel for multi-line matches where no per-line preview is available (consistent with `find_broken_links` frontmatter sentinel). JavaScript regex semantics apply; `g` flag is always active. Patterns with nested quantifiers (e.g. `(a+)+`) are rejected to protect the Obsidian main thread.',
+  'Regex find-and-replace across the vault or a scoped file list. `dry_run` defaults to `"true"` (preview only); pass `"false"` to write. Returns files_matched, total_replacements, and up to 5 match previews per file (`line_number: 0` = multi-line match). JavaScript regex, `g` flag always active; patterns with nested quantifiers are rejected.',
 );
 
 export type SearchAndReplaceContext = {

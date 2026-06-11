@@ -9,11 +9,11 @@ export const getBacklinksSchema = type({
       "Vault-relative path of the target file. The tool returns every file that links to this path.",
     ),
     "includeUnresolved?": type('"true" | "false"').describe(
-      'When `"true"`, also include backlinks where the source uses a linkpath that does not actually resolve to this file (typo or broken-link sources matching the target by path or filename). Default `"false"` because unresolved backlinks are usually noise; opt in when auditing or fixing broken links. For richer per-link context (display text, raw syntax) call `get_outgoing_links` from each source instead.',
+      'When `"true"`, also includes sources whose link does not resolve (typo or broken-link sources matching by path or filename). Default `"false"`: unresolved backlinks are usually noise.',
     ),
   },
 }).describe(
-  "Returns every file that links to the given target, with per-source link count. Aggregates resolved backlinks via Obsidian's `metadataCache.resolvedLinks` reverse-index; opt-in `includeUnresolved` extends with broken-link sources matched by path or filename. Sorted by count descending with path tiebreaker for determinism. Always read-only. Does not error if the target file doesn't currently exist on disk — backlinks can outlive their target.",
+  "Lists every file linking to the target, with per-source link count, sorted by count descending. Works even if the target does not exist (backlinks can outlive it). Read-only.",
 );
 
 export type GetBacklinksContext = {
