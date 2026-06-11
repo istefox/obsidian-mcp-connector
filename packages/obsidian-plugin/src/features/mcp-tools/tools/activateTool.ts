@@ -1,6 +1,10 @@
 import { type } from "arktype";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
+import {
+  ToolLoadingManager,
+  type PluginLike,
+} from "$/features/adaptive-tool-loading/toolLoadingManager";
+import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const activateToolSchema = type({
   name: '"activate_tool"',
@@ -13,15 +17,6 @@ export const activateToolSchema = type({
 }).describe(
   "Promotes an inactive tool to active status. With persist=false (default) the tool is available immediately and stays active until the Obsidian plugin reloads. With persist=true the promotion is saved and survives plugin reloads. Run tool_catalog first to see available tool names.",
 );
-
-type RegistryLike = {
-  listAll: () => { name: string; description: string; enabled: boolean }[];
-};
-
-type PluginLike = {
-  loadData: () => Promise<unknown>;
-  saveData: (data: unknown) => Promise<void>;
-};
 
 export async function activateToolHandler({
   arguments: args,

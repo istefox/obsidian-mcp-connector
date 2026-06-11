@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const toolCatalogSchema = type({
   name: '"tool_catalog"',
@@ -14,10 +15,8 @@ type ToolEntry = {
   description?: string;
 };
 
-type RegistryLike = {
-  listAll: () => { name: string; description: string; enabled: boolean }[];
-};
-
+// Read-only persistence view — intentionally narrower than the shared
+// PluginLike (no saveData): the catalog never writes.
 type PluginLike = {
   loadData: () => Promise<unknown>;
 };

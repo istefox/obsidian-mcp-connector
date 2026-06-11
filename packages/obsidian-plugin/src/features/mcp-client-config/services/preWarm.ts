@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import type { PluginLike } from "$/features/adaptive-tool-loading/toolLoadingManager";
 import { globalSettingsMutex } from "$/features/command-permissions";
 import { logger } from "$/shared/logger";
 import {
@@ -62,11 +63,6 @@ const defaultRunner: ExecRunner = (file, args, options) => {
     opts?: { timeout?: number; env?: NodeJS.ProcessEnv },
   ) => Promise<{ stdout: string; stderr: string }>;
   return execFile_(file, args, options);
-};
-
-type PluginLike = {
-  loadData: () => Promise<unknown>;
-  saveData: (data: unknown) => Promise<void>;
 };
 
 // ---------------------------------------------------------------------------
