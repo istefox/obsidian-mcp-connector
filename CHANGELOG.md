@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.15.6] — 2026-06-11
+
+### Changed
+
+- **Dependency vulnerability advisories: 3 → 0.** Root overrides force `path-to-regexp` ^8.4.2 and `qs` ^6.15.2, the patched releases of the two transitives that `@modelcontextprotocol/sdk` 1.29.0 still pins inside vulnerable ranges. Removed the orphaned `svelte@5.18.0` patch (no longer applied after the svelte bump; redundant since the bundler forces the browser export condition). (PR #267)
+
 ## [0.15.5] — 2026-06-11
 
 ### Fixed
