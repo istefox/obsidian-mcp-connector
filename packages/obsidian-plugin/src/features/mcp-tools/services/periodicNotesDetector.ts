@@ -1,6 +1,9 @@
 import type { App, TFile } from "obsidian";
 import { moment } from "obsidian";
-import type { Moment } from "moment";
+
+// Obsidian bundles moment and re-exports it; deriving the instance type
+// from the bundled export avoids importing the restricted "moment" package.
+type Moment = ReturnType<typeof moment>;
 import * as periodicNotesLib from "obsidian-daily-notes-interface";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
 

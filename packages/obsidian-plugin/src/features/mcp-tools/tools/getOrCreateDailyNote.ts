@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App } from "obsidian";
+import { TFile, type App } from "obsidian";
 import {
   DATE_REGEX_BY_PERIOD,
   isValidPeriodicDate,
@@ -106,10 +106,26 @@ export async function getOrCreateDailyNoteHandler(
       isError: true,
     };
   }
-  // Null-check + `as TFile` cast per Stefano's heads-up: `instanceof TFile`
-  // is always false under the test mock.
-  const tfile = file as import("obsidian").TFile;
-  const content = await ctx.app.vault.cachedRead(tfile);
+  if (!(file instanceof TFile)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              error: "Path is not a file",
+              errorCode: "not_a_file",
+              path: resolved.path,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+  const content = await ctx.app.vault.cachedRead(file);
 
   return {
     content: [
