@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] — 2026-06-11
+
+### Changed
+
+- **`tools/list` token cost reduced by 26%.** `normalizeInputSchema` now runs a `dedupeUnionDescriptions` pass that strips duplicate member descriptions introduced by ArkType's union `.describe()` propagation: each `anyOf` branch received the same string as the parent, so a 5-way enum paid for its description six times. The pass hoists a shared description to the parent and removes it from members; when the parent already has the text, member copies are deleted. Alongside the fix, descriptions for 9 high-token tools were trimmed, removing internal API names, ADR cross-references, stale Local REST API mentions, and redundant preambles. Combined effect: tools/list 11 418 → 8 422 tokens (−26% measured at 0.15.6 tool count). Schema semantics unchanged; existing tool calls unaffected. (PR #272)
+
 ## [0.15.6] — 2026-06-11
 
 ### Changed
