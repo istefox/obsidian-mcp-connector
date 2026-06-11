@@ -4,7 +4,7 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
 
-[Features](#features) | [Installation](#installation) | [Quick setup for clients](#quick-setup-for-clients) | [Migration from 0.3.x](#migration-from-03x) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
+[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Installation](#installation) | [Quick setup for clients](#quick-setup-for-clients) | [Migration from 0.3.x](#migration-from-03x) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
 
 MCP Connector lets AI applications like Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, and VS Code securely access and work with your Obsidian vault through the [Model Context Protocol](https://modelcontextprotocol.io). [^2]
 
@@ -15,7 +15,7 @@ Starting with **0.4.0**, the plugin hosts the MCP server **in-process inside Obs
 - **HTTP-native MCP clients** (Claude Code, Cursor, Cline, Continue, Windsurf, VS Code) connect directly to the local HTTP endpoint.
 - **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge — a two-line config the plugin generates for you.
 - **Native semantic search** runs entirely on-device via Transformers.js + `Xenova/all-MiniLM-L6-v2` (~25 MB, downloaded once and cached). No cloud, no Smart Connections requirement.
-- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 29 tools work without it. [^4]
+- **Local REST API is now optional**: only the `search_vault` tool (Dataview DQL / JsonLogic queries) needs it, and that tool returns an actionable error if it isn't installed. The other 42 tools work without it. [^4]
 
 ## Features
 
@@ -32,7 +32,39 @@ When connected to an MCP-compatible client, this plugin enables:
 - **Command execution** (opt-in) — authorize the agent to run specific Obsidian commands (e.g. `editor:toggle-bold`, `graph:open`) from a per-vault allowlist. Disabled by default; every invocation is audited. See [Command execution](#command-execution) below.
 - **Web fetch** — `fetch` tool retrieves arbitrary URLs and returns Markdown via Turndown, with pagination for long pages.
 
-43 MCP tools in total. Full list in the plugin's settings → **Tools available** section.
+43 vault tools in total, plus two always-on meta-tools (`tool_catalog`, `activate_tool`) that power [adaptive tool loading](#adaptive-tool-loading). Full list in the plugin's settings → **Tools available** section.
+
+## Adaptive tool loading
+
+Every tool a server advertises costs context-window tokens on each session: the client downloads the full JSON schema of every active tool before the model says a word. With all 43 tools active that is roughly 10K tokens per session. Adaptive tool loading lets you cut that cost without losing access to any tool.
+
+### Profiles
+
+Pick a profile in **Settings → MCP Connector → Tool Loading**:
+
+| Profile | Active tools | Best for |
+|---|---|---|
+| **All** (default) | All 43 tools + both meta-tools | Maximum capability, no behavior change from earlier versions |
+| **Core** | 13 essential tools + `tool_catalog` | Minimum token cost, static surface that never changes mid-session |
+| **Adaptive** | Core + frequency-promoted tools + both meta-tools | Token savings that converge on your actual usage |
+
+The Core set covers the everyday operations: server info, active-file read/write/append, vault file read/create/list, both search tools, tags, note properties, and the daily note.
+
+### The two meta-tools
+
+- **`tool_catalog`** (always active, read-only) — returns the full inventory of all tools with their status (`active` / `inactive` / `promoted`), call counts, and descriptions for inactive ones. The model always knows what exists and what is switched off, regardless of profile.
+- **`activate_tool`** (Adaptive and All profiles only) — promotes an inactive tool by name. The tool becomes available immediately, no reconnect needed. By default the promotion lasts until the plugin reloads; pass `persist: true` to write it to the plugin data so it survives reloads. Every promotion shows an Obsidian notice (`MCP Connector: "<tool>" promoted to active`) so you always see when the model expands its own tool surface. In the Core profile this meta-tool is not exposed: Core means a fixed surface, and the model cannot grow it.
+
+### Frequency promotion
+
+In Adaptive mode the plugin counts tool calls. When a non-core tool reaches 3 calls, it is promoted automatically and stays active on subsequent connects. The **Tool Loading** settings section lists the currently promoted tools, lets you remove any of them, and has a **Reset** button that clears counters and promotions while keeping your profile choice.
+
+### Typical flow in Adaptive mode
+
+1. The model needs a tool that is not active (say `find_broken_links`).
+2. It calls `tool_catalog`, sees the tool exists but is inactive.
+3. It calls `activate_tool` with `{"name": "find_broken_links"}` — the tool is usable immediately and you see a notice in Obsidian.
+4. If you use that tool often, frequency promotion makes it permanent without anyone asking.
 
 ## Prerequisites
 
@@ -126,7 +158,7 @@ Click **Copy config for streamable-http clients**. The snippet uses the generic 
 
 ### Verifying the setup
 
-Once configured, your client should expose **43 MCP tools** from this server, plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
+Once configured, your client should expose **45 MCP tools** from this server (43 vault tools + 2 meta-tools, with the default **All** profile — fewer if you selected the Core or Adaptive [tool loading profile](#adaptive-tool-loading)), plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
 
 To verify the connection works end-to-end, ask the agent to call `get_server_info`. A successful response confirms the client can reach the in-process server and the bearer token is correct. For deeper inspection (request/response logs, tool schema inspection without an LLM in the loop), use [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector):
 
@@ -401,4 +433,5 @@ See [GitHub Releases](https://github.com/istefox/obsidian-mcp-connector/releases
 [^1]: For information about Claude data privacy and security, see [Claude AI's data usage policy](https://support.anthropic.com/en/articles/8325621-i-would-like-to-input-sensitive-data-into-free-claude-ai-or-claude-pro-who-can-view-my-conversations).
 [^2]: For more information about the Model Context Protocol, see [MCP Introduction](https://modelcontextprotocol.io/introduction).
 [^3]: For a list of available MCP Clients, see [MCP Example Clients](https://modelcontextprotocol.io/clients).
+[^4]: `search_vault` delegates DQL / JsonLogic evaluation to the Local REST API plugin's search endpoint. Every other tool uses Obsidian's native APIs in-process.
 [^4]: Local REST API was a hard requirement on the 0.3.x line. Starting with 0.4.0 it is optional and only enables the `search_vault` tool (DQL / JsonLogic queries). The other 42 tools work without it; `search_vault` returns an actionable error if it isn't installed. As of `0.4.5`, `search_vault` reads the LRA host and port from the plugin's live settings instead of a hardcoded `127.0.0.1:27124`, so reconfiguring LRA's listen port no longer requires a plugin restart.
