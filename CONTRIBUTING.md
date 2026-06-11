@@ -95,6 +95,9 @@ packages/
 > **Additional context**: Logs attached, willing to test fixes
 
 ### Pull Requests
+
+> **Forked before June 2026?** This repository was detached from the original `jacksteamdev/obsidian-mcp-tools` fork network on 2026-05-31 and is now standalone. A fork created before that date still belongs to the old network, and GitHub will refuse cross-fork PRs against this repo (`gh pr create` fails with "No commits between …" or "not all refs are readable"). Delete the stale fork and re-fork from this repository — a one-time operation.
+
 1. **Fork [istefox/obsidian-mcp-connector](https://github.com/istefox/obsidian-mcp-connector)** and create a feature branch
 2. **Follow the architecture patterns** described in `/docs/project-architecture.md`
 3. **Write tests** for new functionality
