@@ -7,11 +7,11 @@ export const activateToolSchema = type({
   arguments: {
     name: type("string").describe("Exact name of the tool to activate."),
     "persist?": type("boolean").describe(
-      "If true, write the promotion to data.json so it survives the session. Defaults to false (session-only, no reconnect needed).",
+      "If true, write the promotion to data.json so it survives plugin reloads. Defaults to false (in-memory until the plugin reloads, available immediately).",
     ),
   },
 }).describe(
-  "Promotes an inactive tool to active status. With persist=false (default) the tool is available immediately in this session only. With persist=true the promotion is saved and survives reconnects. Run tool_catalog first to see available tool names.",
+  "Promotes an inactive tool to active status. With persist=false (default) the tool is available immediately and stays active until the Obsidian plugin reloads. With persist=true the promotion is saved and survives plugin reloads. Run tool_catalog first to see available tool names.",
 );
 
 type RegistryLike = {
@@ -69,31 +69,17 @@ export async function activateToolHandler({
 
   onActivated?.(args.name);
 
+  // The registry lives for the whole plugin session, so flipping the tool
+  // on here makes it available immediately on either path. `persist` only
+  // controls whether the promotion is ALSO written to data.json so it
+  // survives plugin reloads.
+  enableInRegistry?.(args.name);
+
   if (args.persist === true) {
     const allNames = allEntries.map((e) => e.name);
     const mgr = new ToolLoadingManager();
     await mgr.activateTool(args.name, allNames, plugin);
-
-    try {
-      await server.server.notification({
-        method: "notifications/tools/list_changed",
-      });
-    } catch {
-      // Stateless JSON transport may not support server-initiated notifications.
-      // The reconnect message in the response covers this case.
-    }
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Tool activated and saved. Reconnect the MCP server to use it in this session.",
-        },
-      ],
-    };
   }
-
-  enableInRegistry?.(args.name);
 
   try {
     await server.server.notification({
@@ -101,13 +87,17 @@ export async function activateToolHandler({
     });
   } catch {
     // Stateless JSON transport may not support server-initiated notifications.
+    // Clients pick up the change on their next tools/list request.
   }
 
   return {
     content: [
       {
         type: "text",
-        text: "Tool activated for this session. Available immediately — no reconnect needed.",
+        text:
+          args.persist === true
+            ? "Tool activated and saved. Available immediately; survives plugin reloads."
+            : "Tool activated. Available immediately; stays active until the plugin reloads.",
       },
     ],
   };
