@@ -3,6 +3,16 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.15.5] — 2026-06-11
+
+### Fixed
+
+- **Scanner warnings in test bootstrap resolved.** `test-setup.ts` no longer uses `globalThis` (replaced with `global`/`window`), no longer casts to `TFile`/`TFolder` (type-aliased mock/API boundary), and `moment` is now declared in devDependencies. (PR #264)
+
+### Changed
+
+- **Dependency vulnerability advisories: 34 → 3.** Removed orphaned `@typescript-eslint/*` 5.29.0 devDependencies (no eslint config exists in the repo); bumped `svelte` to ^5.56.3, `svelte-preprocess` to ^6.0.5, `archiver` to ^8.0.0 (zip script migrated to the new `ZipArchive` API). The 3 remaining advisories come via `@modelcontextprotocol/sdk` 1.29.0 (latest, no upstream fix yet). (PR #265)
+
 ## [0.15.4] — 2026-06-11
 
 ### Changed
