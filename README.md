@@ -1,6 +1,6 @@
 # MCP Connector for Obsidian
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/istefox/obsidian-mcp-connector)](https://github.com/istefox/obsidian-mcp-connector/releases/latest)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/istefox/obsidian-mcp-connector?display_name=tag)](https://github.com/istefox/obsidian-mcp-connector/releases/latest)
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
 
