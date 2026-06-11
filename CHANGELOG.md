@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.15.4] — 2026-06-11
+
+### Changed
+
+- **README documents adaptive tool loading.** New section covering the three profiles (All/Core/Adaptive), the `tool_catalog` and `activate_tool` meta-tools with current semantics (immediate activation, `persist` parameter, Obsidian notice, `activate_tool` excluded from Core), frequency promotion, and the typical adaptive flow. Stale tool counts fixed and missing footnote added. (PR #262)
+
 ## [0.15.3] — 2026-06-11
 
 ### Fixed
