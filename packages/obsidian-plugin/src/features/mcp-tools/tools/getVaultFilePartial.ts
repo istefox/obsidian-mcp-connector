@@ -1,5 +1,12 @@
 import { type } from "arktype";
 import { TFile, type App } from "obsidian";
+// Response envelopes shared across tools — aliased to the original local
+// names to keep this file's call sites stable.
+import {
+  errorText as errorResponse,
+  successJson as jsonResponse,
+  successText as textResponse,
+} from "../services/responseBuilders";
 
 export const getVaultFilePartialSchema = type({
   name: '"get_vault_file_partial"',
@@ -44,32 +51,6 @@ type MockCache = {
   blocks?: Record<string, MockBlock>;
   frontmatter?: Record<string, unknown>;
 };
-
-function errorResponse(message: string): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return {
-    content: [{ type: "text", text: message }],
-    isError: true,
-  };
-}
-
-function jsonResponse(value: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
-  return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
-  };
-}
-
-function textResponse(text: string): {
-  content: Array<{ type: "text"; text: string }>;
-} {
-  return {
-    content: [{ type: "text", text }],
-  };
-}
 
 /**
  * Find the heading entry that matches a target path. `target` may be a single
