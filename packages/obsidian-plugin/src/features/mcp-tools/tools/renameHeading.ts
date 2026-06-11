@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 import {
   planRename,
@@ -105,13 +105,14 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   const { path, from, to } = ctx.arguments;
 
   // ── 1. Load source file ─────────────────────────────────────────────────
-  const sourceFile = ctx.app.vault.getAbstractFileByPath(path) as TFile | null;
-  if (!sourceFile) {
+  const sourceAbstract = ctx.app.vault.getAbstractFileByPath(path);
+  if (!(sourceAbstract instanceof TFile)) {
     return errorResponse({
       errorCode: "file-not-found",
       message: `Source file not found: ${path}`,
     });
   }
+  const sourceFile = sourceAbstract;
 
   const sourceText = await ctx.app.vault.cachedRead(sourceFile);
   const sourceCache = (ctx.app.metadataCache.getFileCache(sourceFile) ??
@@ -129,8 +130,8 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
 
   const backlinkerTexts: Record<string, string> = {};
   for (const bp of backlinkerPaths) {
-    const f = ctx.app.vault.getAbstractFileByPath(bp) as TFile | null;
-    if (!f) continue; // resolvedLinks can lag behind file deletes
+    const f = ctx.app.vault.getAbstractFileByPath(bp);
+    if (!(f instanceof TFile)) continue; // resolvedLinks can lag behind file deletes
     try {
       backlinkerTexts[bp] = await ctx.app.vault.cachedRead(f);
     } catch {
@@ -203,8 +204,8 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   }
 
   for (const bp of plan.backlinkers) {
-    const f = ctx.app.vault.getAbstractFileByPath(bp.path) as TFile | null;
-    if (!f) {
+    const f = ctx.app.vault.getAbstractFileByPath(bp.path);
+    if (!(f instanceof TFile)) {
       failedFiles.push({
         path: bp.path,
         error: "Backlinker file disappeared between plan and apply.",
