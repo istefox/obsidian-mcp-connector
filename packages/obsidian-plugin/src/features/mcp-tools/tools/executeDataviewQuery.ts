@@ -156,5 +156,7 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }, null, 2));
+  return errorText(
+    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
+  );
 }

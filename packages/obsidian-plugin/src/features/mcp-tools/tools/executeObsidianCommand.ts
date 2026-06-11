@@ -73,7 +73,9 @@ export async function executeObsidianCommandHandler(
   const rl = rateLimitTake();
   if (!rl.ok) {
     const waitSec = Math.ceil((rl.retryAfterMs ?? 0) / 1000);
-    return errorText(`Rate limit exceeded: too many command executions in the last minute. Retry in ${waitSec}s.`);
+    return errorText(
+      `Rate limit exceeded: too many command executions in the last minute. Retry in ${waitSec}s.`,
+    );
   }
 
   // --- 2. Permission check ---
@@ -89,7 +91,9 @@ export async function executeObsidianCommandHandler(
   };
 
   if (typeof pluginWithPermCheck.checkCommandPermission !== "function") {
-    return errorText("Internal error: permission check not available on plugin.");
+    return errorText(
+      "Internal error: permission check not available on plugin.",
+    );
   }
 
   const decision = await pluginWithPermCheck.checkCommandPermission(
@@ -115,7 +119,9 @@ export async function executeObsidianCommandHandler(
   const success = commandsApi.executeCommandById(ctx.arguments.commandId);
 
   if (!success) {
-    return errorText(`Command not found: '${ctx.arguments.commandId}'. Use list_obsidian_commands to discover available commands.`);
+    return errorText(
+      `Command not found: '${ctx.arguments.commandId}'. Use list_obsidian_commands to discover available commands.`,
+    );
   }
 
   return successText(`Executed Obsidian command '${ctx.arguments.commandId}'.`);

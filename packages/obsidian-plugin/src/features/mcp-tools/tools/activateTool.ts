@@ -41,7 +41,9 @@ export async function activateToolHandler({
   const found = allEntries.find((e) => e.name === args.name);
 
   if (!found) {
-    return errorText(`Unknown tool: '${args.name}'. Run tool_catalog to see available tools.`);
+    return errorText(
+      `Unknown tool: '${args.name}'. Run tool_catalog to see available tools.`,
+    );
   }
 
   if (found.enabled) {

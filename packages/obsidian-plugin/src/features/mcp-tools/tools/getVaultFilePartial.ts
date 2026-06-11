@@ -13,17 +13,17 @@ export const getVaultFilePartialSchema = type({
   arguments: {
     filename: type("string>0").describe("Vault-relative path to the file."),
     mode: type('"frontmatter" | "heading" | "block" | "document-map"').describe(
-      'One of: `"frontmatter"` (returns a single frontmatter field value), `"heading"` (returns the markdown section under the target heading), `"block"` (returns the markdown range of the target block reference), or `"document-map"` (returns the file outline — heading list, block-id list, frontmatter-field list — with no body content).',
+      "`frontmatter` = one field value; `heading` = the markdown section under the heading; `block` = the range of the block reference; `document-map` = outline only (headings, block ids, frontmatter keys), no body.",
     ),
     "target?": type("string>0").describe(
-      "Field name for `frontmatter`, heading text (optionally nested via `targetDelimiter`) for `heading`, or block id (with or without the leading `^`) for `block`. Required for all modes EXCEPT `document-map` (where it is ignored).",
+      "Frontmatter field name, heading text (nested path via `targetDelimiter`), or block id (leading `^` optional). Ignored for `document-map`.",
     ),
     "targetDelimiter?": type("string>0").describe(
-      'Delimiter used to address a nested heading path, e.g. `"Parent::Child::Grandchild"`. Defaults to `"::"` (matching the Local REST API convention). Only meaningful for `mode: "heading"`.',
+      'Delimiter for nested heading paths, e.g. `Parent::Child`. Default `::`. Only for `mode: "heading"`.',
     ),
   },
 }).describe(
-  "Returns a partial read of a vault file: a single frontmatter field, a heading section, a block range, or the file outline. All four modes operate on Obsidian's already-cached metadata (`MetadataCache`) and `vault.cachedRead`; no Local REST API required. The `frontmatter` and `document-map` modes are zero-I/O on cached data; `heading` and `block` perform one cached read each. Useful for context-window economics on large notes (e.g. spot-check a frontmatter field on a 30 KB file without loading the body). Always read-only.",
+  "Reads part of a vault file without loading the body: a single frontmatter field, a heading section, a block range, or the file outline. Read-only and cheap on large notes.",
 );
 
 export type GetVaultFilePartialContext = {

@@ -30,7 +30,9 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
   // the lookup contract.
   const normalized = ctx.arguments.tag.trim().replace(/^#+/, "").toLowerCase();
   if (!normalized) {
-    return errorText('Invalid tag: input is empty or contains only "#" characters.');
+    return errorText(
+      'Invalid tag: input is empty or contains only "#" characters.',
+    );
   }
 
   const includeNested = (ctx.arguments.includeNested ?? "true") === "true";

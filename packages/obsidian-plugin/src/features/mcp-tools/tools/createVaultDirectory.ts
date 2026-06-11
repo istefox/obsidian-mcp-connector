@@ -27,7 +27,9 @@ export async function createVaultDirectoryHandler(
 }> {
   const trimmed = ctx.arguments.path.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return errorText("Path is empty after normalisation; cannot create the vault root.");
+    return errorText(
+      "Path is empty after normalisation; cannot create the vault root.",
+    );
   }
 
   // If a file already exists at this path the request is ambiguous —
@@ -37,7 +39,9 @@ export async function createVaultDirectoryHandler(
     const isFolder =
       (existing as { children?: unknown }).children !== undefined;
     if (!isFolder) {
-      return errorText(`A file already exists at ${trimmed}; cannot create directory with the same path.`);
+      return errorText(
+        `A file already exists at ${trimmed}; cannot create directory with the same path.`,
+      );
     }
     return successText("OK");
   }

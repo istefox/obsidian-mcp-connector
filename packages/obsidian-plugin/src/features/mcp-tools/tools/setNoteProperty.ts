@@ -11,11 +11,11 @@ export const setNotePropertySchema = type({
     value: type(
       "string | number | boolean | string[] | number[] | null",
     ).describe(
-      "Value to set. Native JSON types map to YAML: string, number, boolean, or a homogeneous list of strings/numbers. Dates are passed as ISO 8601 strings. Passing `null` removes the key (same as `delete_note_property`). Mixed-type lists are not supported — use `patch_vault_file` for those.",
+      "String, number, boolean, or homogeneous list of strings/numbers (dates as ISO 8601 strings). `null` removes the key. No mixed-type lists.",
     ),
   },
 }).describe(
-  'Sets a single frontmatter (note property) key on a vault note via Obsidian\'s atomic `processFrontMatter` API (no read-modify-write race). Creates the frontmatter block if the note has none. Passing `value: null` deletes the key. Coexists with `patch_vault_file targetType:"frontmatter"`, which replaces the entire block; this tool is for single-key edits.',
+  'Sets one frontmatter key on a note atomically. Creates the frontmatter block if missing; `value: null` deletes the key. To replace the whole block use `patch_vault_file` with `targetType: "frontmatter"`.',
 );
 
 export type SetNotePropertyContext = {

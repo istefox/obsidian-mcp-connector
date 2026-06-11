@@ -22,10 +22,10 @@ export const patchVaultFileSchema = type({
       "Delimiter used to join ancestor heading names (default: '::').",
     ),
     "createTargetIfMissing?": type("boolean").describe(
-      "When true, creates the target if not found. Defaults to true for heading/frontmatter, false for block. Note: with the default `true` for headings, patching a level-2-or-deeper heading on a file that has no parent H1 will silently create the section instead of failing loud — pass `false` explicitly to get the H2-root reject guard if your vault treats a missing H1 as an integrity error.",
+      "Creates the target if not found. Default true for heading/frontmatter, false for block. Pass false to fail loud when patching an H2-or-deeper heading in a file with no parent H1.",
     ),
     "allowRootHeadings?": type("boolean").describe(
-      "When true, allow targeting a level-2-or-deeper heading that has no level-1 (#) parent even in a document that contains an H1 elsewhere (the ambiguous 'mixed' case the H2-root guard otherwise rejects with createTargetIfMissing=false). Files with no H1 at all are already accepted without this flag. Default false.",
+      "Allows targeting an H2-or-deeper heading with no H1 parent in a file that has an H1 elsewhere (otherwise rejected when createTargetIfMissing=false). Default false.",
     ),
   },
 }).describe(

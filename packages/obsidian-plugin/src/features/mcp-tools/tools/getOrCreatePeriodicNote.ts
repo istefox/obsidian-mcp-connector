@@ -12,14 +12,14 @@ export const getOrCreatePeriodicNoteSchema = type({
   name: '"get_or_create_periodic_note"',
   arguments: {
     period: type('"daily"|"weekly"|"monthly"|"quarterly"|"yearly"').describe(
-      "Period granularity. `daily` is also reachable via `get_or_create_daily_note` (zero-friction shortcut for the common case).",
+      "Period granularity. For daily, `get_or_create_daily_note` is a shortcut.",
     ),
     "date?": type("string").describe(
-      "Period-specific ISO date. Formats: daily `YYYY-MM-DD`, weekly `YYYY-Www` (ISO week), monthly `YYYY-MM`, quarterly `YYYY-QN` (N=1-4), yearly `YYYY`. Default: the period instance containing today in the plugin process timezone (the user's machine TZ in the in-process / desktop deployment).",
+      "Period-specific ISO date: daily `YYYY-MM-DD`, weekly `YYYY-Www`, monthly `YYYY-MM`, quarterly `YYYY-QN`, yearly `YYYY`. Default: the period containing today, host machine timezone.",
     ),
   },
 }).describe(
-  "Reads the periodic note for the given `period` (and optional `date`), creating it if missing. Returns `{path, content, created}`. When the Daily Notes core plugin or the community Periodic Notes plugin covers the period, the note is created via the plugin's API so the configured template + interpolations run; otherwise it is created as an empty file at the ISO path under the vault root. **Structured writes to the resolved note** (set a frontmatter field, replace under a heading, edit a block) compose: get the path, then `set_note_property` (Module D) or `patch_vault_file` — there is no dedicated `patch_periodic_note` (ADR-0002 Alt #7).",
+  "Reads the periodic note for `period` (and optional `date`), creating it if missing. Returns `{path, content, created}`. Uses the Daily Notes / Periodic Notes plugin API when available (so configured templates run); otherwise creates an empty file at the ISO path. For structured edits, take the returned path and use `set_note_property` or `patch_vault_file`.",
 );
 
 export type GetOrCreatePeriodicNoteContext = {

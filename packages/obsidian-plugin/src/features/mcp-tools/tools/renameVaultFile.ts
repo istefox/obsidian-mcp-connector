@@ -55,7 +55,9 @@ export async function renameVaultFileHandler(
   if (slash > 0) {
     const parent = to.slice(0, slash);
     if (!ctx.app.vault.getAbstractFileByPath(parent)) {
-      return errorText(`Destination parent directory does not exist: ${parent}`);
+      return errorText(
+        `Destination parent directory does not exist: ${parent}`,
+      );
     }
   }
 
@@ -70,7 +72,9 @@ export async function renameVaultFileHandler(
       }
     ).renameFile(source, to);
   } catch (e) {
-    return errorText(`Failed to rename: ${e instanceof Error ? e.message : String(e)}`);
+    return errorText(
+      `Failed to rename: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 
   return {

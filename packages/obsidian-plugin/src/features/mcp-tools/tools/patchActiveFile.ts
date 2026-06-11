@@ -134,7 +134,9 @@ export async function applyPatch(
     const fullPath = resolveHeadingPath(fileContent, args.target, delimiter);
 
     if (!fullPath && !createIfMissing) {
-      return errorText(`Heading "${args.target}" not found and createTargetIfMissing=false.`);
+      return errorText(
+        `Heading "${args.target}" not found and createTargetIfMissing=false.`,
+      );
     }
 
     if (!fullPath) {
@@ -171,7 +173,9 @@ export async function applyPatch(
       !args.allowRootHeadings &&
       hasAnyH1(lines)
     ) {
-      return errorText(`Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`);
+      return errorText(
+        `Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`,
+      );
     }
 
     // Find end of this heading's section: next heading at same-or-higher level.
@@ -233,7 +237,9 @@ export async function applyPatch(
     const pos = findBlockPositionFromCache(cache, args.target);
 
     if (!pos && !createIfMissing) {
-      return errorText(`Block "^${args.target}" not found in active file (createTargetIfMissing=false).`);
+      return errorText(
+        `Block "^${args.target}" not found in active file (createTargetIfMissing=false).`,
+      );
     }
 
     if (!pos) {
@@ -248,7 +254,9 @@ export async function applyPatch(
     // see fork #81, #83. 0.4.3 fork #84: full block range
     // check, not just startLine — see range wrapper in patchHelpers.ts.
     if (isBlockRangeStructurallyUnsafe(lines, pos.startLine, pos.endLine)) {
-      return errorText(`Block "^${args.target}" resolved to line ${pos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`);
+      return errorText(
+        `Block "^${args.target}" resolved to line ${pos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
+      );
     }
 
     if (args.operation === "append") {
@@ -269,5 +277,7 @@ export async function applyPatch(
   }
 
   // Unreachable if ArkType validation ran correctly.
-  return errorText(`Unknown targetType: ${(args as unknown as { targetType: string }).targetType}`);
+  return errorText(
+    `Unknown targetType: ${(args as unknown as { targetType: string }).targetType}`,
+  );
 }

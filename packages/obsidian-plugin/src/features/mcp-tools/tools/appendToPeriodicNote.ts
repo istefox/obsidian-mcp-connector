@@ -19,18 +19,18 @@ export const appendToPeriodicNoteSchema = type({
   name: '"append_to_periodic_note"',
   arguments: {
     "period?": type('"daily"|"weekly"|"monthly"|"quarterly"|"yearly"').describe(
-      "Period granularity. Defaults to `daily` so the common case is one positional `content` away.",
+      "Period granularity. Default `daily`.",
     ),
     content: type("string").describe("Markdown content to append."),
     "date?": type("string").describe(
       "Period-specific ISO date. Formats: daily `YYYY-MM-DD`, weekly `YYYY-Www`, monthly `YYYY-MM`, quarterly `YYYY-QN`, yearly `YYYY`. Default: the period instance containing today in the plugin process timezone.",
     ),
     "underHeading?": type("string>0").describe(
-      "If provided, appends inside this heading's section (matched by exact leaf name, or by a `Parent::Child` path with `::` as the delimiter). Without it, appends at end-of-file. If the heading is not found, the call fails with `errorCode: \"heading_not_found\"` — and an auto-created note is left in place (the file's existence is the right end state; add the heading via `patch_vault_file` and retry).",
+      'Appends inside this heading\'s section (exact leaf name or `Parent::Child` path). If the heading is missing the call fails with `errorCode: "heading_not_found"` but the auto-created note is kept; add the heading via `patch_vault_file` and retry.',
     ),
   },
 }).describe(
-  "Appends content to a periodic note (daily by default). Auto-creates the note if it doesn't exist via the same path as `get_or_create_periodic_note` (plugin API when enabled, ISO fallback otherwise). `underHeading` targets a section via the shared heading walker (same fence-aware semantics as `patch_vault_file`); without it, content is appended at EOF.",
+  "Appends to a periodic note (daily by default), auto-creating it like `get_or_create_periodic_note`. With `underHeading`, inserts inside that section; otherwise appends at end of file.",
 );
 
 export type AppendToPeriodicNoteContext = {
@@ -168,5 +168,7 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }, null, 2));
+  return errorText(
+    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
+  );
 }

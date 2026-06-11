@@ -149,6 +149,92 @@ describe("normalizeInputSchema", () => {
     const out = normalizeInputSchema(input);
     expect(out.additionalProperties).toEqual({ type: "string" });
   });
+
+  test("strips anyOf member descriptions duplicating the parent's", () => {
+    // ArkType propagates a union's .describe() onto every branch; the
+    // wire format only needs the property-level copy.
+    const desc = "Period granularity.";
+    const input = {
+      type: "object",
+      properties: {
+        period: {
+          description: desc,
+          anyOf: [
+            { const: "daily", description: desc },
+            { const: "weekly", description: desc },
+          ],
+        },
+      },
+    };
+    const out = normalizeInputSchema(input) as {
+      properties: {
+        period: { description: string; anyOf: Record<string, unknown>[] };
+      };
+    };
+    expect(out.properties.period.description).toBe(desc);
+    for (const member of out.properties.period.anyOf) {
+      expect("description" in member).toBe(false);
+    }
+  });
+
+  test("hoists a description shared by all anyOf members when the parent has none", () => {
+    const desc = "Value to set.";
+    const input = {
+      type: "object",
+      properties: {
+        value: {
+          anyOf: [
+            { type: "string", description: desc },
+            { type: "number", description: desc },
+          ],
+        },
+      },
+    };
+    const out = normalizeInputSchema(input) as {
+      properties: {
+        value: { description: string; anyOf: Record<string, unknown>[] };
+      };
+    };
+    expect(out.properties.value.description).toBe(desc);
+    for (const member of out.properties.value.anyOf) {
+      expect("description" in member).toBe(false);
+    }
+  });
+
+  test("preserves anyOf member descriptions that genuinely differ", () => {
+    const input = {
+      type: "object",
+      properties: {
+        mode: {
+          anyOf: [
+            { const: "a", description: "First mode." },
+            { const: "b", description: "Second mode." },
+          ],
+        },
+      },
+    };
+    const out = normalizeInputSchema(input) as {
+      properties: { mode: { anyOf: { description: string }[] } };
+    };
+    expect(out.properties.mode.anyOf[0].description).toBe("First mode.");
+    expect(out.properties.mode.anyOf[1].description).toBe("Second mode.");
+  });
+
+  test("dedupe does not mutate the input object", () => {
+    const desc = "Shared description.";
+    const input = {
+      type: "object",
+      properties: {
+        period: {
+          description: desc,
+          anyOf: [{ const: "daily", description: desc }],
+        },
+      },
+    };
+    const snapshot = JSON.parse(JSON.stringify(input));
+    normalizeInputSchema(input);
+    expect(input).toEqual(snapshot);
+  });
 });
 
 describe("ToolRegistry list() — issue #77 regression", () => {

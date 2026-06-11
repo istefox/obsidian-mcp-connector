@@ -31,6 +31,46 @@ interface HandlerContext {
  *
  * See issues #63 (Letta Cloud) and #77 (openai-codex).
  */
+/**
+ * ArkType propagates a union's `.describe()` text onto every branch, so
+ * the generated JSON Schema carries the same description once per
+ * `anyOf` member on top of the property-level copy — a 5-way enum pays
+ * for its description six times. Strip member descriptions that
+ * duplicate the parent's, and hoist a description shared by every
+ * member when the parent has none. Wire-size optimization only
+ * (~19% of tools/list bytes measured at 0.15.6); no semantic change.
+ */
+function dedupeUnionDescriptions(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) dedupeUnionDescriptions(item);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const obj = node as Record<string, unknown>;
+
+  if (Array.isArray(obj.anyOf)) {
+    const members = obj.anyOf.filter(
+      (m): m is Record<string, unknown> => typeof m === "object" && m !== null,
+    );
+    if (typeof obj.description === "string") {
+      for (const m of members) {
+        if (m.description === obj.description) delete m.description;
+      }
+    } else {
+      const descriptions = new Set(members.map((m) => m.description));
+      if (descriptions.size === 1) {
+        const [shared] = descriptions;
+        if (typeof shared === "string") {
+          obj.description = shared;
+          for (const m of members) delete m.description;
+        }
+      }
+    }
+  }
+
+  for (const value of Object.values(obj)) dedupeUnionDescriptions(value);
+}
+
 export function normalizeInputSchema(
   jsonSchema: unknown,
 ): Record<string, unknown> {
@@ -42,8 +82,11 @@ export function normalizeInputSchema(
       ? (jsonSchema as Record<string, unknown>)
       : { type: "object" };
 
-  // Clone to avoid mutating the caller's object.
-  const result: Record<string, unknown> = { ...base };
+  // Deep clone: dedupeUnionDescriptions mutates nested nodes, and the
+  // caller's object must stay untouched.
+  const result: Record<string, unknown> = structuredClone(base);
+
+  dedupeUnionDescriptions(result);
 
   // Force-set `type: "object"` if missing — MCP inputSchema must be an
   // object type by protocol.

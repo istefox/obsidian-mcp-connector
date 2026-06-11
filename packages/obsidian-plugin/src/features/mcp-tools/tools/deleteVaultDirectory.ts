@@ -29,7 +29,9 @@ export async function deleteVaultDirectoryHandler(
 }> {
   const trimmed = ctx.arguments.path.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return errorText("Path is empty after normalisation; refusing to delete the vault root.");
+    return errorText(
+      "Path is empty after normalisation; refusing to delete the vault root.",
+    );
   }
 
   const recursive = (ctx.arguments.recursive ?? "false") === "true";
@@ -41,7 +43,9 @@ export async function deleteVaultDirectoryHandler(
     const isFolder =
       (existing as { children?: unknown }).children !== undefined;
     if (!isFolder) {
-      return errorText(`Path ${trimmed} is a file, not a directory. Use delete_vault_file instead.`);
+      return errorText(
+        `Path ${trimmed} is a file, not a directory. Use delete_vault_file instead.`,
+      );
     }
   }
 

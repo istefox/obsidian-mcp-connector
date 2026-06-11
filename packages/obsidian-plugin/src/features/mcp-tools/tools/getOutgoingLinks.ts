@@ -7,14 +7,14 @@ export const getOutgoingLinksSchema = type({
   arguments: {
     path: type("string>0").describe("Vault-relative path to the source file."),
     "includeEmbeds?": type('"true" | "false"').describe(
-      'When `"true"` (default), embedded references (`![[link]]`) are returned alongside regular links, marked with `embed: true`. When `"false"`, only regular links are returned.',
+      'Default `"true"`: embeds included, marked `embed: true`. `"false"` returns only regular links.',
     ),
     "includeUnresolved?": type('"true" | "false"').describe(
-      'When `"true"` (default), unresolved links (link target text that does not match any vault file) are included with `resolved: false` and `targetPath: null`. Set to `"false"` to filter them out.',
+      'Default `"true"`: unresolved links included with `resolved: false`. `"false"` filters them out.',
     ),
   },
 }).describe(
-  "Returns every link emanating from the given file: body links (`[[wikilink]]`, `[md](path)`), embeds (`![[…]]`), and frontmatter links (e.g. `parent: [[Other]]`). Each entry carries its raw linkpath, original syntax, optional display text, source layer (`body` | `frontmatter`), embed flag, resolution status, and the resolved vault path when available. Order preserves document position. Returns `isError: true` when the source file does not exist.",
+  "Returns every link in a file: body links, embeds (`![[…]]`), and frontmatter links. Each entry has linkpath, original syntax, display text, layer (`body` | `frontmatter`), embed flag, resolution status, and resolved path. Document order. `isError: true` if the file does not exist.",
 );
 
 export type GetOutgoingLinksContext = {
