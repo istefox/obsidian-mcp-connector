@@ -34,7 +34,9 @@ export async function searchVaultHandler(ctx: SearchVaultContext): Promise<{
     try {
       rule = JSON.parse(query);
     } catch {
-      return errorText('JsonLogic query must be a valid JSON string. Example: {"==": [{"var": "frontmatter.status"}, "active"]}');
+      return errorText(
+        'JsonLogic query must be a valid JSON string. Example: {"==": [{"var": "frontmatter.status"}, "active"]}',
+      );
     }
 
     const results = ctx.app.vault

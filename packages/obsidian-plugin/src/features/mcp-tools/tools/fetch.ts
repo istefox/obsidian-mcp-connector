@@ -147,7 +147,9 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "__FETCH_TIMEOUT__") {
-      return errorText(`Fetch failed: request timed out after ${REQUEST_TIMEOUT_MS}ms.`);
+      return errorText(
+        `Fetch failed: request timed out after ${REQUEST_TIMEOUT_MS}ms.`,
+      );
     }
     return errorText(`Fetch failed: ${message}`);
   }
