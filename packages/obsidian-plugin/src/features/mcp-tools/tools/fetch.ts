@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import { requestUrl } from "obsidian";
 import TurndownService from "turndown";
 
@@ -123,10 +124,7 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
 
   const urlError = validateFetchUrl(ctx.arguments.url);
   if (urlError) {
-    return {
-      content: [{ type: "text", text: `Fetch rejected: ${urlError}` }],
-      isError: true,
-    };
+    return errorText(`Fetch rejected: ${urlError}`);
   }
 
   let response;
@@ -149,25 +147,9 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "__FETCH_TIMEOUT__") {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Fetch failed: request timed out after ${REQUEST_TIMEOUT_MS}ms.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Fetch failed: request timed out after ${REQUEST_TIMEOUT_MS}ms.`);
     }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Fetch failed: ${message}`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Fetch failed: ${message}`);
   }
 
   let body = response.text;
@@ -193,7 +175,5 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
     ? `\n\n[Content truncated. ${totalLength - startIndex - maxLength} characters remaining; resume with startIndex=${startIndex + maxLength}.]`
     : "";
 
-  return {
-    content: [{ type: "text", text: sliced + truncationNote }],
-  };
+  return successText(sliced + truncationNote);
 }

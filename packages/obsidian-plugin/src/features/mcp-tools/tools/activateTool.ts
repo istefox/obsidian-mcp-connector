@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   ToolLoadingManager,
@@ -40,26 +41,11 @@ export async function activateToolHandler({
   const found = allEntries.find((e) => e.name === args.name);
 
   if (!found) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Unknown tool: '${args.name}'. Run tool_catalog to see available tools.`,
-        },
-      ],
-      isError: true,
-    };
+    return errorText(`Unknown tool: '${args.name}'. Run tool_catalog to see available tools.`);
   }
 
   if (found.enabled) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Tool is already active in the current session.",
-        },
-      ],
-    };
+    return successText("Tool is already active in the current session.");
   }
 
   onActivated?.(args.name);

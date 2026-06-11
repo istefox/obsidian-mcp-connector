@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App, TFile } from "obsidian";
 import { logger } from "$/shared/logger";
 
@@ -99,7 +100,5 @@ export async function getRecentFilesHandler(
 
   const output = { totalFiles, files };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-  };
+  return successText(JSON.stringify(output, null, 2));
 }

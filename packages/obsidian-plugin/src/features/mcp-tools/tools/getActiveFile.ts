@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const getActiveFileSchema = type({
@@ -21,17 +22,14 @@ export async function getActiveFileHandler(ctx: GetActiveFileContext): Promise<{
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return {
-      content: [{ type: "text", text: "No active file." }],
-      isError: true,
-    };
+    return errorText("No active file.");
   }
 
   const content = await ctx.app.vault.read(file);
 
   // Plain markdown — return raw content, no parsing overhead.
   if (ctx.arguments.format !== "json") {
-    return { content: [{ type: "text", text: content }] };
+    return successText(content);
   }
 
   // JSON shape: matches the ApiNoteJson contract (content, frontmatter, path,
@@ -59,7 +57,5 @@ export async function getActiveFileHandler(ctx: GetActiveFileContext): Promise<{
     },
   };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(body, null, 2) }],
-  };
+  return successText(JSON.stringify(body, null, 2));
 }

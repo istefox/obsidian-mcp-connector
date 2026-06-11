@@ -10,7 +10,7 @@
 
 export type ToolResponse = {
   content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
+  isError?: true;
 };
 
 /** Plain-text error: `{ content: [text], isError: true }`. */

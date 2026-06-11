@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successJson } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 
 export const deleteNotePropertySchema = type({
@@ -67,12 +68,5 @@ export async function deleteNotePropertyHandler(
     delete fm[key];
   });
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ path, key, action: "deleted" }, null, 2),
-      },
-    ],
-  };
+  return successJson({ path, key, action: "deleted" });
 }

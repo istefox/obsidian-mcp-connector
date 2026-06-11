@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { normalizeAppendBody } from "$/features/mcp-tools/services/patchHelpers";
 
@@ -26,13 +27,10 @@ export async function appendToActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return {
-      content: [{ type: "text", text: "No active file." }],
-      isError: true,
-    };
+    return errorText("No active file.");
   }
   const existing = await ctx.app.vault.read(file);
   const normalized = normalizeAppendBody(ctx.arguments.content, "append");
   await ctx.app.vault.modify(file, existing + normalized);
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }

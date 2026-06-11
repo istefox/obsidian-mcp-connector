@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const updateActiveFileSchema = type({
@@ -25,11 +26,8 @@ export async function updateActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return {
-      content: [{ type: "text", text: "No active file." }],
-      isError: true,
-    };
+    return errorText("No active file.");
   }
   await ctx.app.vault.modify(file, ctx.arguments.content);
-  return { content: [{ type: "text", text: "OK" }] };
+  return successText("OK");
 }

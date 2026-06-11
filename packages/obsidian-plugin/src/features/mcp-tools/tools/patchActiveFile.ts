@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { errorText, successText } from "../services/responseBuilders";
 import type { App, TFile } from "obsidian";
 import {
   resolveHeadingPath,
@@ -54,10 +55,7 @@ export async function patchActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return {
-      content: [{ type: "text", text: "No active file." }],
-      isError: true,
-    };
+    return errorText("No active file.");
   }
   return await applyPatch(ctx.app, file, ctx.arguments);
 }
@@ -123,12 +121,9 @@ export async function applyPatch(
           : args.content + String(existing);
     });
     if (rejection !== null) {
-      return {
-        content: [{ type: "text", text: rejection }],
-        isError: true,
-      };
+      return errorText(rejection);
     }
-    return { content: [{ type: "text", text: "OK" }] };
+    return successText("OK");
   }
 
   const fileContent = await app.vault.read(file);
@@ -139,22 +134,14 @@ export async function applyPatch(
     const fullPath = resolveHeadingPath(fileContent, args.target, delimiter);
 
     if (!fullPath && !createIfMissing) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Heading "${args.target}" not found and createTargetIfMissing=false.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Heading "${args.target}" not found and createTargetIfMissing=false.`);
     }
 
     if (!fullPath) {
       // Target heading not found — append at EOF (createIfMissing=true path).
       const normalized = normalizeAppendBody(args.content, args.operation);
       await app.vault.modify(file, fileContent + normalized);
-      return { content: [{ type: "text", text: "OK" }] };
+      return successText("OK");
     }
 
     // Resolve the leaf name from the full path and locate the heading line.
@@ -184,15 +171,7 @@ export async function applyPatch(
       !args.allowRootHeadings &&
       hasAnyH1(lines)
     ) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`);
     }
 
     // Find end of this heading's section: next heading at same-or-higher level.
@@ -245,7 +224,7 @@ export async function applyPatch(
     }
 
     await app.vault.modify(file, lines.join("\n"));
-    return { content: [{ type: "text", text: "OK" }] };
+    return successText("OK");
   }
 
   // --- block branch ---
@@ -254,22 +233,14 @@ export async function applyPatch(
     const pos = findBlockPositionFromCache(cache, args.target);
 
     if (!pos && !createIfMissing) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Block "^${args.target}" not found in active file (createTargetIfMissing=false).`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Block "^${args.target}" not found in active file (createTargetIfMissing=false).`);
     }
 
     if (!pos) {
       // Block not found — append at EOF (createIfMissing=true path).
       const normalized = normalizeAppendBody(args.content, args.operation);
       await app.vault.modify(file, fileContent + normalized);
-      return { content: [{ type: "text", text: "OK" }] };
+      return successText("OK");
     }
 
     // 0.3.x parity: reject when block resolves inside a table or fenced code
@@ -277,15 +248,7 @@ export async function applyPatch(
     // see fork #81, #83. 0.4.3 fork #84: full block range
     // check, not just startLine — see range wrapper in patchHelpers.ts.
     if (isBlockRangeStructurallyUnsafe(lines, pos.startLine, pos.endLine)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Block "^${args.target}" resolved to line ${pos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
-          },
-        ],
-        isError: true,
-      };
+      return errorText(`Block "^${args.target}" resolved to line ${pos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`);
     }
 
     if (args.operation === "append") {
@@ -302,17 +265,9 @@ export async function applyPatch(
     }
 
     await app.vault.modify(file, lines.join("\n"));
-    return { content: [{ type: "text", text: "OK" }] };
+    return successText("OK");
   }
 
   // Unreachable if ArkType validation ran correctly.
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Unknown targetType: ${(args as unknown as { targetType: string }).targetType}`,
-      },
-    ],
-    isError: true,
-  };
+  return errorText(`Unknown targetType: ${(args as unknown as { targetType: string }).targetType}`);
 }

@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const listTagsSchema = type({
@@ -55,7 +56,5 @@ export async function listTagsHandler(
     tags: sorted.map(([tag, count]) => ({ tag, count })),
   };
 
-  return {
-    content: [{ type: "text", text: JSON.stringify(output, null, 2) }],
-  };
+  return successText(JSON.stringify(output, null, 2));
 }

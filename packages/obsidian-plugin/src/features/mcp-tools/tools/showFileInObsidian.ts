@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const showFileInObsidianSchema = type({
@@ -29,5 +30,5 @@ export async function showFileInObsidianHandler(
     "",
     ctx.arguments.newLeaf ?? false,
   );
-  return { content: [{ type: "text", text: "File opened successfully" }] };
+  return successText("File opened successfully");
 }
