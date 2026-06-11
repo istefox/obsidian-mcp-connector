@@ -3,6 +3,13 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`activate_tool` activation is now immediate on both persist paths.** With `persist=true` the tool was written to `data.json` but not enabled in the live registry, and the response told the user to reconnect — which had no effect, since the registry is built once at plugin load. Both paths now enable the tool in the registry immediately; `persist` only controls whether the promotion also survives plugin reloads. Response and schema wording corrected accordingly ("until the plugin reloads" instead of "this session"). Dedicated test file added for the handler. (AUDIT.md Phase 4 Finding 2)
+- **Adaptive tool loading state writes serialize through the settings mutex.** Counter increments and promotions could be lost when two tool calls raced each other or another feature's settings write. (AUDIT.md Phase 4 Finding 1)
+
 ## [0.15.1] — 2026-06-09
 
 ### Fixed
