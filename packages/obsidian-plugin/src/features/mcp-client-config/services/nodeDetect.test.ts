@@ -220,7 +220,7 @@ describe("detectNode — canonical-path fallback (launchctl PATH gotcha)", () =>
     // A maliciously-named path must reach the runner as a literal file
     // argument (no `/bin/sh -c "..."`), so `; rm -rf ~` cannot execute.
     const evil = "/opt/homebrew/bin/node; rm -rf ~";
-    let received: { file: string; args: string[] } | null = null;
+    let received = null as { file: string; args: string[] } | null;
     const runner: ExecRunner = async (file, args) => {
       if (file === "node") throw new Error("spawn node ENOENT");
       received = { file, args };
