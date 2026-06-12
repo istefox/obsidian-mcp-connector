@@ -162,6 +162,21 @@ export class ToolRegistryClass<
 > extends Map<TSchema, THandler> {
   private enabled = new Set<TSchema>();
 
+  /**
+   * Memoized `list()` result. ArkType `toJsonSchema()` + the
+   * normalization walk are pure functions of the enabled set, which
+   * only changes via `enable()`/`disable()` — recomputing them on
+   * every `tools/list` request (one per client session in stateless
+   * transport) is wasted work.
+   */
+  private listCache: {
+    tools: {
+      name: string;
+      description: string | undefined;
+      inputSchema: Record<string, unknown>;
+    }[];
+  } | null = null;
+
   register<
     Schema extends TSchema,
     Handler extends (
@@ -183,11 +198,13 @@ export class ToolRegistryClass<
 
   enable = <Schema extends TSchema>(schema: Schema) => {
     this.enabled.add(schema);
+    this.listCache = null;
     return this;
   };
 
   disable = <Schema extends TSchema>(schema: Schema) => {
     this.enabled.delete(schema);
+    this.listCache = null;
     return this;
   };
 
@@ -224,7 +241,7 @@ export class ToolRegistryClass<
   };
 
   list = () => {
-    return {
+    this.listCache ??= {
       tools: Array.from(this.enabled.values()).map((schema) => {
         return {
           name: (schema.get("name").toJsonSchema() as { const: string }).const,
@@ -235,6 +252,7 @@ export class ToolRegistryClass<
         };
       }),
     };
+    return this.listCache;
   };
 
   listAll = (): { name: string; description: string; enabled: boolean }[] =>

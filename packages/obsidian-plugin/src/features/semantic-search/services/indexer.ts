@@ -523,6 +523,34 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
     });
   }
 
+  // A save that didn't change the chunking (the common autosave case)
+  // would otherwise mark the store dirty and trigger a full-store
+  // rewrite at the next flush.
+  if (sameRecordSet(records, deps.store.recordsFor(path))) return;
+
   await deps.store.delete(path);
   await deps.store.upsert(records);
+}
+
+/**
+ * True when the freshly built records match the stored ones
+ * field-for-field. Vectors are excluded: a matching contentHash means
+ * the vector was reused from the matching stored record.
+ */
+function sameRecordSet(
+  next: EmbeddingRecord[],
+  current: Iterable<EmbeddingRecord>,
+): boolean {
+  const byId = new Map<string, EmbeddingRecord>();
+  for (const r of current) byId.set(r.chunkId, r);
+  if (byId.size !== next.length) return false;
+  return next.every((r) => {
+    const e = byId.get(r.chunkId);
+    return (
+      e !== undefined &&
+      e.contentHash === r.contentHash &&
+      e.offset === r.offset &&
+      e.heading === r.heading
+    );
+  });
 }

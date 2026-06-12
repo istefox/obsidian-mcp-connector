@@ -1078,3 +1078,94 @@ describe("indexer — isUserIgnored exclusion (#238)", () => {
     await indexer.stop();
   });
 });
+
+/**
+ * Proxies every method to the wrapped store and counts delete/upsert
+ * calls, so tests can assert that a no-op save never touches the
+ * store (which would mark it dirty and trigger a full-store rewrite
+ * at the next flush).
+ */
+function wrapStoreWithWriteSpy(store: Awaited<ReturnType<typeof makeStore>>): {
+  store: typeof store;
+  writes: () => { deletes: number; upserts: number };
+} {
+  let deletes = 0;
+  let upserts = 0;
+  const wrapped: typeof store = {
+    init: () => store.init(),
+    size: () => store.size(),
+    scan: () => store.scan(),
+    recordsFor: (path) => store.recordsFor(path),
+    upsert: (records) => {
+      upserts++;
+      return store.upsert(records);
+    },
+    delete: (path) => {
+      deletes++;
+      return store.delete(path);
+    },
+    close: () => store.close(),
+    flush: () => store.flush(),
+  };
+  return { store: wrapped, writes: () => ({ deletes, upserts }) };
+}
+
+describe("live indexer — unchanged-file no-op skip", () => {
+  test("modify event with identical content skips delete/upsert", async () => {
+    const rawStore = await makeStore();
+    const { vault, files, emit } = makeVault({
+      "a.md": "alpha---CHUNK---beta",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, writes } = wrapStoreWithWriteSpy(rawStore);
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    const afterBuild = writes();
+
+    // Same content saved again: chunking is identical, so the path
+    // must not be rewritten.
+    files.set("a.md", "alpha---CHUNK---beta");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(writes()).toEqual(afterBuild);
+    expect(rawStore.size()).toBe(2);
+
+    await indexer.stop();
+  });
+
+  test("modify event with changed content still rewrites the path", async () => {
+    const rawStore = await makeStore();
+    const { vault, files, emit } = makeVault({
+      "a.md": "alpha---CHUNK---beta",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const { store, writes } = wrapStoreWithWriteSpy(rawStore);
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    const afterBuild = writes();
+
+    files.set("a.md", "alpha---CHUNK---gamma");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 60));
+
+    const afterModify = writes();
+    expect(afterModify.deletes).toBe(afterBuild.deletes + 1);
+    expect(afterModify.upserts).toBe(afterBuild.upserts + 1);
+    expect(rawStore.size()).toBe(2);
+
+    await indexer.stop();
+  });
+});

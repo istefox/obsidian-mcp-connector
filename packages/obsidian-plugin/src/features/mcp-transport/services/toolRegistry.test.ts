@@ -480,3 +480,33 @@ describe("ToolRegistry — tool-error log redaction", () => {
     expect(JSON.stringify(meta)).not.toContain("private-note-body");
   });
 });
+
+describe("ToolRegistry list() memoization", () => {
+  test("repeated list() calls return the same object until enable/disable", () => {
+    const { tools, alphaSchema } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    expect(tools.list()).toBe(first);
+
+    tools.disable(alphaSchema);
+    const afterDisable = tools.list();
+    expect(afterDisable).not.toBe(first);
+    expect(afterDisable.tools.map((t) => t.name)).toEqual(["beta"]);
+    expect(tools.list()).toBe(afterDisable);
+
+    tools.enable(alphaSchema);
+    const afterEnable = tools.list();
+    expect(afterEnable).not.toBe(afterDisable);
+    // Re-enabling appends to the Set, so alpha moves to the end.
+    expect(afterEnable.tools.map((t) => t.name)).toEqual(["beta", "alpha"]);
+  });
+
+  test("enableByName/disableByName also invalidate the cache", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.disableByName("beta");
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["alpha"]);
+    expect(tools.list()).not.toBe(first);
+  });
+});
