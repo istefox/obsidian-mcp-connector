@@ -163,6 +163,21 @@ describe("embedder", () => {
     expect(callCount()).toBe(2);
   });
 
+  test("idle timer: omitted unloadWhenIdle keeps the pipeline warm", async () => {
+    // Opt-in contract: without the flag the model must stay loaded,
+    // otherwise the unloadModelWhenIdle setting cannot disable it.
+    const { factory, callCount } = makeMockFactory();
+    const embedder = createEmbedder({
+      pipelineFactory: factory,
+      idleMs: 30,
+    });
+    await embedder.embed("hello");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(embedder.isLoaded()).toBe(true);
+    await embedder.embed("world");
+    expect(callCount()).toBe(1); // no cold reload
+  });
+
   test("concurrent first calls share one pipeline construction", async () => {
     const { factory, callCount } = makeMockFactory();
     const embedder = createEmbedder({ pipelineFactory: factory });

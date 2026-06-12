@@ -295,7 +295,10 @@
         disabled={saving}
       />
       Unload model when idle (60s)
-      <span class="hint">frees ~150 MB of RAM after inactivity</span>
+      <span class="hint"
+        >frees ~150 MB of RAM after inactivity, next search reloads the model
+        (~1s); takes effect at the next plugin reload</span
+      >
     </label>
   {/if}
 

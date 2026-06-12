@@ -172,7 +172,11 @@ class EmbedderImpl implements Embedder {
   }
 
   private touchIdle(): void {
-    if (this.opts.unloadWhenIdle === false) return;
+    // Opt-in: an omitted flag keeps the pipeline warm. The previous
+    // `=== false` check made `undefined` behave like `true`, which
+    // silently disconnected the unloadModelWhenIdle setting and made
+    // every search after 60s idle pay a cold pipeline rebuild.
+    if (this.opts.unloadWhenIdle !== true) return;
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     this.idleTimer = window.setTimeout(() => {
       this.pipeline = null;
