@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from "bun:test";
 import {
   cosineSimilarity,
   createNativeProvider,
+  dotProduct,
   type ExcerptResolver,
 } from "./nativeProvider";
 import type { Embedder } from "./embedder";
@@ -273,5 +274,74 @@ describe("native provider", () => {
     const out = await provider.search("q", {});
     expect(out).toHaveLength(1);
     expect(out[0]!.excerpt).toBe("(no preview)");
+  });
+});
+
+describe("dot-product scoring and bounded top-k", () => {
+  function norm(values: number[]): Float32Array {
+    const v = vec(values);
+    let n = 0;
+    for (let i = 0; i < v.length; i++) n += (v[i] ?? 0) ** 2;
+    n = Math.sqrt(n) || 1;
+    return v.map((x) => x / n) as Float32Array;
+  }
+
+  test("dotProduct equals cosineSimilarity on normalized vectors", () => {
+    const pairs: Array<[number[], number[]]> = [
+      [
+        [1, 2, 3, 4],
+        [4, 3, 2, 1],
+      ],
+      [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+      ],
+      [
+        [0.3, -0.7, 0.2, 0.1],
+        [-0.5, 0.5, 0.5, -0.5],
+      ],
+    ];
+    for (const [a, b] of pairs) {
+      const na = norm(a);
+      const nb = norm(b);
+      expect(dotProduct(na, nb)).toBeCloseTo(cosineSimilarity(na, nb), 6);
+    }
+  });
+
+  test("dotProduct throws on dimension mismatch", () => {
+    expect(() => dotProduct(new Float32Array(3), new Float32Array(4))).toThrow(
+      /dim mismatch/,
+    );
+  });
+
+  test("bounded top-k returns the same ranking as full sort+slice", async () => {
+    // 30 records with distinct scores against the query direction.
+    const records: EmbeddingRecord[] = [];
+    for (let i = 0; i < 30; i++) {
+      // Angle sweep in the (x, y) plane → strictly decreasing dot with
+      // the x axis as i grows.
+      const angle = (i / 60) * Math.PI;
+      records.push(
+        rec({
+          chunkId: `c${i}`,
+          filePath: `Notes/f${i}.md`,
+          vector: norm([Math.cos(angle), Math.sin(angle), 0, 0]),
+        }),
+      );
+    }
+    // Insert deliberately unordered.
+    records.reverse();
+    const store = await makeStore(records);
+    const embedder = makeFakeEmbedder(new Map([["q", norm([1, 0, 0, 0])]]));
+    const provider = createNativeProvider({ embedder, store });
+
+    const out = await provider.search("q", { limit: 7 });
+    expect(out.map((r) => r.filePath)).toEqual(
+      Array.from({ length: 7 }, (_, i) => `Notes/f${i}.md`),
+    );
+    // Scores strictly descending.
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]!.score).toBeLessThan(out[i - 1]!.score);
+    }
   });
 });
