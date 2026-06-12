@@ -113,14 +113,18 @@ async function fakeChunker(content: string): Promise<Chunk[]> {
 function fakeEmbeddingProvider(): {
   embedder: EmbeddingProvider;
   embeds: () => string[];
+  /** One entry per embed() invocation, preserving the batch shape. */
+  embedCalls: () => string[][];
 } {
   const calls: string[] = [];
+  const shapes: string[][] = [];
   const embedder: EmbeddingProvider = {
     providerKey: "test-provider",
     dimensions: DIM,
     maxInputTokens: 512,
     getMaxInputTokens: async () => 512,
     embed: async (texts, _role) => {
+      shapes.push([...texts]);
       for (const text of texts) calls.push(text);
       return texts.map((text) => {
         const v = new Float32Array(DIM);
@@ -131,7 +135,11 @@ function fakeEmbeddingProvider(): {
     isAvailable: async () => true,
     getModelSizeBytes: () => 0,
   };
-  return { embedder, embeds: () => [...calls] };
+  return {
+    embedder,
+    embeds: () => [...calls],
+    embedCalls: () => shapes.map((s) => [...s]),
+  };
 }
 
 async function collect(
@@ -1166,6 +1174,69 @@ describe("live indexer — unchanged-file no-op skip", () => {
     expect(afterModify.upserts).toBe(afterBuild.upserts + 1);
     expect(rawStore.size()).toBe(2);
 
+    await indexer.stop();
+  });
+});
+
+describe("live indexer — batched embed calls", () => {
+  test("a modified file embeds only its changed chunks, in one call", async () => {
+    const rawStore = await makeStore();
+    const { vault, files, emit } = makeVault({
+      "a.md": "one---CHUNK---two---CHUNK---three",
+    });
+    const { embedder, embedCalls } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store: rawStore,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    // Full build: one batched call with all three chunks (overlap
+    // wrapper prepends the previous chunk's text).
+    expect(embedCalls()).toEqual([["one", "one\ntwo", "two\nthree"]]);
+
+    // Change two chunks, keep the first.
+    files.set("a.md", "one---CHUNK---TWO---CHUNK---THREE");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 60));
+
+    const calls = embedCalls();
+    expect(calls).toHaveLength(2);
+    // Reused "one" not re-embedded; the two changed chunks ride in
+    // one batched call.
+    expect(calls[1]).toEqual(["one\nTWO", "TWO\nTHREE"]);
+    expect(rawStore.size()).toBe(3);
+
+    await indexer.stop();
+  });
+
+  test("duplicate chunks within a file embed once and share the vector", async () => {
+    const rawStore = await makeStore();
+    // After the overlap wrapper, chunks 2 and 3 are both "same\nsame".
+    const { vault } = makeVault({
+      "a.md": "same---CHUNK---same---CHUNK---same",
+    });
+    const { embedder, embedCalls } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store: rawStore,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    // contentHash is computed on the raw chunk text (pre-overlap), so
+    // all three "same" chunks share one hash and embed exactly once —
+    // consistent with the existing reuse path, which already treats
+    // equal hashes as vector-interchangeable across re-indexes.
+    expect(embedCalls()).toEqual([["same"]]);
+    const records = Array.from(rawStore.recordsFor("a.md"));
+    expect(records).toHaveLength(3);
+    const vecs = records.map((r) => r.vector);
+    expect(vecs[1]).toBe(vecs[0] as Float32Array);
+    expect(vecs[2]).toBe(vecs[0] as Float32Array);
     await indexer.stop();
   });
 });

@@ -36,7 +36,16 @@ export type TransformersProviderOpts = {
   modelSizeBytes: number;
   taskPrompt: TaskPromptFn;
   pipelineFactory: PipelineFactory;
+  /**
+   * Max texts per pipeline call. The tokenizer pads every text in a
+   * batch to the longest one, so attention memory scales with
+   * batch × seq² — large-context models on WebGPU need a smaller
+   * batch (EmbeddingGemma uses 4). Default 8.
+   */
+  batchSize?: number;
 };
+
+const DEFAULT_BATCH_SIZE = 8;
 
 class TransformersProviderImpl implements EmbeddingProvider {
   readonly providerKey: string;
@@ -74,20 +83,47 @@ class TransformersProviderImpl implements EmbeddingProvider {
     texts: string[],
     role: "document" | "query",
   ): Promise<Float32Array[]> {
+    // Before ensurePipeline(): an all-reused reindex must not cold-load
+    // the model.
+    if (texts.length === 0) return [];
     const pipe = await this.ensurePipeline();
     const maxLen = await this.getMaxInputTokens();
-    return Promise.all(
-      texts.map(async (text) => {
-        const prompted = this.opts.taskPrompt(text, role);
-        const result = await pipe(prompted, {
-          pooling: "mean",
-          normalize: true,
-          truncation: true,
-          max_length: maxLen,
-        });
-        return new Float32Array(result.data);
-      }),
-    );
+    const batchSize = this.opts.batchSize ?? DEFAULT_BATCH_SIZE;
+
+    // One pipeline call per sub-batch: tokenization and the forward
+    // pass are batched by Transformers.js, which beats per-text calls
+    // by a wide margin (kernel-launch and tensor-upload overhead
+    // dominates at batch size 1, especially on WebGPU). Sub-batches
+    // run sequentially — concurrent pipe() calls on one ORT session
+    // queue anyway but multiply peak memory.
+    const out: Float32Array[] = [];
+    for (let start = 0; start < texts.length; start += batchSize) {
+      const batch = texts
+        .slice(start, start + batchSize)
+        .map((text) => this.opts.taskPrompt(text, role));
+      const result = await pipe(batch, {
+        pooling: "mean",
+        normalize: true,
+        truncation: true,
+        max_length: maxLen,
+      });
+      // [batch, dim] tensor, row-major. Fall back to the declared
+      // dimensions if dims is missing.
+      const stride =
+        result.dims?.length === 2 && typeof result.dims[1] === "number"
+          ? result.dims[1]
+          : this.opts.dimensions;
+      for (let row = 0; row < batch.length; row++) {
+        // Copy each row into an owned Float32Array, independent of the
+        // pipeline's internal buffer.
+        out.push(
+          new Float32Array(
+            result.data.subarray(row * stride, (row + 1) * stride),
+          ),
+        );
+      }
+    }
+    return out;
   }
 
   private async ensurePipeline(): Promise<PipelineFn> {

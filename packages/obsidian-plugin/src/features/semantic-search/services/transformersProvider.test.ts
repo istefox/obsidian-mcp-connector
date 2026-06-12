@@ -23,7 +23,10 @@ function makeMockFactory(dim: number): {
     return async (input) => {
       const texts = Array.isArray(input) ? input : [input];
       calls.push(...texts);
-      return { data: new Float32Array(dim), dims: [1, dim] };
+      return {
+        data: new Float32Array(dim * texts.length),
+        dims: [texts.length, dim],
+      };
     };
   };
   return { factory, calls };
@@ -35,9 +38,10 @@ function makeMockFactoryWithOpts(dim: number): {
 } {
   const optsLog: Array<object | undefined> = [];
   const factory = async (_model: string): Promise<MockPipelineFn> => {
-    return async (_input, opts) => {
+    return async (input, opts) => {
       optsLog.push(opts);
-      return { data: new Float32Array(dim), dims: [1, dim] };
+      const n = Array.isArray(input) ? input.length : 1;
+      return { data: new Float32Array(dim * n), dims: [n, dim] };
     };
   };
   return { factory, optsLog };
@@ -134,9 +138,13 @@ describe("TransformersProviderImpl", () => {
     let loadCount = 0;
     const factory = async (
       _model: string,
-    ): Promise<(input: string) => Promise<{ data: Float32Array }>> => {
+    ): Promise<
+      (input: string | string[]) => Promise<{ data: Float32Array }>
+    > => {
       loadCount++;
-      return async () => ({ data: new Float32Array(768) });
+      return async (input) => ({
+        data: new Float32Array(768 * (Array.isArray(input) ? input.length : 1)),
+      });
     };
     const provider = createTransformersProvider({
       modelId: "test-model",
@@ -375,5 +383,73 @@ describe("NativeEmbeddingProvider", () => {
     expect(captured).toEqual(["hello", "world"]);
     expect(result).toHaveLength(2);
     expect(result[0]).toBeInstanceOf(Float32Array);
+  });
+});
+
+describe("TransformersProviderImpl — batched pipeline calls", () => {
+  function makeShapeRecordingFactory(dim: number): {
+    factory: (model: string) => Promise<MockPipelineFn>;
+    invocations: string[][];
+  } {
+    const invocations: string[][] = [];
+    const factory = async (_model: string): Promise<MockPipelineFn> => {
+      return async (input) => {
+        const texts = Array.isArray(input) ? input : [input];
+        invocations.push([...texts]);
+        const data = new Float32Array(dim * texts.length);
+        // Distinguishable rows: row r starts with r + 1.
+        texts.forEach((_, r) => {
+          data[r * dim] = r + 1;
+        });
+        return { data, dims: [texts.length, dim] };
+      };
+    };
+    return { factory, invocations };
+  }
+
+  function makeProvider(
+    factory: (model: string) => Promise<MockPipelineFn>,
+    batchSize?: number,
+  ) {
+    return createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 16,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
+      modelSizeBytes: 1_000_000,
+      taskPrompt: (t, role) => `${role}: ${t}`,
+      pipelineFactory: factory as never,
+      ...(batchSize === undefined ? {} : { batchSize }),
+    });
+  }
+
+  test("one pipeline call per batch, prompts applied per text, rows sliced in order", async () => {
+    const { factory, invocations } = makeShapeRecordingFactory(16);
+    const provider = makeProvider(factory);
+    const out = await provider.embed(["a", "b", "c"], "document");
+    expect(invocations).toEqual([
+      ["document: a", "document: b", "document: c"],
+    ]);
+    expect(out.map((v) => v[0])).toEqual([1, 2, 3]);
+    expect(out.every((v) => v.length === 16)).toBe(true);
+  });
+
+  test("batchSize caps the sub-batch size", async () => {
+    const { factory, invocations } = makeShapeRecordingFactory(16);
+    const provider = makeProvider(factory, 2);
+    const out = await provider.embed(["a", "b", "c", "d", "e"], "query");
+    expect(out).toHaveLength(5);
+    expect(invocations.map((i) => i.length)).toEqual([2, 2, 1]);
+  });
+
+  test("empty input returns [] without loading the pipeline", async () => {
+    let loads = 0;
+    const factory = async (_m: string): Promise<MockPipelineFn> => {
+      loads++;
+      return async () => ({ data: new Float32Array(16), dims: [1, 16] });
+    };
+    const provider = makeProvider(factory);
+    expect(await provider.embed([], "document")).toEqual([]);
+    expect(loads).toBe(0);
   });
 });

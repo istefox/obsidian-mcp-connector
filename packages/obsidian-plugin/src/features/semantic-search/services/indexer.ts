@@ -508,20 +508,53 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
     existingByHash.set(r.contentHash, r);
   }
 
-  const records: EmbeddingRecord[] = [];
-  for (const c of chunks) {
+  // Two-pass: collect every chunk that needs an embed (deduped by
+  // contentHash) and run ONE batched embedder call. Per-chunk calls
+  // were batch-of-1 inferences — tokenization and the forward pass
+  // batch far better in a single pipeline invocation.
+  const vectors = new Array<Float32Array | undefined>(chunks.length);
+  const toEmbedTexts: string[] = [];
+  const slotsByHash = new Map<string, number[]>();
+  chunks.forEach((c, i) => {
     const reused = existingByHash.get(c.contentHash);
-    const vector =
-      reused?.vector ?? (await deps.embedder.embed([c.text], "document"))[0];
-    records.push({
+    if (reused) {
+      vectors[i] = reused.vector;
+      return;
+    }
+    const slots = slotsByHash.get(c.contentHash);
+    if (slots) {
+      slots.push(i);
+    } else {
+      slotsByHash.set(c.contentHash, [i]);
+      toEmbedTexts.push(c.text);
+    }
+  });
+
+  if (toEmbedTexts.length > 0) {
+    const embedded = await deps.embedder.embed(toEmbedTexts, "document");
+    let k = 0;
+    for (const slots of slotsByHash.values()) {
+      const vector = embedded[k++];
+      for (const i of slots) vectors[i] = vector;
+    }
+  }
+
+  const records: EmbeddingRecord[] = chunks.map((c, i) => {
+    const vector = vectors[i];
+    if (!vector) {
+      throw new Error(
+        `indexer: missing embedding for chunk ${path}#${c.id} (batch result misaligned)`,
+      );
+    }
+    return {
       chunkId: `${path}#${c.id}`,
       filePath: path,
       offset: c.offset,
       heading: c.heading,
       contentHash: c.contentHash,
       vector,
-    });
-  }
+    };
+  });
 
   // A save that didn't change the chunking (the common autosave case)
   // would otherwise mark the store dirty and trigger a full-store

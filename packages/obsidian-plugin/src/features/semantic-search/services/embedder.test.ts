@@ -24,19 +24,23 @@ function makeMockFactory(): {
     factoryCalls += 1;
     const pipe: PipelineFn = async (input, _opts) => {
       embedCalls += 1;
-      const text = Array.isArray(input) ? input.join("|") : input;
+      // Batch-shaped output: one hashed row per input text, row-major
+      // [n, dim], matching the real Transformers.js tensor layout.
+      const texts = Array.isArray(input) ? input : [input];
       const dim = 8;
-      const data = new Float32Array(dim);
-      // Stable per-input vector via a tiny hash.
-      let h = 2166136261;
-      for (let i = 0; i < text.length; i++) {
-        h = (h ^ text.charCodeAt(i)) >>> 0;
-        h = Math.imul(h, 16777619) >>> 0;
-      }
-      for (let i = 0; i < dim; i++) {
-        data[i] = ((h >>> (i * 4)) & 0xff) / 255;
-      }
-      return { data, dims: [1, dim] };
+      const data = new Float32Array(dim * texts.length);
+      texts.forEach((text, row) => {
+        // Stable per-input vector via a tiny hash.
+        let h = 2166136261;
+        for (let i = 0; i < text.length; i++) {
+          h = (h ^ text.charCodeAt(i)) >>> 0;
+          h = Math.imul(h, 16777619) >>> 0;
+        }
+        for (let i = 0; i < dim; i++) {
+          data[row * dim + i] = ((h >>> (i * 4)) & 0xff) / 255;
+        }
+      });
+      return { data, dims: [texts.length, dim] };
     };
     return pipe;
   };
@@ -95,16 +99,14 @@ describe("embedder", () => {
     expect(embedCount()).toBe(beforeQ0); // hit
   });
 
-  test("embedBatch: returns one vector per input, dedupes duplicates via cache", async () => {
+  test("embedBatch: returns one vector per input, dedupes duplicates in-batch", async () => {
     const { factory, embedCount } = makeMockFactory();
     const embedder = createEmbedder({ pipelineFactory: factory });
     const out = await embedder.embedBatch(["a", "b", "c", "a"]);
     expect(out).toHaveLength(4);
     expect(out[0]).toBe(out[3]); // same Float32Array reference
-    // a, b, c are 3 distinct strings → 3 pipeline calls. The duplicate
-    // "a" hits the cache after the first one resolves.
-    expect(embedCount()).toBeLessThanOrEqual(4);
-    expect(embedCount()).toBeGreaterThanOrEqual(3);
+    // a, b, c dedupe to 3 unique texts → ONE batched pipeline call.
+    expect(embedCount()).toBe(1);
   });
 
   test("unload: clears pipeline; next call re-loads", async () => {
@@ -268,5 +270,91 @@ describe("resolveBackend", () => {
     ).toBe("webgpu");
     // No reset between calls; the cached result wins.
     expect(await resolveBackend(undefined)).toBe("webgpu");
+  });
+});
+
+/** Mock factory that also records the raw input of every pipe() call. */
+function makeRecordingFactory(): {
+  factory: PipelineFactory;
+  callCount: () => number;
+  inputs: () => (string | string[])[];
+} {
+  let factoryCalls = 0;
+  const inputs: (string | string[])[] = [];
+  const factory: PipelineFactory = async (_model: string) => {
+    factoryCalls += 1;
+    const pipe: PipelineFn = async (input, _opts) => {
+      inputs.push(input);
+      const texts = Array.isArray(input) ? input : [input];
+      const dim = 8;
+      const data = new Float32Array(dim * texts.length);
+      texts.forEach((text, row) => {
+        data[row * dim] = text.length;
+      });
+      return { data, dims: [texts.length, dim] };
+    };
+    return pipe;
+  };
+  return {
+    factory,
+    callCount: () => factoryCalls,
+    inputs: () => [...inputs],
+  };
+}
+
+describe("embedder — embedBatch batching", () => {
+  test("a batch of unique texts is one pipeline call with a string[] arg, order preserved", async () => {
+    const { factory, inputs } = makeRecordingFactory();
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    const out = await embedder.embedBatch(["aa", "b", "cccc"]);
+    expect(inputs()).toEqual([["aa", "b", "cccc"]]);
+    expect(out.map((v) => v[0])).toEqual([2, 1, 4]);
+  });
+
+  test("embedBatch reads the LRU but does not write it", async () => {
+    const { factory, inputs } = makeRecordingFactory();
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    // Seed the query cache.
+    await embedder.embed("query");
+    // Batch containing the cached query only embeds the new text.
+    await embedder.embedBatch(["query", "doc"]);
+    expect(inputs()).toEqual(["query", ["doc"]]);
+    // The batch result was NOT cached: embedding "doc" as a query
+    // re-runs the pipeline.
+    await embedder.embed("doc");
+    expect(inputs()).toEqual(["query", ["doc"], "doc"]);
+  });
+
+  test("more than EMBED_BATCH_SIZE inputs split into ceil(n/8) sequential calls", async () => {
+    const { factory, inputs } = makeRecordingFactory();
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    const texts = Array.from({ length: 9 }, (_, i) => `t${i}`);
+    const out = await embedder.embedBatch(texts);
+    expect(out).toHaveLength(9);
+    const shapes = inputs();
+    expect(shapes).toHaveLength(2);
+    expect(shapes[0]).toHaveLength(8);
+    expect(shapes[1]).toHaveLength(1);
+  });
+
+  test("empty batch returns [] without loading the pipeline", async () => {
+    const { factory, callCount } = makeRecordingFactory();
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    expect(await embedder.embedBatch([])).toEqual([]);
+    expect(callCount()).toBe(0);
+    expect(embedder.isLoaded()).toBe(false);
+  });
+
+  test("embedBatch touches the idle timer when unloadWhenIdle is on", async () => {
+    const { factory } = makeRecordingFactory();
+    const embedder = createEmbedder({
+      pipelineFactory: factory,
+      idleMs: 30,
+      unloadWhenIdle: true,
+    });
+    await embedder.embedBatch(["a"]);
+    expect(embedder.isLoaded()).toBe(true);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(embedder.isLoaded()).toBe(false);
   });
 });
