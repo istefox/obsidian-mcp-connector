@@ -153,6 +153,24 @@ describe("end-to-end: HTTP → McpServer", () => {
         "update_active_file",
       ]);
       expect(names).toHaveLength(45);
+
+      // Annotations completeness: every exposed tool must carry MCP
+      // annotations with an explicit readOnlyHint and openWorldHint.
+      // A failure here means a new tool was registered without an
+      // entry in mcp-tools/toolAnnotations.ts.
+      const missingAnnotations = (
+        tools as Array<{
+          name: string;
+          annotations?: { readOnlyHint?: boolean; openWorldHint?: boolean };
+        }>
+      )
+        .filter(
+          (t) =>
+            typeof t.annotations?.readOnlyHint !== "boolean" ||
+            typeof t.annotations?.openWorldHint !== "boolean",
+        )
+        .map((t) => t.name);
+      expect(missingAnnotations).toEqual([]);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }

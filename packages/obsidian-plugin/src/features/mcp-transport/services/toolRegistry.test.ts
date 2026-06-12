@@ -510,3 +510,35 @@ describe("ToolRegistry list() memoization", () => {
     expect(tools.list()).not.toBe(first);
   });
 });
+
+describe("ToolRegistry annotations", () => {
+  test("list() includes annotations for matching names and omits them otherwise", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setAnnotations({
+      alpha: { readOnlyHint: true, openWorldHint: false },
+      never_registered: { readOnlyHint: true },
+    });
+
+    const listed = tools.list().tools;
+    const alpha = listed.find((t) => t.name === "alpha");
+    const beta = listed.find((t) => t.name === "beta");
+    expect(alpha?.annotations).toEqual({
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(beta && "annotations" in beta).toBe(false);
+  });
+
+  test("setAnnotations invalidates the memoized list()", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setAnnotations({ alpha: { readOnlyHint: true } });
+    const second = tools.list();
+    expect(second).not.toBe(first);
+    expect(second.tools.find((t) => t.name === "alpha")?.annotations).toEqual({
+      readOnlyHint: true,
+    });
+  });
+});
