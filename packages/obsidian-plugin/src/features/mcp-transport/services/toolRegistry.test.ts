@@ -542,3 +542,25 @@ describe("ToolRegistry annotations", () => {
     });
   });
 });
+
+describe("ToolRegistry name-keyed lookups", () => {
+  test("registering two distinct schemas with the same name throws", () => {
+    const tools = new ToolRegistryClass();
+    const first = type({ name: '"dup"', arguments: {} }).describe("first");
+    const second = type({ name: '"dup"', arguments: {} }).describe("second");
+    tools.register(first, () => ({
+      content: [{ type: "text", text: "ok" }],
+    }));
+    expect(() =>
+      tools.register(second, () => ({
+        content: [{ type: "text", text: "ok" }],
+      })),
+    ).toThrow(/already registered: dup/);
+  });
+
+  test("enableByName/disableByName return false for unknown names", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    expect(tools.disableByName("nope")).toBe(false);
+    expect(tools.enableByName("nope")).toBe(false);
+  });
+});
