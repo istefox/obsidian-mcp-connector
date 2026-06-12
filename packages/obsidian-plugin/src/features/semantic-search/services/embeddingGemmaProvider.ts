@@ -20,5 +20,9 @@ export function createEmbeddingGemmaProvider(
         ? "task: search result | query: " + text
         : "title: none | text: " + text,
     pipelineFactory,
+    // 2K-context model: padding to the longest text in the batch makes
+    // attention memory batch × seq², which can OOM integrated GPUs at
+    // the default batch of 8.
+    batchSize: 4,
   });
 }

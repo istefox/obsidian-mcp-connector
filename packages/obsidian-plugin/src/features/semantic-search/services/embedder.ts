@@ -23,6 +23,9 @@
 const DEFAULT_MODEL = "Xenova/all-MiniLM-L6-v2";
 const DEFAULT_CACHE_SIZE = 32;
 const DEFAULT_IDLE_MS = 60_000;
+// Max texts per pipeline call in embedBatch. The tokenizer pads to the
+// longest text in the batch, so bigger is not monotonically better.
+const EMBED_BATCH_SIZE = 8;
 
 /** Minimal subset of Transformers.js's pipeline output that we use. */
 export type EmbedTensor = { data: Float32Array; dims?: number[] };
@@ -90,9 +93,9 @@ class EmbedderImpl implements Embedder {
   private loadPromise: Promise<PipelineFn> | null = null;
   // Cache stores Promise<Float32Array> rather than Float32Array so
   // concurrent embed(sameText) calls share the in-flight work and
-  // resolve to the same array reference. Identity holds across
-  // duplicates within an embedBatch call, which the indexer relies on
-  // when chunk-delta detection re-embeds a partial set.
+  // resolve to the same array reference. Query-only: embedBatch reads
+  // it but never writes (document chunks must not evict query entries);
+  // within-batch duplicate identity comes from embedBatch's dedupe map.
   private cache = new Map<string, Promise<Float32Array>>();
   private idleTimer: number | null = null;
 
@@ -130,11 +133,72 @@ class EmbedderImpl implements Embedder {
   }
 
   async embedBatch(texts: string[]): Promise<Float32Array[]> {
-    // Each call routes through the per-string cache, so duplicated
-    // batch entries reuse work. Concurrency is fine: the first batch
-    // call triggers `ensurePipeline()` and the rest await the same
-    // promise.
-    return Promise.all(texts.map((t) => this.embed(t)));
+    this.touchIdle();
+    // Before ensurePipeline(): an all-cached or empty batch must not
+    // cold-load the model.
+    if (texts.length === 0) return [];
+
+    // Cache policy: batch traffic is document chunks (indexing); it
+    // READS the query LRU (a chunk equal to a recent query reuses the
+    // vector) but never WRITES it — 32 slots of query cache would be
+    // churned to nothing by a single file's chunks. Duplicate texts
+    // within the batch still resolve to the SAME Float32Array
+    // reference (invariant the indexer's chunk-delta reuse relies on)
+    // via the dedupe map below.
+    const results = new Array<Promise<Float32Array>>(texts.length);
+    const missing = new Map<string, number[]>();
+    texts.forEach((text, i) => {
+      const cached = this.cache.get(text);
+      if (cached) {
+        results[i] = cached;
+      } else {
+        const positions = missing.get(text);
+        if (positions) positions.push(i);
+        else missing.set(text, [i]);
+      }
+    });
+
+    const entries = Array.from(missing.entries());
+    for (let start = 0; start < entries.length; start += EMBED_BATCH_SIZE) {
+      const slice = entries.slice(start, start + EMBED_BATCH_SIZE);
+      const batchTexts = slice.map(([text]) => text);
+      const batchPromise = (async (): Promise<Float32Array[]> => {
+        const pipe = await this.ensurePipeline();
+        const result = await pipe(batchTexts, {
+          pooling: "mean",
+          normalize: true,
+          truncation: true,
+          max_length: this.opts.maxInputTokens,
+        });
+        // [batch, dim] row-major; without dims, derive the stride from
+        // the flat length (must divide evenly).
+        const stride =
+          result.dims?.length === 2 && typeof result.dims[1] === "number"
+            ? result.dims[1]
+            : result.data.length / batchTexts.length;
+        if (!Number.isInteger(stride)) {
+          throw new Error(
+            `embedBatch: cannot infer row stride (data ${result.data.length}, batch ${batchTexts.length})`,
+          );
+        }
+        return batchTexts.map(
+          (_, row) =>
+            new Float32Array(
+              result.data.subarray(row * stride, (row + 1) * stride),
+            ),
+        );
+      })();
+      slice.forEach(([, positions], row) => {
+        const rowPromise = batchPromise.then((rows) => {
+          const v = rows[row];
+          if (!v) throw new Error("embedBatch: missing row in batch result");
+          return v;
+        });
+        for (const pos of positions) results[pos] = rowPromise;
+      });
+    }
+
+    return Promise.all(results);
   }
 
   async unload(): Promise<void> {
