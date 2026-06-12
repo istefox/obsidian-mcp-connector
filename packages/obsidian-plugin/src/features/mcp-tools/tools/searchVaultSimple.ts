@@ -32,11 +32,25 @@ type FileResult = {
   matches: Array<{ context: string; match: { start: number; end: number } }>;
 };
 
+/** Reads per batch: bounds memory while hiding cachedRead latency. */
+const READ_BATCH_SIZE = 8;
+
+/** Escape a literal string for use inside a RegExp source. */
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Search vault files for plain-text substring matches. Iterates over all
  * markdown files, performs case-insensitive search, extracts context
  * windows around each match, and respects the client-side limit truncation
  * (fix for issue #62).
+ *
+ * The scan is a case-insensitive regex over the original content: the
+ * previous `content.toLowerCase()` allocated a full copy of every file
+ * per query. Files are read in sequential batches of 8 (parallel reads
+ * within a batch, batch order preserved) with an early stop once
+ * `limit` files have matched.
  */
 export async function searchVaultSimpleHandler(
   ctx: SearchVaultSimpleContext,
@@ -44,31 +58,50 @@ export async function searchVaultSimpleHandler(
   const query = ctx.arguments.query;
   const contextLength = ctx.arguments.contextLength ?? DEFAULT_CONTEXT;
   const limit = ctx.arguments.limit ?? DEFAULT_LIMIT;
-  const lowerQuery = query.toLowerCase();
+  const patternSource = escapeRegExp(query);
 
   const files = ctx.app.vault.getMarkdownFiles();
   const results: FileResult[] = [];
 
-  for (const file of files) {
-    if (results.length >= limit) break; // #62 fix: client-side truncation
+  for (
+    let start = 0;
+    start < files.length && results.length < limit;
+    start += READ_BATCH_SIZE
+  ) {
+    const batch = files.slice(start, start + READ_BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (file): Promise<FileResult | null> => {
+        const content = await ctx.app.vault.cachedRead(file);
+        const matches: FileResult["matches"] = [];
 
-    const content = await ctx.app.vault.cachedRead(file);
-    const lower = content.toLowerCase();
-    const matches: FileResult["matches"] = [];
+        // Per-file scanner: files in a batch scan concurrently, so a
+        // shared regex would race on lastIndex.
+        let m: RegExpExecArray | null;
+        const scanner = new RegExp(patternSource, "gi");
+        while ((m = scanner.exec(content)) !== null) {
+          const idx = m.index;
+          const start = Math.max(0, idx - contextLength);
+          const end = Math.min(
+            content.length,
+            idx + query.length + contextLength,
+          );
+          matches.push({
+            context: content.slice(start, end),
+            match: { start: idx, end: idx + query.length },
+          });
+          // Match length equals query length (literal pattern), so this
+          // mirrors the previous `idx += query.length` stepping.
+          scanner.lastIndex = idx + query.length;
+        }
 
-    let idx = 0;
-    while ((idx = lower.indexOf(lowerQuery, idx)) !== -1) {
-      const start = Math.max(0, idx - contextLength);
-      const end = Math.min(content.length, idx + query.length + contextLength);
-      matches.push({
-        context: content.slice(start, end),
-        match: { start: idx, end: idx + query.length },
-      });
-      idx += query.length;
-    }
+        return matches.length > 0 ? { filename: file.path, matches } : null;
+      }),
+    );
 
-    if (matches.length > 0) {
-      results.push({ filename: file.path, matches });
+    for (const r of batchResults) {
+      if (r === null) continue;
+      if (results.length >= limit) break; // #62 fix: client-side truncation
+      results.push(r);
     }
   }
 
