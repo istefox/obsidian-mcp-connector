@@ -42,6 +42,13 @@ export interface VaultLike {
    */
   getMarkdownFiles(): Array<{ path: string; mtime?: number }>;
   read(path: string): Promise<string>;
+  /**
+   * O(1) mtime lookup for a single path, used by the live event path
+   * to capture the mtime BEFORE reading the file (recording it after
+   * the read could stamp newer mtime on older content). Optional:
+   * without it, live-edited files simply don't get a persisted mtime.
+   */
+  getFileMtime?(path: string): number | undefined;
   /** Returns an unsubscribe function. */
   on(event: VaultEvent, handler: (path: string) => void): () => void;
 }
@@ -83,11 +90,22 @@ export type StartOpts = {
   initialRebuild?: boolean;
 };
 
+export type RebuildOpts = {
+  /**
+   * `true` (default) re-processes every file — the contract of the
+   * manual "Rebuild index" button and of `startRebuildFor`. `false`
+   * (used by `start()`) skips files whose persisted mtime matches and
+   * whose records are present, so a session start does not re-read the
+   * whole vault.
+   */
+  force?: boolean;
+};
+
 export interface SemanticIndexer {
   start(opts?: StartOpts): Promise<void>;
   stop(): Promise<void>;
-  /** Force a full re-build over all markdown files. */
-  rebuildAll(): Promise<void>;
+  /** Full re-build over all markdown files. See {@link RebuildOpts}. */
+  rebuildAll(opts?: RebuildOpts): Promise<void>;
   /**
    * Drain any pending debounce timers and await every in-flight
    * file processing. Test helper — production code does not need
@@ -129,7 +147,9 @@ class LiveIndexerImpl implements SemanticIndexer {
     );
 
     if (opts.initialRebuild !== false) {
-      await this.rebuildAll();
+      // Session start is not a user-requested rebuild: unchanged files
+      // (persisted mtime matches, records present) are skipped.
+      await this.rebuildAll({ force: false });
     }
   }
 
@@ -151,7 +171,8 @@ class LiveIndexerImpl implements SemanticIndexer {
     return this.opts.isExcluded?.(path) ?? false;
   }
 
-  async rebuildAll(): Promise<void> {
+  async rebuildAll(opts: RebuildOpts = {}): Promise<void> {
+    const force = opts.force ?? true;
     if (!(await this.opts.embedder.isAvailable())) {
       logger.warn(
         "live indexer: embedding provider not available, skipping rebuild",
@@ -164,13 +185,30 @@ class LiveIndexerImpl implements SemanticIndexer {
     logger.info("live indexer: rebuildAll starting", {
       providerKey: this.opts.embedder.providerKey,
       fileCount: files.length,
+      force,
     });
+    let skipped = 0;
     for (const f of files) {
-      await this.processFile(f.path);
+      // Session-start pass: a file whose persisted mtime matches and
+      // whose records are present is current — skip the read entirely.
+      // The hasRecords guard self-heals a stale sidecar (e.g. records
+      // discarded by sentinel recovery while mtimes survived a crash
+      // window elsewhere).
+      if (
+        !force &&
+        f.mtime !== undefined &&
+        f.mtime === this.opts.store.mtimeFor(f.path) &&
+        this.opts.store.hasRecords(f.path)
+      ) {
+        skipped++;
+        continue;
+      }
+      await this.processFile(f.path, f.mtime);
     }
     logger.info("live indexer: rebuildAll finished", {
       providerKey: this.opts.embedder.providerKey,
       fileCount: files.length,
+      skippedUnchanged: skipped,
     });
   }
 
@@ -220,13 +258,13 @@ class LiveIndexerImpl implements SemanticIndexer {
     this.timers.set(path, handle);
   }
 
-  private async processFile(path: string): Promise<void> {
+  private async processFile(path: string, knownMtime?: number): Promise<void> {
     // Serialize per-path so a fast modify→delete sequence does not
     // race the in-flight processor for the prior modify event.
     const prior = this.inFlight.get(path);
     const next = (async () => {
       if (prior) await prior.catch(() => {});
-      await this.doProcessFile(path);
+      await this.doProcessFile(path, knownMtime);
     })();
     this.inFlight.set(path, next);
     try {
@@ -241,8 +279,11 @@ class LiveIndexerImpl implements SemanticIndexer {
     }
   }
 
-  private async doProcessFile(path: string): Promise<void> {
-    await processOnePath(this.opts, path);
+  private async doProcessFile(
+    path: string,
+    knownMtime?: number,
+  ): Promise<void> {
+    await processOnePath(this.opts, path, knownMtime);
   }
 
   private scheduleFlush(): void {
@@ -337,6 +378,7 @@ class LowPowerIndexerImpl implements SemanticIndexer {
   private running = false;
   private cycleInFlight: Promise<void> | null = null;
   private lastSeenMtime = new Map<string, number>();
+  private bypassPersistedMtime = false;
   private readonly intervalMs: number;
   private readonly opts: LowPowerIndexerOpts;
 
@@ -378,16 +420,26 @@ class LowPowerIndexerImpl implements SemanticIndexer {
     return this.opts.isExcluded?.(path) ?? false;
   }
 
-  async rebuildAll(): Promise<void> {
+  async rebuildAll(opts: RebuildOpts = {}): Promise<void> {
+    const force = opts.force ?? true;
     if (!(await this.opts.embedder.isAvailable())) {
       logger.warn(
         "low-power indexer: embedding provider not available, skipping rebuild",
       );
       return;
     }
-    // Force every file to be considered stale, then run a cycle.
-    this.lastSeenMtime.clear();
-    await this.runCycle();
+    if (force) {
+      // Force every file to be considered stale: clear the in-memory
+      // map AND bypass the persisted mtimes for this cycle, otherwise
+      // the sidecar would defeat the manual "Rebuild index" button.
+      this.lastSeenMtime.clear();
+      this.bypassPersistedMtime = true;
+    }
+    try {
+      await this.runCycle();
+    } finally {
+      this.bypassPersistedMtime = false;
+    }
   }
 
   async flush(): Promise<void> {
@@ -417,10 +469,18 @@ class LowPowerIndexerImpl implements SemanticIndexer {
         // hide at query time, physical cleanup only via manual Rebuild).
         seenPaths.add(f.path);
         if (this.isExcluded(f.path)) continue;
-        const prev = this.lastSeenMtime.get(f.path);
+        // Seed from the persisted sidecar so the first cycle after a
+        // restart skips unchanged files too. Guarded by hasRecords so
+        // a stale sidecar without records self-heals, and bypassed
+        // entirely during a forced rebuild.
+        const persisted =
+          this.bypassPersistedMtime || !this.opts.store.hasRecords(f.path)
+            ? undefined
+            : this.opts.store.mtimeFor(f.path);
+        const prev = this.lastSeenMtime.get(f.path) ?? persisted;
         const cur = f.mtime ?? Number.POSITIVE_INFINITY; // unknown mtime → process every cycle
         if (prev !== undefined && cur <= prev) continue;
-        await processOnePath(this.opts, f.path);
+        await processOnePath(this.opts, f.path, f.mtime);
         if (f.mtime !== undefined) this.lastSeenMtime.set(f.path, f.mtime);
       }
 
@@ -475,7 +535,15 @@ type ProcessDeps = {
  * index stays consistent with what `chunker` would produce on a
  * fresh re-build.
  */
-async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
+async function processOnePath(
+  deps: ProcessDeps,
+  path: string,
+  knownMtime?: number,
+): Promise<void> {
+  // Capture the mtime BEFORE reading: stamping it after the read could
+  // record a newer mtime for older content if the file changes in
+  // between, and a too-old mtime only costs one redundant re-process.
+  const mtime = knownMtime ?? deps.vault.getFileMtime?.(path);
   let content: string;
   try {
     content = await deps.vault.read(path);
@@ -558,11 +626,16 @@ async function processOnePath(deps: ProcessDeps, path: string): Promise<void> {
 
   // A save that didn't change the chunking (the common autosave case)
   // would otherwise mark the store dirty and trigger a full-store
-  // rewrite at the next flush.
-  if (sameRecordSet(records, deps.store.recordsFor(path))) return;
+  // rewrite at the next flush. The mtime is still recorded (sidecar
+  // dirty only) so the next session-start rebuild can skip the file.
+  if (sameRecordSet(records, deps.store.recordsFor(path))) {
+    if (mtime !== undefined) deps.store.setMtime(path, mtime);
+    return;
+  }
 
   await deps.store.delete(path);
   await deps.store.upsert(records);
+  if (mtime !== undefined) deps.store.setMtime(path, mtime);
 }
 
 /**

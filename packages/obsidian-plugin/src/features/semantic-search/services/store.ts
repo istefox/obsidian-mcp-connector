@@ -53,6 +53,19 @@ export interface EmbeddingStore {
   delete(filePath: string): Promise<void>;
   /** O(chunks-in-file) lookup via secondary index. Use instead of scan()+filter for per-path access. */
   recordsFor(filePath: string): Iterable<EmbeddingRecord>;
+  /** O(1): true when the path has at least one record. */
+  hasRecords(filePath: string): boolean;
+  /**
+   * Last successfully indexed mtime for the path, persisted in the
+   * `mtimes.json` sidecar. Lets a session-start rebuild skip unchanged
+   * files without reading them. Accepted risk: a sync tool that
+   * preserves mtime while changing content defeats the skip — same
+   * exposure as the low-power indexer's in-memory map; the manual
+   * "Rebuild index" button forces a full pass.
+   */
+  mtimeFor(filePath: string): number | undefined;
+  /** Record the mtime for a successfully indexed path (sidecar-dirty only). */
+  setMtime(filePath: string, mtime: number): void;
   scan(): AsyncIterable<EmbeddingRecord>;
   flush(): Promise<void>;
   close(): Promise<void>;
@@ -92,6 +105,11 @@ class EmbeddingStoreImpl implements EmbeddingStore {
   private records = new Map<string, EmbeddingRecord>();
   private fileIndex = new Map<string, Set<string>>();
   private dirty = false;
+  // Per-file mtimes live in their own sidecar with their own dirty
+  // flag: an autosave that only advances mtime must cost one small
+  // JSON write, never the full bin+index rewrite.
+  private fileMtimes = new Map<string, number>();
+  private mtimeDirty = false;
   private initialized = false;
   private readonly vectorDim: number;
   // Dirty-sentinel: written before the bin/index pair, removed only
@@ -101,9 +119,14 @@ class EmbeddingStoreImpl implements EmbeddingStore {
   // from indexPath so no extra opt is needed.
   private readonly sentinelPath: string;
 
+  /** Sidecar next to the index file, e.g. `<dir>/mtimes.json`. */
+  private readonly mtimesPath: string;
+
   constructor(private opts: EmbeddingStoreOpts) {
     this.vectorDim = opts.vectorDim ?? DEFAULT_VECTOR_DIM;
     this.sentinelPath = `${opts.indexPath}.writing`;
+    const dir = opts.indexPath.split("/").slice(0, -1).join("/");
+    this.mtimesPath = dir ? `${dir}/mtimes.json` : "mtimes.json";
   }
 
   async init(): Promise<void> {
@@ -119,6 +142,10 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       await this.removeSentinel();
       this.initialized = true;
       this.dirty = true; // next flush rewrites a clean bin/index pair
+      // Discard mtimes too: a sidecar claiming "current" while the
+      // records are gone would make the rebuild skip everything.
+      this.fileMtimes.clear();
+      this.mtimeDirty = true;
       return;
     }
 
@@ -212,10 +239,43 @@ class EmbeddingStoreImpl implements EmbeddingStore {
 
     this.initialized = true;
     this.dirty = skippedAny;
+    await this.loadMtimes();
+  }
+
+  /** Best-effort load of the mtimes sidecar; absent/corrupt → empty map. */
+  private async loadMtimes(): Promise<void> {
+    try {
+      if (!(await this.opts.adapter.exists(this.mtimesPath))) return;
+      const parsed = JSON.parse(
+        await this.opts.adapter.read(this.mtimesPath),
+      ) as Record<string, unknown>;
+      for (const [path, mtime] of Object.entries(parsed)) {
+        if (typeof mtime === "number") this.fileMtimes.set(path, mtime);
+      }
+    } catch (error) {
+      logger.warn("mtimes sidecar unreadable, ignoring", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   size(): number {
     return this.records.size;
+  }
+
+  hasRecords(filePath: string): boolean {
+    const set = this.fileIndex.get(filePath);
+    return set !== undefined && set.size > 0;
+  }
+
+  mtimeFor(filePath: string): number | undefined {
+    return this.fileMtimes.get(filePath);
+  }
+
+  setMtime(filePath: string, mtime: number): void {
+    if (this.fileMtimes.get(filePath) === mtime) return;
+    this.fileMtimes.set(filePath, mtime);
+    this.mtimeDirty = true;
   }
 
   async upsert(records: EmbeddingRecord[]): Promise<void> {
@@ -249,6 +309,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
 
   async delete(filePath: string): Promise<void> {
     if (!this.initialized) await this.init();
+    if (this.fileMtimes.delete(filePath)) this.mtimeDirty = true;
     const chunkIds = this.fileIndex.get(filePath);
     if (!chunkIds || chunkIds.size === 0) return;
     for (const chunkId of chunkIds) {
@@ -277,7 +338,13 @@ class EmbeddingStoreImpl implements EmbeddingStore {
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty) return;
+    if (!this.dirty) {
+      // mtime-only change (the common autosave case): one small JSON
+      // write, no sentinel needed — the sidecar is advisory and the
+      // record pair is untouched.
+      if (this.mtimeDirty) await this.flushMtimes();
+      return;
+    }
 
     // Ensure the parent directory exists before writing — on a fresh
     // install the per-providerKey subdirectory may not exist yet.
@@ -330,9 +397,23 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       JSON.stringify(indexFile),
     );
 
+    // After the pair, inside the sentinel window: a crash here leaves
+    // the sentinel up, so init() discards records AND mtimes together.
+    if (this.mtimeDirty) await this.flushMtimes();
+
     // Both writes succeeded — the pair is consistent, clear the sentinel.
     await this.removeSentinel();
     this.dirty = false;
+  }
+
+  private async flushMtimes(): Promise<void> {
+    const dir = this.mtimesPath.split("/").slice(0, -1).join("/");
+    if (dir) await this.opts.adapter.mkdir(dir);
+    await this.opts.adapter.write(
+      this.mtimesPath,
+      JSON.stringify(Object.fromEntries(this.fileMtimes)),
+    );
+    this.mtimeDirty = false;
   }
 
   /** Remove the sentinel, tolerating it already being gone. */
@@ -354,7 +435,9 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     await this.flush();
     this.records.clear();
     this.fileIndex.clear();
+    this.fileMtimes.clear();
     this.dirty = false;
+    this.mtimeDirty = false;
     this.initialized = false;
   }
 }
