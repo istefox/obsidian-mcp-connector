@@ -505,6 +505,9 @@ function wrapStoreWithFlushSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     size: () => store.size(),
     scan: () => store.scan(),
     recordsFor: (path) => store.recordsFor(path),
+    hasRecords: (path) => store.hasRecords(path),
+    mtimeFor: (path) => store.mtimeFor(path),
+    setMtime: (path, mtime) => store.setMtime(path, mtime),
     upsert: (records) => store.upsert(records),
     delete: (path) => store.delete(path),
     close: () => store.close(),
@@ -1104,6 +1107,9 @@ function wrapStoreWithWriteSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     size: () => store.size(),
     scan: () => store.scan(),
     recordsFor: (path) => store.recordsFor(path),
+    hasRecords: (path) => store.hasRecords(path),
+    mtimeFor: (path) => store.mtimeFor(path),
+    setMtime: (path, mtime) => store.setMtime(path, mtime),
     upsert: (records) => {
       upserts++;
       return store.upsert(records);
@@ -1238,5 +1244,204 @@ describe("live indexer — batched embed calls", () => {
     expect(vecs[1]).toBe(vecs[0] as Float32Array);
     expect(vecs[2]).toBe(vecs[0] as Float32Array);
     await indexer.stop();
+  });
+});
+
+describe("indexer — persisted mtime skip", () => {
+  const BIN = "/p/embeddings.bin";
+  const IDX = "/p/embeddings.index.json";
+
+  function sharedStorePair() {
+    const adapter = memAdapter();
+    const make = () =>
+      createEmbeddingStore({
+        adapter,
+        binPath: BIN,
+        indexPath: IDX,
+        vectorDim: DIM,
+      });
+    return { adapter, make };
+  }
+
+  function mtimeVaultWithReadSpy(
+    initial: Record<string, { content: string; mtime: number }>,
+  ) {
+    const { vault, files } = makeMtimeVault(initial);
+    let reads = 0;
+    const spied: VaultLike = {
+      ...vault,
+      read: async (path) => {
+        reads++;
+        return vault.read(path);
+      },
+    };
+    return { vault: spied, files, reads: () => reads };
+  }
+
+  test("session start skips files whose persisted mtime matches", async () => {
+    const { make } = sharedStorePair();
+    const vaultData = {
+      "a.md": { content: "alpha", mtime: 100 },
+      "b.md": { content: "beta", mtime: 200 },
+    };
+
+    // Session 1: full build persists records + mtimes.
+    const store1 = make();
+    await store1.init();
+    const v1 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e1 } = fakeEmbeddingProvider();
+    const idx1 = createLiveIndexer({
+      vault: v1.vault,
+      chunker: fakeChunker,
+      embedder: e1,
+      store: store1,
+      debounceMs: 10,
+    });
+    await idx1.start();
+    await idx1.stop();
+
+    // Session 2: fresh store instance over the same adapter, same vault.
+    const store2 = make();
+    await store2.init();
+    const v2 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e2, embedCalls } = fakeEmbeddingProvider();
+    const idx2 = createLiveIndexer({
+      vault: v2.vault,
+      chunker: fakeChunker,
+      embedder: e2,
+      store: store2,
+      debounceMs: 10,
+    });
+    await idx2.start();
+    expect(v2.reads()).toBe(0); // not even read, let alone re-embedded
+    expect(embedCalls()).toEqual([]);
+    expect(store2.size()).toBe(2);
+    await idx2.stop();
+  });
+
+  test("explicit rebuildAll() re-processes despite matching mtimes", async () => {
+    const { make } = sharedStorePair();
+    const vaultData = { "a.md": { content: "alpha", mtime: 100 } };
+
+    const store1 = make();
+    await store1.init();
+    const v1 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e1 } = fakeEmbeddingProvider();
+    const idx1 = createLiveIndexer({
+      vault: v1.vault,
+      chunker: fakeChunker,
+      embedder: e1,
+      store: store1,
+      debounceMs: 10,
+    });
+    await idx1.start();
+    await idx1.stop();
+
+    const store2 = make();
+    await store2.init();
+    const v2 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e2 } = fakeEmbeddingProvider();
+    const idx2 = createLiveIndexer({
+      vault: v2.vault,
+      chunker: fakeChunker,
+      embedder: e2,
+      store: store2,
+      debounceMs: 10,
+    });
+    await idx2.rebuildAll(); // manual button: default force
+    expect(v2.reads()).toBe(1); // read again (embed still skipped via hash)
+  });
+
+  test("matching mtime without records is processed (crash-heal guard)", async () => {
+    const { make } = sharedStorePair();
+    const store = make();
+    await store.init();
+    // Sidecar claims current, but no records exist for the path.
+    store.setMtime("a.md", 100);
+    const v = mtimeVaultWithReadSpy({
+      "a.md": { content: "alpha", mtime: 100 },
+    });
+    const { embedder, embedCalls } = fakeEmbeddingProvider();
+    const idx = createLiveIndexer({
+      vault: v.vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await idx.start();
+    expect(v.reads()).toBe(1);
+    expect(embedCalls()).toEqual([["alpha"]]);
+    expect(store.size()).toBe(1);
+    await idx.stop();
+  });
+
+  test("transient read failure does not record an mtime", async () => {
+    const { make } = sharedStorePair();
+    const store = make();
+    await store.init();
+    const { vault } = makeMtimeVault({
+      "a.md": { content: "alpha", mtime: 100 },
+    });
+    const failing: VaultLike = {
+      ...vault,
+      read: async () => {
+        throw new Error("EBUSY");
+      },
+      getFileMtime: () => 100,
+    };
+    const { embedder } = fakeEmbeddingProvider();
+    const idx = createLiveIndexer({
+      vault: failing,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await idx.start();
+    // Read failed while the path is still listed: vectors preserved,
+    // and crucially no mtime recorded, or the retry would be skipped.
+    expect(store.mtimeFor("a.md")).toBeUndefined();
+    await idx.stop();
+  });
+
+  test("low-power: first cycle after restart skips unchanged files via persisted mtimes", async () => {
+    const { make } = sharedStorePair();
+    const vaultData = { "a.md": { content: "alpha", mtime: 100 } };
+
+    const store1 = make();
+    await store1.init();
+    const v1 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e1 } = fakeEmbeddingProvider();
+    const lp1 = createLowPowerIndexer({
+      vault: v1.vault,
+      chunker: fakeChunker,
+      embedder: e1,
+      store: store1,
+      intervalMs: 60_000,
+    });
+    await lp1.start();
+    await lp1.stop();
+    await store1.flush();
+
+    // "Restart": fresh indexer + fresh store instance, same adapter.
+    const store2 = make();
+    await store2.init();
+    const v2 = mtimeVaultWithReadSpy(vaultData);
+    const { embedder: e2 } = fakeEmbeddingProvider();
+    const lp2 = createLowPowerIndexer({
+      vault: v2.vault,
+      chunker: fakeChunker,
+      embedder: e2,
+      store: store2,
+      intervalMs: 60_000,
+    });
+    await lp2.start();
+    expect(v2.reads()).toBe(0); // skipped via sidecar, not even re-read
+    await lp2.stop();
+
+    // The manual rebuild still forces a full pass.
+    await lp2.rebuildAll();
+    expect(v2.reads()).toBe(1);
   });
 });

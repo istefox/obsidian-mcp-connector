@@ -500,3 +500,160 @@ describe("EmbeddingStore — recordsFor", () => {
     expect(forB[0]?.chunkId).toBe("b:0");
   });
 });
+
+describe("embedding store — mtimes sidecar", () => {
+  const A = "/p/embeddings.bin";
+  const I = "/p/embeddings.index.json";
+  const M = "/p/mtimes.json";
+
+  function rec(chunkId: string, filePath: string): EmbeddingRecord {
+    const vector = new Float32Array(DIM);
+    vector[0] = 1;
+    return {
+      chunkId,
+      filePath,
+      offset: 0,
+      heading: null,
+      contentHash: `h:${chunkId}`,
+      vector,
+    };
+  }
+
+  test("setMtime persists through flush and reloads in a new instance", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 111);
+    await store.flush();
+    expect(mem.files.has(M)).toBe(true);
+
+    const reloaded = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await reloaded.init();
+    expect(reloaded.mtimeFor("a.md")).toBe(111);
+    expect(reloaded.hasRecords("a.md")).toBe(true);
+  });
+
+  test("mtime-only change flushes the sidecar without rewriting the bin", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 1);
+    await store.flush();
+    const binAfterFirst = mem.bins.get(A);
+
+    // Advance only the mtime: the record pair must not be rewritten.
+    mem.bins.delete(A); // tripwire: a bin rewrite would re-create it
+    store.setMtime("a.md", 2);
+    await store.flush();
+    expect(mem.bins.has(A)).toBe(false);
+    expect(binAfterFirst).toBeDefined();
+    expect(
+      (JSON.parse(mem.files.get(M) ?? "{}") as Record<string, number>)["a.md"],
+    ).toBe(2);
+  });
+
+  test("setMtime with an unchanged value does not dirty the sidecar", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 5);
+    await store.flush();
+    mem.files.delete(M); // tripwire
+    store.setMtime("a.md", 5);
+    await store.flush();
+    expect(mem.files.has(M)).toBe(false);
+  });
+
+  test("delete(path) clears the path's mtime", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 7);
+    await store.delete("a.md");
+    expect(store.mtimeFor("a.md")).toBeUndefined();
+    await store.flush();
+    expect(JSON.parse(mem.files.get(M) ?? "{}")).toEqual({});
+  });
+
+  test("corrupt mtimes sidecar is ignored, init succeeds", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 9);
+    await store.flush();
+    mem.files.set(M, "not json{");
+
+    const reloaded = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await reloaded.init();
+    expect(reloaded.mtimeFor("a.md")).toBeUndefined();
+    expect(reloaded.size()).toBe(1);
+  });
+
+  test("sentinel recovery discards mtimes along with the records", async () => {
+    const mem = makeMemAdapter();
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([rec("a.md#0", "a.md")]);
+    store.setMtime("a.md", 13);
+    await store.flush();
+    // Simulate a crash mid-flush: sentinel left behind.
+    mem.files.set(`${I}.writing`, "1");
+
+    const reloaded = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+    await reloaded.init();
+    expect(reloaded.size()).toBe(0);
+    // A sidecar claiming "current" over discarded records would make a
+    // session-start rebuild skip everything.
+    expect(reloaded.mtimeFor("a.md")).toBeUndefined();
+  });
+});

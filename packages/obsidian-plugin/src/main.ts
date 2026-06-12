@@ -327,6 +327,10 @@ export default class McpToolsPlugin extends Plugin {
           }
           return this.app.vault.cachedRead(f);
         },
+        getFileMtime: (path) => {
+          const f = this.app.vault.getAbstractFileByPath(path);
+          return f instanceof TFile ? f.stat?.mtime : undefined;
+        },
         on: (event, handler) => {
           // Obsidian's vault.on signatures are event-specific. The
           // unsubscribe is offref(EventRef). Wrap so our VaultLike
@@ -399,6 +403,7 @@ export default class McpToolsPlugin extends Plugin {
             await ssAdapter
               .remove(`${dirPath}/embeddings.index.json.writing`)
               .catch(() => {});
+            await ssAdapter.remove(`${dirPath}/mtimes.json`).catch(() => {});
           } catch (err) {
             logger.warn(
               "semantic-search: failed to wipe stale index directory",
