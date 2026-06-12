@@ -69,7 +69,9 @@ export type SemanticSearchSettings = typeof semanticSearchSettingsSchema.infer;
 export const DEFAULT_SEMANTIC_SETTINGS: SemanticSearchSettings = {
   provider: "auto",
   indexingMode: "live",
-  unloadModelWhenIdle: true,
+  // Warm by default: typical usage is sporadic agent queries, where a
+  // cold pipeline rebuild on every search costs more than the RAM.
+  unloadModelWhenIdle: false,
 };
 
 /**

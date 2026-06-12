@@ -427,9 +427,18 @@ export default class McpToolsPlugin extends Plugin {
       const nativeDownloader = createModelDownloader({
         innerFactory: realPipelineFactory,
       });
+      // Construction-time read: toggling the setting takes effect at
+      // the next plugin reload (the settings UI says so).
+      const semanticPrefs = await globalSettingsMutex.run(async () => {
+        const data = ((await this.loadData()) as Record<string, unknown>) ?? {};
+        return (data.semanticSearch ?? {}) as {
+          unloadModelWhenIdle?: boolean;
+        };
+      });
       const embedder = createEmbedder({
         pipelineFactory: nativeDownloader.factory,
         maxInputTokens: NATIVE_MAX_INPUT_TOKENS,
+        unloadWhenIdle: semanticPrefs.unloadModelWhenIdle === true,
       });
       const nativeEp = createNativeEmbeddingProvider(embedder);
       const nativeStore = registry.storeFor("native-minilm-l6-v2", 384);
