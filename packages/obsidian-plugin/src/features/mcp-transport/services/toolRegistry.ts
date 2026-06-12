@@ -182,6 +182,24 @@ export class ToolRegistryClass<
   /** MCP tool annotations, keyed by public tool name (set via setAnnotations). */
   private annotationsByName = new Map<string, ToolAnnotations>();
 
+  /** Public tool name → schema, built at register() time for O(1) lookups. */
+  private byName = new Map<string, TSchema>();
+
+  /**
+   * Single extraction point for the public tool name. Every tool
+   * schema declares `name` as a string literal, so its JSON Schema
+   * node carries `const`; the runtime guard catches a schema that
+   * doesn't.
+   */
+  private toolNameOf = (schema: TSchema): string => {
+    const node = schema.get("name").toJsonSchema() as { const?: unknown };
+    const name = node.const;
+    if (typeof name !== "string") {
+      throw new Error("tool schema has no string-literal name");
+    }
+    return name;
+  };
+
   /**
    * Attach MCP tool annotations (readOnlyHint, destructiveHint, ...)
    * by public tool name. Lookup happens lazily in list(), so the order
@@ -203,11 +221,11 @@ export class ToolRegistryClass<
       context: HandlerContext,
     ) => ResultSchema | Promise<ResultSchema>,
   >(schema: Schema, handler: Handler) {
-    if (this.has(schema)) {
-      // @ts-expect-error We know the const property is present for a string
-      const name = schema.get("name").toJsonSchema().const as string;
+    const name = this.toolNameOf(schema as unknown as TSchema);
+    if (this.byName.has(name)) {
       throw new Error(`Tool already registered: ${name}`);
     }
+    this.byName.set(name, schema as unknown as TSchema);
     this.enable(schema);
     return super.set(
       schema as unknown as TSchema,
@@ -236,34 +254,23 @@ export class ToolRegistryClass<
    * env var) after all features have registered their tools.
    */
   enableByName = (name: string): boolean => {
-    for (const schema of this.keys()) {
-      // @ts-expect-error We know the const property is present for a string
-      const toolName = schema.get("name").toJsonSchema().const as string;
-      if (toolName === name) {
-        this.enable(schema);
-        return true;
-      }
-    }
-    return false;
+    const schema = this.byName.get(name);
+    if (!schema) return false;
+    this.enable(schema);
+    return true;
   };
 
   disableByName = (name: string): boolean => {
-    for (const schema of this.keys()) {
-      // @ts-expect-error We know the const property is present for a string
-      const toolName = schema.get("name").toJsonSchema().const as string;
-      if (toolName === name) {
-        this.disable(schema);
-        return true;
-      }
-    }
-    return false;
+    const schema = this.byName.get(name);
+    if (!schema) return false;
+    this.disable(schema);
+    return true;
   };
 
   list = () => {
     this.listCache ??= {
       tools: Array.from(this.enabled.values()).map((schema) => {
-        const name = (schema.get("name").toJsonSchema() as { const: string })
-          .const;
+        const name = this.toolNameOf(schema);
         const annotations = this.annotationsByName.get(name);
         return {
           name,
@@ -280,8 +287,7 @@ export class ToolRegistryClass<
 
   listAll = (): { name: string; description: string; enabled: boolean }[] =>
     Array.from(this.keys()).map((schema) => ({
-      // @ts-expect-error We know the const property is present for a string
-      name: schema.get("name").toJsonSchema().const as string,
+      name: this.toolNameOf(schema),
       description: schema.description ?? "",
       enabled: this.enabled.has(schema),
     }));
@@ -337,19 +343,17 @@ export class ToolRegistryClass<
     context: HandlerContext,
   ) => {
     try {
-      for (const [schema, handler] of this.entries()) {
-        // Only dispatch to tools that are currently enabled. A disabled
-        // tool must behave as if it did not exist — otherwise `list()`
-        // and `dispatch()` would disagree and clients could invoke tools
-        // the user explicitly turned off.
-        if (!this.enabled.has(schema)) continue;
-        if (schema.get("name").allows(params.name)) {
-          const validParams = schema.assert(
-            this.coerceBooleanParams(schema, params),
-          );
-          // return await to handle runtime errors here
-          return await handler(validParams, context);
-        }
+      // O(1) name lookup. A disabled tool must behave as if it did not
+      // exist — otherwise `list()` and `dispatch()` would disagree and
+      // clients could invoke tools the user explicitly turned off.
+      const schema = this.byName.get(params.name);
+      const handler = schema ? this.get(schema) : undefined;
+      if (schema && handler && this.enabled.has(schema)) {
+        const validParams = schema.assert(
+          this.coerceBooleanParams(schema, params),
+        );
+        // return await to handle runtime errors here
+        return await handler(validParams, context);
       }
       throw new McpError(
         ErrorCode.InvalidRequest,
