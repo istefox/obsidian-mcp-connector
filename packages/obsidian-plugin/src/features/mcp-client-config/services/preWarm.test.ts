@@ -80,7 +80,7 @@ describe("preWarm — success path", () => {
     // A path with a shell metacharacter must reach the runner verbatim
     // as the file argument — never concatenated into a `/bin/sh -c` line.
     const evilNpx = "/Users/a b/npx; touch /tmp/pwned";
-    let received: { file: string; args: string[] } | null = null;
+    let received = null as { file: string; args: string[] } | null;
     const runner: ExecRunner = async (file, args) => {
       received = { file, args };
       return { stdout: "mcp-remote 1.0.0", stderr: "" };

@@ -189,7 +189,7 @@ describe("find_broken_links tool", () => {
     // scanned_files is incremented before the cache check — file counts as scanned
     expect(data.scanned_files).toBe(1);
     expect(data.total_broken_links).toBe(0);
-    expect(r.isError).toBeUndefined();
+    expect((r as { isError?: boolean }).isError).toBeUndefined();
   });
 
   test("caps output at limit and reports truncated+total (applied after scope)", async () => {

@@ -94,7 +94,7 @@ describe("findBlockPositionFromCache", () => {
     const cache = {};
     expect(
       findBlockPositionFromCache(
-        cache as { blocks?: Record<string, unknown> },
+        cache as Parameters<typeof findBlockPositionFromCache>[0],
         "x",
       ),
     ).toBeNull();

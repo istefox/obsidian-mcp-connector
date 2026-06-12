@@ -24,7 +24,7 @@ describe("get_vault_file tool", () => {
     });
     expect(result.content).toHaveLength(1);
     expect(result.content[0].type).toBe("text");
-    expect(result.content[0].text).toBe("# Hello");
+    expect((result.content[0] as { text: string }).text).toBe("# Hello");
   });
 
   test("returns JSON shape when format=json with frontmatter+tags+stat", async () => {
@@ -37,7 +37,7 @@ describe("get_vault_file tool", () => {
       arguments: { path: "a.md", format: "json" },
       app: mockApp(),
     });
-    const parsed = JSON.parse(result.content[0].text as string);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
     expect(parsed.path).toBe("a.md");
     expect(parsed.frontmatter).toEqual({ tags: ["foo"] });
     expect(parsed.tags).toEqual(["foo"]);
@@ -84,7 +84,7 @@ describe("get_vault_file tool", () => {
     });
     // Unsupported binary returns text content describing the file
     expect(result.content[0].type).toBe("text");
-    const parsed = JSON.parse(result.content[0].text as string);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
     expect(parsed.path ?? parsed.filename).toBe("doc/file.pdf");
     expect(parsed.hint).toBeDefined();
   });
@@ -95,6 +95,6 @@ describe("get_vault_file tool", () => {
       app: mockApp(),
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/not found/i);
+    expect((result.content[0] as { text: string }).text).toMatch(/not found/i);
   });
 });
