@@ -65,4 +65,35 @@ describe("list_obsidian_commands tool", () => {
     const data = JSON.parse(r.content[0].text as string);
     expect(data.commands).toEqual([]);
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockCommands([
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+      { id: "c", name: "C" },
+    ]);
+    const r = await listObsidianCommandsHandler({
+      arguments: { limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.commands).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.total).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockCommands([
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+    ]);
+    const r = await listObsidianCommandsHandler({
+      arguments: {},
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.commands).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+    expect(data.total).toBeUndefined();
+  });
 });

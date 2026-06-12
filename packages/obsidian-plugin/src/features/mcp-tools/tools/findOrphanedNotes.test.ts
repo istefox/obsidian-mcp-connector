@@ -80,4 +80,27 @@ describe("find_orphaned_notes tool", () => {
     expect(data.total_orphaned).toBe(0);
     expect(data.orphaned_notes).toEqual([]);
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    setMockFile("c.md", "");
+    const r = await findOrphanedNotesHandler({
+      arguments: { limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.orphaned_notes).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.total_orphaned).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    const r = await findOrphanedNotesHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.orphaned_notes).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

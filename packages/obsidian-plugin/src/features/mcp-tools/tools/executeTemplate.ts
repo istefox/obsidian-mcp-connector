@@ -174,15 +174,11 @@ export async function executeTemplateHandler(
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  message: "Template executed and file created successfully",
-                  content: processedContent,
-                  path: ctx.arguments.targetPath,
-                },
-                null,
-                2,
-              ),
+              text: JSON.stringify({
+                message: "Template executed and file created successfully",
+                content: processedContent,
+                path: ctx.arguments.targetPath,
+              }),
             },
           ],
         };
@@ -192,14 +188,10 @@ export async function executeTemplateHandler(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                message: "Template executed without creating a file",
-                content: processedContent,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify({
+              message: "Template executed without creating a file",
+              content: processedContent,
+            }),
           },
         ],
       };
@@ -293,16 +285,12 @@ async function runCoreTemplates(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              message: "Template executed and file created successfully",
-              content: processed,
-              path: targetPath,
-              ...(warning ? { warning } : {}),
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            message: "Template executed and file created successfully",
+            content: processed,
+            path: targetPath,
+            ...(warning ? { warning } : {}),
+          }),
         },
       ],
     };
@@ -312,15 +300,11 @@ async function runCoreTemplates(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            message: "Template executed without creating a file",
-            content: processed,
-            ...(warning ? { warning } : {}),
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          message: "Template executed without creating a file",
+          content: processed,
+          ...(warning ? { warning } : {}),
+        }),
       },
     ],
   };
@@ -334,7 +318,5 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(
-    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
-  );
+  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }

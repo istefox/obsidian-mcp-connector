@@ -142,5 +142,5 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
-  return successText(JSON.stringify({ results }, null, 2));
+  return successText(JSON.stringify({ results }));
 }

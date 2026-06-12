@@ -19,14 +19,14 @@ describe("responseBuilders", () => {
       path: "a.md",
     });
     expect(result.isError).toBe(true);
-    // Byte-identical to the inline JSON.stringify({error, errorCode, path}, null, 2)
+    // Byte-identical to the inline JSON.stringify({error, errorCode, path})
     // shape used by the property tools.
     expect(result.content[0].text).toBe(
-      JSON.stringify(
-        { error: "File not found", errorCode: "file_not_found", path: "a.md" },
-        null,
-        2,
-      ),
+      JSON.stringify({
+        error: "File not found",
+        errorCode: "file_not_found",
+        path: "a.md",
+      }),
     );
   });
 
@@ -36,8 +36,8 @@ describe("responseBuilders", () => {
     expect("isError" in result).toBe(false);
   });
 
-  test("successJson pretty-prints with 2-space indent", () => {
+  test("successJson serializes compact, no indentation", () => {
     const result = successJson({ a: 1 });
-    expect(result.content[0].text).toBe('{\n  "a": 1\n}');
+    expect(result.content[0].text).toBe('{"a":1}');
   });
 });

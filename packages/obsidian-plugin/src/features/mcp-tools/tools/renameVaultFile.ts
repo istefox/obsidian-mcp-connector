@@ -78,8 +78,6 @@ export async function renameVaultFileHandler(
   }
 
   return {
-    content: [
-      { type: "text", text: JSON.stringify({ ok: true, path: to }, null, 2) },
-    ],
+    content: [{ type: "text", text: JSON.stringify({ ok: true, path: to }) }],
   };
 }

@@ -32,11 +32,11 @@ export async function deleteNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            { error: "File not found", errorCode: "file_not_found", path },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "File not found",
+            errorCode: "file_not_found",
+            path,
+          }),
         },
       ],
       isError: true,
@@ -47,15 +47,11 @@ export async function deleteNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: "Path is a folder, not a file",
-              errorCode: "not_a_file",
-              path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Path is a folder, not a file",
+            errorCode: "not_a_file",
+            path,
+          }),
         },
       ],
       isError: true,

@@ -75,11 +75,12 @@ export async function listPropertyValuesHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { key, values, truncated: totalDistinct > limit, totalDistinct },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          key,
+          values,
+          truncated: totalDistinct > limit,
+          totalDistinct,
+        }),
       },
     ],
   };

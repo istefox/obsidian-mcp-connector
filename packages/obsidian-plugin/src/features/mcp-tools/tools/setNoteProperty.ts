@@ -72,11 +72,11 @@ export async function setNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            { error: "Invalid frontmatter key", errorCode: "invalid_key", key },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Invalid frontmatter key",
+            errorCode: "invalid_key",
+            key,
+          }),
         },
       ],
       isError: true,
@@ -89,11 +89,11 @@ export async function setNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            { error: "File not found", errorCode: "file_not_found", path },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "File not found",
+            errorCode: "file_not_found",
+            path,
+          }),
         },
       ],
       isError: true,
@@ -104,15 +104,11 @@ export async function setNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: "Path is a folder, not a file",
-              errorCode: "not_a_file",
-              path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Path is a folder, not a file",
+            errorCode: "not_a_file",
+            path,
+          }),
         },
       ],
       isError: true,
@@ -131,8 +127,6 @@ export async function setNotePropertyHandler(
 
   const action = value === null ? "deleted" : "set";
   return {
-    content: [
-      { type: "text", text: JSON.stringify({ path, key, action }, null, 2) },
-    ],
+    content: [{ type: "text", text: JSON.stringify({ path, key, action }) }],
   };
 }

@@ -11,13 +11,18 @@ export const getBacklinksSchema = type({
     "includeUnresolved?": type('"true" | "false"').describe(
       'When `"true"`, also includes sources whose link does not resolve (typo or broken-link sources matching by path or filename). Default `"false"`: unresolved backlinks are usually noise.',
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Lists every file linking to the target, with per-source link count, sorted by count descending. Works even if the target does not exist (backlinks can outlive it). Read-only.",
 );
 
 export type GetBacklinksContext = {
-  arguments: { path: string; includeUnresolved?: "true" | "false" };
+  arguments: {
+    path: string;
+    includeUnresolved?: "true" | "false";
+    limit?: number;
+  };
   app: App;
 };
 
@@ -83,11 +88,18 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
     return compareName(a.path, b.path);
   });
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = backlinks.length > limit;
+
   const output = {
     target,
     totalBacklinks: backlinks.length,
-    backlinks,
+    ...(truncated ? { truncated: true } : {}),
+    backlinks: truncated ? backlinks.slice(0, limit) : backlinks,
   };
 
-  return successText(JSON.stringify(output, null, 2));
+  return successText(JSON.stringify(output));
 }

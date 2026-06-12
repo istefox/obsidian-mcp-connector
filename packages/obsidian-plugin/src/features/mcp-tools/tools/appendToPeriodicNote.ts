@@ -145,16 +145,12 @@ export async function appendToPeriodicNoteHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            period,
-            path: resolved.path,
-            appended: true,
-            created,
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          period,
+          path: resolved.path,
+          appended: true,
+          created,
+        }),
       },
     ],
   };
@@ -168,7 +164,5 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(
-    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
-  );
+  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }

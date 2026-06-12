@@ -12,6 +12,7 @@ export const getOutgoingLinksSchema = type({
     "includeUnresolved?": type('"true" | "false"').describe(
       'Default `"true"`: unresolved links included with `resolved: false`. `"false"` filters them out.',
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Returns every link in a file: body links, embeds (`![[…]]`), and frontmatter links. Each entry has linkpath, original syntax, display text, layer (`body` | `frontmatter`), embed flag, resolution status, and resolved path. Document order. `isError: true` if the file does not exist.",
@@ -22,6 +23,7 @@ export type GetOutgoingLinksContext = {
     path: string;
     includeEmbeds?: "true" | "false";
     includeUnresolved?: "true" | "false";
+    limit?: number;
   };
   app: App;
 };
@@ -116,10 +118,17 @@ export async function getOutgoingLinksHandler(
 
   const filtered = includeUnresolved ? out : out.filter((l) => l.resolved);
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = filtered.length > limit;
+
   const output = {
     source: sourcePath,
     totalLinks: filtered.length,
-    links: filtered,
+    ...(truncated ? { truncated: true } : {}),
+    links: truncated ? filtered.slice(0, limit) : filtered,
   };
 
   return successJson(output);

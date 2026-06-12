@@ -201,4 +201,35 @@ describe("get_files_by_tag tool", () => {
     expect(data.totalFiles).toBe(1);
     expect(data.files[0].path).toBe("note.md");
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    setMockFile("c.md", "");
+    setMockMetadata("a.md", { tags: [{ tag: "#k" }] });
+    setMockMetadata("b.md", { tags: [{ tag: "#k" }] });
+    setMockMetadata("c.md", { tags: [{ tag: "#k" }] });
+    const r = await getFilesByTagHandler({
+      arguments: { tag: "k", limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.files).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.totalFiles).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    setMockMetadata("a.md", { tags: [{ tag: "#k" }] });
+    setMockMetadata("b.md", { tags: [{ tag: "#k" }] });
+    const r = await getFilesByTagHandler({
+      arguments: { tag: "k" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.files).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

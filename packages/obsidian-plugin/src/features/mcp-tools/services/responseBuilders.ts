@@ -22,8 +22,9 @@ export function errorText(message: string): ToolResponse & { isError: true } {
 }
 
 /**
- * JSON error payload (pretty-printed, 2-space indent) with a stable
- * `error` + `errorCode` shape, plus any extra context fields.
+ * JSON error payload (compact, no indentation — consumers are LLMs,
+ * whitespace is pure token cost) with a stable `error` + `errorCode`
+ * shape, plus any extra context fields.
  */
 export function errorJson(
   error: string,
@@ -34,7 +35,7 @@ export function errorJson(
     content: [
       {
         type: "text",
-        text: JSON.stringify({ error, errorCode, ...extras }, null, 2),
+        text: JSON.stringify({ error, errorCode, ...extras }),
       },
     ],
     isError: true,
@@ -48,9 +49,9 @@ export function successText(text: string): ToolResponse {
   };
 }
 
-/** JSON success payload, pretty-printed with 2-space indent. */
+/** JSON success payload, compact (no indentation). */
 export function successJson(value: unknown): ToolResponse {
   return {
-    content: [{ type: "text", text: JSON.stringify(value, null, 2) }],
+    content: [{ type: "text", text: JSON.stringify(value) }],
   };
 }

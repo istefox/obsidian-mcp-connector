@@ -36,17 +36,13 @@ export async function getOrCreateDailyNoteHandler(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                error:
-                  "Invalid date format for period 'daily' — expected `YYYY-MM-DD`.",
-                errorCode: "invalid_date_for_period",
-                period: "daily",
-                date,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify({
+              error:
+                "Invalid date format for period 'daily' — expected `YYYY-MM-DD`.",
+              errorCode: "invalid_date_for_period",
+              period: "daily",
+              date,
+            }),
           },
         ],
         isError: true,
@@ -57,17 +53,13 @@ export async function getOrCreateDailyNoteHandler(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                error:
-                  "Date is well-shaped but not a real calendar date (e.g. month 13, Feb 30).",
-                errorCode: "invalid_date_for_period",
-                period: "daily",
-                date,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify({
+              error:
+                "Date is well-shaped but not a real calendar date (e.g. month 13, Feb 30).",
+              errorCode: "invalid_date_for_period",
+              period: "daily",
+              date,
+            }),
           },
         ],
         isError: true,
@@ -91,16 +83,12 @@ export async function getOrCreateDailyNoteHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error:
-                "Internal: daily note resolved but not retrievable after create.",
-              errorCode: "internal_error",
-              path: resolved.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error:
+              "Internal: daily note resolved but not retrievable after create.",
+            errorCode: "internal_error",
+            path: resolved.path,
+          }),
         },
       ],
       isError: true,
@@ -111,15 +99,11 @@ export async function getOrCreateDailyNoteHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: "Path is not a file",
-              errorCode: "not_a_file",
-              path: resolved.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Path is not a file",
+            errorCode: "not_a_file",
+            path: resolved.path,
+          }),
         },
       ],
       isError: true,
@@ -131,11 +115,7 @@ export async function getOrCreateDailyNoteHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { path: resolved.path, content, created },
-          null,
-          2,
-        ),
+        text: JSON.stringify({ path: resolved.path, content, created }),
       },
     ],
   };

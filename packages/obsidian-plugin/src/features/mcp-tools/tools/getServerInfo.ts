@@ -36,5 +36,5 @@ export async function getServerInfoHandler(
     transport: "streamable-http",
     ...(localTransport ? { localTransport } : {}),
   };
-  return successText(JSON.stringify(body, null, 2));
+  return successText(JSON.stringify(body));
 }

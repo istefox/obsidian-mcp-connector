@@ -36,15 +36,11 @@ export async function getNoteOutlineHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: `File not found: ${path}`,
-              errorCode: "file_not_found",
-              path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: `File not found: ${path}`,
+            errorCode: "file_not_found",
+            path,
+          }),
         },
       ],
       isError: true,
@@ -55,15 +51,11 @@ export async function getNoteOutlineHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: `Path is a folder: ${path}`,
-              errorCode: "not_a_file",
-              path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: `Path is a folder: ${path}`,
+            errorCode: "not_a_file",
+            path,
+          }),
         },
       ],
       isError: true,
@@ -84,11 +76,11 @@ export async function getNoteOutlineHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { path, heading_count: headings.length, headings },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          path,
+          heading_count: headings.length,
+          headings,
+        }),
       },
     ],
   };

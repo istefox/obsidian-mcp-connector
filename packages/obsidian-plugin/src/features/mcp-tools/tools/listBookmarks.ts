@@ -130,11 +130,7 @@ export async function listBookmarksHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            { enabled: false, total_items: 0, items: [] },
-            null,
-            2,
-          ),
+          text: JSON.stringify({ enabled: false, total_items: 0, items: [] }),
         },
       ],
     };
@@ -144,16 +140,12 @@ export async function listBookmarksHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              enabled: true,
-              total_items: 0,
-              items: [],
-              note: "Bookmarks plugin not yet initialized",
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            enabled: true,
+            total_items: 0,
+            items: [],
+            note: "Bookmarks plugin not yet initialized",
+          }),
         },
       ],
     };
@@ -173,11 +165,11 @@ export async function listBookmarksHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { enabled: true, total_items: countItems(items), items },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          enabled: true,
+          total_items: countItems(items),
+          items,
+        }),
       },
     ],
   };
