@@ -246,4 +246,40 @@ describe("get_outgoing_links tool", () => {
       targetPath: null,
     });
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      links: [
+        { link: "a", original: "[[a]]" },
+        { link: "b", original: "[[b]]" },
+        { link: "c", original: "[[c]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md", limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.totalLinks).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      links: [
+        { link: "a", original: "[[a]]" },
+        { link: "b", original: "[[b]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

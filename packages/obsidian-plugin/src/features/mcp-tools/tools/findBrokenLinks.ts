@@ -11,13 +11,14 @@ export const findBrokenLinksSchema = type({
     "scope?": type("string[]").describe(
       "Optional list of vault-relative paths or folder prefixes to limit the scan. A folder prefix matches any file under it. Omit for vault-wide scan.",
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Scans the vault (or a scoped subset) for unresolved links (wiki-links, markdown links, embeds, frontmatter links) and returns every broken link with its source file, 1-based line number, link target, original syntax, and link type. Uses Obsidian's metadata cache — no file I/O. Always read-only.",
 );
 
 export type FindBrokenLinksContext = {
-  arguments: { exclude_folders?: string[]; scope?: string[] };
+  arguments: { exclude_folders?: string[]; scope?: string[]; limit?: number };
   app: App;
 };
 
@@ -102,21 +103,24 @@ export async function findBrokenLinksHandler(
     for (const f of c.frontmatterLinks ?? []) check(f, "frontmatter");
   }
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = broken.length > limit;
+
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            total_broken_links: broken.length,
-            scanned_files: scannedFiles,
-            excluded_folders: excludes,
-            ...(scope !== undefined ? { scope } : {}),
-            broken_links: broken,
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          total_broken_links: broken.length,
+          scanned_files: scannedFiles,
+          excluded_folders: excludes,
+          ...(scope !== undefined ? { scope } : {}),
+          ...(truncated ? { truncated: true } : {}),
+          broken_links: truncated ? broken.slice(0, limit) : broken,
+        }),
       },
     ],
   };

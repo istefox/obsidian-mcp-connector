@@ -72,16 +72,12 @@ export async function searchAndReplaceHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: `Invalid regex: ${msg}`,
-              errorCode: "invalid_regex",
-              pattern,
-              flags,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: `Invalid regex: ${msg}`,
+            errorCode: "invalid_regex",
+            pattern,
+            flags,
+          }),
         },
       ],
       isError: true,
@@ -97,16 +93,12 @@ export async function searchAndReplaceHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error:
-                "Pattern contains nested quantifiers (ReDoS risk). Simplify the pattern.",
-              errorCode: "unsafe_regex",
-              pattern,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error:
+              "Pattern contains nested quantifiers (ReDoS risk). Simplify the pattern.",
+            errorCode: "unsafe_regex",
+            pattern,
+          }),
         },
       ],
       isError: true,
@@ -174,18 +166,14 @@ export async function searchAndReplaceHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            dry_run: dryRun,
-            pattern,
-            flags_used: flags,
-            files_matched: details.length,
-            total_replacements: totalReplacements,
-            details,
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          dry_run: dryRun,
+          pattern,
+          flags_used: flags,
+          files_matched: details.length,
+          total_replacements: totalReplacements,
+          details,
+        }),
       },
     ],
   };

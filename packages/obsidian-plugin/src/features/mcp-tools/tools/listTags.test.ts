@@ -136,4 +136,24 @@ describe("list_tags tool", () => {
       "#project/active",
     ]);
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockTags({ "#a": 3, "#b": 2, "#c": 1 });
+    const r = await listTagsHandler({
+      arguments: { limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.tags).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.totalTags).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockTags({ "#a": 1, "#b": 2 });
+    const r = await listTagsHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.tags).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

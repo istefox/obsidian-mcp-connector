@@ -41,16 +41,12 @@ export async function getOrCreatePeriodicNoteHandler(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                error: `Invalid date format for period '${period}' — expected ${describeFormat(period)}.`,
-                errorCode: "invalid_date_for_period",
-                period,
-                date,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify({
+              error: `Invalid date format for period '${period}' — expected ${describeFormat(period)}.`,
+              errorCode: "invalid_date_for_period",
+              period,
+              date,
+            }),
           },
         ],
         isError: true,
@@ -61,17 +57,13 @@ export async function getOrCreatePeriodicNoteHandler(
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                error:
-                  "Date is well-shaped but not a real calendar value (e.g. month 13, Feb 30, ISO-week 99).",
-                errorCode: "invalid_date_for_period",
-                period,
-                date,
-              },
-              null,
-              2,
-            ),
+            text: JSON.stringify({
+              error:
+                "Date is well-shaped but not a real calendar value (e.g. month 13, Feb 30, ISO-week 99).",
+              errorCode: "invalid_date_for_period",
+              period,
+              date,
+            }),
           },
         ],
         isError: true,
@@ -91,17 +83,13 @@ export async function getOrCreatePeriodicNoteHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error:
-                "Internal: periodic note resolved but not retrievable after create.",
-              errorCode: "internal_error",
-              period,
-              path: resolved.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error:
+              "Internal: periodic note resolved but not retrievable after create.",
+            errorCode: "internal_error",
+            period,
+            path: resolved.path,
+          }),
         },
       ],
       isError: true,
@@ -112,17 +100,12 @@ export async function getOrCreatePeriodicNoteHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error:
-                "Internal: periodic note resolved to a folder, not a file.",
-              errorCode: "internal_error",
-              period,
-              path: resolved.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Internal: periodic note resolved to a folder, not a file.",
+            errorCode: "internal_error",
+            period,
+            path: resolved.path,
+          }),
         },
       ],
       isError: true,
@@ -135,11 +118,7 @@ export async function getOrCreatePeriodicNoteHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          { period, path: resolved.path, content, created },
-          null,
-          2,
-        ),
+        text: JSON.stringify({ period, path: resolved.path, content, created }),
       },
     ],
   };

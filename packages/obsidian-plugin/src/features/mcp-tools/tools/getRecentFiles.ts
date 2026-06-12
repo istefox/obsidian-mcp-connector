@@ -100,5 +100,5 @@ export async function getRecentFilesHandler(
 
   const output = { totalFiles, files };
 
-  return successText(JSON.stringify(output, null, 2));
+  return successText(JSON.stringify(output));
 }

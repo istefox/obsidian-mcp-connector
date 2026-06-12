@@ -191,4 +191,42 @@ describe("find_broken_links tool", () => {
     expect(data.total_broken_links).toBe(0);
     expect(r.isError).toBeUndefined();
   });
+
+  test("caps output at limit and reports truncated+total (applied after scope)", async () => {
+    setMockFile("Projects/a.md", "");
+    setMockFile("Archive/old.md", "");
+    setMockMetadata("Projects/a.md", {
+      links: [
+        { link: "BrokenA", line: 1 },
+        { link: "BrokenB", line: 2 },
+        { link: "BrokenC", line: 3 },
+      ],
+    });
+    // Outside scope — must not contribute to the full count.
+    setMockMetadata("Archive/old.md", {
+      links: [{ link: "BrokenD", line: 1 }],
+    });
+    const r = await findBrokenLinksHandler({
+      arguments: { scope: ["Projects"], exclude_folders: [], limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.broken_links).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.total_broken_links).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockFile("a.md", "");
+    setMockMetadata("a.md", {
+      links: [
+        { link: "BrokenA", line: 1 },
+        { link: "BrokenB", line: 2 },
+      ],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.broken_links).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

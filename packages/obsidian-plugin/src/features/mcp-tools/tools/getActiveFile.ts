@@ -57,5 +57,5 @@ export async function getActiveFileHandler(ctx: GetActiveFileContext): Promise<{
     },
   };
 
-  return successText(JSON.stringify(body, null, 2));
+  return successText(JSON.stringify(body));
 }

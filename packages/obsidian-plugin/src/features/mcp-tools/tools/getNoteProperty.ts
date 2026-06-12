@@ -30,15 +30,11 @@ export async function getNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: "File not found",
-              errorCode: "file_not_found",
-              path: ctx.arguments.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "File not found",
+            errorCode: "file_not_found",
+            path: ctx.arguments.path,
+          }),
         },
       ],
       isError: true,
@@ -49,15 +45,11 @@ export async function getNotePropertyHandler(
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              error: "Path is a folder, not a file",
-              errorCode: "not_a_file",
-              path: ctx.arguments.path,
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            error: "Path is a folder, not a file",
+            errorCode: "not_a_file",
+            path: ctx.arguments.path,
+          }),
         },
       ],
       isError: true,
@@ -75,15 +67,11 @@ export async function getNotePropertyHandler(
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            path: ctx.arguments.path,
-            key: ctx.arguments.key,
-            value: value ?? null,
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          path: ctx.arguments.path,
+          key: ctx.arguments.key,
+          value: value ?? null,
+        }),
       },
     ],
   };

@@ -8,13 +8,14 @@ export const listTagsSchema = type({
     "sort?": type('"name" | "count"').describe(
       "Sort by tag name (alphabetical, ascending) or by usage count (descending). Defaults to 'count'.",
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Lists all tags used across the vault with their usage counts. Aggregates both inline `#tags` and frontmatter tags via Obsidian's metadata cache. Useful for discovering content categories, finding related notes, and understanding vault organization. Always read-only.",
 );
 
 export type ListTagsContext = {
-  arguments: { sort?: "name" | "count" };
+  arguments: { sort?: "name" | "count"; limit?: number };
   app: App;
 };
 
@@ -51,10 +52,18 @@ export async function listTagsHandler(
     return compareName(a[0], b[0]);
   });
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const all = sorted.map(([tag, count]) => ({ tag, count }));
+  const truncated = all.length > limit;
+
   const output = {
-    totalTags: sorted.length,
-    tags: sorted.map(([tag, count]) => ({ tag, count })),
+    totalTags: all.length,
+    ...(truncated ? { truncated: true } : {}),
+    tags: truncated ? all.slice(0, limit) : all,
   };
 
-  return successText(JSON.stringify(output, null, 2));
+  return successText(JSON.stringify(output));
 }

@@ -52,7 +52,7 @@ function errorResponse(payload: {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(JSON.stringify(payload, null, 2));
+  return errorText(JSON.stringify(payload));
 }
 
 function successResponse(payload: {
@@ -60,7 +60,7 @@ function successResponse(payload: {
   updatedFiles: string[];
   linkRewriteCount: number;
 }): { content: Array<{ type: "text"; text: string }> } {
-  return successText(JSON.stringify(payload, null, 2));
+  return successText(JSON.stringify(payload));
 }
 
 function partialFailureResponse(payload: {
@@ -70,7 +70,7 @@ function partialFailureResponse(payload: {
   failedFiles: Array<{ path: string; error: string }>;
   linkRewriteCount: number;
 }): { content: Array<{ type: "text"; text: string }>; isError: true } {
-  return errorText(JSON.stringify(payload, null, 2));
+  return errorText(JSON.stringify(payload));
 }
 
 /**

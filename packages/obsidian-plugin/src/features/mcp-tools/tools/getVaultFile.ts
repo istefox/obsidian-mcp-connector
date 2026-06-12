@@ -154,11 +154,13 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            { path: file.path, content: text, frontmatter, tags, stat },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            path: file.path,
+            content: text,
+            frontmatter,
+            tags,
+            stat,
+          }),
         },
       ],
     };
@@ -182,16 +184,12 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              kind: "binary_file",
-              filename: file.path,
-              mimeType: "application/octet-stream",
-              hint: "This file is binary (video, PDF, Office document, or archive) and cannot be returned as text content. Use show_file_in_obsidian to open it in the Obsidian UI.",
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            kind: "binary_file",
+            filename: file.path,
+            mimeType: "application/octet-stream",
+            hint: "This file is binary (video, PDF, Office document, or archive) and cannot be returned as text content. Use show_file_in_obsidian to open it in the Obsidian UI.",
+          }),
         },
       ],
     };
@@ -206,16 +204,12 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
       content: [
         {
           type: "text",
-          text: JSON.stringify(
-            {
-              kind: "binary_file",
-              filename: file.path,
-              mimeType: mimeEntry.mime,
-              hint: "This file is too large to be returned inline (exceeds the 10 MiB cap to avoid overflowing the MCP client context window). Use show_file_in_obsidian to open it in the Obsidian UI.",
-            },
-            null,
-            2,
-          ),
+          text: JSON.stringify({
+            kind: "binary_file",
+            filename: file.path,
+            mimeType: mimeEntry.mime,
+            hint: "This file is too large to be returned inline (exceeds the 10 MiB cap to avoid overflowing the MCP client context window). Use show_file_in_obsidian to open it in the Obsidian UI.",
+          }),
         },
       ],
     };

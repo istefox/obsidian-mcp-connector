@@ -11,13 +11,14 @@ export const getFilesByTagSchema = type({
     "includeNested?": type('"true" | "false"').describe(
       'When `"true"` (default), `tag="#project"` matches `#project`, `#project/active`, `#project/archived`, etc., mirroring Obsidian\'s hierarchical tag pane behaviour. When `"false"`, only exact matches are returned.',
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Returns all vault files tagged with the given tag, with per-file occurrence count. Aggregates inline `#tags` and frontmatter tags via Obsidian's metadata cache (`getAllTags`). Sorted by occurrence count descending, with file path tiebreaker for determinism. Always read-only.",
 );
 
 export type GetFilesByTagContext = {
-  arguments: { tag: string; includeNested?: "true" | "false" };
+  arguments: { tag: string; includeNested?: "true" | "false"; limit?: number };
   app: App;
 };
 
@@ -87,12 +88,19 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
     return compareName(a.path, b.path);
   });
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = counts.length > limit;
+
   const output = {
     tag: `#${normalized}`,
     includeNested,
     totalFiles: counts.length,
-    files: counts,
+    ...(truncated ? { truncated: true } : {}),
+    files: truncated ? counts.slice(0, limit) : counts,
   };
 
-  return successText(JSON.stringify(output, null, 2));
+  return successText(JSON.stringify(output));
 }

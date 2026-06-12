@@ -22,6 +22,15 @@ type PluginLike = {
   loadData: () => Promise<unknown>;
 };
 
+// Inactive tools only surface their first sentence — the remaining prose is
+// pure token cost in the catalog listing. Split on the first ". " sentence
+// boundary and keep the period; a single-sentence description is returned
+// verbatim.
+function firstSentence(description: string): string {
+  const i = description.indexOf(". ");
+  return i === -1 ? description : description.slice(0, i + 1);
+}
+
 export async function toolCatalogHandler({
   registry,
   plugin,
@@ -47,7 +56,9 @@ export async function toolCatalogHandler({
         name: entry.name,
         status: "inactive",
         call_count: callCount,
-        description: entry.description || undefined,
+        description: entry.description
+          ? firstSentence(entry.description)
+          : undefined,
       };
     }
     return {
@@ -57,5 +68,5 @@ export async function toolCatalogHandler({
     };
   });
 
-  return successText(JSON.stringify(catalog, null, 2));
+  return successText(JSON.stringify(catalog));
 }

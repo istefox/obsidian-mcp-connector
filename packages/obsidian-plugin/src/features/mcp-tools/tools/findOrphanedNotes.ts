@@ -8,13 +8,14 @@ export const findOrphanedNotesSchema = type({
     "exclude_folders?": type("string[]").describe(
       'Vault-relative folder prefixes whose notes are omitted from the orphan list. Default: `["templates","attachments","_archive"]`. Links FROM excluded folders still count as incoming references — they do not make a note an orphan.',
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Returns all markdown notes that have zero incoming resolved links from any vault file. Builds the referenced-file set from Obsidian's resolvedLinks cache (no file I/O). Notes in excluded folders are omitted from the output but their outgoing links still count toward other notes' reference status. Always read-only.",
 );
 
 export type FindOrphanedNotesContext = {
-  arguments: { exclude_folders?: string[] };
+  arguments: { exclude_folders?: string[]; limit?: number };
   app: App;
 };
 
@@ -62,20 +63,23 @@ export async function findOrphanedNotesHandler(
     orphans.push({ path: file.path, mtime: stat.mtime, size: stat.size });
   }
 
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = orphans.length > limit;
+
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          {
-            total_orphaned: orphans.length,
-            scanned_files: scannedFiles,
-            excluded_folders: excludes,
-            orphaned_notes: orphans,
-          },
-          null,
-          2,
-        ),
+        text: JSON.stringify({
+          total_orphaned: orphans.length,
+          scanned_files: scannedFiles,
+          excluded_folders: excludes,
+          ...(truncated ? { truncated: true } : {}),
+          orphaned_notes: truncated ? orphans.slice(0, limit) : orphans,
+        }),
       },
     ],
   };

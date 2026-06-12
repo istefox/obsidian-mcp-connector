@@ -68,4 +68,28 @@ describe("list_vault_files tool", () => {
       JSON.parse(r2.content[0].text as string).files,
     );
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    setMockFile("c.md", "");
+    const r = await listVaultFilesHandler({
+      arguments: { limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.files).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.total).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    const r = await listVaultFilesHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.files).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+    expect(data.total).toBeUndefined();
+  });
 });

@@ -72,5 +72,5 @@ export async function searchVaultSimpleHandler(
     }
   }
 
-  return successText(JSON.stringify({ results }, null, 2));
+  return successText(JSON.stringify({ results }));
 }

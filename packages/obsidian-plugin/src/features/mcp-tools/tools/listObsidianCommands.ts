@@ -8,13 +8,14 @@ export const listObsidianCommandsSchema = type({
     "filter?": type("string").describe(
       "Case-insensitive substring; matches against command id or display name.",
     ),
+    "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
   "Lists registered Obsidian commands (core + plugins). Always read-only and unrestricted by command-permissions.",
 );
 
 export type ListObsidianCommandsContext = {
-  arguments: { filter?: string };
+  arguments: { filter?: string; limit?: number };
   app: App;
 };
 
@@ -40,5 +41,16 @@ export async function listObsidianCommandsHandler(
       )
     : all;
 
-  return successText(JSON.stringify({ commands }, null, 2));
+  const limit = Math.min(
+    1000,
+    Math.max(1, Math.floor(ctx.arguments.limit ?? 200)),
+  );
+  const truncated = commands.length > limit;
+
+  return successText(
+    JSON.stringify({
+      commands: truncated ? commands.slice(0, limit) : commands,
+      ...(truncated ? { truncated: true, total: commands.length } : {}),
+    }),
+  );
 }

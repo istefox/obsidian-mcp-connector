@@ -156,4 +156,30 @@ describe("get_backlinks tool", () => {
       "zebra.md",
     ]);
   });
+
+  test("caps output at limit and reports truncated+total", async () => {
+    setMockResolvedLinks("a.md", { "target.md": 3 });
+    setMockResolvedLinks("b.md", { "target.md": 2 });
+    setMockResolvedLinks("c.md", { "target.md": 1 });
+    const r = await getBacklinksHandler({
+      arguments: { path: "target.md", limit: 2 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.backlinks).toHaveLength(2);
+    expect(data.truncated).toBe(true);
+    expect(data.totalBacklinks).toBe(3);
+  });
+
+  test("default limit leaves a small result set untouched (no truncated field)", async () => {
+    setMockResolvedLinks("a.md", { "target.md": 1 });
+    setMockResolvedLinks("b.md", { "target.md": 1 });
+    const r = await getBacklinksHandler({
+      arguments: { path: "target.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.backlinks).toHaveLength(2);
+    expect(data.truncated).toBeUndefined();
+  });
 });

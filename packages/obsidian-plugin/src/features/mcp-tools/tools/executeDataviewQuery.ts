@@ -132,7 +132,7 @@ export async function executeDataviewQueryHandler(
   // structured error rather than an unhandled rejection.
   let text: string;
   try {
-    text = JSON.stringify(result.value, null, 2);
+    text = JSON.stringify(result.value);
   } catch {
     return errorPayload(
       "Dataview result contains non-serialisable values (circular reference or BigInt). Add LIMIT or simplify the query to reduce result complexity.",
@@ -156,7 +156,5 @@ function errorPayload(
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  return errorText(
-    JSON.stringify({ error: message, errorCode, ...extras }, null, 2),
-  );
+  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }
