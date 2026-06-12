@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Removed
+
+- **0.3.x migration wizard.** The `migration` feature (leftover-state detection probe on every plugin load, migration modal, ~2,000 lines) is gone, together with the orphaned `plugin-local-rest-api` type definitions in `packages/shared` (unused since the Local REST API dependency was removed in 0.13.0). Users upgrading from ≤0.3.x should install any 0.15.x release first to run the assisted migration, then update.
+
 ## [0.16.0] — 2026-06-11
 
 ### Changed
