@@ -60,17 +60,31 @@ class NativeProviderImpl implements SemanticSearchProvider {
 
   async search(query: string, opts: SearchOpts): Promise<SearchResult[]> {
     const queryVec = await this.opts.embedder.embed(query);
+    const limit = opts.limit ?? DEFAULT_LIMIT;
 
-    const candidates: Array<{ record: EmbeddingRecord; score: number }> = [];
+    // Bounded top-k selection (descending, ties keep scan order — same
+    // outcome as the previous full sort+slice, without holding every
+    // candidate and without the O(n log n) sort). Scoring is a plain
+    // dot product: every vector written to the store is L2-normalized
+    // at embed time, so dot ≡ cosine at a third of the FLOPs.
+    const top: Array<{ record: EmbeddingRecord; score: number }> = [];
     for await (const record of this.opts.store.scan()) {
       if (!matchesFolders(record.filePath, opts)) continue;
-      const score = cosineSimilarity(queryVec, record.vector);
-      candidates.push({ record, score });
+      const score = dotProduct(queryVec, record.vector);
+      const worst = top[top.length - 1];
+      if (top.length === limit && worst && score <= worst.score) continue;
+      // Binary insert into the descending-sorted window.
+      let lo = 0;
+      let hi = top.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const at = top[mid];
+        if (at && at.score >= score) lo = mid + 1;
+        else hi = mid;
+      }
+      top.splice(lo, 0, { record, score });
+      if (top.length > limit) top.pop();
     }
-
-    candidates.sort((a, b) => b.score - a.score);
-    const limit = opts.limit ?? DEFAULT_LIMIT;
-    const top = candidates.slice(0, limit);
 
     return Promise.all(
       top.map(async ({ record, score }) => ({
@@ -125,9 +139,28 @@ function startsWithFolder(filePath: string, folder: string): boolean {
 }
 
 /**
+ * Plain dot product over Float32 typed arrays. Equals cosine
+ * similarity when both vectors are L2-normalized — which every vector
+ * in the store is (normalize: true on all embed paths) — at a third
+ * of the FLOPs and with no per-element guards, so V8 keeps the loop
+ * in pure float arithmetic.
+ */
+export function dotProduct(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) {
+    throw new Error(`dot: dim mismatch ${a.length} vs ${b.length}`);
+  }
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+  }
+  return dot;
+}
+
+/**
  * Vectorized cosine similarity over Float32 typed arrays. Returns 0
  * for zero-norm inputs so the call site does not need a guard. The
- * result is in [-1, 1] for any non-zero pair.
+ * result is in [-1, 1] for any non-zero pair. Kept for callers with
+ * non-normalized inputs; the search hot loop uses dotProduct.
  */
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) {
