@@ -1,6 +1,7 @@
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import type { ToolRegistry } from "$/features/mcp-transport/services/toolRegistry";
+import { TOOL_ANNOTATIONS } from "./toolAnnotations";
 
 import {
   getServerInfoHandler,
@@ -351,4 +352,8 @@ export async function registerTools(
       plugin: ctx.plugin,
     }),
   );
+
+  // Covers the meta-tools registered later in mcpServer.ts too:
+  // annotations are looked up by name at list() time.
+  registry.setAnnotations(TOOL_ANNOTATIONS);
 }

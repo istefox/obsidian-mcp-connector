@@ -3,6 +3,7 @@ import {
   ErrorCode,
   McpError,
   type Result,
+  type ToolAnnotations,
 } from "@modelcontextprotocol/sdk/types.js";
 import { type, type Type } from "arktype";
 import { formatMcpError } from "./formatMcpError";
@@ -174,8 +175,26 @@ export class ToolRegistryClass<
       name: string;
       description: string | undefined;
       inputSchema: Record<string, unknown>;
+      annotations?: ToolAnnotations;
     }[];
   } | null = null;
+
+  /** MCP tool annotations, keyed by public tool name (set via setAnnotations). */
+  private annotationsByName = new Map<string, ToolAnnotations>();
+
+  /**
+   * Attach MCP tool annotations (readOnlyHint, destructiveHint, ...)
+   * by public tool name. Lookup happens lazily in list(), so the order
+   * relative to register() does not matter; entries for names that
+   * never register are simply unused. Invalidates the memoized list().
+   */
+  setAnnotations = (byName: Record<string, ToolAnnotations>) => {
+    for (const [name, annotations] of Object.entries(byName)) {
+      this.annotationsByName.set(name, annotations);
+    }
+    this.listCache = null;
+    return this;
+  };
 
   register<
     Schema extends TSchema,
@@ -243,12 +262,16 @@ export class ToolRegistryClass<
   list = () => {
     this.listCache ??= {
       tools: Array.from(this.enabled.values()).map((schema) => {
+        const name = (schema.get("name").toJsonSchema() as { const: string })
+          .const;
+        const annotations = this.annotationsByName.get(name);
         return {
-          name: (schema.get("name").toJsonSchema() as { const: string }).const,
+          name,
           description: schema.description,
           inputSchema: normalizeInputSchema(
             schema.get("arguments").toJsonSchema(),
           ),
+          ...(annotations ? { annotations } : {}),
         };
       }),
     };
