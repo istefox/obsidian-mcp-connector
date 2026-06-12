@@ -17,7 +17,6 @@ import {
   teardown as mcpTransportTeardown,
   type McpTransportState,
 } from "./features/mcp-transport";
-import { setupMigration } from "./features/migration";
 import {
   setup as promptsSetup,
   teardown as promptsTeardown,
@@ -726,17 +725,8 @@ export default class McpToolsPlugin extends Plugin {
     }
 
     // 0.4.0: the in-process server has no binary to install.
-
-    // Migration UX (Phase 4 T8) — detect leftover 0.3.x state and,
-    // if found, queue the migration modal at workspace.onLayoutReady.
-    // Pure no-op for fresh installs and for users who already
-    // dismissed the modal (skippedAt persisted in data.json).
-    const migrationResult = await setupMigration(this);
-    if (!migrationResult.success) {
-      logger.warn("Migration setup failed (non-fatal)", {
-        error: migrationResult.error,
-      });
-    }
+    // 0.17.0: the 0.3.x migration wizard was removed; users coming
+    // from <=0.3.x migrate through any 0.15.x release first.
 
     // Smart Connections: resolve the search API best-effort and bind
     // it onto the plugin instance. The SmartConnectionsProvider and
