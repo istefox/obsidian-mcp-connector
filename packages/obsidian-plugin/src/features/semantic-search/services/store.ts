@@ -66,6 +66,15 @@ export interface EmbeddingStore {
   mtimeFor(filePath: string): number | undefined;
   /** Record the mtime for a successfully indexed path (sidecar-dirty only). */
   setMtime(filePath: string, mtime: number): void;
+  /**
+   * Cheap readiness probe: reads only the `embeddings.meta.json`
+   * sidecar (fallback: one parse of the index JSON, for stores written
+   * before the sidecar existed), never the bin, and never initializes
+   * the store. Returns null when nothing is persisted or the dirty
+   * sentinel is present — a pending init() would discard those records,
+   * so reporting them as ready would be a lie.
+   */
+  probe(): Promise<{ version: number; recordCount: number } | null>;
   scan(): AsyncIterable<EmbeddingRecord>;
   flush(): Promise<void>;
   close(): Promise<void>;
@@ -121,12 +130,52 @@ class EmbeddingStoreImpl implements EmbeddingStore {
 
   /** Sidecar next to the index file, e.g. `<dir>/mtimes.json`. */
   private readonly mtimesPath: string;
+  /** Tiny readiness sidecar, e.g. `<dir>/embeddings.meta.json`. */
+  private readonly metaPath: string;
 
   constructor(private opts: EmbeddingStoreOpts) {
     this.vectorDim = opts.vectorDim ?? DEFAULT_VECTOR_DIM;
     this.sentinelPath = `${opts.indexPath}.writing`;
     const dir = opts.indexPath.split("/").slice(0, -1).join("/");
     this.mtimesPath = dir ? `${dir}/mtimes.json` : "mtimes.json";
+    this.metaPath = dir
+      ? `${dir}/embeddings.meta.json`
+      : "embeddings.meta.json";
+  }
+
+  async probe(): Promise<{ version: number; recordCount: number } | null> {
+    if (await this.opts.adapter.exists(this.sentinelPath)) return null;
+    try {
+      if (await this.opts.adapter.exists(this.metaPath)) {
+        const parsed = JSON.parse(
+          await this.opts.adapter.read(this.metaPath),
+        ) as { version?: unknown; recordCount?: unknown };
+        if (
+          typeof parsed.version === "number" &&
+          typeof parsed.recordCount === "number"
+        ) {
+          return {
+            version: parsed.version,
+            recordCount: parsed.recordCount,
+          };
+        }
+      }
+    } catch {
+      // Corrupt meta: fall through to the index parse below.
+    }
+    try {
+      if (!(await this.opts.adapter.exists(this.opts.indexPath))) return null;
+      const parsed = JSON.parse(
+        await this.opts.adapter.read(this.opts.indexPath),
+      ) as IndexFile;
+      if (typeof parsed.version !== "number") return null;
+      return {
+        version: parsed.version,
+        recordCount: parsed.records?.length ?? 0,
+      };
+    } catch {
+      return null;
+    }
   }
 
   async init(): Promise<void> {
@@ -400,6 +449,17 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     // After the pair, inside the sentinel window: a crash here leaves
     // the sentinel up, so init() discards records AND mtimes together.
     if (this.mtimeDirty) await this.flushMtimes();
+
+    // Meta sidecar last, still inside the window: it doubles as the
+    // commit marker probe() trusts, so it must never describe a pair
+    // that didn't finish writing.
+    await this.opts.adapter.write(
+      this.metaPath,
+      JSON.stringify({
+        version: FORMAT_VERSION,
+        recordCount: this.records.size,
+      }),
+    );
 
     // Both writes succeeded — the pair is consistent, clear the sentinel.
     await this.removeSentinel();

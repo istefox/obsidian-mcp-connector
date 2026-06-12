@@ -49,14 +49,25 @@
     const state = plugin.semanticSearchState;
     const provider = state?.settings?.provider;
     const registry = state?.registry;
+    // Stores load lazily: size() is 0 until the first indexer/search
+    // use. Fall back to the plugin-load probe counts so a settings-only
+    // session still shows the persisted chunk count.
+    const probed = state?.probedCounts ?? {};
     // For DLC providers, read chunk count from their own store.
     // state.store always points to the native MiniLM store.
     if (provider === "embedding-gemma" && registry) {
-      storeSize = registry.storeFor("embedding-gemma-300m", 768).size();
+      storeSize =
+        registry.storeFor("embedding-gemma-300m", 768).size() ||
+        probed["embedding-gemma-300m"] ||
+        0;
     } else if (provider === "multilingual-e5-base" && registry) {
-      storeSize = registry.storeFor("multilingual-e5-base", 768).size();
+      storeSize =
+        registry.storeFor("multilingual-e5-base", 768).size() ||
+        probed["multilingual-e5-base"] ||
+        0;
     } else {
-      storeSize = state?.store?.size?.() ?? 0;
+      storeSize =
+        (state?.store?.size?.() ?? 0) || probed["native-minilm-l6-v2"] || 0;
     }
     pendingProvider = state?.pendingProvider ?? null;
     autoSuggestProvider = state?.autoSuggestProvider ?? null;

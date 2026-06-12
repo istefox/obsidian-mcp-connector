@@ -657,3 +657,147 @@ describe("embedding store — mtimes sidecar", () => {
     expect(reloaded.mtimeFor("a.md")).toBeUndefined();
   });
 });
+
+describe("embedding store — probe() and meta sidecar", () => {
+  const A = "/p/embeddings.bin";
+  const I = "/p/embeddings.index.json";
+  const META = "/p/embeddings.meta.json";
+
+  function rec2(chunkId: string, filePath: string): EmbeddingRecord {
+    const vector = new Float32Array(DIM);
+    vector[0] = 1;
+    return {
+      chunkId,
+      filePath,
+      offset: 0,
+      heading: null,
+      contentHash: `h:${chunkId}`,
+      vector,
+    };
+  }
+
+  function makeOn(adapter: VaultAdapter) {
+    return createEmbeddingStore({
+      adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+  }
+
+  /** Adapter wrapper logging every write path in order + readBinary calls. */
+  function spying(adapter: VaultAdapter): {
+    adapter: VaultAdapter;
+    writes: string[];
+    binReads: () => number;
+  } {
+    const writes: string[] = [];
+    let binReads = 0;
+    return {
+      writes,
+      binReads: () => binReads,
+      adapter: {
+        ...adapter,
+        write: async (p, d) => {
+          writes.push(p);
+          return adapter.write(p, d);
+        },
+        writeBinary: async (p, d) => {
+          writes.push(p);
+          return adapter.writeBinary(p, d);
+        },
+        readBinary: async (p) => {
+          binReads++;
+          return adapter.readBinary(p);
+        },
+      },
+    };
+  }
+
+  test("flush writes the meta sidecar last, with version and recordCount", async () => {
+    const mem = makeMemAdapter();
+    const spy = spying(mem.adapter);
+    const store = makeOn(spy.adapter);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md"), rec2("a.md#1", "a.md")]);
+    store.setMtime("a.md", 1);
+    await store.flush();
+
+    expect(JSON.parse(mem.files.get(META) ?? "{}")).toEqual({
+      version: FORMAT_VERSION,
+      recordCount: 2,
+    });
+    // Meta is the commit marker: nothing may be written after it
+    // except nothing (sentinel removal is a remove, not a write).
+    expect(spy.writes[spy.writes.length - 1]).toBe(META);
+  });
+
+  test("probe() on a fresh store returns null without touching the bin", async () => {
+    const mem = makeMemAdapter();
+    const spy = spying(mem.adapter);
+    const store = makeOn(spy.adapter);
+    expect(await store.probe()).toBeNull();
+    expect(spy.binReads()).toBe(0);
+  });
+
+  test("probe() reads the meta sidecar and never the bin", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md")]);
+    await store.flush();
+
+    const spy = spying(mem.adapter);
+    const probing = makeOn(spy.adapter);
+    expect(await probing.probe()).toEqual({
+      version: FORMAT_VERSION,
+      recordCount: 1,
+    });
+    expect(spy.binReads()).toBe(0);
+  });
+
+  test("probe() falls back to the index JSON when the meta sidecar is absent or corrupt", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md")]);
+    await store.flush();
+
+    // Pre-sidecar store: meta missing.
+    mem.files.delete(META);
+    const spy1 = spying(mem.adapter);
+    expect(await makeOn(spy1.adapter).probe()).toEqual({
+      version: FORMAT_VERSION,
+      recordCount: 1,
+    });
+    expect(spy1.binReads()).toBe(0);
+
+    // Corrupt meta: same fallback.
+    mem.files.set(META, "{broken");
+    expect(await makeOn(mem.adapter).probe()).toEqual({
+      version: FORMAT_VERSION,
+      recordCount: 1,
+    });
+  });
+
+  test("probe() returns null while the dirty sentinel is present", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md")]);
+    await store.flush();
+
+    // Crash window: sentinel up. A probe trusting the healthy-looking
+    // meta would mark ready a store that init() is about to discard.
+    mem.files.set(`${I}.writing`, "1");
+    expect(await makeOn(mem.adapter).probe()).toBeNull();
+  });
+
+  test("close() on a never-initialized store performs zero writes", async () => {
+    const mem = makeMemAdapter();
+    const spy = spying(mem.adapter);
+    const store = makeOn(spy.adapter);
+    await store.close();
+    expect(spy.writes).toEqual([]);
+  });
+});

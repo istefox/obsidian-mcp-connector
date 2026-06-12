@@ -140,6 +140,12 @@ class LiveIndexerImpl implements SemanticIndexer {
     if (this.running) return;
     this.running = true;
 
+    // With lazy store loading the store may not be initialized yet.
+    // processOnePath reads recordsFor() (sync, no defensive init): on
+    // an un-inited store it would see zero records and silently
+    // re-embed the whole vault. Idempotent, cheap when already inited.
+    await this.opts.store.init();
+
     this.unsubs.push(
       this.opts.vault.on("modify", (p) => this.schedule(p)),
       this.opts.vault.on("create", (p) => this.schedule(p)),
@@ -179,6 +185,8 @@ class LiveIndexerImpl implements SemanticIndexer {
       );
       return;
     }
+    // See start(): guard against recordsFor() on an un-inited store.
+    await this.opts.store.init();
     const files = this.opts.vault
       .getMarkdownFiles()
       .filter((f) => !this.isExcluded(f.path));
@@ -457,6 +465,9 @@ class LowPowerIndexerImpl implements SemanticIndexer {
       return;
     }
     const cycle = (async () => {
+      // Guard against recordsFor()/mtimeFor() on an un-inited store
+      // (lazy loading); idempotent.
+      await this.opts.store.init();
       const files = this.opts.vault.getMarkdownFiles();
       const seenPaths = new Set<string>();
 
