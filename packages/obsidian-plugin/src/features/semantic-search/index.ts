@@ -96,6 +96,13 @@ export type SemanticSearchState = {
    */
   registry?: EmbeddingStoreRegistry | null;
   /**
+   * Per-providerKey record counts from the plugin-load probe pass.
+   * With lazy store init, `store.size()` reports 0 until something
+   * initializes the store; the settings UI falls back to these counts
+   * so "chunks indexed" stays truthful in settings-only sessions.
+   */
+  probedCounts?: Partial<Record<string, number>> | null;
+  /**
    * providerKey of the provider currently being built (download +
    * index). Set when the user switches to a provider whose store is
    * not yet ready. Cleared once `onProviderReady` fires.

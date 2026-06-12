@@ -508,6 +508,7 @@ function wrapStoreWithFlushSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     hasRecords: (path) => store.hasRecords(path),
     mtimeFor: (path) => store.mtimeFor(path),
     setMtime: (path, mtime) => store.setMtime(path, mtime),
+    probe: () => store.probe(),
     upsert: (records) => store.upsert(records),
     delete: (path) => store.delete(path),
     close: () => store.close(),
@@ -1110,6 +1111,7 @@ function wrapStoreWithWriteSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     hasRecords: (path) => store.hasRecords(path),
     mtimeFor: (path) => store.mtimeFor(path),
     setMtime: (path, mtime) => store.setMtime(path, mtime),
+    probe: () => store.probe(),
     upsert: (records) => {
       upserts++;
       return store.upsert(records);
@@ -1443,5 +1445,106 @@ describe("indexer — persisted mtime skip", () => {
     // The manual rebuild still forces a full pass.
     await lp2.rebuildAll();
     expect(v2.reads()).toBe(1);
+  });
+});
+
+describe("indexer — lazy store init", () => {
+  const BIN = "/p/embeddings.bin";
+  const IDX = "/p/embeddings.index.json";
+
+  function lazyStorePair() {
+    const adapter = memAdapter();
+    const make = () =>
+      createEmbeddingStore({
+        adapter,
+        binPath: BIN,
+        indexPath: IDX,
+        vectorDim: DIM,
+      });
+    return { make };
+  }
+
+  test("start() on an UN-initialized store does not re-embed unchanged files", async () => {
+    const { make } = lazyStorePair();
+    const vaultData = { "a.md": { content: "alpha", mtime: 100 } };
+
+    // Session 1.
+    const store1 = make();
+    await store1.init();
+    const { vault: v1 } = makeMtimeVault(vaultData);
+    const { embedder: e1 } = fakeEmbeddingProvider();
+    const idx1 = createLiveIndexer({
+      vault: v1,
+      chunker: fakeChunker,
+      embedder: e1,
+      store: store1,
+      debounceMs: 10,
+    });
+    await idx1.start();
+    await idx1.stop();
+
+    // Session 2: NO explicit store.init() — the indexer must init it
+    // before reading recordsFor, or it would silently re-embed the
+    // whole vault against an empty in-memory view.
+    const store2 = make();
+    const { vault: v2 } = makeMtimeVault(vaultData);
+    const { embedder: e2, embedCalls } = fakeEmbeddingProvider();
+    const idx2 = createLiveIndexer({
+      vault: v2,
+      chunker: fakeChunker,
+      embedder: e2,
+      store: store2,
+      debounceMs: 10,
+    });
+    await idx2.start();
+    expect(embedCalls()).toEqual([]);
+    expect(store2.size()).toBe(1);
+    await idx2.stop();
+  });
+
+  test("start({initialRebuild:false}) + modify event reuses hashes from the lazily-loaded store", async () => {
+    const { make } = lazyStorePair();
+
+    const store1 = make();
+    await store1.init();
+    const { vault: v1 } = makeVault({ "a.md": "keep---CHUNK---old" });
+    const { embedder: e1 } = fakeEmbeddingProvider();
+    const idx1 = createLiveIndexer({
+      vault: v1,
+      chunker: fakeChunker,
+      embedder: e1,
+      store: store1,
+      debounceMs: 10,
+    });
+    await idx1.start();
+    await idx1.stop();
+
+    // DLC auto-subscribe pattern: un-inited store, no initial rebuild.
+    const store2 = make();
+    const {
+      vault: v2,
+      files,
+      emit,
+    } = makeVault({
+      "a.md": "keep---CHUNK---old",
+    });
+    const { embedder: e2, embedCalls } = fakeEmbeddingProvider();
+    const idx2 = createLiveIndexer({
+      vault: v2,
+      chunker: fakeChunker,
+      embedder: e2,
+      store: store2,
+      debounceMs: 10,
+    });
+    await idx2.start({ initialRebuild: false });
+
+    files.set("a.md", "keep---CHUNK---NEW");
+    emit("modify", "a.md");
+    await new Promise((r) => setTimeout(r, 60));
+
+    // Only the changed chunk embeds; "keep" reuses the persisted hash.
+    expect(embedCalls()).toEqual([["keep\nNEW"]]);
+    expect(store2.size()).toBe(2);
+    await idx2.stop();
   });
 });

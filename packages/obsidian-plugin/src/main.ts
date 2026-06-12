@@ -366,25 +366,35 @@ export default class McpToolsPlugin extends Plugin {
       // Migrate v1 flat store before constructing any registry entry.
       await migrateV1FlatStore(ssAdapter, pluginDir);
 
-      // Detect stale per-providerKey stores (version < FORMAT_VERSION).
-      // If any exist, show a blocking dialog before wiping them.
+      // One cheap probe per provider replaces the three eager store
+      // loads this block used to do (stale-version JSON parse, native
+      // init, DLC size checks): it reads the meta sidecar (or the index
+      // JSON once, for pre-sidecar stores), never the bin, so no vector
+      // data sits in RAM for providers that may never be queried this
+      // session. Stores init lazily on first indexer/search use.
       const embeddingsBaseDir = `${pluginDir}/embeddings`;
+      const registry = createEmbeddingStoreRegistry(
+        ssAdapter,
+        embeddingsBaseDir,
+      );
+      const PROVIDER_DIMS = {
+        "native-minilm-l6-v2": 384,
+        "embedding-gemma-300m": 768,
+        "multilingual-e5-base": 768,
+      } as const satisfies Record<ProviderKey, number>;
       const staleProviderKeys: ProviderKey[] = [];
+      const probedCounts: Partial<Record<ProviderKey, number>> = {};
       for (const key of ALL_PROVIDER_KEYS) {
-        const indexPath = `${embeddingsBaseDir}/${key}/embeddings.index.json`;
-        try {
-          if (await ssAdapter.exists(indexPath)) {
-            const text = await ssAdapter.read(indexPath);
-            const parsed = JSON.parse(text) as { version?: number };
-            if (
-              typeof parsed.version === "number" &&
-              parsed.version < FORMAT_VERSION
-            ) {
-              staleProviderKeys.push(key);
-            }
-          }
-        } catch {
-          // Unreadable index is already handled by store.init(); skip here.
+        const probed = await registry.storeFor(key, PROVIDER_DIMS[key]).probe();
+        if (!probed) continue;
+        if (probed.version < FORMAT_VERSION) {
+          staleProviderKeys.push(key);
+        } else if (
+          probed.version === FORMAT_VERSION &&
+          probed.recordCount > 0
+        ) {
+          registry.markReady(key);
+          probedCounts[key] = probed.recordCount;
         }
       }
 
@@ -404,6 +414,9 @@ export default class McpToolsPlugin extends Plugin {
               .remove(`${dirPath}/embeddings.index.json.writing`)
               .catch(() => {});
             await ssAdapter.remove(`${dirPath}/mtimes.json`).catch(() => {});
+            await ssAdapter
+              .remove(`${dirPath}/embeddings.meta.json`)
+              .catch(() => {});
           } catch (err) {
             logger.warn(
               "semantic-search: failed to wipe stale index directory",
@@ -423,12 +436,7 @@ export default class McpToolsPlugin extends Plugin {
         });
       }
 
-      const registry = createEmbeddingStoreRegistry(
-        ssAdapter,
-        `${pluginDir}/embeddings`,
-      );
-
-      // Native MiniLM — eager init; always available.
+      // Native MiniLM — always available (store loads lazily).
       const nativeDownloader = createModelDownloader({
         innerFactory: realPipelineFactory,
       });
@@ -447,7 +455,8 @@ export default class McpToolsPlugin extends Plugin {
       });
       const nativeEp = createNativeEmbeddingProvider(embedder);
       const nativeStore = registry.storeFor("native-minilm-l6-v2", 384);
-      await nativeStore.init();
+      // No eager init: the indexer/search path inits on first use. The
+      // native provider is always available, so it is always "ready".
       registry.markReady("native-minilm-l6-v2");
 
       // DLC providers — pipeline loads lazily on first embed call.
@@ -485,16 +494,9 @@ export default class McpToolsPlugin extends Plugin {
         state.downloader = nativeDownloader;
         state.store = nativeStore;
         state.registry = registry;
-
-        // Check whether DLC stores are already built from a prior session.
-        for (const [key, dim] of [
-          ["embedding-gemma-300m", 768],
-          ["multilingual-e5-base", 768],
-        ] as const) {
-          const dlcStore = registry.storeFor(key, dim);
-          await dlcStore.init();
-          if (dlcStore.size() > 0) registry.markReady(key);
-        }
+        // DLC readiness came from the probe pass above (no store init);
+        // the settings UI uses these counts while stores are still lazy.
+        state.probedCounts = probedCounts;
 
         // Native indexer — lazy start on first search tool call.
         // The chunker tracks the provider's effective max-input-tokens
@@ -657,16 +659,14 @@ export default class McpToolsPlugin extends Plugin {
           "embedding-gemma-300m",
           "multilingual-e5-base",
         ] as const) {
-          const dim = 768;
-          const dlcStore = registry.storeFor(key, dim);
           // Auto-subscribe only when the provider is currently active AND
-          // its store is ready (size > 0 was set by the earlier init loop
-          // via registry.markReady). Inactive providers stay dormant —
-          // the user can switch into them, which routes through
-          // startRebuildFor and lazily starts the indexer at that point.
+          // its store is ready (probe pass found a current store with
+          // records). Inactive providers stay dormant — the user can
+          // switch into them, which routes through startRebuildFor and
+          // lazily starts the indexer at that point.
           const isActive =
             settingToRegistryKey[state.settings.provider] === key;
-          if (isActive && dlcStore.size() > 0) {
+          if (isActive && registry.isReady(key)) {
             _autoSubscribeDlc(key);
           }
         }
