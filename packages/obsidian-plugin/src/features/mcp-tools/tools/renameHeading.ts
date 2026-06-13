@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { errorText, successText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 
 import {
   planRename,
@@ -98,14 +99,14 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   const { path, from, to } = ctx.arguments;
 
   // ── 1. Load source file ─────────────────────────────────────────────────
-  const sourceAbstract = ctx.app.vault.getAbstractFileByPath(path);
-  if (!(sourceAbstract instanceof TFile)) {
+  const resolved = resolveTFile(ctx.app.vault, path);
+  if (!resolved.ok) {
     return errorResponse({
       errorCode: "file-not-found",
       message: `Source file not found: ${path}`,
     });
   }
-  const sourceFile = sourceAbstract;
+  const sourceFile = resolved.file;
 
   const sourceText = await ctx.app.vault.cachedRead(sourceFile);
   const sourceCache = (ctx.app.metadataCache.getFileCache(sourceFile) ??

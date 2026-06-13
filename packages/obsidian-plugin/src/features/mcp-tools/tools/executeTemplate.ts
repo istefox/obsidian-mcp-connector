@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { errorText } from "../services/responseBuilders";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 import { moment } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { Templater, type PromptArgAccessor } from "shared";
@@ -96,23 +97,21 @@ export async function executeTemplateHandler(
   }
 
   // Resolve template file from vault
-  const templateFile = ctx.app.vault.getAbstractFileByPath(
-    ctx.arguments.templatePath,
-  );
-  if (!templateFile) {
-    return errorPayload(
-      `Template not found: ${ctx.arguments.templatePath}`,
-      "template_not_found",
-      { templatePath: ctx.arguments.templatePath },
-    );
+  const resolved = resolveTFile(ctx.app.vault, ctx.arguments.templatePath);
+  if (!resolved.ok) {
+    return resolved.reason === "not_found"
+      ? errorPayload(
+          `Template not found: ${ctx.arguments.templatePath}`,
+          "template_not_found",
+          { templatePath: ctx.arguments.templatePath },
+        )
+      : errorPayload(
+          `Template path is a folder: ${ctx.arguments.templatePath}`,
+          "template_not_found",
+          { templatePath: ctx.arguments.templatePath },
+        );
   }
-  if (!(templateFile instanceof TFile)) {
-    return errorPayload(
-      `Template path is a folder: ${ctx.arguments.templatePath}`,
-      "template_not_found",
-      { templatePath: ctx.arguments.templatePath },
-    );
-  }
+  const templateFile = resolved.file;
 
   // createFile coercion — belt-and-suspenders: accept both boolean string "true" and missing
   const createFile = ctx.arguments.createFile === "true";
@@ -229,21 +228,21 @@ async function runCoreTemplates(
     arguments: argMap,
   } = ctx.arguments;
 
-  const templateFile = ctx.app.vault.getAbstractFileByPath(templatePath);
-  if (!templateFile) {
-    return errorPayload(
-      `Template not found: ${templatePath}`,
-      "template_not_found",
-      { templatePath },
-    );
+  const resolved = resolveTFile(ctx.app.vault, templatePath);
+  if (!resolved.ok) {
+    return resolved.reason === "not_found"
+      ? errorPayload(
+          `Template not found: ${templatePath}`,
+          "template_not_found",
+          { templatePath },
+        )
+      : errorPayload(
+          `Template path is a folder: ${templatePath}`,
+          "template_not_found",
+          { templatePath },
+        );
   }
-  if (!(templateFile instanceof TFile)) {
-    return errorPayload(
-      `Template path is a folder: ${templatePath}`,
-      "template_not_found",
-      { templatePath },
-    );
-  }
+  const templateFile = resolved.file;
 
   let raw: string;
   try {

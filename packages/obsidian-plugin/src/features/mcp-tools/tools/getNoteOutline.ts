@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 
 export const getNoteOutlineSchema = type({
   name: '"get_note_outline"',
@@ -30,37 +31,30 @@ export async function getNoteOutlineHandler(
   isError?: boolean;
 }> {
   const { path } = ctx.arguments;
-  const abstract = ctx.app.vault.getAbstractFileByPath(path);
-  if (!abstract) {
+  const resolved = resolveTFile(ctx.app.vault, path);
+  if (!resolved.ok) {
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            error: `File not found: ${path}`,
-            errorCode: "file_not_found",
-            path,
-          }),
+          text:
+            resolved.reason === "not_found"
+              ? JSON.stringify({
+                  error: `File not found: ${path}`,
+                  errorCode: "file_not_found",
+                  path,
+                })
+              : JSON.stringify({
+                  error: `Path is a folder: ${path}`,
+                  errorCode: "not_a_file",
+                  path,
+                }),
         },
       ],
       isError: true,
     };
   }
-  if (!(abstract instanceof TFile)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error: `Path is a folder: ${path}`,
-            errorCode: "not_a_file",
-            path,
-          }),
-        },
-      ],
-      isError: true,
-    };
-  }
+  const abstract = resolved.file;
 
   const cache = ctx.app.metadataCache.getFileCache(abstract);
   const raw = cache?.headings ?? [];
