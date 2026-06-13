@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 
 export const setNotePropertySchema = type({
   name: '"set_note_property"',
@@ -83,38 +84,30 @@ export async function setNotePropertyHandler(
     };
   }
 
-  const abstract = ctx.app.vault.getAbstractFileByPath(path);
-  if (!abstract) {
+  const resolved = resolveTFile(ctx.app.vault, path);
+  if (!resolved.ok) {
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            error: "File not found",
-            errorCode: "file_not_found",
-            path,
-          }),
+          text:
+            resolved.reason === "not_found"
+              ? JSON.stringify({
+                  error: "File not found",
+                  errorCode: "file_not_found",
+                  path,
+                })
+              : JSON.stringify({
+                  error: "Path is a folder, not a file",
+                  errorCode: "not_a_file",
+                  path,
+                }),
         },
       ],
       isError: true,
     };
   }
-  if (!(abstract instanceof TFile)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error: "Path is a folder, not a file",
-            errorCode: "not_a_file",
-            path,
-          }),
-        },
-      ],
-      isError: true,
-    };
-  }
-  const file = abstract;
+  const file = resolved.file;
 
   await ctx.app.fileManager.processFrontMatter(file, (rawFm) => {
     const fm = rawFm as Record<string, unknown>;

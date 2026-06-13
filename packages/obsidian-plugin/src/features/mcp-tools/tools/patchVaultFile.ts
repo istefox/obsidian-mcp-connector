@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { errorText } from "../services/responseBuilders";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 import {
   applyPatch,
   type PatchArgs,
@@ -52,13 +53,13 @@ export async function patchVaultFileHandler(
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
-  const file = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
-  if (!file) {
-    return errorText(`File not found: ${ctx.arguments.path}`);
+  const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
+  if (!resolved.ok) {
+    return resolved.reason === "not_found"
+      ? errorText(`File not found: ${ctx.arguments.path}`)
+      : errorText(`Path is a folder: ${ctx.arguments.path}`);
   }
-  if (!(file instanceof TFile)) {
-    return errorText(`Path is a folder: ${ctx.arguments.path}`);
-  }
+  const file = resolved.file;
 
   // Strip `path` from the arguments before forwarding — applyPatch only needs
   // the patch-specific fields (operation, targetType, target, content, …).

@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 // Response envelopes shared across tools — aliased to the original local
 // names to keep this file's call sites stable.
 import {
@@ -154,14 +155,13 @@ export async function getVaultFilePartialHandler(
 }> {
   const { filename, mode, target, targetDelimiter } = ctx.arguments;
 
-  const abstract = ctx.app.vault.getAbstractFileByPath(filename);
-  if (!abstract) {
-    return errorResponse(`File not found: ${filename}`);
+  const resolved = resolveTFile(ctx.app.vault, filename);
+  if (!resolved.ok) {
+    return resolved.reason === "not_found"
+      ? errorResponse(`File not found: ${filename}`)
+      : errorResponse(`Path is a folder: ${filename}`);
   }
-  if (!(abstract instanceof TFile)) {
-    return errorResponse(`Path is a folder: ${filename}`);
-  }
-  const file = abstract;
+  const file = resolved.file;
 
   // Schema-level guard: `target` is required for every mode except
   // `document-map`. We enforce this at the handler level (rather than via

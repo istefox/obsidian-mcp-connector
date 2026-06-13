@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { TFile, type App } from "obsidian";
+import { type App } from "obsidian";
+import { resolveTFile } from "../services/resolveTFile";
 
 /**
  * Maps lowercased file extensions to their MIME type and MCP content-block
@@ -108,25 +109,23 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   content: Array<ContentBlock>;
   isError?: boolean;
 }> {
-  const abstract = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
-  if (!abstract) {
+  const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
+  if (!resolved.ok) {
     return {
       content: [
-        { type: "text", text: `File not found: ${ctx.arguments.path}` },
-      ],
-      isError: true,
-    };
-  }
-  if (!(abstract instanceof TFile)) {
-    return {
-      content: [
-        { type: "text", text: `Path is a folder: ${ctx.arguments.path}` },
+        {
+          type: "text",
+          text:
+            resolved.reason === "not_found"
+              ? `File not found: ${ctx.arguments.path}`
+              : `Path is a folder: ${ctx.arguments.path}`,
+        },
       ],
       isError: true,
     };
   }
 
-  const file = abstract;
+  const file = resolved.file;
   const ext = file.extension.toLowerCase();
 
   const mimeEntry = MIME_BY_EXT.get(ext);
