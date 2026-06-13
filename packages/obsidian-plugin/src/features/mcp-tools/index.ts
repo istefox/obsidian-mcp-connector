@@ -160,6 +160,15 @@ import {
   listBookmarksHandler,
   listBookmarksSchema,
 } from "./tools/listBookmarks";
+import { getCanvasHandler, getCanvasSchema } from "./tools/getCanvas";
+import {
+  addCanvasNodeHandler,
+  addCanvasNodeSchema,
+} from "./tools/addCanvasNode";
+import {
+  connectCanvasNodesHandler,
+  connectCanvasNodesSchema,
+} from "./tools/connectCanvasNodes";
 
 export type RegisterToolsContext = {
   app: App;
@@ -293,6 +302,17 @@ export async function registerTools(
   );
   registry.register(listBookmarksSchema, async ({ arguments: args }) =>
     listBookmarksHandler({ arguments: args, app: ctx.app }),
+  );
+
+  // Canvas
+  registry.register(getCanvasSchema, async ({ arguments: args }) =>
+    getCanvasHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(addCanvasNodeSchema, async ({ arguments: args }) =>
+    addCanvasNodeHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(connectCanvasNodesSchema, async ({ arguments: args }) =>
+    connectCanvasNodesHandler({ arguments: args, app: ctx.app }),
   );
 
   // Search
