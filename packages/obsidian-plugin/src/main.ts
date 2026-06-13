@@ -1,16 +1,9 @@
 import { type EventRef, Notice, Plugin, TFile } from "obsidian";
 import { lastValueFrom } from "rxjs";
 import { type SmartConnections } from "shared";
-import {
-  CommandPermissionModal,
-  globalSettingsMutex,
-  decidePermission,
-  appendAuditEntry,
-  createRuntimeRateCounter,
-  isDestructiveCommand,
-  SOFT_RATE_LIMIT_PER_MINUTE,
-} from "./features/command-permissions";
-import type { CommandAuditEntry } from "./features/command-permissions";
+import { globalSettingsMutex } from "./features/command-permissions";
+import { checkCommandPermission as runCommandPermissionCheck } from "./features/command-permissions/services/checkCommandPermission";
+import { SettingsStore } from "./shared/settingsStore";
 import { setup as setupCore } from "./features/core";
 import {
   setup as mcpTransportSetup,
@@ -61,13 +54,6 @@ import { loadSmartSearchAPI } from "./shared";
 import { logger } from "./shared/logger";
 import { createExclusionFilter } from "./shared/isUserIgnored";
 
-// Soft-rate counter for the in-process permission-check path. The
-// settings load/modify/save cycle is serialized through the shared
-// `globalSettingsMutex` (process-wide, see settingsLock.ts), not a
-// path-local mutex — data.json is shared across features.
-const _inProcessRateCounter = createRuntimeRateCounter();
-const IN_PROCESS_MODAL_TIMEOUT_MS = 30_000;
-
 export default class McpToolsPlugin extends Plugin {
   mcpTransportState?: McpTransportState;
 
@@ -87,190 +73,18 @@ export default class McpToolsPlugin extends Plugin {
   smartSearch?: SmartConnections.SmartSearch;
 
   /**
-   * In-process permission check for the `execute_obsidian_command`
-   * MCP tool. Two-phase mutex policy: Phase A (load + decide /
-   * detect-modal-needed + fast-path save) under the shared settings
-   * lock, modal wait OUTSIDE the lock, Phase B (re-load + persist
-   * final outcome) re-acquires it. Returns a plain
-   * `{ outcome, reason }`.
-   *
-   * Fast path: if the master toggle is off, or the command is already
-   * in the allowlist (allow) or not (deny), the decision is made under
-   * the settings mutex and returned immediately.
-   *
-   * Slow path: if the master toggle is on and the command is not in the
-   * allowlist, a modal is opened in the Obsidian UI. The method awaits
-   * the user's decision (or a 30-second timeout). Phase B then persists
-   * the outcome under the mutex.
-   *
-   * The runtime soft-rate-limit counter is updated on every call so the
-   * modal can display a warning banner when activity is high.
+   * In-process permission check for `execute_obsidian_command`,
+   * delegated to the testable service. The two-phase decision (Phase A
+   * decide + fast-path audit, modal wait, Phase B persist) lives in
+   * services/checkCommandPermission.ts.
    */
   async checkCommandPermission(
     rawCommandId: string,
   ): Promise<{ outcome: "allow" | "deny"; reason?: string }> {
-    // Allowlist entries are exact ids; a stray leading/trailing space
-    // in the request must not cause a spurious deny. Trim only — ids
-    // are case-sensitive by Obsidian convention, so no lowercasing.
-    const commandId = rawCommandId.trim();
-
-    // Record this call in the soft-rate counter (UI warning only —
-    // hard enforcement is the rate limiter in services/rateLimit.ts).
-    _inProcessRateCounter.record();
-
-    // Phase A: decide under the settings mutex.
-    type PhaseAResult =
-      | { kind: "done"; outcome: "allow" | "deny"; reason?: string }
-      | { kind: "needs-modal"; softRateLimit: number };
-
-    const phaseA: PhaseAResult = await globalSettingsMutex.run(async () => {
-      const settings = (await this.loadData()) ?? {};
-      const perms = settings.commandPermissions ?? {};
-
-      const pureOutcome = decidePermission(
-        commandId,
-        perms.enabled,
-        perms.allowlist,
-      );
-
-      const inAllowlist = (perms.allowlist ?? []).includes(commandId);
-      const needsModal =
-        perms.enabled === true &&
-        pureOutcome.decision === "deny" &&
-        !inAllowlist;
-
-      if (needsModal) {
-        return {
-          kind: "needs-modal",
-          softRateLimit: perms.softRateLimit ?? SOFT_RATE_LIMIT_PER_MINUTE,
-        };
-      }
-
-      // Fast path: write audit entry and return.
-      const auditEntry: CommandAuditEntry = {
-        timestamp: new Date().toISOString(),
-        commandId,
-        decision: pureOutcome.decision,
-        ...(pureOutcome.reason ? { reason: pureOutcome.reason } : {}),
-      };
-      settings.commandPermissions = {
-        ...perms,
-        recentInvocations: appendAuditEntry(
-          perms.recentInvocations,
-          auditEntry,
-        ),
-      };
-      await this.saveData(settings);
-
-      return {
-        kind: "done",
-        outcome: pureOutcome.decision,
-        reason: pureOutcome.reason,
-      };
-    });
-
-    if (phaseA.kind === "done") {
-      return { outcome: phaseA.outcome, reason: phaseA.reason };
-    }
-
-    // Slow path: open the confirmation modal.
-    const commandName = (
-      this.app as unknown as {
-        commands?: {
-          commands?: Record<string, { id: string; name: string }>;
-        };
-      }
-    ).commands?.commands?.[commandId]?.name;
-
-    const isDestructive = isDestructiveCommand(commandId, commandName);
-    const rateCount = _inProcessRateCounter.countInLastMinute();
-    const showRateWarning = rateCount > phaseA.softRateLimit;
-
-    const modal = new CommandPermissionModal(this.app, {
-      commandId,
-      commandName,
-      isDestructive,
-      showRateWarning,
-      rateCount,
-    });
-    modal.open();
-
-    // Race the modal decision against the timeout.
-    let timeoutHandle: number | undefined;
-    type ModalOutcome =
-      | {
-          kind: "decided";
-          decision: import("./features/command-permissions").ModalDecision;
-        }
-      | { kind: "timeout" };
-
-    const outcome = await Promise.race<ModalOutcome>([
-      modal
-        .waitForDecision()
-        .then((d) => ({ kind: "decided" as const, decision: d })),
-      new Promise<ModalOutcome>((resolve) => {
-        timeoutHandle = window.setTimeout(
-          () => resolve({ kind: "timeout" }),
-          IN_PROCESS_MODAL_TIMEOUT_MS,
-        );
-      }),
-    ]);
-
-    if (timeoutHandle) window.clearTimeout(timeoutHandle);
-    if (outcome.kind === "timeout") modal.close();
-
-    let finalOutcome: "allow" | "deny";
-    let finalReason: string | undefined;
-    let persistAllowlistEntry = false;
-
-    if (outcome.kind === "timeout") {
-      finalOutcome = "deny";
-      finalReason = `User did not respond within ${IN_PROCESS_MODAL_TIMEOUT_MS / 1000} seconds.`;
-    } else {
-      const d = outcome.decision;
-      if (d === "deny") {
-        finalOutcome = "deny";
-        finalReason = `User denied permission for command '${commandId}' via the confirmation modal.`;
-      } else {
-        finalOutcome = "allow";
-        if (d === "allow-always") persistAllowlistEntry = true;
-      }
-    }
-
-    // Phase B: persist outcome under the mutex.
-    await globalSettingsMutex.run(async () => {
-      const settings = (await this.loadData()) ?? {};
-      const perms = settings.commandPermissions ?? {};
-
-      const auditEntry: CommandAuditEntry = {
-        timestamp: new Date().toISOString(),
-        commandId,
-        decision: finalOutcome,
-        ...(finalReason ? { reason: finalReason } : {}),
-      };
-
-      let updatedAllowlist: string[] | undefined;
-      if (
-        persistAllowlistEntry &&
-        !(perms.allowlist ?? []).includes(commandId)
-      ) {
-        updatedAllowlist = [...(perms.allowlist ?? []), commandId];
-      }
-
-      settings.commandPermissions = {
-        ...perms,
-        ...(updatedAllowlist !== undefined
-          ? { allowlist: updatedAllowlist }
-          : {}),
-        recentInvocations: appendAuditEntry(
-          perms.recentInvocations,
-          auditEntry,
-        ),
-      };
-      await this.saveData(settings);
-    });
-
-    return { outcome: finalOutcome, reason: finalReason };
+    return runCommandPermissionCheck(
+      { app: this.app, store: new SettingsStore(this) },
+      rawCommandId,
+    );
   }
 
   async onload() {
