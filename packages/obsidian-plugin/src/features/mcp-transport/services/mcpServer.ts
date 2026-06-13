@@ -7,28 +7,16 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { Notice, type App } from "obsidian";
+import { type App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { logger } from "$/shared";
-import { ToolRegistryClass } from "./toolRegistry";
 import type { ToolRegistry } from "./toolRegistry";
-import { PromptRegistryClass } from "./promptRegistry";
 import type { PromptRegistry } from "./promptRegistry";
-import { registerTools } from "$/features/mcp-tools";
-import { applyDisabledToolsFilter } from "$/features/tool-toggle";
 import {
-  applyAdaptiveFilter,
   ToolLoadingManager,
   META_TOOLS,
 } from "$/features/adaptive-tool-loading";
-import {
-  toolCatalogSchema,
-  toolCatalogHandler,
-} from "$/features/mcp-tools/tools/toolCatalog";
-import {
-  activateToolSchema,
-  activateToolHandler,
-} from "$/features/mcp-tools/tools/activateTool";
+import { composeToolRegistry } from "$/composeToolRegistry";
 
 export type McpServiceConfig = {
   app: App;
@@ -68,42 +56,10 @@ export async function createMcpService(
   config: McpServiceConfig,
 ): Promise<McpService> {
   const toolLoadingManager = new ToolLoadingManager();
-  const registry = new ToolRegistryClass();
-  const promptRegistry = new PromptRegistryClass();
-  await registerTools(registry, {
-    app: config.app,
-    plugin: config.plugin,
-    pluginVersion: config.pluginVersion,
-  });
-
-  // Register adaptive-loading meta-tools. These need access to the
-  // registry itself (for listing/status) and are always active regardless
-  // of profile, so they are registered here rather than in registerTools.
-  registry.register(toolCatalogSchema, () =>
-    toolCatalogHandler({ registry, plugin: config.plugin }),
-  );
-  registry.register(activateToolSchema, async (request, { server }) =>
-    activateToolHandler({
-      arguments: (request as { arguments: { name: string; persist?: boolean } })
-        .arguments,
-      registry,
-      plugin: config.plugin,
-      server,
-      onActivated: (name) =>
-        new Notice(`MCP Connector: "${name}" promoted to active`),
-      enableInRegistry: (name) => registry.enableByName(name),
-    }),
-  );
-
-  // Apply the adaptive profile filter (All/Core/Adaptive).
-  // Runs before toolToggle so the user-controlled disable list still wins.
-  await applyAdaptiveFilter(registry, config.plugin);
-
-  // Apply the user's `toolToggle.disabled` filter.
-  // Disabled tools stay registered but are flipped off the registry's
-  // enabled set, so they no longer appear in `tools/list` and any
-  // `tools/call` against them returns MethodNotFound. Idempotent.
-  await applyDisabledToolsFilter(registry, config.plugin);
+  // The populated registry is composed outside the transport (policy
+  // lives in $/composeToolRegistry); this layer only serves it.
+  const { toolRegistry: registry, promptRegistry } =
+    await composeToolRegistry(config);
 
   const handleRequest = async (
     req: IncomingMessage,
