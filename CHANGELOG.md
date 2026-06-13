@@ -3,6 +3,16 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] — 2026-06-13
+
+An internal architecture release. Three refactor cycles split the plugin's entry point, introduced a typed settings store, and centralized vault file resolution. No user-facing changes: tool inputs, outputs, and behavior are identical, verified by the full test suite passing with no test edits.
+
+### Internal
+
+- **`main.ts` reduced from 786 to 141 lines.** Registry composition moved out of the transport layer into a dedicated composition root (`composeToolRegistry.ts`), semantic-search wiring moved to `services/productionWiring.ts` with a testable stale-store probe, and command-permission checking moved to a `checkCommandPermission` service. The transport is now policy-free. (PR #290, #291, #292)
+- **Typed, race-free settings store.** A `SettingsStore` in shared owns `data.json` slice access: `updateSlice` short-circuits on identity, `loadSlice` persists only when a value changed, and `readSlice` reads without taking the lock. It replaces scattered load/cast/spread/save sites, and the settings mutex moved alongside it. (PR #287, #288, #289)
+- **Centralized vault file resolution.** A shared `resolveTFile` helper replaces the `getAbstractFileByPath` plus `instanceof TFile` guard that was duplicated across 11 tool handlers. Each call site keeps its existing error output. (PR #293)
+
 ## [0.17.0] — 2026-06-13
 
 A performance and hardening release. Twelve merged changes covering tool-call token cost, the semantic-search indexing pipeline, MCP tool metadata, and a legacy-code removal. No breaking changes to tool inputs.
