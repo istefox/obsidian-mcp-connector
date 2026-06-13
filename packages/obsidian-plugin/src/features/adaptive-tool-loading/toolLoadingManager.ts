@@ -1,4 +1,5 @@
-import { globalSettingsMutex } from "$/features/command-permissions/services/settingsLock";
+import { globalSettingsMutex } from "$/shared/settingsLock";
+import type { PluginDataLike } from "$/shared/types";
 import {
   ADAPTIVE_META_TOOLS,
   ALWAYS_ACTIVE_TOOLS,
@@ -11,11 +12,6 @@ export type ToolLoadingState = {
   profile: "all" | "core" | "adaptive";
   counters: Record<string, number>;
   promoted: string[];
-};
-
-export type PluginLike = {
-  loadData: () => Promise<unknown>;
-  saveData: (data: unknown) => Promise<void>;
 };
 
 const DEFAULTS: ToolLoadingState = {
@@ -43,7 +39,7 @@ function mergeState(raw: unknown): ToolLoadingState {
 }
 
 export class ToolLoadingManager {
-  async loadState(plugin: PluginLike): Promise<ToolLoadingState> {
+  async loadState(plugin: PluginDataLike): Promise<ToolLoadingState> {
     const raw = await plugin.loadData();
     return mergeState(raw);
   }
@@ -66,7 +62,7 @@ export class ToolLoadingManager {
   // an unserialized read-modify-write here can clobber another feature's
   // slice (or lose a concurrent counter increment). See settingsLock.ts.
 
-  async recordCall(toolName: string, plugin: PluginLike): Promise<void> {
+  async recordCall(toolName: string, plugin: PluginDataLike): Promise<void> {
     await globalSettingsMutex.run(async () => {
       const raw = (await plugin.loadData()) as Record<string, unknown> | null;
       const state = mergeState(raw);
@@ -86,7 +82,7 @@ export class ToolLoadingManager {
   async activateTool(
     name: string,
     allNames: string[],
-    plugin: PluginLike,
+    plugin: PluginDataLike,
   ): Promise<"activated" | "already_active" | "not_found"> {
     if (!allNames.includes(name)) return "not_found";
     return globalSettingsMutex.run(async () => {
@@ -99,7 +95,7 @@ export class ToolLoadingManager {
     });
   }
 
-  async deactivateTool(name: string, plugin: PluginLike): Promise<void> {
+  async deactivateTool(name: string, plugin: PluginDataLike): Promise<void> {
     await globalSettingsMutex.run(async () => {
       const raw = (await plugin.loadData()) as Record<string, unknown> | null;
       const state = mergeState(raw);
@@ -108,7 +104,7 @@ export class ToolLoadingManager {
     });
   }
 
-  async resetAll(plugin: PluginLike): Promise<void> {
+  async resetAll(plugin: PluginDataLike): Promise<void> {
     await globalSettingsMutex.run(async () => {
       const raw = (await plugin.loadData()) as Record<string, unknown> | null;
       const state = mergeState(raw);

@@ -1,5 +1,6 @@
 import { globalSettingsMutex } from "$/features/command-permissions";
 import { logger } from "$/shared/logger";
+import type { PluginDataLike } from "$/shared/types";
 import { updateClaudeDesktopConfig } from "./claudeDesktop";
 
 /**
@@ -26,9 +27,7 @@ import { updateClaudeDesktopConfig } from "./claudeDesktop";
 const DATA_KEY = "mcpClientConfig";
 const FLAG_KEY = "autoWriteClaudeDesktopConfig";
 
-type PluginLike = {
-  loadData: () => Promise<unknown>;
-  saveData: (data: unknown) => Promise<void>;
+type PluginLike = PluginDataLike & {
   mcpTransportState?:
     | {
         bearerToken: string;
