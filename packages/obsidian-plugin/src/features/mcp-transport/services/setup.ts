@@ -1,5 +1,5 @@
 import type McpToolsPlugin from "$/main";
-import { globalSettingsMutex } from "$/features/command-permissions";
+import { SettingsStore } from "$/shared/settingsStore";
 import { logger } from "$/shared";
 import {
   startHttpServer,
@@ -41,32 +41,24 @@ export type SetupResult =
  */
 export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
   try {
-    // Serialize the load→(maybe generate)→save through the shared
-    // mutex so a first-run token write cannot clobber a concurrent
-    // settings write from another feature (data.json is not atomic).
-    const bearerToken = await globalSettingsMutex.run(async () => {
-      const settings = ((await plugin.loadData()) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const mcpTransportSettings = (settings.mcpTransport ?? {}) as Record<
-        string,
-        unknown
-      >;
-      let token = mcpTransportSettings.bearerToken as string | undefined;
+    // SettingsStore.updateSlice serializes the load→(maybe
+    // generate)→save through the shared mutex; returning the slice
+    // unchanged when a valid token exists skips the write.
+    let bearerToken!: string;
+    await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => {
+      const slice = (current as Record<string, unknown> | undefined) ?? {};
+      const token = slice.bearerToken as string | undefined;
 
       // Byte length, not UTF-16 code units: the 32-byte floor is a
       // security threshold and must hold regardless of encoding.
       if (!token || Buffer.byteLength(token, "utf8") < 32) {
         // No valid token yet — generate a fresh one and persist it.
         // This only happens on the very first load after plugin install.
-        token = generateToken();
-        await plugin.saveData({
-          ...settings,
-          mcpTransport: { ...mcpTransportSettings, bearerToken: token },
-        });
+        bearerToken = generateToken();
+        return { ...slice, bearerToken };
       }
-      return token;
+      bearerToken = token;
+      return current; // NO_CHANGE: keep the existing valid token
     });
 
     const mcp = await createMcpService({
