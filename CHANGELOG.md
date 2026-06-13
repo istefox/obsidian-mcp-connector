@@ -3,11 +3,33 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.17.0] — 2026-06-13
+
+A performance and hardening release. Twelve merged changes covering tool-call token cost, the semantic-search indexing pipeline, MCP tool metadata, and a legacy-code removal. No breaking changes to tool inputs.
+
+### Added
+
+- **MCP tool annotations on every tool.** All 45 tools now carry `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` (MCP spec 2025-03-26). Clients that honour them, including Claude Desktop and Claude Code, can skip confirmation prompts on read-only calls and gate them on destructive ones. 24 tools are read-only; writers that overwrite or remove content (`delete_*`, `rename_*`, `search_and_replace`, `create_vault_file`, the template and command tools) are marked destructive. (PR #276)
+- **`limit` parameter on eight list and scan tools** (`list_tags`, `get_backlinks`, `get_outgoing_links`, `find_orphaned_notes`, `get_files_by_tag`, `list_vault_files`, `find_broken_links`, `list_obsidian_commands`). Default 200, clamped to [1, 1000]. When the result is capped the payload gains `truncated: true` and a full `total`, so a large vault no longer returns an unbounded array. (PR #274)
+- **`unloadModelWhenIdle` setting now works.** The toggle existed but was never wired to the embedder, so the model always unloaded after 60s idle. It now controls the behaviour and defaults to keeping the model warm, since sporadic agent queries cost more from cold reloads than they save in RAM. (PR #278)
+
+### Changed
+
+- **Tool result payloads are compact JSON.** LLMs consume these results, so the 2-space indentation was pure token cost. Removing it cuts a typical payload by roughly 40%: `list_tags` on a 166-tag vault went from 9,332 to 5,004 bytes. (PR #274)
+- **Embedding indexing batches its pipeline calls.** Indexing used to embed one chunk per call. The transformer providers and the indexer now send up to 8 texts per call (4 for EmbeddingGemma, whose 2K context pads to the longest text) and deduplicate chunks by content hash, which speeds up full rebuilds. (PR #279)
+- **The first search of a session no longer rescans the whole vault.** A per-file mtime sidecar lets the indexer skip files that have not changed since the last run. The manual "Rebuild index" button still forces a full pass. (PR #280)
+- **Embedding stores load lazily.** Plugin startup read and materialized every store, including inactive ones, just to check their size. A small `embeddings.meta.json` sidecar answers the readiness check without touching the vector data, which loads on first use. (PR #281)
+- **Faster vector search and registry dispatch.** Semantic scoring uses a dot product over the already-normalized vectors with bounded top-k selection instead of full cosine plus a full sort, and `tools/list` plus tool dispatch are memoized and name-keyed instead of rescanned per request. (PR #275, #283, #284)
+- **`search_vault_simple` no longer copies each file to lowercase per query**, scanning with a case-insensitive regex over batched reads instead. (PR #282)
+- **`tool_catalog` trims inactive tool descriptions to their first sentence** to keep the discovery payload small. (PR #274)
+
+### Fixed
+
+- **Type checking now covers the test suite.** `tsc` checked only top-level sources, so test files were never type-checked outside the editor. The configuration now includes them, and the latent errors it surfaced are fixed. (PR #285)
 
 ### Removed
 
-- **0.3.x migration wizard.** The `migration` feature (leftover-state detection probe on every plugin load, migration modal, ~2,000 lines) is gone, together with the orphaned `plugin-local-rest-api` type definitions in `packages/shared` (unused since the Local REST API dependency was removed in 0.13.0). Users upgrading from ≤0.3.x should install any 0.15.x release first to run the assisted migration, then update.
+- **0.3.x migration wizard.** The `migration` feature, a leftover-state filesystem probe on every plugin load plus a migration modal, around 2,000 lines, is gone, along with the orphaned `plugin-local-rest-api` type definitions unused since the Local REST API dependency was removed in 0.13.0. Anyone upgrading from 0.3.x or earlier should install a 0.15.x release first to run the assisted migration, then update. (PR #277)
 
 ## [0.16.0] — 2026-06-11
 
