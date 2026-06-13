@@ -1,4 +1,4 @@
-import { globalSettingsMutex } from "$/shared/settingsLock";
+import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
 import {
   ADAPTIVE_META_TOOLS,
@@ -20,28 +20,25 @@ const DEFAULTS: ToolLoadingState = {
   promoted: [],
 };
 
-function mergeState(raw: unknown): ToolLoadingState {
-  const slice =
-    raw && typeof raw === "object"
-      ? ((raw as Record<string, unknown>).toolLoading as
-          | Partial<ToolLoadingState>
-          | undefined)
+/** Normalize a raw `toolLoading` slice value into a well-formed state. */
+function mergeState(slice: unknown): ToolLoadingState {
+  const s =
+    slice && typeof slice === "object"
+      ? (slice as Partial<ToolLoadingState>)
       : undefined;
   return {
     ...DEFAULTS,
-    ...(slice ?? {}),
-    counters:
-      slice?.counters && typeof slice.counters === "object"
-        ? slice.counters
-        : {},
-    promoted: Array.isArray(slice?.promoted) ? slice.promoted : [],
+    ...(s ?? {}),
+    counters: s?.counters && typeof s.counters === "object" ? s.counters : {},
+    promoted: Array.isArray(s?.promoted) ? s.promoted : [],
   };
 }
 
+const SLICE = "toolLoading";
+
 export class ToolLoadingManager {
   async loadState(plugin: PluginDataLike): Promise<ToolLoadingState> {
-    const raw = await plugin.loadData();
-    return mergeState(raw);
+    return mergeState(await new SettingsStore(plugin).readSlice(SLICE));
   }
 
   getActiveToolNames(allNames: string[], state: ToolLoadingState): Set<string> {
@@ -57,15 +54,15 @@ export class ToolLoadingManager {
     return base;
   }
 
-  // All mutating methods serialize their load→modify→save cycle through
-  // globalSettingsMutex: data.json is shared with every other feature, so
-  // an unserialized read-modify-write here can clobber another feature's
-  // slice (or lose a concurrent counter increment). See settingsLock.ts.
+  // All mutating methods go through SettingsStore.updateSlice, which
+  // serializes the load→modify→save cycle through the process-wide
+  // settings mutex: data.json is shared with every other feature, so an
+  // unserialized read-modify-write here can clobber another feature's
+  // slice (or lose a concurrent counter increment). See settingsStore.ts.
 
   async recordCall(toolName: string, plugin: PluginDataLike): Promise<void> {
-    await globalSettingsMutex.run(async () => {
-      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-      const state = mergeState(raw);
+    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+      const state = mergeState(current);
       state.counters[toolName] = (state.counters[toolName] ?? 0) + 1;
       if (
         state.profile === "adaptive" &&
@@ -75,7 +72,7 @@ export class ToolLoadingManager {
       ) {
         state.promoted = [...state.promoted, toolName];
       }
-      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+      return state;
     });
   }
 
@@ -85,32 +82,33 @@ export class ToolLoadingManager {
     plugin: PluginDataLike,
   ): Promise<"activated" | "already_active" | "not_found"> {
     if (!allNames.includes(name)) return "not_found";
-    return globalSettingsMutex.run(async () => {
-      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-      const state = mergeState(raw);
-      if (state.promoted.includes(name)) return "already_active" as const;
+    let outcome: "activated" | "already_active" = "activated";
+    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+      const state = mergeState(current);
+      if (state.promoted.includes(name)) {
+        outcome = "already_active";
+        return current; // NO_CHANGE: no write
+      }
       state.promoted = [...state.promoted, name];
-      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
-      return "activated" as const;
+      return state;
     });
+    return outcome;
   }
 
   async deactivateTool(name: string, plugin: PluginDataLike): Promise<void> {
-    await globalSettingsMutex.run(async () => {
-      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-      const state = mergeState(raw);
+    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+      const state = mergeState(current);
       state.promoted = state.promoted.filter((n) => n !== name);
-      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+      return state;
     });
   }
 
   async resetAll(plugin: PluginDataLike): Promise<void> {
-    await globalSettingsMutex.run(async () => {
-      const raw = (await plugin.loadData()) as Record<string, unknown> | null;
-      const state = mergeState(raw);
+    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+      const state = mergeState(current);
       state.counters = {};
       state.promoted = [];
-      await plugin.saveData({ ...(raw ?? {}), toolLoading: state });
+      return state;
     });
   }
 }
