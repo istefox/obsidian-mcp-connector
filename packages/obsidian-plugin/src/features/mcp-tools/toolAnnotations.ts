@@ -101,6 +101,11 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_or_create_periodic_note: { ...SAFE_WRITE, idempotentHint: true },
   append_to_periodic_note: SAFE_WRITE,
 
+  // Canvas
+  get_canvas: READ_ONLY,
+  add_canvas_node: SAFE_WRITE,
+  connect_canvas_nodes: SAFE_WRITE,
+
   // Adaptive-loading meta-tools (registered in mcpServer.ts; lookup is
   // name-keyed at list() time, so the entry can live here regardless).
   tool_catalog: READ_ONLY,
