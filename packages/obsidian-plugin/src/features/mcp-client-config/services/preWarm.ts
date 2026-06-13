@@ -1,7 +1,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { PluginDataLike } from "$/shared/types";
-import { globalSettingsMutex } from "$/features/command-permissions";
+import { SettingsStore } from "$/shared/settingsStore";
 import { logger } from "$/shared/logger";
 import {
   detectNode,
@@ -72,9 +72,7 @@ const defaultRunner: ExecRunner = (file, args, options) => {
 export async function getPreWarmCache(
   plugin: PluginDataLike,
 ): Promise<PreWarmCacheEntry | null> {
-  const data = (await plugin.loadData()) as Record<string, unknown> | null;
-  if (!data || typeof data !== "object") return null;
-  const slice = data[DATA_KEY];
+  const slice = await new SettingsStore(plugin).readSlice(DATA_KEY);
   if (!slice || typeof slice !== "object") return null;
   const entry = (slice as Record<string, unknown>)[SLICE_KEY];
   if (!entry || typeof entry !== "object") return null;
@@ -90,16 +88,9 @@ async function persistPreWarmCache(
   plugin: PluginDataLike,
   entry: PreWarmCacheEntry,
 ): Promise<void> {
-  // Serialized through the shared settings mutex: data.json is not
-  // atomic and is shared across features.
-  await globalSettingsMutex.run(async () => {
-    const data =
-      ((await plugin.loadData()) as Record<string, unknown> | null) ?? {};
-    const slice = (data[DATA_KEY] as Record<string, unknown> | undefined) ?? {};
-    await plugin.saveData({
-      ...data,
-      [DATA_KEY]: { ...slice, [SLICE_KEY]: entry },
-    });
+  await new SettingsStore(plugin).updateSlice(DATA_KEY, (current) => {
+    const slice = (current as Record<string, unknown> | undefined) ?? {};
+    return { ...slice, [SLICE_KEY]: entry };
   });
 }
 

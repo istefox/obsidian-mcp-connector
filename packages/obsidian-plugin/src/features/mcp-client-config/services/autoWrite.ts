@@ -1,6 +1,6 @@
-import { globalSettingsMutex } from "$/features/command-permissions";
 import { logger } from "$/shared/logger";
 import type { PluginDataLike } from "$/shared/types";
+import { SettingsStore } from "$/shared/settingsStore";
 import { updateClaudeDesktopConfig } from "./claudeDesktop";
 
 /**
@@ -55,9 +55,7 @@ export async function getAutoWriteEnabled(
   plugin: PluginLike,
 ): Promise<boolean> {
   try {
-    const data = (await plugin.loadData()) as Record<string, unknown> | null;
-    if (!data || typeof data !== "object") return false;
-    const slice = data[DATA_KEY];
+    const slice = await new SettingsStore(plugin).readSlice(DATA_KEY);
     if (!slice || typeof slice !== "object") return false;
     const flag = (slice as Record<string, unknown>)[FLAG_KEY];
     return flag === true;
@@ -70,25 +68,19 @@ export async function getAutoWriteEnabled(
 }
 
 /**
- * Persist the flag. Reads the current `data.json`, mutates only the
- * `mcpClientConfig.autoWriteClaudeDesktopConfig` field, writes the
- * merged object back. Other keys are preserved. Serialized through
- * the shared `globalSettingsMutex` so this write cannot clobber a
- * concurrent settings write from another feature (data.json is not
- * atomic).
+ * Persist the flag. `SettingsStore.updateSlice` mutates only the
+ * `mcpClientConfig.autoWriteClaudeDesktopConfig` field under the shared
+ * settings mutex, preserving every other key, so this write cannot
+ * clobber a concurrent settings write from another feature (data.json
+ * is not atomic).
  */
 export async function setAutoWriteEnabled(
   plugin: PluginLike,
   enabled: boolean,
 ): Promise<void> {
-  await globalSettingsMutex.run(async () => {
-    const data =
-      ((await plugin.loadData()) as Record<string, unknown> | null) ?? {};
-    const slice = (data[DATA_KEY] as Record<string, unknown> | undefined) ?? {};
-    await plugin.saveData({
-      ...data,
-      [DATA_KEY]: { ...slice, [FLAG_KEY]: enabled },
-    });
+  await new SettingsStore(plugin).updateSlice(DATA_KEY, (current) => {
+    const slice = (current as Record<string, unknown> | undefined) ?? {};
+    return { ...slice, [FLAG_KEY]: enabled };
   });
 }
 
