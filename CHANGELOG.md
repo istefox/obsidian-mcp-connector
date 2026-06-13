@@ -3,6 +3,14 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-06-13
+
+Adds canvas support. Three tools read and build Obsidian Canvas files as structured graphs instead of opaque text.
+
+### Added
+
+- **Canvas tools: `get_canvas`, `add_canvas_node`, `connect_canvas_nodes`.** `get_canvas` reads a `.canvas` file as structured nodes and edges, capping long text-node content with a `textTruncated` flag to bound token cost. `add_canvas_node` appends a text, file, or link node with automatic placement to the right of the existing layout, creates the canvas and its parent folders when the path does not exist, and validates that a file node's embed target resolves in the vault. `connect_canvas_nodes` adds an edge between two existing nodes by id, defaulting the sides to right and left. Writes preserve every existing field on a node or edge, including styling and unmodeled spec fields, so a canvas built or edited in Obsidian round-trips through a tool write with clean diffs and no data loss. Tool count rises to 48. Read and write paths go through the vault API only, with no internal Obsidian API. (PR #295)
+
 ## [0.18.0] — 2026-06-13
 
 An internal architecture release. Three refactor cycles split the plugin's entry point, introduced a typed settings store, and centralized vault file resolution. No user-facing changes: tool inputs, outputs, and behavior are identical, verified by the full test suite passing with no test edits.
