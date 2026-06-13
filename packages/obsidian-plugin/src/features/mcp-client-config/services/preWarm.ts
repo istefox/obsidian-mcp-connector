@@ -1,6 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
-import type { PluginLike } from "$/features/adaptive-tool-loading/toolLoadingManager";
+import type { PluginDataLike } from "$/shared/types";
 import { globalSettingsMutex } from "$/features/command-permissions";
 import { logger } from "$/shared/logger";
 import {
@@ -70,7 +70,7 @@ const defaultRunner: ExecRunner = (file, args, options) => {
 // ---------------------------------------------------------------------------
 
 export async function getPreWarmCache(
-  plugin: PluginLike,
+  plugin: PluginDataLike,
 ): Promise<PreWarmCacheEntry | null> {
   const data = (await plugin.loadData()) as Record<string, unknown> | null;
   if (!data || typeof data !== "object") return null;
@@ -87,7 +87,7 @@ export async function getPreWarmCache(
 }
 
 async function persistPreWarmCache(
-  plugin: PluginLike,
+  plugin: PluginDataLike,
   entry: PreWarmCacheEntry,
 ): Promise<void> {
   // Serialized through the shared settings mutex: data.json is not
@@ -116,7 +116,7 @@ async function persistPreWarmCache(
  *   runner: optional override for tests.
  */
 export async function preWarm(
-  plugin: PluginLike,
+  plugin: PluginDataLike,
   opts?: { runner?: ExecRunner; npxPath?: string },
 ): Promise<PreWarmResult> {
   const runner = opts?.runner ?? defaultRunner;

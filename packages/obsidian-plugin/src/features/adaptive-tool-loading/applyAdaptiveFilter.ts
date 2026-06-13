@@ -1,5 +1,6 @@
 import { logger } from "$/shared/logger";
-import { ToolLoadingManager, type PluginLike } from "./toolLoadingManager";
+import type { PluginDataLike } from "$/shared/types";
+import { ToolLoadingManager } from "./toolLoadingManager";
 
 type RegistryLike = {
   disableByName: (name: string) => boolean;
@@ -8,7 +9,7 @@ type RegistryLike = {
 
 export async function applyAdaptiveFilter(
   registry: RegistryLike,
-  plugin: PluginLike,
+  plugin: PluginDataLike,
 ): Promise<void> {
   const mgr = new ToolLoadingManager();
   const state = await mgr.loadState(plugin);

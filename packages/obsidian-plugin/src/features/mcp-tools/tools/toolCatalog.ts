@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
+import type { PluginReadLike } from "$/shared/types";
 
 export const toolCatalogSchema = type({
   name: '"tool_catalog"',
@@ -16,11 +17,9 @@ type ToolEntry = {
   description?: string;
 };
 
-// Read-only persistence view — intentionally narrower than the shared
-// PluginLike (no saveData): the catalog never writes.
-type PluginLike = {
-  loadData: () => Promise<unknown>;
-};
+// Read-only persistence view (PluginReadLike, no saveData): the
+// catalog never writes.
+type PluginLike = PluginReadLike;
 
 // Inactive tools only surface their first sentence — the remaining prose is
 // pure token cost in the catalog listing. Split on the first ". " sentence

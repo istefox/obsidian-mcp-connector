@@ -1,4 +1,5 @@
 import { logger } from "$/shared/logger";
+import type { PluginReadLike } from "$/shared/types";
 
 /**
  * Apply the user-controlled `toolToggle.disabled` list to a freshly-
@@ -23,9 +24,7 @@ type RegistryLike = {
   disableByName: (name: string) => boolean;
 };
 
-type PluginLike = {
-  loadData: () => Promise<unknown>;
-};
+type PluginLike = PluginReadLike;
 
 export type ApplyDisabledToolsFilterResult = {
   /** Tool names that were disabled. */

@@ -1,10 +1,8 @@
 import { type } from "arktype";
 import { errorText, successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  ToolLoadingManager,
-  type PluginLike,
-} from "$/features/adaptive-tool-loading/toolLoadingManager";
+import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
+import type { PluginDataLike } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const activateToolSchema = type({
@@ -29,7 +27,7 @@ export async function activateToolHandler({
 }: {
   arguments: { name: string; persist?: boolean };
   registry: RegistryLike;
-  plugin: PluginLike;
+  plugin: PluginDataLike;
   server: McpServer;
   onActivated?: (toolName: string) => void;
   enableInRegistry?: (name: string) => boolean;
