@@ -205,6 +205,31 @@ describe("activateTool", () => {
     expect(result).toBe("already_active");
   });
 
+  test("'already_active' performs NO write (NO_CHANGE)", async () => {
+    let saves = 0;
+    const base = makePlugin({
+      toolLoading: {
+        profile: "adaptive",
+        counters: {},
+        promoted: ["search_and_replace"],
+      },
+    });
+    const plugin = {
+      loadData: base.loadData,
+      saveData: async (d: unknown) => {
+        saves++;
+        await base.saveData(d);
+      },
+    };
+    const result = await mgr.activateTool(
+      "search_and_replace",
+      ALL_NAMES,
+      plugin,
+    );
+    expect(result).toBe("already_active");
+    expect(saves).toBe(0);
+  });
+
   test("returns 'activated' and writes to promoted list", async () => {
     const plugin = makePlugin();
     const result = await mgr.activateTool(

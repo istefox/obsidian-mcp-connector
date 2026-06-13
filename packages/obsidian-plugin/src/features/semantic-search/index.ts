@@ -1,10 +1,9 @@
-import { type } from "arktype";
 import type McpToolsPlugin from "$/main";
 import {
   globalSettingsMutex,
   type Mutex,
 } from "$/features/command-permissions";
-import { logger } from "$/shared/logger";
+import { SettingsStore } from "$/shared/settingsStore";
 import {
   DEFAULT_SEMANTIC_SETTINGS,
   semanticSearchSettingsSchema,
@@ -170,44 +169,16 @@ async function loadAndPersistSettings(
   plugin: McpToolsPlugin,
   mutex: Mutex,
 ): Promise<SemanticSearchSettings> {
-  return mutex.run(async () => {
-    const data = ((await plugin.loadData()) as Record<string, unknown>) ?? {};
-    const stored = data.semanticSearch as
-      | Partial<SemanticSearchSettings>
-      | undefined;
-
-    const merged: SemanticSearchSettings = {
-      ...DEFAULT_SEMANTIC_SETTINGS,
-      ...(stored ?? {}),
-    };
-
-    const validated = semanticSearchSettingsSchema(merged);
-    if (validated instanceof type.errors) {
-      // Settings on disk are malformed — fall back to defaults but log
-      // so the user can find out via plugin logs why their tweaks were
-      // ignored. Never throw: a corrupt settings field must not crash
-      // the plugin onload.
-      logger.warn("semantic-search settings invalid, using defaults", {
-        summary: validated.summary,
-        stored,
-      });
-      const defaults = { ...DEFAULT_SEMANTIC_SETTINGS };
-      data.semanticSearch = defaults;
-      await plugin.saveData(data);
-      return defaults;
-    }
-
-    // Persist iff the merge added defaults that weren't on disk.
-    const needsPersist =
-      stored === undefined ||
-      JSON.stringify(stored) !== JSON.stringify(validated);
-    if (needsPersist) {
-      data.semanticSearch = validated;
-      await plugin.saveData(data);
-    }
-
-    return validated;
-  });
+  // SettingsStore.loadSlice owns the merge-defaults + arktype-validate
+  // + persist-iff-changed cycle under the mutex. Invalid on-disk data
+  // falls back to defaults (persisted, warned) without throwing.
+  return new SettingsStore(plugin, mutex).loadSlice<SemanticSearchSettings>(
+    "semanticSearch",
+    {
+      schema: semanticSearchSettingsSchema,
+      defaults: DEFAULT_SEMANTIC_SETTINGS,
+    },
+  );
 }
 
 class NoopProvider implements SemanticSearchProvider {
@@ -305,11 +276,10 @@ export async function applySettings(
   state: SemanticSearchState,
   next: SemanticSearchSettings,
 ): Promise<void> {
-  await state.settingsMutex.run(async () => {
-    const data = ((await plugin.loadData()) as Record<string, unknown>) ?? {};
-    data.semanticSearch = next;
-    await plugin.saveData(data);
-  });
+  await new SettingsStore(plugin, state.settingsMutex).updateSlice(
+    "semanticSearch",
+    () => next,
+  );
   state.settings = next;
 
   const pendingKey = DOWNLOADABLE_PROVIDER_KEYS[next.provider];
