@@ -3,6 +3,14 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.20.0] — 2026-06-14
+
+Adds structured output to every tool. MCP clients that support `structuredContent` now receive a typed object alongside the existing text. Clients that read only the text see no change.
+
+### Added
+
+- **`structuredContent` on every tool result.** `successJson` now emits the object form as `structuredContent` next to the existing `content[].text` JSON string, so structured-aware clients (Claude Desktop, Claude Code) get a typed object without parsing the text blob. Plain objects pass through as-is; arrays and primitives are wrapped as `{ result: value }`. The text payload stays byte-identical, so existing clients keep working unchanged. All 48 tools gain this from a single change in the shared response builder, with no dependency, registry, or transport changes. (PR #297)
+
 ## [0.19.0] — 2026-06-13
 
 Adds canvas support. Three tools read and build Obsidian Canvas files as structured graphs instead of opaque text.
