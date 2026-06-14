@@ -210,3 +210,4 @@ CLAUDE.md.bak-*
 docs/superpowers/plans/
 packages/obsidian-plugin/.claude/.triage-fix-last-main.json
 .claude/.triage-fix-last-feat_transformersjs-v4-onnx-ir10.json
+.claude/.triage-fix-last-feat_structured-tool-output.json

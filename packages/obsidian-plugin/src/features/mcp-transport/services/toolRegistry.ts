@@ -138,6 +138,7 @@ const audioResult = type({
 export const resultSchema = type({
   content: textResult.or(imageResult).or(audioResult).array(),
   "isError?": "boolean",
+  "structuredContent?": type("Record<string, unknown>"),
 });
 
 type ResultSchema = typeof resultSchema.infer;

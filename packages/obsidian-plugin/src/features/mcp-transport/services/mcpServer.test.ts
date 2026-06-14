@@ -222,4 +222,54 @@ describe("end-to-end: HTTP → McpServer", () => {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
   });
+
+  test("tools/call result carries structuredContent in the wire response", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 99,
+          method: "tools/call",
+          params: { name: "get_server_info", arguments: {} },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      // content[].text is present (backward-compat path)
+      const text = body?.result?.content?.[0]?.text as string;
+      expect(typeof text).toBe("string");
+      const parsed = JSON.parse(text);
+      expect(parsed.status).toBe("ok");
+
+      // structuredContent must be present and be the same object
+      const sc = body?.result?.structuredContent as Record<string, unknown>;
+      expect(sc).toBeDefined();
+      expect(typeof sc).toBe("object");
+      expect(sc.status).toBe("ok");
+      // structuredContent object matches the parsed text blob
+      expect(sc).toEqual(parsed);
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
 });

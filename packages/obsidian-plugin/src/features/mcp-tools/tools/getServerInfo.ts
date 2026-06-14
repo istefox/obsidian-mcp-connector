@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { successText } from "../services/responseBuilders";
+import { successJson, type ToolResponse } from "../services/responseBuilders";
 
 export const getServerInfoSchema = type({
   name: '"get_server_info"',
@@ -28,7 +28,7 @@ export type GetServerInfoContext = {
 
 export async function getServerInfoHandler(
   ctx: GetServerInfoContext,
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<ToolResponse> {
   const localTransport = ctx.getLocalTransport?.();
   const body = {
     status: "ok",
@@ -36,5 +36,5 @@ export async function getServerInfoHandler(
     transport: "streamable-http",
     ...(localTransport ? { localTransport } : {}),
   };
-  return successText(JSON.stringify(body));
+  return successJson(body);
 }
