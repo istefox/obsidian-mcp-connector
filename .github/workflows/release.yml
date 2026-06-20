@@ -91,7 +91,9 @@ jobs:
 
       - name: Validate MCPB bundle (0.4.x line)
         if: steps.release_line.outputs.ships_binary != 'true'
-        run: npx --yes @anthropic-ai/mcpb@latest validate obsidian-mcp-connector.mcpb
+        run: |
+          cd /tmp
+          npx --yes @anthropic-ai/mcpb@latest validate $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb
 
       - name: Generate artifact attestation for the plugin bundle (0.4.x line)
         if: steps.release_line.outputs.ships_binary != 'true'
