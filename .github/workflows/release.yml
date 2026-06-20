@@ -1,22 +1,5 @@
 name: Release
 
-# Release-line-aware workflow:
-#
-# - Plugin artifacts: the 0.3.x line uploads main.js + manifest.json +
-#   the obsidian-plugin-*.zip convenience archive + the cross-platform
-#   mcp-server binaries. The 0.4.x line uploads only main.js +
-#   manifest.json (no zip, no binary).
-#
-# - mcp-server cross-platform binaries are built and uploaded ONLY for
-#   tags on the 0.3.x line. The 0.4.x line ships an in-process MCP
-#   server inside the plugin (no platform binary). Discrimination is
-#   by tag name prefix — `0.3.` matches the bug-fix line, anything
-#   else (`0.4.`, `0.4.0-*`, `0.5.`, …) is plugin-only.
-#
-# This keeps the protected 0.3.x hotfix line shipping its full asset
-# set (the BRAT users on `main` rely on it) while letting the 0.4.0
-# stable cut and beyond ship cleanly with no binary in the release.
-
 on:
   push:
     tags:
@@ -40,17 +23,6 @@ jobs:
         with:
           bun-version: 1.3.12
 
-      - name: Determine release line
-        id: release_line
-        run: |
-          if [[ "${{ github.ref_name }}" == 0.3.* ]]; then
-            echo "ships_binary=true" >> "$GITHUB_OUTPUT"
-            echo "Release line: 0.3.x — will build mcp-server cross-platform binaries"
-          else
-            echo "ships_binary=false" >> "$GITHUB_OUTPUT"
-            echo "Release line: 0.4.x+ — plugin-only, no mcp-server binary"
-          fi
-
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v3
@@ -68,38 +40,21 @@ jobs:
       - name: Install Dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build plugin (always)
+      - name: Build plugin
         env:
-          # The 0.3.x plugin reads GITHUB_DOWNLOAD_URL at bundle time to
-          # know where to fetch the mcp-server binary from. The 0.4.x
-          # plugin no longer downloads a binary, but we keep these env
-          # vars wired so the same workflow handles both lines without
-          # branching.
-          GITHUB_DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bun --filter '@obsidian-mcp-tools/obsidian-plugin' release
 
-      - name: Build mcp-server binaries (0.3.x line only)
-        if: steps.release_line.outputs.ships_binary == 'true'
-        run: bun --filter '@obsidian-mcp-tools/mcp-server' release
-
-      - name: Generate artifact attestation for MCP server binaries (0.3.x line only)
-        if: steps.release_line.outputs.ships_binary == 'true'
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: "packages/mcp-server/dist/*"
-
-      - name: Validate MCPB bundle (0.4.x line)
-        if: steps.release_line.outputs.ships_binary != 'true'
+      - name: Validate MCPB bundle
         run: |
           cd /tmp
-          npx --yes @anthropic-ai/mcpb@latest validate $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb
+          mkdir mcpb-check && cd mcpb-check
+          unzip $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb manifest.json
+          npx --yes @anthropic-ai/mcpb@latest validate manifest.json
 
-      - name: Generate artifact attestation for the plugin bundle (0.4.x line)
-        if: steps.release_line.outputs.ships_binary != 'true'
+      - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v4
         with:
-          # Attest both the plugin bundle and the Claude Desktop extension.
           subject-path: |
             main.js
             obsidian-mcp-connector.mcpb
@@ -108,7 +63,7 @@ jobs:
         id: get_release_body
         uses: actions/github-script@v9
         with:
-          result-encoding: string # This tells the action to return a raw string
+          result-encoding: string
           script: |
             const release = await github.rest.repos.getRelease({
               owner: context.repo.owner,
@@ -117,8 +72,7 @@ jobs:
             });
             return release.data.body || '';
 
-      - name: Upload plugin artifacts (0.3.x line — includes convenience zip)
-        if: steps.release_line.outputs.ships_binary == 'true'
+      - name: Upload plugin artifacts
         env:
           GH_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         uses: ncipollo/release-action@v1
@@ -126,51 +80,14 @@ jobs:
           allowUpdates: true
           omitName: true
           tag: ${{ github.ref_name }}
-          # styles.css intentionally omitted — Svelte 5 inlines
-          # component CSS into main.js, no separate stylesheet is
-          # emitted by this build. ncipollo/release-action errors out
-          # if a literal (non-glob) artifact is missing.
-          artifacts: "packages/obsidian-plugin/releases/obsidian-plugin-*.zip,main.js,manifest.json"
+          # styles.css intentionally omitted — Svelte 5 inlines component CSS into main.js.
+          # NOTE: obsidian-mcp-connector.mcpb is a Claude Desktop extension (not a plugin zip).
+          # The GH013 rule targets .zip plugin archives; .mcpb has not triggered it.
+          # If the store reviewer flags this, move the .mcpb upload to a separate step.
+          artifacts: "main.js,manifest.json,obsidian-mcp-connector.mcpb"
           body: |
             ${{ steps.get_release_body.outputs.result }}
 
             ---
             ✨ This release includes attested build artifacts.
             📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
-
-      - name: Upload plugin artifacts (0.4.x line — main.js and manifest.json only)
-        if: steps.release_line.outputs.ships_binary != 'true'
-        env:
-          GH_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          omitName: true
-          tag: ${{ github.ref_name }}
-          # styles.css intentionally omitted — Svelte 5 inlines
-          # component CSS into main.js, no separate stylesheet is
-          # emitted by this build. ZIP excluded: the Obsidian store
-          # reviewer rejects releases that have assets beyond main.js
-          # and manifest.json (GH013 rule violation on 0.12.0).
-          # NOTE: obsidian-mcp-connector.mcpb is a Claude Desktop
-          # extension (different file type from a plugin zip). The GH013
-          # rule targets .zip plugin archives; .mcpb has not triggered it.
-          # If the store reviewer flags this, move the .mcpb upload to a
-          # separate ncipollo/release-action step.
-          artifacts: "main.js,manifest.json,obsidian-mcp-connector.mcpb"
-          body: |
-            ${{ steps.get_release_body.outputs.result }}
-
-            ---
-            ✨ This release includes an attested build artifact (main.js).
-            📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
-
-      - name: Upload mcp-server binaries (0.3.x line only)
-        if: steps.release_line.outputs.ships_binary == 'true'
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          omitName: true
-          omitBody: true
-          tag: ${{ github.ref_name }}
-          artifacts: "packages/mcp-server/dist/mcp-server-*"
