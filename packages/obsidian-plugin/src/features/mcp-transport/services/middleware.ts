@@ -4,7 +4,11 @@ import { compareTokens } from "./token";
 
 export type MethodPathResult = { ok: true } | { ok: false; status: 404 | 405 };
 
-const ALLOWED_METHODS = new Set(["GET", "POST"]);
+// GET is intentionally excluded: our stateless per-request architecture never
+// sends server-initiated events, so the SSE stream that GET opens is useless.
+// Returning 405 causes mcp-remote to operate POST-only (it explicitly handles
+// 405 in _startOrAuthSse with a silent return, so no error or fallback fires).
+const ALLOWED_METHODS = new Set(["POST"]);
 
 /**
  * Validate HTTP method and request path.
@@ -18,7 +22,7 @@ const ALLOWED_METHODS = new Set(["GET", "POST"]);
  *
  * @param method - HTTP method from req.method (may be undefined)
  * @param url - Request URL from req.url (may be undefined)
- * @returns Result ok=true when path matches /mcp or /mcp/* AND method is GET or POST
+ * @returns Result ok=true when path matches /mcp or /mcp/* AND method is POST
  */
 export function checkMethodAndPath(
   method: string | undefined,
