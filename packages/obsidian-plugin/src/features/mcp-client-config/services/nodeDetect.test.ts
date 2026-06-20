@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import os from "os";
 import {
   clearNodeDetectCache,
   detectBrew,
   detectNode,
+  getDetectedNpxPath,
   installNodeViaBrew,
   type ExecRunner,
 } from "./nodeDetect";
@@ -237,6 +239,54 @@ describe("detectNode — canonical-path fallback (launchctl PATH gotcha)", () =>
     expect(r).toEqual({ found: true, version: "20.0.0", raw: "v20.0.0\n" });
     // The full evil string is the literal argv[0] — never split by a shell.
     expect(received).toEqual({ file: evil, args: ["--version"] });
+  });
+});
+
+describe("getDetectedNpxPath", () => {
+  test("null when node was never detected", () => {
+    expect(getDetectedNpxPath()).toBeNull();
+  });
+
+  test("absolute /opt/homebrew/bin/node → /opt/homebrew/bin/npx", async () => {
+    const runner: ExecRunner = async (file) => {
+      if (file === "node") throw new Error("spawn node ENOENT");
+      if (file === "/opt/homebrew/bin/node")
+        return { stdout: "v22.3.0\n", stderr: "" };
+      throw new Error("unexpected: " + file);
+    };
+    await detectNode({
+      runner,
+      forceRefresh: true,
+      candidatePaths: ["/opt/homebrew/bin/node"],
+      pathExists: () => true,
+    });
+    expect(getDetectedNpxPath()).toBe("/opt/homebrew/bin/npx");
+  });
+
+  test("absolute Windows node.exe → npx.cmd (issue #302)", async () => {
+    const runner: ExecRunner = async (file) => {
+      if (file === "node") throw new Error("spawn node ENOENT");
+      if (file === "C:\\Program Files\\nodejs\\node.exe")
+        return { stdout: "v22.3.0\n", stderr: "" };
+      throw new Error("unexpected: " + file);
+    };
+    await detectNode({
+      runner,
+      forceRefresh: true,
+      candidatePaths: ["C:\\Program Files\\nodejs\\node.exe"],
+      pathExists: () => true,
+    });
+    expect(getDetectedNpxPath()).toBe("C:\\Program Files\\nodejs\\npx.cmd");
+  });
+
+  test("PATH-based lookup → platform-appropriate npx name", async () => {
+    const runner: ExecRunner = async () => ({
+      stdout: "v22.3.0\n",
+      stderr: "",
+    });
+    await detectNode({ runner, forceRefresh: true });
+    const expected = os.platform() === "win32" ? "npx.cmd" : "npx";
+    expect(getDetectedNpxPath()).toBe(expected);
   });
 });
 
