@@ -3,6 +3,22 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.21.0] — 2026-06-20
+
+Added a "Download .mcpb" button in the Quick setup for clients section of the plugin settings. Clicking it generates a Claude Desktop extension bundle and opens a save dialog. Drag the downloaded file onto Claude Desktop. Claude Desktop asks for the bearer token on first install and stores it in the system keychain, not in a plaintext config file.
+
+### Added
+
+- **Claude Desktop extension (.mcpb)**: new button in plugin settings generates and downloads a `.mcpb` bundle for Claude Desktop. The bundle uses `mcp-remote` as a stdio→HTTP bridge. No token is embedded, and no Node.js runtime is bundled. Node.js is still required (same prerequisite as the manual flow).
+- `scripts/build-mcpb.ts`: CI script that produces `obsidian-mcp-connector.mcpb` at release time using the official `@anthropic-ai/mcpb` CLI.
+- GitHub Releases now include `obsidian-mcp-connector.mcpb` alongside `main.js`.
+
+### Changed
+
+- README Quick Setup: `.mcpb` download is the recommended Claude Desktop setup path; the manual JSON config is documented as the advanced alternative.
+
+---
+
 ## [0.20.0] — 2026-06-14
 
 Adds structured output to every tool. MCP clients that support `structuredContent` now receive a typed object alongside the existing text. Clients that read only the text see no change.

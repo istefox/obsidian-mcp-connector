@@ -61,4 +61,9 @@ export {
   type PreWarmResult,
 } from "./services/preWarm";
 
+export {
+  generateMcpb,
+  type McpbGeneratorInput,
+} from "./services/mcpbGenerator";
+
 export { default as ClientConfigSection } from "./components/ClientConfigSection.svelte";
