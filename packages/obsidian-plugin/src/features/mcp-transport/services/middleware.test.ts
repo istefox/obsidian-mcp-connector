@@ -6,8 +6,11 @@ describe("checkMethodAndPath", () => {
     expect(checkMethodAndPath("POST", "/mcp")).toEqual({ ok: true });
   });
 
-  test("accepts GET /mcp", () => {
-    expect(checkMethodAndPath("GET", "/mcp")).toEqual({ ok: true });
+  test("rejects GET /mcp with 405 (stateless server has no SSE to offer)", () => {
+    expect(checkMethodAndPath("GET", "/mcp")).toEqual({
+      ok: false,
+      status: 405,
+    });
   });
 
   test("accepts /mcp/ with trailing slash", () => {
