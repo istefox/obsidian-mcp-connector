@@ -198,7 +198,8 @@ export function getDetectedNodeBinDir(): string | null {
  */
 export function getDetectedNpxPath(): string | null {
   if (cachedNodePath === null) return null;
-  if (cachedNodePath === "node") return "npx";
+  if (cachedNodePath === "node")
+    return os.platform() === "win32" ? "npx.cmd" : "npx";
   // Replace the trailing `node` (or `node.exe`) with the npx
   // counterpart. Use a regex so we don't accidentally chop a
   // path that happens to contain "node" elsewhere.
