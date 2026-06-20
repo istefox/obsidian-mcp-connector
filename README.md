@@ -119,10 +119,11 @@ Claude Desktop only speaks stdio MCP, so it reaches the in-process server throug
 
 1. In the plugin settings, under **Quick setup for clients**, click **Download .mcpb**.
 2. Drag the file onto Claude Desktop.
-3. Claude Desktop asks for your bearer token once. Copy it from the plugin's **Access Control** panel. Claude Desktop stores it in your system keychain, not in plaintext.
-4. The extension shows as **running** in Settings → Extensions.
+3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
-Port changes and token rotations do not require re-downloading the bundle. Update the values in Claude Desktop's extension settings.
+The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. Node.js must be on your PATH (the plugin settings show a warning if it is missing).
+
+If you rotate your token or change the server port, download a fresh `.mcpb` and drag it onto Claude Desktop to replace the existing extension.
 
 **Alternative: manual JSON config**
 
