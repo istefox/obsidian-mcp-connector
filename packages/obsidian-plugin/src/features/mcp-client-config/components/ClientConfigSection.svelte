@@ -9,6 +9,7 @@
     streamableHttpConfig,
     wrapInMcpServers,
   } from "../services/generators";
+  import { generateMcpb } from "../services/mcpbGenerator";
   import {
     getAutoWriteEnabled,
     setAutoWriteEnabled,
@@ -48,6 +49,7 @@
   let url = "";
   let autoWrite = false;
   let busy = false;
+  let mcpbBusy = false;
 
   // Claude Desktop integration (T9 + T10): Node.js presence + mcp-remote
   // pre-warm. Both are read-only/idempotent UX hints driven from the
@@ -158,6 +160,42 @@
       return new Date(iso).toLocaleString();
     } catch {
       return iso;
+    }
+  }
+
+  async function handleDownloadMcpb(): Promise<void> {
+    if (mcpbBusy) return;
+    mcpbBusy = true;
+    try {
+      const bytes = generateMcpb({ version: plugin.manifest.version, port });
+      const filename = "obsidian-mcp-connector.mcpb";
+
+      // Try Electron save dialog first (desktop only).
+      try {
+        const { remote } = require("electron") as { remote: { dialog: Electron.Dialog } };
+        const { filePath } = await remote.dialog.showSaveDialog({
+          defaultPath: filename,
+          filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
+        });
+        if (!filePath) {
+          new Notice("Save cancelled.");
+          return;
+        }
+        const fsp = await import("fs/promises");
+        await fsp.writeFile(filePath, Buffer.from(bytes));
+        new Notice(`${filename} saved.`);
+      } catch {
+        // Fallback: write into the vault root and tell the user where it landed.
+        const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        await plugin.app.vault.adapter.writeBinary(filename, ab as ArrayBuffer);
+        new Notice(`Saved to vault root: ${filename}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to generate .mcpb: ${msg}`);
+      console.error("[mcpb] generation failed", err);
+    } finally {
+      mcpbBusy = false;
     }
   }
 
@@ -273,6 +311,30 @@
         aria-label="Copy streamable-http config (Cursor, Cline, Continue, VS Code)"
       >
         Cursor / Cline / Continue
+      </button>
+    </div>
+  </div>
+
+  <div class="setting-item mcpb-row">
+    <div class="setting-item-info">
+      <div class="setting-item-name">Claude Desktop extension</div>
+      <div class="setting-item-description">
+        Drag the downloaded file onto Claude Desktop. You will be asked for
+        your token once. It is saved in the system keychain, not in plaintext.
+        Node.js must be on your PATH (see below).
+      </div>
+    </div>
+    <div class="setting-item-control">
+      <button
+        type="button"
+        on:click={handleDownloadMcpb}
+        disabled={!token ||
+          !port ||
+          (nodeStatus !== null && !nodeStatus.found) ||
+          mcpbBusy}
+        aria-label="Download Claude Desktop extension (.mcpb)"
+      >
+        {mcpbBusy ? "Generating…" : "Download .mcpb"}
       </button>
     </div>
   </div>

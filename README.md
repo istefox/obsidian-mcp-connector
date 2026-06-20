@@ -113,9 +113,22 @@ The plugin settings expose three **Copy config** buttons, one per supported clie
 
 ### Claude Desktop
 
-Claude Desktop only speaks stdio MCP, so it reaches the in-process server through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path).
+Claude Desktop only speaks stdio MCP, so it reaches the in-process server through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path). Node.js must be on your PATH. The plugin auto-detects it and offers a one-click Homebrew install if it is missing.
 
-1. Click **Copy config for Claude Desktop**. The snippet looks like:
+**Recommended: download the `.mcpb` extension**
+
+1. In the plugin settings, under **Quick setup for clients**, click **Download .mcpb**.
+2. Drag the file onto Claude Desktop.
+3. Claude Desktop asks for your bearer token once. Copy it from the plugin's **Access Control** panel. Claude Desktop stores it in your system keychain, not in plaintext.
+4. The extension shows as **running** in Settings → Extensions.
+
+Port changes and token rotations do not require re-downloading the bundle. Update the values in Claude Desktop's extension settings.
+
+**Alternative: manual JSON config**
+
+For advanced users or when the `.mcpb` flow is not available:
+
+1. Click **Claude Desktop** under **Copy config snippets**. The snippet looks like:
    ```json
    {
      "mcpServers": {

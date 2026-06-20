@@ -89,11 +89,18 @@ jobs:
         with:
           subject-path: "packages/mcp-server/dist/*"
 
+      - name: Validate MCPB bundle (0.4.x line)
+        if: steps.release_line.outputs.ships_binary != 'true'
+        run: npx --yes @anthropic-ai/mcpb@latest validate obsidian-mcp-connector.mcpb
+
       - name: Generate artifact attestation for the plugin bundle (0.4.x line)
         if: steps.release_line.outputs.ships_binary != 'true'
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: "main.js"
+          # Attest both the plugin bundle and the Claude Desktop extension.
+          subject-path: |
+            main.js
+            obsidian-mcp-connector.mcpb
 
       - name: Get existing release body
         id: get_release_body
@@ -143,7 +150,12 @@ jobs:
           # emitted by this build. ZIP excluded: the Obsidian store
           # reviewer rejects releases that have assets beyond main.js
           # and manifest.json (GH013 rule violation on 0.12.0).
-          artifacts: "main.js,manifest.json"
+          # NOTE: obsidian-mcp-connector.mcpb is a Claude Desktop
+          # extension (different file type from a plugin zip). The GH013
+          # rule targets .zip plugin archives; .mcpb has not triggered it.
+          # If the store reviewer flags this, move the .mcpb upload to a
+          # separate ncipollo/release-action step.
+          artifacts: "main.js,manifest.json,obsidian-mcp-connector.mcpb"
           body: |
             ${{ steps.get_release_body.outputs.result }}
 

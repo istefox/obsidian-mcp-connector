@@ -15,12 +15,14 @@
 		"check": "tsc --noEmit",
 		"dev": "bun --watch run bun.config.ts --watch",
 		"link": "bun scripts/link.ts",
-		"release": "bun run build && bun run zip",
+		"build:mcpb": "bun scripts/build-mcpb.ts",
+		"release": "bun run build && bun run zip && bun run build:mcpb",
 		"zip": "bun scripts/zip.ts"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",
 		"@modelcontextprotocol/sdk": "1.29.0",
+		"fflate": "^0.8.2",
 		"onnxruntime-web": "1.26.0",
 		"arktype": "^2.0.0-rc.30",
 		"json-logic-js": "^2.0.5",
@@ -32,6 +34,7 @@
 		"turndown": "^7.2.0"
 	},
 	"devDependencies": {
+		"@anthropic-ai/mcpb": "^2.1.2",
 		"@types/bun": "1.3.14",
 		"@types/fs-extra": "^11.0.4",
 		"@types/json-logic-js": "^2.0.8",
