@@ -170,10 +170,18 @@
       const bytes = generateMcpb({ version: plugin.manifest.version, port });
       const filename = "obsidian-mcp-connector.mcpb";
 
-      // Try Electron save dialog first (desktop only).
-      try {
-        const { remote } = require("electron") as { remote: { dialog: Electron.Dialog } };
-        const { filePath } = await remote.dialog.showSaveDialog({
+      // Detect Electron remote (desktop only). If unavailable, fall back to vault.
+      const electronRemote = (() => {
+        try {
+          const r = (require("electron") as { remote?: { dialog: Electron.Dialog } }).remote;
+          return r?.dialog ? r : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      if (electronRemote) {
+        const { filePath } = await electronRemote.dialog.showSaveDialog({
           defaultPath: filename,
           filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
         });
@@ -181,11 +189,12 @@
           new Notice("Save cancelled.");
           return;
         }
-        const fsp = await import("fs/promises");
-        await fsp.writeFile(filePath, Buffer.from(bytes));
+        // require() is reliable for Node built-ins in Electron; dynamic import() is not.
+        const { writeFile } = require("fs/promises") as typeof import("fs/promises");
+        await writeFile(filePath, Buffer.from(bytes));
         new Notice(`${filename} saved.`);
-      } catch {
-        // Fallback: write into the vault root and tell the user where it landed.
+      } else {
+        // Vault fallback when Electron remote is unavailable (mobile / unusual env).
         const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         await plugin.app.vault.adapter.writeBinary(filename, ab as ArrayBuffer);
         new Notice(`Saved to vault root: ${filename}`);
