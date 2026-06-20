@@ -167,7 +167,7 @@
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      const bytes = generateMcpb({ version: plugin.manifest.version, port });
+      const bytes = generateMcpb({ version: plugin.manifest.version, port, token });
       const filename = "obsidian-mcp-connector.mcpb";
 
       // Detect Electron remote (desktop only). If unavailable, fall back to vault.
@@ -328,9 +328,9 @@
     <div class="setting-item-info">
       <div class="setting-item-name">Claude Desktop extension</div>
       <div class="setting-item-description">
-        Drag the downloaded file onto Claude Desktop. You will be asked for
-        your token once. It is saved in the system keychain, not in plaintext.
-        Node.js must be on your PATH (see below).
+        Drag the downloaded file onto Claude Desktop. The token is embedded —
+        no paste needed. Do not share this file. Node.js must be on your PATH
+        (see below).
       </div>
     </div>
     <div class="setting-item-control">
