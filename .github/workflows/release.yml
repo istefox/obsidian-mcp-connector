@@ -49,7 +49,7 @@ jobs:
         run: |
           cd /tmp
           mkdir mcpb-check && cd mcpb-check
-          unzip $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb manifest.json
+          unzip $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb
           npx --yes @anthropic-ai/mcpb@latest validate manifest.json
 
       - name: Generate artifact attestation

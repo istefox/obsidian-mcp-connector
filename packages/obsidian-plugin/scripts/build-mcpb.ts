@@ -11,6 +11,7 @@ const MANIFEST = {
   description:
     "Access your Obsidian vault (semantic search, notes, Templater prompts) via MCP.",
   author: { name: "Stefano Ferri" },
+  icon: "icon.png",
   server: {
     type: "node",
     entry_point: "server/index.js",
