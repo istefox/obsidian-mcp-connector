@@ -304,6 +304,12 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 - **Fix**: fully quit Claude Desktop (Cmd+Q on macOS) and reopen it. Claude Desktop only re-reads `claude_desktop_config.json` at launch, so closing the window or an in-app restart is not enough. With auto-write on (the default) the plugin keeps the config in sync afterward.
 - Still failing? Confirm the port in `claude_desktop_config.json` (`http://127.0.0.1:<port>/mcp`) matches the port the plugin logs on start (Settings, **Open Logs**), and make sure only one Obsidian vault has the plugin enabled (two instances contend for the port). Then fully restart Claude Desktop again.
 
+### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
+
+- **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
+- **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. Claude Code over direct HTTP is unaffected.
+- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py). See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for the setup.
+
 ### `tool/call` returns HTTP 401
 
 - The bearer token in your client config does not match the plugin's current token. Open the plugin settings, **Bearer token**, click **Show** to reveal the current token and **Copy** to copy it. Update your client config and restart the client.
