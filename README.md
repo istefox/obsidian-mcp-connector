@@ -13,7 +13,7 @@ MCP Connector lets AI applications like Claude Desktop, Claude Code, Cursor, Cli
 The plugin hosts the MCP server in-process inside Obsidian and exposes Streamable HTTP on `127.0.0.1:27200`. No native binary ships from this repository, so there is no platform-specific executable to download and run from GitHub Releases.
 
 - **HTTP-native MCP clients** (Claude Code, Cursor, Cline, Continue, Windsurf, VS Code) connect directly to the local HTTP endpoint.
-- **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge, a two-line config the plugin generates for you.
+- **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge, a two-line config the plugin generates for you. On Windows, where `mcp-remote` currently hangs on connect, a bundled POST-only Python bridge replaces it (see [Troubleshooting](#troubleshooting)).
 - **Native semantic search** runs entirely on-device via Transformers.js. No cloud, no Smart Connections requirement.
 - **Everything runs through Obsidian's own APIs.** Vault reads, writes, plain-text search, and Dataview queries all go through `app.vault`, `app.metadataCache`, and the Dataview plugin API in-process. No external HTTP service is required.
 
@@ -150,6 +150,26 @@ For advanced users or when the `.mcpb` flow is not available:
 3. Restart Claude Desktop.
 
 Or tick **Auto-write Claude Desktop config** in the plugin settings. The plugin keeps the file in sync on token rotation, with a `.backup` written before each rewrite.
+
+**Windows note: use the POST-only bridge**
+
+On Windows, `mcp-remote` has a bug that makes Claude Desktop hang for 60 seconds on connect, then fail with "Could not attach to MCP server". This is not a plugin bug: the same hang shows up against unrelated MCP servers, and Claude Code over direct HTTP is fine. Until `mcp-remote` ships a fix ([geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296)), Windows users should skip `mcp-remote` and run the bundled bridge instead.
+
+`scripts/obsidian_mcp_bridge.py` is a small Python script, standard library only with nothing to install, that talks to the plugin over POST requests, so it never opens the stream that triggers the hang. Point `claude_desktop_config.json` at it:
+
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "command": "python",
+      "args": ["C:\\Users\\you\\obsidian_mcp_bridge.py", "http://127.0.0.1:27200/mcp"],
+      "env": { "OBSIDIAN_BEARER_TOKEN": "paste-your-token-here" }
+    }
+  }
+}
+```
+
+Full setup, including how to grab the script and verify it works, is in [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md). macOS and Linux are not affected; use the standard `mcp-remote` config above.
 
 ### Claude Code
 
@@ -307,8 +327,8 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 ### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
 
 - **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
-- **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. Claude Code over direct HTTP is unaffected.
-- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py). See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for the setup.
+- **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. The plugin answers an identical request in milliseconds over direct HTTP, and Claude Code is unaffected. Tracked upstream at [geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296).
+- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Quick setup for clients](#claude-desktop).
 
 ### `tool/call` returns HTTP 401
 
