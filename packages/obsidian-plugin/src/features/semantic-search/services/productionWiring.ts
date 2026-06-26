@@ -41,6 +41,16 @@ import {
 import { makeChunkerForProvider } from "./chunker";
 import type { ExcerptResolver } from "./nativeProvider";
 
+/**
+ * El camino Live de indexación debe ver el MISMO conjunto de archivos que
+ * el rebuild (`vault.getMarkdownFiles()`): solo `.md`. Sin esta guarda, un
+ * `create`/`modify` de un PDF u otro adjunto se reenvía al indexer, que lo
+ * lee como UTF-8 y lo vectoriza como basura (pico de CPU + índice sucio).
+ */
+export function isIndexableFile(f: unknown): f is TFile {
+  return f instanceof TFile && f.extension === "md";
+}
+
 export async function wireSemanticSearch(
   plugin: McpToolsPlugin,
 ): Promise<SemanticSearchState | undefined> {
@@ -80,7 +90,7 @@ export async function wireSemanticSearch(
           on: (event: string, handler: (f: unknown) => void) => EventRef;
         }
       ).on(event, (f: unknown) => {
-        if (f instanceof TFile) handler(f.path);
+        if (isIndexableFile(f)) handler(f.path);
       });
       return () => plugin.app.vault.offref(ref);
     },
