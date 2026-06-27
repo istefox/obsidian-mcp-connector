@@ -3,6 +3,16 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.21.6] — 2026-06-27
+
+Fixes a bug where the semantic search live indexer embedded non-markdown files. Adding a PDF or other attachment to the vault no longer triggers embedding, so the CPU spike and the junk chunks in search results are gone.
+
+### Fixed
+
+- **Live indexer embedded PDFs and other attachments.** The live indexer processed every file created or modified in the vault, while the full rebuild only walks markdown files. When you added a PDF or attachment, the indexer read it as UTF-8, chunked it, and embedded it. That spiked CPU in the Obsidian renderer (heavy with native providers like EmbeddingGemma 300M) and left unreadable binary chunks in the index that `search_vault_smart` queries. The live event path now indexes the same set as the rebuild: `.md` files only. (#324, fixes #323)
+
+---
+
 ## [0.21.0] — 2026-06-20
 
 Added a "Download .mcpb" button in the Quick setup for clients section of the plugin settings. Clicking it generates a Claude Desktop extension bundle and opens a save dialog. Drag the downloaded file onto Claude Desktop. Claude Desktop asks for the bearer token on first install and stores it in the system keychain, not in a plaintext config file.
