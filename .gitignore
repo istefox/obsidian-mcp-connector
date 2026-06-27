@@ -196,6 +196,9 @@ embeddings.bin
 embeddings.index.json*
 tmp/
 
+# Generated .mcpb bundles embed the live bearer token in plaintext; never commit
+*.mcpb
+
 # Local strategy / private notes & session scaffolding (never in the public repo)
 # Claude Code tooling — kept locally for development, never published
 CLAUDE.md
