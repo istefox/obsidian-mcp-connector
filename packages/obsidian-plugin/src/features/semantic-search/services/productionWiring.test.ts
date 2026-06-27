@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { probeAndWipeStaleStores } from "./productionWiring";
+import { isIndexableFile, probeAndWipeStaleStores } from "./productionWiring";
 import { createEmbeddingStoreRegistry } from "./storeRegistry";
 import { FORMAT_VERSION, type VaultAdapter } from "./store";
+import { TFile } from "obsidian";
 
 /** In-memory adapter tracking text + binary files and remove() calls. */
 function memAdapter() {
@@ -141,5 +142,35 @@ describe("probeAndWipeStaleStores", () => {
     expect(
       await mem.adapter.exists(`${BASE}/embedding-gemma-300m/embeddings.bin`),
     ).toBe(false);
+  });
+});
+
+describe("isIndexableFile", () => {
+  // Builds an object that passes `instanceof TFile` (the obsidian mock
+  // wires up the prototype) with an explicit `extension`, without
+  // depending on MockTFile.
+  function fakeTFile(path: string, extension: string): TFile {
+    const f = Object.create(TFile.prototype) as TFile;
+    Object.assign(f, { path, extension });
+    return f;
+  }
+
+  test("accepts a .md TFile", () => {
+    expect(isIndexableFile(fakeTFile("Notes/a.md", "md"))).toBe(true);
+  });
+
+  test("rejects a .pdf TFile", () => {
+    expect(isIndexableFile(fakeTFile("Attachments/doc.pdf", "pdf"))).toBe(
+      false,
+    );
+  });
+
+  test("rejects a .canvas TFile", () => {
+    expect(isIndexableFile(fakeTFile("map.canvas", "canvas"))).toBe(false);
+  });
+
+  test("rejects something that is not a TFile", () => {
+    expect(isIndexableFile({ path: "x.md", extension: "md" })).toBe(false);
+    expect(isIndexableFile(null)).toBe(false);
   });
 });
