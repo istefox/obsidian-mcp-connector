@@ -146,28 +146,30 @@ describe("probeAndWipeStaleStores", () => {
 });
 
 describe("isIndexableFile", () => {
-  // Construye un objeto que pasa `instanceof TFile` (el mock de obsidian
-  // enlaza el prototipo) con una `extension` explícita, sin depender de
-  // MockTFile.
+  // Builds an object that passes `instanceof TFile` (the obsidian mock
+  // wires up the prototype) with an explicit `extension`, without
+  // depending on MockTFile.
   function fakeTFile(path: string, extension: string): TFile {
     const f = Object.create(TFile.prototype) as TFile;
     Object.assign(f, { path, extension });
     return f;
   }
 
-  test("acepta un TFile .md", () => {
-    expect(isIndexableFile(fakeTFile("Notas/a.md", "md"))).toBe(true);
+  test("accepts a .md TFile", () => {
+    expect(isIndexableFile(fakeTFile("Notes/a.md", "md"))).toBe(true);
   });
 
-  test("rechaza un TFile .pdf", () => {
-    expect(isIndexableFile(fakeTFile("Adjuntos/doc.pdf", "pdf"))).toBe(false);
+  test("rejects a .pdf TFile", () => {
+    expect(isIndexableFile(fakeTFile("Attachments/doc.pdf", "pdf"))).toBe(
+      false,
+    );
   });
 
-  test("rechaza un TFile .canvas", () => {
-    expect(isIndexableFile(fakeTFile("mapa.canvas", "canvas"))).toBe(false);
+  test("rejects a .canvas TFile", () => {
+    expect(isIndexableFile(fakeTFile("map.canvas", "canvas"))).toBe(false);
   });
 
-  test("rechaza algo que no es TFile", () => {
+  test("rejects something that is not a TFile", () => {
     expect(isIndexableFile({ path: "x.md", extension: "md" })).toBe(false);
     expect(isIndexableFile(null)).toBe(false);
   });

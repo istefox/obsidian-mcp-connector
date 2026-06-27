@@ -42,10 +42,11 @@ import { makeChunkerForProvider } from "./chunker";
 import type { ExcerptResolver } from "./nativeProvider";
 
 /**
- * El camino Live de indexación debe ver el MISMO conjunto de archivos que
- * el rebuild (`vault.getMarkdownFiles()`): solo `.md`. Sin esta guarda, un
- * `create`/`modify` de un PDF u otro adjunto se reenvía al indexer, que lo
- * lee como UTF-8 y lo vectoriza como basura (pico de CPU + índice sucio).
+ * The live indexing path must see the SAME set of files as the rebuild
+ * (`vault.getMarkdownFiles()`): only `.md`. Without this guard, a
+ * `create`/`modify` for a PDF or other attachment is forwarded to the
+ * indexer, which reads it as UTF-8 and embeds it as garbage (CPU spike +
+ * polluted index).
  */
 export function isIndexableFile(f: unknown): f is TFile {
   return f instanceof TFile && f.extension === "md";
