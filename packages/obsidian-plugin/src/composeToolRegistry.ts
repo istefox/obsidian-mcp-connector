@@ -60,17 +60,21 @@ export async function composeToolRegistry(
   toolRegistry.register(toolCatalogSchema, () =>
     toolCatalogHandler({ registry: toolRegistry, plugin: config.plugin }),
   );
-  toolRegistry.register(activateToolSchema, async (request, { server }) =>
-    activateToolHandler({
-      arguments: (request as { arguments: { name: string; persist?: boolean } })
-        .arguments,
-      registry: toolRegistry,
-      plugin: config.plugin,
-      server,
-      onActivated: (name) =>
-        new Notice(`MCP Connector: "${name}" promoted to active`),
-      enableInRegistry: (name) => toolRegistry.enableByName(name),
-    }),
+  toolRegistry.register(
+    activateToolSchema,
+    async (request, { server, sendNotification }) =>
+      activateToolHandler({
+        arguments: (
+          request as { arguments: { name: string; persist?: boolean } }
+        ).arguments,
+        registry: toolRegistry,
+        plugin: config.plugin,
+        server,
+        onActivated: (name) =>
+          new Notice(`MCP Connector: "${name}" promoted to active`),
+        enableInRegistry: (name) => toolRegistry.enableByName(name),
+        sendNotification,
+      }),
   );
 
   // Adaptive profile filter (All/Core/Adaptive) runs before toolToggle

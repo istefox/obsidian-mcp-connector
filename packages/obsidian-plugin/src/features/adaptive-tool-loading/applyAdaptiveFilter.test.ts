@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyAdaptiveFilter } from "./applyAdaptiveFilter";
-import {
-  ADAPTIVE_META_TOOLS,
-  ALWAYS_ACTIVE_TOOLS,
-  META_TOOLS,
-} from "./constants";
+import { ALWAYS_ACTIVE_TOOLS, META_TOOLS } from "./constants";
 
 type FakeEntry = { name: string; description: string; enabled: boolean };
 
@@ -57,18 +53,15 @@ describe("applyAdaptiveFilter", () => {
     expect(registry._disabled()).toHaveLength(0);
   });
 
-  test("core profile: tool_catalog stays enabled, activate_tool is disabled", async () => {
+  test("core profile: meta-tools stay enabled, non-core domain tools disabled", async () => {
     const registry = makeRegistry(ALL_TOOLS);
     const plugin = makePlugin({ profile: "core", counters: {}, promoted: [] });
     await applyAdaptiveFilter(registry, plugin);
 
-    // tool_catalog always active
+    // Meta-tools (tool_catalog AND activate_tool) are never disabled, even
+    // in core — demoting activate_tool would make promotion impossible.
     for (const m of ALWAYS_ACTIVE_TOOLS) {
       expect(registry._disabled()).not.toContain(m);
-    }
-    // activate_tool must be disabled in core
-    for (const m of ADAPTIVE_META_TOOLS) {
-      expect(registry._disabled()).toContain(m);
     }
     // Non-core domain tools must be disabled
     expect(registry._disabled()).toContain("search_and_replace");

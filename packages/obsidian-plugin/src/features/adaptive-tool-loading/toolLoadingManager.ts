@@ -1,7 +1,6 @@
 import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
 import {
-  ADAPTIVE_META_TOOLS,
   ALWAYS_ACTIVE_TOOLS,
   CORE_SET,
   META_TOOLS,
@@ -48,7 +47,6 @@ export class ToolLoadingManager {
     const base = new Set<string>(ALWAYS_ACTIVE_TOOLS);
     for (const n of CORE_SET) base.add(n);
     if (state.profile === "adaptive") {
-      for (const n of ADAPTIVE_META_TOOLS) base.add(n);
       for (const n of state.promoted) base.add(n);
     }
     return base;
