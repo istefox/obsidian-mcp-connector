@@ -81,6 +81,18 @@ describe("getActiveToolNames", () => {
     }
   });
 
+  test("core profile honors explicit promotions (survive reconnect)", () => {
+    const state = {
+      profile: "core" as const,
+      counters: {},
+      promoted: ["search_and_replace"],
+    };
+    const active = mgr.getActiveToolNames(ALL_NAMES, state);
+    expect(active.has("search_and_replace")).toBe(true);
+    // Still no auto-promotion in core: an un-promoted non-core tool stays off.
+    expect(active.has("find_broken_links")).toBe(false);
+  });
+
   test("activate_tool is active even in core (promotion is not self-blocking)", () => {
     const coreState = { profile: "core" as const, counters: {}, promoted: [] };
     const coreActive = mgr.getActiveToolNames(ALL_NAMES, coreState);

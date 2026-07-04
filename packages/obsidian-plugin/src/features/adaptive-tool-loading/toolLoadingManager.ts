@@ -46,9 +46,12 @@ export class ToolLoadingManager {
     }
     const base = new Set<string>(ALWAYS_ACTIVE_TOOLS);
     for (const n of CORE_SET) base.add(n);
-    if (state.profile === "adaptive") {
-      for (const n of state.promoted) base.add(n);
-    }
+    // Explicit promotions are honored in BOTH core and adaptive: a tool the
+    // user (or `activate_tool`/`activate_tools`) promoted with persist must
+    // survive a reconnect regardless of profile. The only core/adaptive
+    // difference is auto-promotion by frequency, which lives in recordCall
+    // and stays adaptive-only.
+    for (const n of state.promoted) base.add(n);
     return base;
   }
 

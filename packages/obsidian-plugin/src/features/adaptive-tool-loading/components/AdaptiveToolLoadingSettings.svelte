@@ -89,9 +89,9 @@
   <h3>Tool Loading</h3>
   <p class="description">
     Control which MCP tools are loaded at connect time. "All tools" (default)
-    preserves current behavior. "Core set" loads ~13 frequently-used tools.
-    "Adaptive" starts from the core set and adds tools you use often or
-    activate explicitly via <code>activate_tool</code>.
+    loads every tool. "Core set" loads ~13 essential tools plus any you
+    promote below. "Adaptive" is the core set plus your promotions, and also
+    auto-promotes tools you use often.
   </p>
 
   {#if mounted}
@@ -131,13 +131,14 @@
       </label>
     </div>
 
-    {#if profile === "adaptive"}
+    {#if profile !== "all"}
       <div class="promoted-section">
         <p class="section-label">
           Promoted tools
           <span class="muted"
-            >— auto-promoted after {3} calls, activated via
-            <code>activate_tool</code>, or added here</span
+            >— added here, via <code>activate_tool</code>, or auto-promoted
+            after {3} calls (Adaptive only). Active at connect time in both
+            Core and Adaptive.</span
           >
         </p>
 
