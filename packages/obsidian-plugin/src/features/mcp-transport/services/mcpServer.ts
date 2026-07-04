@@ -17,6 +17,8 @@ import {
   META_TOOLS,
 } from "$/features/adaptive-tool-loading";
 import { composeToolRegistry } from "$/composeToolRegistry";
+import { MAX_REQUEST_BODY_BYTES } from "../constants";
+import { bodyTargetsActivateTool, readBodyWithCap } from "./parseRequestBody";
 
 export type McpServiceConfig = {
   app: App;
@@ -88,16 +90,26 @@ export async function createMcpService(
     // Server so tools/list and tools/call go through our boolean
     // coercion + error formatting + disableByName support.
     server.server.setRequestHandler(ListToolsRequestSchema, registry.list);
-    server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const result = await registry.dispatch(request.params, { server });
-      // Record the call for frequency-based promotion (meta-tools are excluded).
-      if (!(META_TOOLS as string[]).includes(request.params.name)) {
-        toolLoadingManager
-          .recordCall(request.params.name, config.plugin)
-          .catch(() => {});
-      }
-      return result;
-    });
+    server.server.setRequestHandler(
+      CallToolRequestSchema,
+      async (request, extra) => {
+        // Pass the SDK's request-scoped sendNotification down to the
+        // handler. activate_tool uses it so its tools/list_changed carries
+        // this call's relatedRequestId and is flushed on the POST response
+        // stream (which is SSE for activate_tool — see below).
+        const result = await registry.dispatch(request.params, {
+          server,
+          sendNotification: extra.sendNotification,
+        });
+        // Record the call for frequency-based promotion (meta-tools are excluded).
+        if (!(META_TOOLS as string[]).includes(request.params.name)) {
+          toolLoadingManager
+            .recordCall(request.params.name, config.plugin)
+            .catch(() => {});
+        }
+        return result;
+      },
+    );
     server.server.setRequestHandler(
       ListPromptsRequestSchema,
       promptRegistry.list,
@@ -106,16 +118,40 @@ export async function createMcpService(
       promptRegistry.dispatch(req.params),
     );
 
-    // Stateless mode (no sessionIdGenerator) + JSON response. Per-
-    // request transport — see file header for the SDK constraint.
+    // Inspect the body before choosing the response mode. The GET SSE
+    // stream is blocked (POST-only transport), so a server-initiated
+    // notification has nowhere to go — EXCEPT the response stream of the
+    // request that triggers it. activate_tool must therefore answer with
+    // SSE so its tools/list_changed is flushed on this call's stream and
+    // the client re-lists without a reconnect. Every other request keeps
+    // the default JSON response (Windows/mcp-remote path unchanged).
+    const rawBody = await readBodyWithCap(req, MAX_REQUEST_BODY_BYTES);
+    let parsedBody: unknown;
+    let isActivateTool = false;
+    if (rawBody !== null) {
+      try {
+        parsedBody = JSON.parse(rawBody);
+        isActivateTool = bodyTargetsActivateTool(parsedBody);
+      } catch {
+        // Malformed JSON: leave parsedBody undefined and let the SDK emit
+        // the standard -32700 parse error over the JSON response path.
+        parsedBody = undefined;
+      }
+    }
+
+    // Stateless mode (no sessionIdGenerator). Per-request transport — see
+    // file header for the SDK constraint. JSON response by default; SSE
+    // only for activate_tool so its notification can be delivered.
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
-      enableJsonResponse: true,
+      enableJsonResponse: !isActivateTool,
     });
 
     try {
       await server.connect(transport);
-      await transport.handleRequest(req, res);
+      // Pass the pre-parsed body so the SDK does not re-read the drained
+      // stream (readBodyWithCap already consumed it).
+      await transport.handleRequest(req, res, parsedBody);
     } finally {
       // Best-effort cleanup. If close() throws (e.g. transport
       // already closed by the SDK), log and swallow so the next

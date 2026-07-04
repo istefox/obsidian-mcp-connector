@@ -5,6 +5,7 @@
   import { globalSettingsMutex } from "$/features/command-permissions";
   import { ToolLoadingManager } from "../toolLoadingManager";
   import type { ToolLoadingState } from "../toolLoadingManager";
+  import { CORE_SET, META_TOOLS } from "../constants";
 
   export let plugin: McpToolsPlugin;
 
@@ -13,14 +14,41 @@
   let busy = false;
   let mounted = false;
 
+  // All registered tool names, read from the live registry when the MCP
+  // server is up. Empty when the server has not started yet (settings
+  // opened before connect): the manual picker then shows a hint.
+  let allToolNames: string[] = [];
+  let selected = "";
+
   const mgr = new ToolLoadingManager();
+
+  // Tools the user can usefully promote: everything except meta-tools and
+  // core-set tools (always active anyway) and those already promoted.
+  $: alwaysActive = new Set<string>([...META_TOOLS, ...CORE_SET]);
+  $: promotable = allToolNames
+    .filter((n) => !alwaysActive.has(n) && !promoted.includes(n))
+    .sort((a, b) => a.localeCompare(b));
 
   onMount(async () => {
     const state = await mgr.loadState(plugin);
     profile = state.profile;
     promoted = state.promoted;
+    const registry = plugin.mcpTransportState?.mcp.registry;
+    allToolNames = registry ? registry.listAll().map((t) => t.name) : [];
     mounted = true;
   });
+
+  async function addPromoted(name: string): Promise<void> {
+    if (!name) return;
+    busy = true;
+    try {
+      await mgr.activateTool(name, allToolNames, plugin);
+      promoted = [...promoted, name];
+      selected = "";
+    } finally {
+      busy = false;
+    }
+  }
 
   async function persist(patch: Partial<ToolLoadingState>): Promise<void> {
     busy = true;
@@ -61,9 +89,9 @@
   <h3>Tool Loading</h3>
   <p class="description">
     Control which MCP tools are loaded at connect time. "All tools" (default)
-    preserves current behavior. "Core set" loads ~13 frequently-used tools.
-    "Adaptive" starts from the core set and adds tools you use often or
-    activate explicitly via <code>activate_tool</code>.
+    loads every tool. "Core set" loads ~13 essential tools plus any you
+    promote below. "Adaptive" is the core set plus your promotions, and also
+    auto-promotes tools you use often.
   </p>
 
   {#if mounted}
@@ -103,15 +131,41 @@
       </label>
     </div>
 
-    {#if profile === "adaptive"}
+    {#if profile !== "all"}
       <div class="promoted-section">
         <p class="section-label">
           Promoted tools
           <span class="muted"
-            >— auto-promoted after {3} calls, or activated via
-            <code>activate_tool</code></span
+            >— added here, via <code>activate_tool</code>, or auto-promoted
+            after {3} calls (Adaptive only). Active at connect time in both
+            Core and Adaptive.</span
           >
         </p>
+
+        {#if allToolNames.length === 0}
+          <p class="muted empty-hint">
+            Connect an MCP client once so the tool list is available, then
+            reopen settings to add tools here.
+          </p>
+        {:else if promotable.length > 0}
+          <div class="add-row">
+            <select bind:value={selected} disabled={busy} aria-label="Tool to promote">
+              <option value="" disabled selected>Add a tool…</option>
+              {#each promotable as name (name)}
+                <option value={name}>{name}</option>
+              {/each}
+            </select>
+            <button
+              type="button"
+              on:click={() => void addPromoted(selected)}
+              disabled={busy || !selected}
+              aria-label="Add selected tool to promoted"
+            >
+              Add
+            </button>
+          </div>
+        {/if}
+
         {#if promoted.length === 0}
           <p class="muted empty-hint">
             No promoted tools yet. Use a non-core tool 3 times in Adaptive mode
@@ -193,6 +247,18 @@
     background: var(--background-secondary);
     border-radius: 4px;
     margin-bottom: 0.8em;
+  }
+
+  .add-row {
+    display: flex;
+    gap: 0.5em;
+    align-items: center;
+    margin-bottom: 0.6em;
+  }
+
+  .add-row select {
+    flex: 1;
+    min-width: 0;
   }
 
   .promoted-list {

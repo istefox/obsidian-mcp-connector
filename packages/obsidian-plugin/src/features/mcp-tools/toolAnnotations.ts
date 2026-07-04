@@ -115,4 +115,10 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
     idempotentHint: true,
     openWorldHint: false,
   },
+  activate_tools: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
 };

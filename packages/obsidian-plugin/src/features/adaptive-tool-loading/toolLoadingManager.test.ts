@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ToolLoadingManager } from "./toolLoadingManager";
 import {
-  ADAPTIVE_META_TOOLS,
   ALWAYS_ACTIVE_TOOLS,
   CORE_SET,
   META_TOOLS,
@@ -42,16 +41,14 @@ describe("getActiveToolNames", () => {
     }
   });
 
-  test("core profile: returns CORE_SET plus tool_catalog only", () => {
+  test("core profile: returns CORE_SET plus the always-active meta-tools", () => {
     const state = { profile: "core" as const, counters: {}, promoted: [] };
     const active = mgr.getActiveToolNames(ALL_NAMES, state);
-    // tool_catalog always active
+    // Meta-tools (tool_catalog AND activate_tool) are always active, even in
+    // core — otherwise promotion is impossible (an inactive activate_tool
+    // cannot promote anything).
     for (const m of ALWAYS_ACTIVE_TOOLS) {
       expect(active.has(m)).toBe(true);
-    }
-    // activate_tool must NOT be active in core
-    for (const m of ADAPTIVE_META_TOOLS) {
-      expect(active.has(m)).toBe(false);
     }
     // Non-core, non-meta tools must be inactive
     expect(active.has("search_and_replace")).toBe(false);
@@ -74,7 +71,7 @@ describe("getActiveToolNames", () => {
     }
   });
 
-  test("tool_catalog always active regardless of profile", () => {
+  test("meta-tools always active regardless of profile", () => {
     for (const profile of ["all", "core", "adaptive"] as const) {
       const state = { profile, counters: {}, promoted: [] };
       const active = mgr.getActiveToolNames(ALL_NAMES, state);
@@ -84,19 +81,23 @@ describe("getActiveToolNames", () => {
     }
   });
 
-  test("activate_tool active for all and adaptive profiles, not core", () => {
-    for (const profile of ["all", "adaptive"] as const) {
-      const state = { profile, counters: {}, promoted: [] };
-      const active = mgr.getActiveToolNames(ALL_NAMES, state);
-      for (const m of ADAPTIVE_META_TOOLS) {
-        expect(active.has(m)).toBe(true);
-      }
-    }
+  test("core profile honors explicit promotions (survive reconnect)", () => {
+    const state = {
+      profile: "core" as const,
+      counters: {},
+      promoted: ["search_and_replace"],
+    };
+    const active = mgr.getActiveToolNames(ALL_NAMES, state);
+    expect(active.has("search_and_replace")).toBe(true);
+    // Still no auto-promotion in core: an un-promoted non-core tool stays off.
+    expect(active.has("find_broken_links")).toBe(false);
+  });
+
+  test("activate_tool is active even in core (promotion is not self-blocking)", () => {
     const coreState = { profile: "core" as const, counters: {}, promoted: [] };
     const coreActive = mgr.getActiveToolNames(ALL_NAMES, coreState);
-    for (const m of ADAPTIVE_META_TOOLS) {
-      expect(coreActive.has(m)).toBe(false);
-    }
+    expect(coreActive.has("activate_tool")).toBe(true);
+    expect(coreActive.has("tool_catalog")).toBe(true);
   });
 });
 
@@ -281,6 +282,50 @@ describe("loadState", () => {
     expect(state.profile).toBe("core");
     expect(state.counters).toEqual({});
     expect(state.promoted).toEqual([]);
+  });
+});
+
+describe("activateTools (batch)", () => {
+  const ALL = ["a", "b", "c", "d"];
+
+  test("promotes several unknown-free names in one write", async () => {
+    const plugin = makePlugin();
+    const out = await mgr.activateTools(["b", "c"], ALL, plugin);
+    expect(out).toEqual({ b: "activated", c: "activated" });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b", "c"]);
+  });
+
+  test("reports already_active and not_found, persists only new ones", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: ["b"] },
+    });
+    const out = await mgr.activateTools(["b", "c", "zzz"], ALL, plugin);
+    expect(out).toEqual({
+      b: "already_active",
+      c: "activated",
+      zzz: "not_found",
+    });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b", "c"]);
+  });
+
+  test("no-op batch (all already promoted or unknown) does not write", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: ["b"] },
+    });
+    const before = JSON.stringify(plugin._store());
+    const out = await mgr.activateTools(["b", "zzz"], ALL, plugin);
+    expect(out).toEqual({ b: "already_active", zzz: "not_found" });
+    expect(JSON.stringify(plugin._store())).toBe(before);
+  });
+
+  test("dedupes repeated names", async () => {
+    const plugin = makePlugin();
+    const out = await mgr.activateTools(["b", "b"], ALL, plugin);
+    expect(out).toEqual({ b: "activated" });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b"]);
   });
 });
 

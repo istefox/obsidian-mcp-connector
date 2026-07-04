@@ -1,7 +1,6 @@
 import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
 import {
-  ADAPTIVE_META_TOOLS,
   ALWAYS_ACTIVE_TOOLS,
   CORE_SET,
   META_TOOLS,
@@ -47,10 +46,12 @@ export class ToolLoadingManager {
     }
     const base = new Set<string>(ALWAYS_ACTIVE_TOOLS);
     for (const n of CORE_SET) base.add(n);
-    if (state.profile === "adaptive") {
-      for (const n of ADAPTIVE_META_TOOLS) base.add(n);
-      for (const n of state.promoted) base.add(n);
-    }
+    // Explicit promotions are honored in BOTH core and adaptive: a tool the
+    // user (or `activate_tool`/`activate_tools`) promoted with persist must
+    // survive a reconnect regardless of profile. The only core/adaptive
+    // difference is auto-promotion by frequency, which lives in recordCall
+    // and stays adaptive-only.
+    for (const n of state.promoted) base.add(n);
     return base;
   }
 
@@ -93,6 +94,48 @@ export class ToolLoadingManager {
       return state;
     });
     return outcome;
+  }
+
+  /**
+   * Batch variant of {@link activateTool}: promote several tools in ONE
+   * settings write instead of N. Unknown names (not in `allNames`) are
+   * reported back and not persisted. Returns the per-name outcome so the
+   * caller can build a summary.
+   */
+  async activateTools(
+    names: string[],
+    allNames: string[],
+    plugin: PluginDataLike,
+  ): Promise<Record<string, "activated" | "already_active" | "not_found">> {
+    const known = new Set(allNames);
+    const outcomes: Record<
+      string,
+      "activated" | "already_active" | "not_found"
+    > = {};
+    // Dedupe input while preserving first-seen order.
+    const requested = [...new Set(names)];
+
+    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+      const state = mergeState(current);
+      const promotedSet = new Set(state.promoted);
+      const toAdd: string[] = [];
+      for (const name of requested) {
+        if (!known.has(name)) {
+          outcomes[name] = "not_found";
+        } else if (promotedSet.has(name)) {
+          outcomes[name] = "already_active";
+        } else {
+          outcomes[name] = "activated";
+          promotedSet.add(name);
+          toAdd.push(name);
+        }
+      }
+      if (toAdd.length === 0) return current; // NO_CHANGE: no write
+      state.promoted = [...state.promoted, ...toAdd];
+      return state;
+    });
+
+    return outcomes;
   }
 
   async deactivateTool(name: string, plugin: PluginDataLike): Promise<void> {

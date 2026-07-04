@@ -11,6 +11,17 @@ import { logger } from "$/shared";
 
 interface HandlerContext {
   server: McpServer;
+  /**
+   * SDK-provided notification sender, bound to the current request so the
+   * message carries its `relatedRequestId` and is delivered on the POST
+   * response stream (see mcpServer.ts). Optional: absent for callers that
+   * don't thread it, in which case handlers fall back to a raw
+   * server-initiated notification.
+   */
+  sendNotification?: (notification: {
+    method: string;
+    params?: Record<string, unknown>;
+  }) => Promise<void>;
 }
 
 /**

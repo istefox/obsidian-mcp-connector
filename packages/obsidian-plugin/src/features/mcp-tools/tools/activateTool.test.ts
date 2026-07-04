@@ -131,6 +131,27 @@ describe("activateToolHandler", () => {
     expect(activated).toEqual(["find_broken_links"]);
   });
 
+  test("uses request-scoped sendNotification when provided, not the raw fallback", async () => {
+    const plugin = makePlugin();
+    const { server, notifications } = makeServer();
+    const scoped: string[] = [];
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links" },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: () => true,
+      sendNotification: async (n) => {
+        scoped.push(n.method);
+      },
+    });
+    expect(result.isError).toBeUndefined();
+    // The scoped sender (relatedRequestId-tagged) is used...
+    expect(scoped).toEqual(["notifications/tools/list_changed"]);
+    // ...and the raw server.notification fallback is NOT.
+    expect(notifications).toHaveLength(0);
+  });
+
   test("notification failure is swallowed and activation still succeeds", async () => {
     const plugin = makePlugin();
     const server = {

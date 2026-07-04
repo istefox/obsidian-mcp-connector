@@ -24,6 +24,7 @@ export async function activateToolHandler({
   server,
   onActivated,
   enableInRegistry,
+  sendNotification,
 }: {
   arguments: { name: string; persist?: boolean };
   registry: RegistryLike;
@@ -31,6 +32,16 @@ export async function activateToolHandler({
   server: McpServer;
   onActivated?: (toolName: string) => void;
   enableInRegistry?: (name: string) => boolean;
+  /**
+   * Request-scoped notification sender (from the SDK handler's `extra`).
+   * When present it tags the notification with the current request's
+   * `relatedRequestId`, so `tools/list_changed` rides back on this call's
+   * POST response stream and the client re-lists without a reconnect.
+   */
+  sendNotification?: (notification: {
+    method: string;
+    params?: Record<string, unknown>;
+  }) => Promise<void>;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -63,11 +74,21 @@ export async function activateToolHandler({
   }
 
   try {
-    await server.server.notification({
-      method: "notifications/tools/list_changed",
-    });
+    // Prefer the request-scoped sender: it tags relatedRequestId so the
+    // notification is delivered on THIS call's POST response stream (the
+    // transport switches that response to SSE for activate_tool). The raw
+    // server.notification fallback goes to the standalone GET stream, which
+    // is blocked here, so it is a no-op — kept only so callers that don't
+    // thread sendNotification keep the prior behavior.
+    if (sendNotification) {
+      await sendNotification({ method: "notifications/tools/list_changed" });
+    } else {
+      await server.server.notification({
+        method: "notifications/tools/list_changed",
+      });
+    }
   } catch {
-    // Stateless JSON transport may not support server-initiated notifications.
+    // Transport may not support server-initiated notifications on this path.
     // Clients pick up the change on their next tools/list request.
   }
 
