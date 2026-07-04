@@ -3,6 +3,23 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.22.0] — 2026-07-04
+
+Makes progressive tool loading (`activate_tool`, the Core and Adaptive profiles) work through real MCP clients, and adds two ways to load your working set without runtime activation.
+
+### Added
+
+- **`activate_tools` batch tool.** Activates several inactive tools in one call and refreshes the client tool list once, instead of one refresh per `activate_tool`. Use it when a task needs more than one inactive tool. Always active in every profile.
+- **Manual promote picker in settings.** MCP Connector settings now let you add tools to the promoted set directly, in both the Core and Adaptive profiles, so a working set is active at connect time and no mid-session activation is needed.
+
+### Fixed
+
+- **`activate_tool` was uncallable in the Core profile.** It was filtered out of every profile except Adaptive, a circular dead end: an inactive tool cannot activate other tools. It is now always active in every profile.
+- **Tool promotions never reached the client.** The `tools/list_changed` notification went to the blocked GET SSE stream and was dropped, so a promoted tool stayed invisible until a reconnect. The `activate_tool` and `activate_tools` response now carries the notification on its own POST stream, so a client that re-lists sees the promotion right away.
+- **The Core profile dropped promoted tools on reconnect.** `getActiveToolNames` read the promoted list only for Adaptive, so a `persist=true` promotion was active in the session but lost on the next connect. Core now honors promoted tools too; auto-promotion by frequency stays Adaptive-only.
+
+---
+
 ## [0.21.6] — 2026-06-27
 
 Fixes a bug where the semantic search live indexer embedded non-markdown files. Adding a PDF or other attachment to the vault no longer triggers embedding, so the CPU spike and the junk chunks in search results are gone.
