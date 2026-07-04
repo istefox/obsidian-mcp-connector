@@ -14,6 +14,7 @@ export const PROMOTION_THRESHOLD = 3;
 export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
   "tool_catalog",
   "activate_tool",
+  "activate_tools",
 ];
 
 /** Combined set used for promotion-exclusion checks in recordCall. */

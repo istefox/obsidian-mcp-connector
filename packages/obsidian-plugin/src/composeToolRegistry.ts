@@ -29,6 +29,10 @@ import {
   activateToolSchema,
   activateToolHandler,
 } from "$/features/mcp-tools/tools/activateTool";
+import {
+  activateToolsSchema,
+  activateToolsHandler,
+} from "$/features/mcp-tools/tools/activateTools";
 
 export type ToolRegistryConfig = {
   app: App;
@@ -66,6 +70,22 @@ export async function composeToolRegistry(
       activateToolHandler({
         arguments: (
           request as { arguments: { name: string; persist?: boolean } }
+        ).arguments,
+        registry: toolRegistry,
+        plugin: config.plugin,
+        server,
+        onActivated: (name) =>
+          new Notice(`MCP Connector: "${name}" promoted to active`),
+        enableInRegistry: (name) => toolRegistry.enableByName(name),
+        sendNotification,
+      }),
+  );
+  toolRegistry.register(
+    activateToolsSchema,
+    async (request, { server, sendNotification }) =>
+      activateToolsHandler({
+        arguments: (
+          request as { arguments: { names: string[]; persist?: boolean } }
         ).arguments,
         registry: toolRegistry,
         plugin: config.plugin,

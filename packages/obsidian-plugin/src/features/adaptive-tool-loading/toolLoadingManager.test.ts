@@ -273,6 +273,50 @@ describe("loadState", () => {
   });
 });
 
+describe("activateTools (batch)", () => {
+  const ALL = ["a", "b", "c", "d"];
+
+  test("promotes several unknown-free names in one write", async () => {
+    const plugin = makePlugin();
+    const out = await mgr.activateTools(["b", "c"], ALL, plugin);
+    expect(out).toEqual({ b: "activated", c: "activated" });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b", "c"]);
+  });
+
+  test("reports already_active and not_found, persists only new ones", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: ["b"] },
+    });
+    const out = await mgr.activateTools(["b", "c", "zzz"], ALL, plugin);
+    expect(out).toEqual({
+      b: "already_active",
+      c: "activated",
+      zzz: "not_found",
+    });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b", "c"]);
+  });
+
+  test("no-op batch (all already promoted or unknown) does not write", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: ["b"] },
+    });
+    const before = JSON.stringify(plugin._store());
+    const out = await mgr.activateTools(["b", "zzz"], ALL, plugin);
+    expect(out).toEqual({ b: "already_active", zzz: "not_found" });
+    expect(JSON.stringify(plugin._store())).toBe(before);
+  });
+
+  test("dedupes repeated names", async () => {
+    const plugin = makePlugin();
+    const out = await mgr.activateTools(["b", "b"], ALL, plugin);
+    expect(out).toEqual({ b: "activated" });
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toEqual(["b"]);
+  });
+});
+
 // Smoke-test: CORE_SET contains only real tool names
 describe("CORE_SET", () => {
   test("all core tools are known names (sanity check)", () => {

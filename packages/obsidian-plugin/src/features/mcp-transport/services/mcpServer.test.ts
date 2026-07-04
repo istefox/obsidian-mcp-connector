@@ -107,6 +107,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         .sort();
       expect(names).toEqual([
         "activate_tool",
+        "activate_tools",
         "add_canvas_node",
         "append_to_active_file",
         "append_to_periodic_note",
@@ -155,7 +156,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "tool_catalog",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(48);
+      expect(names).toHaveLength(49);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.
