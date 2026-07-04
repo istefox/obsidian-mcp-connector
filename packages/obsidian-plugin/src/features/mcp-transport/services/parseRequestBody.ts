@@ -1,11 +1,19 @@
 import type { IncomingMessage } from "node:http";
 
 /**
- * Whether a parsed JSON-RPC request body targets the `activate_tool` tool.
+ * Tools whose handler emits `notifications/tools/list_changed`. A call to
+ * one of these must get an SSE response so the notification can ride back
+ * on its own POST stream (see mcpServer.ts / activateTool.ts).
+ */
+const ACTIVATION_TOOLS = new Set(["activate_tool", "activate_tools"]);
+
+/**
+ * Whether a parsed JSON-RPC request body targets a tool-activation call
+ * (`activate_tool` or `activate_tools`).
  *
  * Accepts either a single JSON-RPC request object or a batch array, and
- * returns true if ANY member is a `tools/call` whose `params.name` is
- * `activate_tool`. Everything else (notifications, responses, other tool
+ * returns true if ANY member is a `tools/call` whose `params.name` is an
+ * activation tool. Everything else (notifications, responses, other tool
  * calls, malformed shapes) returns false.
  *
  * Used by the transport to decide whether the response must be delivered
@@ -20,7 +28,8 @@ export function bodyTargetsActivateTool(parsed: unknown): boolean {
     if (msg.method !== "tools/call") return false;
     const params = msg.params;
     if (typeof params !== "object" || params === null) return false;
-    return (params as { name?: unknown }).name === "activate_tool";
+    const name = (params as { name?: unknown }).name;
+    return typeof name === "string" && ACTIVATION_TOOLS.has(name);
   });
 }
 

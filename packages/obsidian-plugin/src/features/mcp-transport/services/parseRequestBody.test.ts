@@ -20,6 +20,17 @@ describe("bodyTargetsActivateTool", () => {
     expect(bodyTargetsActivateTool(activateCall)).toBe(true);
   });
 
+  test("true for a batch activate_tools call", () => {
+    expect(
+      bodyTargetsActivateTool({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "activate_tools", arguments: { names: ["a", "b"] } },
+      }),
+    ).toBe(true);
+  });
+
   test("false for a different tools/call", () => {
     expect(bodyTargetsActivateTool(otherCall)).toBe(false);
   });
