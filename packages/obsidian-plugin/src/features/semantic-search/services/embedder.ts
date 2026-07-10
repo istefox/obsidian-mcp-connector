@@ -129,6 +129,11 @@ class EmbedderImpl implements Embedder {
       return new Float32Array(result.data);
     })();
     this.cacheSet(text, promise);
+    // A rejected embed must not be served to later calls for the same
+    // text; evict it (only if this entry still owns the slot).
+    promise.catch(() => {
+      if (this.cache.get(text) === promise) this.cache.delete(text);
+    });
     return promise;
   }
 
@@ -218,10 +223,18 @@ class EmbedderImpl implements Embedder {
     if (this.pipeline) return this.pipeline;
     if (!this.loadPromise) {
       const model = this.opts.model ?? DEFAULT_MODEL;
-      this.loadPromise = this.opts.pipelineFactory(model).then((p) => {
-        this.pipeline = p;
-        return p;
-      });
+      this.loadPromise = this.opts
+        .pipelineFactory(model)
+        .then((p) => {
+          this.pipeline = p;
+          return p;
+        })
+        .catch((e: unknown) => {
+          // A failed load must not pin a rejected promise for the rest
+          // of the session; clear it so the next call retries the factory.
+          this.loadPromise = null;
+          throw e;
+        });
     }
     return this.loadPromise;
   }

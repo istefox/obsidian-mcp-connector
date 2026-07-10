@@ -194,13 +194,20 @@ function hasOversizedCodeFence(text: string, maxTokens: number): boolean {
  * windows share `overlapTokens` tokens. The first heading line of the
  * section is repeated at the head of every window so each chunk
  * carries its context.
+ *
+ * `bodyOffset` is the char position, relative to the start of `text`,
+ * where the window's own content begins (past the repeated heading
+ * prefix). Callers add it to the section offset so every window maps
+ * back to its real position in the file — using the parent section's
+ * offset for all windows made excerpt resolution return the section
+ * head for every window after the first.
  */
 function slidingWindows(
   text: string,
   heading: string | null,
   maxTokens: number,
   overlapTokens: number,
-): string[] {
+): Array<{ text: string; bodyOffset: number }> {
   // Preserve the heading line on every window.
   let prefix = "";
   let body = text;
@@ -220,9 +227,19 @@ function slidingWindows(
     if ((tokens[i] ?? "").trim().length > 0) wordIndices.push(i);
   }
 
-  if (wordIndices.length <= maxTokens) return [prefix + body];
+  if (wordIndices.length <= maxTokens)
+    return [{ text: prefix + body, bodyOffset: 0 }];
 
-  const windows: string[] = [];
+  // Char offset of each token within `body` (the split keeps every
+  // separator, so joining tokens reconstructs `body` losslessly).
+  const tokenStarts = new Array<number>(tokens.length);
+  let charPos = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    tokenStarts[i] = charPos;
+    charPos += (tokens[i] ?? "").length;
+  }
+
+  const windows: Array<{ text: string; bodyOffset: number }> = [];
   const step = Math.max(1, maxTokens - overlapTokens);
   for (let start = 0; start < wordIndices.length; start += step) {
     const end = Math.min(start + maxTokens, wordIndices.length);
@@ -233,7 +250,10 @@ function slidingWindows(
         ? tokens.length
         : (wordIndices[end] ?? tokens.length);
     const slice = tokens.slice(fromIdx, toIdx).join("");
-    windows.push(prefix + slice);
+    windows.push({
+      text: prefix + slice,
+      bodyOffset: prefix.length + (tokenStarts[fromIdx] ?? 0),
+    });
     if (end >= wordIndices.length) break;
   }
   return windows;
@@ -307,10 +327,10 @@ async function emitSectionChunks(
         for (const w of windows) {
           out.push({
             id: String(out.length),
-            text: w,
+            text: w.text,
             heading: sub.heading,
-            offset: sub.offset,
-            contentHash: await hashChunk(w),
+            offset: sub.offset + w.bodyOffset,
+            contentHash: await hashChunk(w.text),
           });
         }
       }
@@ -328,10 +348,10 @@ async function emitSectionChunks(
   for (const w of windows) {
     out.push({
       id: String(out.length),
-      text: w,
+      text: w.text,
       heading: section.heading,
-      offset: section.offset,
-      contentHash: await hashChunk(w),
+      offset: section.offset + w.bodyOffset,
+      contentHash: await hashChunk(w.text),
     });
   }
 }

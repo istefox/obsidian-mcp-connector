@@ -3,6 +3,7 @@ import { errorText, successText } from "../services/responseBuilders";
 import type { App, TFile } from "obsidian";
 import {
   resolveHeadingPath,
+  findHeadingSectionEnd,
   findBlockPositionFromCache,
   hasParentH1,
   hasAnyH1,
@@ -178,15 +179,10 @@ export async function applyPatch(
       );
     }
 
-    // Find end of this heading's section: next heading at same-or-higher level.
-    let sectionEnd = lines.length;
-    for (let i = headingLine + 1; i < lines.length; i++) {
-      const m = /^(#+)\s+/.exec(lines[i]);
-      if (m && m[1].length <= headingLevel) {
-        sectionEnd = i;
-        break;
-      }
-    }
+    // Find end of this heading's section: next heading at same-or-higher
+    // level. Fence-aware (fork #137): a `#`-line inside a fenced code block
+    // is not a section boundary — same fix as services/patchHelpers.ts.
+    const sectionEnd = findHeadingSectionEnd(lines, headingLine, headingLevel);
 
     if (args.operation === "append") {
       // Insert at end of section, just before sectionEnd.

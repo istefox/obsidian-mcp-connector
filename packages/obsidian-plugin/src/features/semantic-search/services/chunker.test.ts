@@ -162,6 +162,24 @@ describe("chunker", () => {
     expect(sliced.length).toBeGreaterThan(1);
   });
 
+  test("sliding windows carry their own offset, not the section's", async () => {
+    // Distinct numbered words so each window has unique content.
+    const words = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
+    const content = `# T\n\n${words}`;
+    const chunks = await chunk(content, { maxTokens: 20, overlapTokens: 4 });
+    expect(chunks.length).toBeGreaterThan(1);
+
+    // Every window's offset must point at its OWN body in the file —
+    // excerpt resolution slices the file at `offset`.
+    for (const c of chunks) {
+      const prefixEnd = c.text.startsWith("#") ? c.text.indexOf("\n") + 1 : 0;
+      const body = c.text.slice(prefixEnd);
+      expect(content.slice(c.offset, c.offset + body.length)).toBe(body);
+    }
+    // Regression (audit): all windows used to share the section offset.
+    expect(new Set(chunks.map((c) => c.offset)).size).toBe(chunks.length);
+  });
+
   test("offset reflects section position in file", async () => {
     const content = ["# A", "", lorem(30), "", "## B", "", lorem(30)].join(
       "\n",

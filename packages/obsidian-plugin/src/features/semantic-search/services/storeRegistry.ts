@@ -85,24 +85,31 @@ export async function migrateV1FlatStore(
 
     const sentinelPath = `${dstDir}/.migrating`;
 
-    // If a prior interrupted migration left a sentinel, skip — the
-    // partial destination will be ignored (no index at new path → re-index
-    // banner fires on next startup).
-    if (await adapter.exists(sentinelPath)) return;
-
+    // Sentinel-before-mutation, source-removal-after-commit (same
+    // atomicity pattern as store.ts flush). Sources are only removed
+    // once the sentinel is cleared, so a leftover sentinel means an
+    // interrupted copy with sources still intact — safe to redo the
+    // copy (idempotent overwrite) instead of abandoning the store to
+    // a silent full re-index.
     const binData = await adapter.readBinary(srcBin);
     await adapter.mkdir(dstDir);
     await adapter.write(sentinelPath, "");
     await adapter.writeBinary(`${dstDir}/embeddings.bin`, binData);
-    await adapter.remove(srcBin);
 
-    if (await adapter.exists(srcIndex)) {
+    const hasIndex = await adapter.exists(srcIndex);
+    if (hasIndex) {
       const indexData = await adapter.read(srcIndex);
       await adapter.write(`${dstDir}/embeddings.index.json`, indexData);
-      await adapter.remove(srcIndex);
     }
 
+    // Commit point: destination is complete.
     await adapter.remove(sentinelPath);
+
+    // A crash between here and the last remove re-runs the migration on
+    // next startup (srcBin still present), which overwrites the
+    // destination with identical data.
+    await adapter.remove(srcBin);
+    if (hasIndex) await adapter.remove(srcIndex);
     logger.info(
       "semantic-search: v1 flat store migrated to per-provider directory",
       { pluginDir },
