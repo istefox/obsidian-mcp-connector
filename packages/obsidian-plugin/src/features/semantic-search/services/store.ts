@@ -423,19 +423,16 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       });
     }
 
-    // Slice to exact byte length — bin.buffer can be larger than the
-    // logical content if Float32Array was allocated with padding by
-    // some runtimes.
-    const exactBuffer = bin.buffer.slice(
-      bin.byteOffset,
-      bin.byteOffset + bin.byteLength,
-    );
+    // `new Float32Array(n)` owns a fresh ArrayBuffer of exactly n*4
+    // bytes (byteOffset 0) — write it directly. The previous
+    // buffer.slice() here was a redundant full copy that doubled peak
+    // memory for the duration of every flush.
 
     // Raise the sentinel before touching either file: if the process
     // dies between the bin and index writes the sentinel stays,
     // signalling the next init() that the pair is inconsistent.
     await this.opts.adapter.write(this.sentinelPath, "1");
-    await this.opts.adapter.writeBinary(this.opts.binPath, exactBuffer);
+    await this.opts.adapter.writeBinary(this.opts.binPath, bin.buffer);
 
     const indexFile: IndexFile = {
       version: FORMAT_VERSION,

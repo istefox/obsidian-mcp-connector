@@ -30,7 +30,11 @@ function makePlugin(data: Record<string, unknown> = {}) {
   };
 }
 
-const mgr = new ToolLoadingManager();
+// flushDelayMs: 0 makes recordCall persist synchronously (the production
+// default debounces counter writes); every existing "await recordCall →
+// assert persisted state" test keeps its original semantics. The
+// debounced path has its own dedicated tests below.
+const mgr = new ToolLoadingManager({ flushDelayMs: 0 });
 
 describe("getActiveToolNames", () => {
   test("all profile: returns every name plus meta-tools", () => {
@@ -159,6 +163,69 @@ describe("recordCall", () => {
     const state = data.toolLoading as { counters: Record<string, number> };
     expect(state.counters["search_vault"]).toBe(1);
     expect(state.counters["get_active_file"]).toBe(1);
+  });
+
+  test("debounced mode: counters accumulate in memory, ONE write on flush", async () => {
+    const plugin = makePlugin();
+    let saves = 0;
+    const counting = {
+      loadData: plugin.loadData,
+      saveData: async (d: unknown) => {
+        saves += 1;
+        await plugin.saveData(d);
+      },
+    };
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+    for (let i = 0; i < 5; i++) {
+      await debounced.recordCall("search_vault", counting);
+    }
+    // Nothing persisted yet — the debounce window is still open.
+    expect(saves).toBe(0);
+    await debounced.flushPendingCalls(counting);
+    expect(saves).toBe(1);
+    const state = plugin._store().toolLoading as {
+      counters: Record<string, number>;
+    };
+    expect(state.counters["search_vault"]).toBe(5);
+    // Flush with nothing pending: no extra write.
+    await debounced.flushPendingCalls(counting);
+    expect(saves).toBe(1);
+  });
+
+  test("debounced mode: batched flush still promotes at threshold (adaptive)", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      await debounced.recordCall("search_and_replace", plugin);
+    }
+    await debounced.flushPendingCalls(plugin);
+    const state = plugin._store().toolLoading as { promoted: string[] };
+    expect(state.promoted).toContain("search_and_replace");
+  });
+
+  test("debounced mode: failed flush restores the batch for retry", async () => {
+    const plugin = makePlugin();
+    let fail = true;
+    const flaky = {
+      loadData: plugin.loadData,
+      saveData: async (d: unknown) => {
+        if (fail) throw new Error("disk full");
+        await plugin.saveData(d);
+      },
+    };
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+    await debounced.recordCall("search_vault", flaky);
+    await expect(debounced.flushPendingCalls(flaky)).rejects.toThrow(
+      "disk full",
+    );
+    fail = false;
+    await debounced.flushPendingCalls(flaky);
+    const state = plugin._store().toolLoading as {
+      counters: Record<string, number>;
+    };
+    expect(state.counters["search_vault"]).toBe(1);
   });
 
   test("does not re-promote an already-promoted tool", async () => {

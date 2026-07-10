@@ -35,7 +35,22 @@ function mergeState(slice: unknown): ToolLoadingState {
 
 const SLICE = "toolLoading";
 
+/**
+ * Trailing debounce for persisting call counters. recordCall fires on
+ * EVERY non-meta tool call; a full loadData/saveData round trip through
+ * the global settings mutex per call was the single largest fixed cost
+ * on the request path (and queued permission-check writes behind it).
+ * Counters are heuristic data — losing a window of them on a crash is
+ * acceptable, delaying auto-promotion by up to this window is invisible.
+ */
+const RECORD_FLUSH_DELAY_MS = 2_000;
+
 export class ToolLoadingManager {
+  /** In-memory counter increments not yet persisted to data.json. */
+  private pendingCalls = new Map<string, number>();
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(private opts: { flushDelayMs?: number } = {}) {}
   async loadState(plugin: PluginDataLike): Promise<ToolLoadingState> {
     return mergeState(await new SettingsStore(plugin).readSlice(SLICE));
   }
@@ -61,20 +76,71 @@ export class ToolLoadingManager {
   // unserialized read-modify-write here can clobber another feature's
   // slice (or lose a concurrent counter increment). See settingsStore.ts.
 
+  /**
+   * Record a tool call for frequency-based promotion. Increments an
+   * in-memory counter and schedules a trailing debounced flush instead
+   * of persisting per call (see RECORD_FLUSH_DELAY_MS). With
+   * `flushDelayMs: 0` the flush is immediate — used by tests that
+   * assert on persisted state.
+   */
   async recordCall(toolName: string, plugin: PluginDataLike): Promise<void> {
-    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-      const state = mergeState(current);
-      state.counters[toolName] = (state.counters[toolName] ?? 0) + 1;
-      if (
-        state.profile === "adaptive" &&
-        state.counters[toolName] >= PROMOTION_THRESHOLD &&
-        !state.promoted.includes(toolName) &&
-        !(META_TOOLS as string[]).includes(toolName)
-      ) {
-        state.promoted = [...state.promoted, toolName];
+    this.pendingCalls.set(toolName, (this.pendingCalls.get(toolName) ?? 0) + 1);
+    const delay = this.opts.flushDelayMs ?? RECORD_FLUSH_DELAY_MS;
+    if (delay <= 0) {
+      await this.flushPendingCalls(plugin);
+      return;
+    }
+    if (this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        // Fire-and-forget: a failed flush restores the batch in memory
+        // (see flushPendingCalls) and the next call retries.
+        void this.flushPendingCalls(plugin).catch(() => {});
+      }, delay);
+    }
+  }
+
+  /**
+   * Persist all pending counter increments in ONE settings write and
+   * apply adaptive auto-promotion against the merged totals. Callers:
+   * the recordCall debounce timer, and service teardown (so a window of
+   * counts is not lost on unload). Safe to call with nothing pending.
+   */
+  async flushPendingCalls(plugin: PluginDataLike): Promise<void> {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pendingCalls.size === 0) return;
+    const batch = this.pendingCalls;
+    this.pendingCalls = new Map();
+    try {
+      await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+        const state = mergeState(current);
+        for (const [toolName, count] of batch) {
+          state.counters[toolName] = (state.counters[toolName] ?? 0) + count;
+          if (
+            state.profile === "adaptive" &&
+            state.counters[toolName] >= PROMOTION_THRESHOLD &&
+            !state.promoted.includes(toolName) &&
+            !(META_TOOLS as string[]).includes(toolName)
+          ) {
+            state.promoted = [...state.promoted, toolName];
+          }
+        }
+        return state;
+      });
+    } catch (error) {
+      // Put the batch back so a transient write failure does not drop
+      // the counts; merge with anything recorded meanwhile.
+      for (const [toolName, count] of batch) {
+        this.pendingCalls.set(
+          toolName,
+          (this.pendingCalls.get(toolName) ?? 0) + count,
+        );
       }
-      return state;
-    });
+      throw error;
+    }
   }
 
   async activateTool(

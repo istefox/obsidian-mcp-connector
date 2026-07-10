@@ -17,7 +17,7 @@ import {
   META_TOOLS,
 } from "$/features/adaptive-tool-loading";
 import { composeToolRegistry } from "$/composeToolRegistry";
-import { MAX_REQUEST_BODY_BYTES } from "../constants";
+import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
 import { bodyTargetsActivateTool, readBodyWithCap } from "./parseRequestBody";
 
 export type McpServiceConfig = {
@@ -30,6 +30,8 @@ export type McpService = {
   registry: ToolRegistry;
   promptRegistry: PromptRegistry;
   handleRequest: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  /** Persist any in-memory tool-call counters (see ToolLoadingManager). */
+  flushPendingCalls: () => Promise<void>;
 };
 
 /**
@@ -105,7 +107,15 @@ export async function createMcpService(
         if (!(META_TOOLS as string[]).includes(request.params.name)) {
           toolLoadingManager
             .recordCall(request.params.name, config.plugin)
-            .catch(() => {});
+            .catch((error: unknown) => {
+              // Fire-and-forget by design, but a persistent settings
+              // write failure (disk full, corrupted data.json) must
+              // leave a diagnostic trail.
+              logger.warn("[mcp] recordCall failed", {
+                tool: request.params.name,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
         }
         return result;
       },
@@ -126,17 +136,26 @@ export async function createMcpService(
     // the client re-lists without a reconnect. Every other request keeps
     // the default JSON response (Windows/mcp-remote path unchanged).
     const rawBody = await readBodyWithCap(req, MAX_REQUEST_BODY_BYTES);
+    if (rawBody === null) {
+      // Chunked body (no Content-Length) exceeded the cap. Falling through
+      // with parsedBody=undefined would make the SDK re-read the stream we
+      // already partially drained and answer -32700 instead of 413. Mirror
+      // httpServer.ts's declared-length rejection: respond, then destroy
+      // the socket so the oversized payload stops arriving.
+      res.writeHead(ERROR_CODES.PAYLOAD_TOO_LARGE);
+      res.end();
+      req.destroy();
+      return;
+    }
     let parsedBody: unknown;
     let isActivateTool = false;
-    if (rawBody !== null) {
-      try {
-        parsedBody = JSON.parse(rawBody);
-        isActivateTool = bodyTargetsActivateTool(parsedBody);
-      } catch {
-        // Malformed JSON: leave parsedBody undefined and let the SDK emit
-        // the standard -32700 parse error over the JSON response path.
-        parsedBody = undefined;
-      }
+    try {
+      parsedBody = JSON.parse(rawBody);
+      isActivateTool = bodyTargetsActivateTool(parsedBody);
+    } catch {
+      // Malformed JSON: leave parsedBody undefined and let the SDK emit
+      // the standard -32700 parse error over the JSON response path.
+      parsedBody = undefined;
     }
 
     // Stateless mode (no sessionIdGenerator). Per-request transport — see
@@ -169,16 +188,28 @@ export async function createMcpService(
     }
   };
 
-  return { registry, promptRegistry, handleRequest };
+  return {
+    registry,
+    promptRegistry,
+    handleRequest,
+    flushPendingCalls: () =>
+      toolLoadingManager.flushPendingCalls(config.plugin),
+  };
 }
 
 /**
  * Service-level teardown. With per-request server+transport creation
- * there is nothing to close at the service level — every request
- * already cleans up after itself in the `finally` block. Kept as an
- * exported async no-op for symmetry with the previous API and so
- * main.ts can call it unconditionally.
+ * there is nothing to close at the request level — every request
+ * already cleans up after itself in the `finally` block. The one piece
+ * of service state is the in-memory tool-call counter batch, flushed
+ * here so an unload does not drop it.
  */
-export async function destroyMcpService(_svc: McpService): Promise<void> {
-  // intentionally empty
+export async function destroyMcpService(svc: McpService): Promise<void> {
+  try {
+    await svc.flushPendingCalls();
+  } catch (error) {
+    logger.warn("[mcp] flushing tool-call counters on teardown failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
