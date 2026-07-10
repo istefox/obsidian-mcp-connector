@@ -3,6 +3,7 @@ import os from "os";
 import path from "path";
 import { type } from "arktype";
 import { logger } from "$/shared/logger";
+import { mcpRemoteInvocation } from "./generators";
 
 /**
  * Claude Desktop config writer for the 0.4.0 HTTP-embedded plugin.
@@ -231,16 +232,7 @@ function buildHttpEntry(
   command: string;
   args: string[];
 } {
-  return {
-    command: "npx",
-    args: [
-      "-y",
-      "mcp-remote",
-      `http://127.0.0.1:${port}/mcp`,
-      "--header",
-      `Authorization: Bearer ${token}`,
-    ],
-  };
+  return mcpRemoteInvocation(`http://127.0.0.1:${port}/mcp`, token);
 }
 
 type Platform = "macos" | "windows" | "linux";

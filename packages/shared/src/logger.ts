@@ -77,9 +77,18 @@ export function createLogger(inputConfig: InputLoggerConfig) {
   let logMeta: Record<string, unknown> = {};
 
   const queue: Promise<void>[] = [];
+  // Ensure the log directory once per (possibly reconfigured) target
+  // path, not on every log call — the sync exists/mkdir pair on the
+  // per-call path was a blocking fs stat per log line. config.filename
+  // is already the morphed absolute path.
+  let ensuredDir: string | null = null;
   const log = (level: LogLevel, message: unknown, meta?: typeof logMeta) => {
     if (!config.levels.includes(level)) return;
-    ensureDirSync(dirname(getLogFilePath(config.appName, config.filename)));
+    const dir = dirname(config.filename);
+    if (ensuredDir !== dir) {
+      ensureDirSync(dir);
+      ensuredDir = dir;
+    }
     queue.push(
       appendFile(
         config.filename,

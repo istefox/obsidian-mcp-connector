@@ -1,10 +1,32 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
-  cosineSimilarity,
   createNativeProvider,
   dotProduct,
   type ExcerptResolver,
 } from "./nativeProvider";
+
+/**
+ * Reference cosine similarity, kept test-local: production removed it as
+ * dead code (the search hot loop uses dotProduct on normalized vectors),
+ * but it remains the oracle for the dotProduct-equivalence invariant.
+ */
+function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) {
+    throw new Error(`cosine: dim mismatch ${a.length} vs ${b.length}`);
+  }
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    dot += ai * bi;
+    normA += ai * ai;
+    normB += bi * bi;
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
 import type { Embedder } from "./embedder";
 import {
   createEmbeddingStore,
