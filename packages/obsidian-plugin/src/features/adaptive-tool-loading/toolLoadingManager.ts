@@ -45,11 +45,30 @@ const SLICE = "toolLoading";
  */
 const RECORD_FLUSH_DELAY_MS = 2_000;
 
-export class ToolLoadingManager {
-  /** In-memory counter increments not yet persisted to data.json. */
-  private pendingCalls = new Map<string, number>();
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Pending counter batches, keyed by plugin instance (module-level, NOT
+ * per manager): the transport service and the settings UI construct
+ * separate ToolLoadingManager instances against the same plugin, and
+ * resetAll must clear the batch the transport accumulated — a
+ * per-instance map would leave those counts to resurface at the next
+ * flush. WeakMap keeps test plugins isolated and lets instances be GCed.
+ */
+type PendingState = {
+  counts: Map<string, number>;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+const pendingByPlugin = new WeakMap<PluginDataLike, PendingState>();
 
+function pendingFor(plugin: PluginDataLike): PendingState {
+  let state = pendingByPlugin.get(plugin);
+  if (!state) {
+    state = { counts: new Map(), timer: null };
+    pendingByPlugin.set(plugin, state);
+  }
+  return state;
+}
+
+export class ToolLoadingManager {
   constructor(private opts: { flushDelayMs?: number } = {}) {}
   async loadState(plugin: PluginDataLike): Promise<ToolLoadingState> {
     return mergeState(await new SettingsStore(plugin).readSlice(SLICE));
@@ -84,15 +103,16 @@ export class ToolLoadingManager {
    * assert on persisted state.
    */
   async recordCall(toolName: string, plugin: PluginDataLike): Promise<void> {
-    this.pendingCalls.set(toolName, (this.pendingCalls.get(toolName) ?? 0) + 1);
+    const pending = pendingFor(plugin);
+    pending.counts.set(toolName, (pending.counts.get(toolName) ?? 0) + 1);
     const delay = this.opts.flushDelayMs ?? RECORD_FLUSH_DELAY_MS;
     if (delay <= 0) {
       await this.flushPendingCalls(plugin);
       return;
     }
-    if (this.flushTimer === null) {
-      this.flushTimer = setTimeout(() => {
-        this.flushTimer = null;
+    if (pending.timer === null) {
+      pending.timer = setTimeout(() => {
+        pending.timer = null;
         // Fire-and-forget: a failed flush restores the batch in memory
         // (see flushPendingCalls) and the next call retries.
         void this.flushPendingCalls(plugin).catch(() => {});
@@ -107,13 +127,14 @@ export class ToolLoadingManager {
    * counts is not lost on unload). Safe to call with nothing pending.
    */
   async flushPendingCalls(plugin: PluginDataLike): Promise<void> {
-    if (this.flushTimer !== null) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
+    const pending = pendingFor(plugin);
+    if (pending.timer !== null) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
     }
-    if (this.pendingCalls.size === 0) return;
-    const batch = this.pendingCalls;
-    this.pendingCalls = new Map();
+    if (pending.counts.size === 0) return;
+    const batch = pending.counts;
+    pending.counts = new Map();
     try {
       await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
         const state = mergeState(current);
@@ -134,9 +155,9 @@ export class ToolLoadingManager {
       // Put the batch back so a transient write failure does not drop
       // the counts; merge with anything recorded meanwhile.
       for (const [toolName, count] of batch) {
-        this.pendingCalls.set(
+        pending.counts.set(
           toolName,
-          (this.pendingCalls.get(toolName) ?? 0) + count,
+          (pending.counts.get(toolName) ?? 0) + count,
         );
       }
       throw error;
@@ -213,6 +234,15 @@ export class ToolLoadingManager {
   }
 
   async resetAll(plugin: PluginDataLike): Promise<void> {
+    // Drop the unpersisted batch FIRST (module-level, shared with the
+    // transport's manager instance) so a debounced flush scheduled
+    // before the reset cannot re-add pre-reset counts afterwards.
+    const pending = pendingFor(plugin);
+    if (pending.timer !== null) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    pending.counts.clear();
     await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
       const state = mergeState(current);
       state.counters = {};

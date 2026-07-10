@@ -205,6 +205,25 @@ describe("recordCall", () => {
     expect(state.promoted).toContain("search_and_replace");
   });
 
+  test("resetAll drops the pending batch, even from another manager instance", async () => {
+    const plugin = makePlugin();
+    // The transport service and the settings UI hold SEPARATE manager
+    // instances; pending state is shared per plugin.
+    const transportMgr = new ToolLoadingManager({ flushDelayMs: 60_000 });
+    const uiMgr = new ToolLoadingManager({ flushDelayMs: 0 });
+    await transportMgr.recordCall("search_vault", plugin);
+    await transportMgr.recordCall("search_vault", plugin);
+
+    await uiMgr.resetAll(plugin);
+
+    // A later flush must NOT resurrect the pre-reset counts.
+    await transportMgr.flushPendingCalls(plugin);
+    const state = plugin._store().toolLoading as {
+      counters: Record<string, number>;
+    };
+    expect(state.counters["search_vault"] ?? 0).toBe(0);
+  });
+
   test("debounced mode: failed flush restores the batch for retry", async () => {
     const plugin = makePlugin();
     let fail = true;

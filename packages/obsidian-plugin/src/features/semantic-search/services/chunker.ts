@@ -378,14 +378,24 @@ function extractLastSentence(text: string): string {
 export function wrapChunkerWithOverlap(chunker: ChunkerFn): ChunkerFn {
   return async (content: string): Promise<Chunk[]> => {
     const chunks = await chunker(content);
-    return chunks.map((c, i) => {
-      if (i === 0) return c;
-      const prev = chunks[i - 1];
-      if (prev.id === "#frontmatter") return c;
-      const overlap = extractLastSentence(prev.text);
-      if (!overlap) return c;
-      return { ...c, text: overlap + "\n" + c.text };
-    });
+    return Promise.all(
+      chunks.map(async (c, i) => {
+        if (i === 0) return c;
+        const prev = chunks[i - 1];
+        if (prev.id === "#frontmatter") return c;
+        const overlap = extractLastSentence(prev.text);
+        if (!overlap) return c;
+        const enriched = overlap + "\n" + c.text;
+        // Hash the ENRICHED text — the store's reuse invariant is
+        // "same contentHash ⇒ same embedded text". Hashing only the
+        // chunk's own text let a stale vector survive when just the
+        // previous chunk's tail sentence changed, and collapsed two
+        // same-text chunks with different overlaps onto one vector.
+        // Migration is progressive: unchanged files keep their records
+        // via the mtime skip; the first edit re-embeds that file once.
+        return { ...c, text: enriched, contentHash: await hashChunk(enriched) };
+      }),
+    );
   };
 }
 

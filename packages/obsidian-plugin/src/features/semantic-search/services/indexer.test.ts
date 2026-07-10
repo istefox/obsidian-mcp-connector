@@ -8,6 +8,7 @@ import {
 import type { EmbeddingProvider } from "../types";
 import {
   createEmbeddingStore,
+  segmentOfPath,
   type EmbeddingRecord,
   type VaultAdapter,
 } from "./store";
@@ -204,10 +205,17 @@ describe("live indexer", () => {
     emit("modify", "f.md");
     await indexer.flush();
 
-    // Only "TWO!" is new — "one" and "three" reuse their existing
-    // vectors via contentHash match. Overlap prepends the last sentence
-    // of the previous chunk's original text.
-    expect(embeds()).toEqual(["one", "one\ntwo", "two\nthree", "one\nTWO!"]);
+    // "one" reuses its vector via contentHash match. Chunk 2 changed
+    // outright; chunk 3's OWN text is unchanged but its overlap prefix
+    // (previous chunk's tail) changed, and the hash covers the enriched
+    // text, so it re-embeds too instead of serving a stale vector.
+    expect(embeds()).toEqual([
+      "one",
+      "one\ntwo",
+      "two\nthree",
+      "one\nTWO!",
+      "TWO!\nthree",
+    ]);
     expect(store.size()).toBe(3);
 
     await indexer.stop();
@@ -939,7 +947,12 @@ describe("low-power indexer", () => {
 
     expect(writeBinaryCount()).toBe(0);
     await indexer.start(); // runs the first cycle
-    expect(writeBinaryCount()).toBe(1); // one batched flush, not three
+    // One batched flush per cycle: one bin write per DIRTY SEGMENT the
+    // three paths hash into — never one per file.
+    const expectedSegments = new Set(
+      ["a.md", "b.md", "c.md"].map(segmentOfPath),
+    ).size;
+    expect(writeBinaryCount()).toBe(expectedSegments);
 
     await indexer.stop();
   });
@@ -1235,16 +1248,17 @@ describe("live indexer — batched embed calls", () => {
       debounceMs: 10,
     });
     await indexer.start();
-    // contentHash is computed on the raw chunk text (pre-overlap), so
-    // all three "same" chunks share one hash and embed exactly once —
-    // consistent with the existing reuse path, which already treats
-    // equal hashes as vector-interchangeable across re-indexes.
-    expect(embedCalls()).toEqual([["same"]]);
+    // contentHash covers the enriched (overlap-prefixed) text: chunk 1
+    // embeds as "same", chunks 2 and 3 both embed as "same\nsame" and
+    // share one hash → exactly two embeds in one batched call, with
+    // chunks 2 and 3 sharing a vector. Chunk 1 must NOT share it — its
+    // embedded text differs.
+    expect(embedCalls()).toEqual([["same", "same\nsame"]]);
     const records = Array.from(rawStore.recordsFor("a.md"));
     expect(records).toHaveLength(3);
     const vecs = records.map((r) => r.vector);
-    expect(vecs[1]).toBe(vecs[0] as Float32Array);
-    expect(vecs[2]).toBe(vecs[0] as Float32Array);
+    expect(vecs[2]).toBe(vecs[1] as Float32Array);
+    expect(vecs[1]).not.toBe(vecs[0] as Float32Array);
     await indexer.stop();
   });
 });

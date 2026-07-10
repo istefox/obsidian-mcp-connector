@@ -286,6 +286,40 @@ describe("chunker", () => {
     expect(chunks[0]?.text.startsWith("# First")).toBe(true);
   });
 
+  test("wrapChunkerWithOverlap: contentHash covers the overlap prefix", async () => {
+    const tail = (s: string) => `${lorem(20)} Opening sentence. ${s}`;
+    const contentA = [
+      "# First",
+      "",
+      tail("Tail sentence A."),
+      "",
+      "# Second",
+      "",
+      lorem(30),
+    ].join("\n");
+    const contentB = [
+      "# First",
+      "",
+      tail("Tail sentence B."),
+      "",
+      "# Second",
+      "",
+      lorem(30),
+    ].join("\n");
+
+    const wrapped = wrapChunkerWithOverlap(chunk);
+    const [a, b] = [await wrapped(contentA), await wrapped(contentB)];
+
+    // Second section's own text is identical in A and B; only the
+    // overlap prefix (previous chunk's tail) differs. The hash must
+    // differ too, or the indexer reuses a vector embedded against the
+    // stale prefix.
+    expect(a[1]?.text).not.toBe(b[1]?.text);
+    expect(a[1]?.contentHash).not.toBe(b[1]?.contentHash);
+    // Hash must equal the hash of the enriched text it describes.
+    expect(a[1]?.contentHash).toBe(await hashChunk(a[1]!.text));
+  });
+
   test("wrapChunkerWithOverlap: #frontmatter chunk not used as overlap source", async () => {
     const fm = lorem(30);
     const content = [
