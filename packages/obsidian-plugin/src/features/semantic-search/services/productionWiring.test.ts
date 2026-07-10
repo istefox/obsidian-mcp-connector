@@ -95,7 +95,7 @@ describe("probeAndWipeStaleStores", () => {
     ).toBe(true);
   });
 
-  test("stale store: reported stale AND its five files wiped", async () => {
+  test("stale store: reported stale AND all its files wiped (legacy pair + segments)", async () => {
     const mem = memAdapter();
     const key = "native-minilm-l6-v2";
     seedStore(mem, key, FORMAT_VERSION - 1, 10);
@@ -108,16 +108,24 @@ describe("probeAndWipeStaleStores", () => {
     expect(staleKeys).toEqual([key]);
     expect(probedCounts).toEqual({});
     expect(registry.isReady(key)).toBe(false);
-    // bin, index, and mtimes existed and are gone; the .writing and
-    // meta removals are best-effort and always attempted.
+    // Every candidate file is attempted best-effort: the legacy pair,
+    // the sidecars, and each segment pair (a stale store may be in
+    // either layout, or mid-migration in both).
     const dir = `${BASE}/${key}`;
-    expect(mem.removed()).toEqual([
+    const expectedTargets = [
       `${dir}/embeddings.bin`,
       `${dir}/embeddings.index.json`,
       `${dir}/embeddings.index.json.writing`,
       `${dir}/mtimes.json`,
       `${dir}/embeddings.meta.json`,
-    ]);
+    ];
+    for (let seg = 0; seg < 16; seg++) {
+      expectedTargets.push(
+        `${dir}/embeddings.seg${seg}.bin`,
+        `${dir}/embeddings.seg${seg}.index.json`,
+      );
+    }
+    expect(mem.removed()).toEqual(expectedTargets);
     expect(await mem.adapter.exists(`${dir}/embeddings.bin`)).toBe(false);
     expect(await mem.adapter.exists(`${dir}/embeddings.index.json`)).toBe(
       false,

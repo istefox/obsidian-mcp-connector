@@ -1,7 +1,10 @@
 import { TFile, type App } from "obsidian";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { PromptFrontmatterSchema } from "shared";
-import type { PromptRegistry } from "$/features/mcp-transport/services/promptRegistry";
+import type {
+  PromptListEntry,
+  PromptRegistry,
+} from "$/features/mcp-transport/services/promptRegistry";
 import { discoverPrompts } from "./services/promptDiscovery";
 import { renderPrompt } from "./services/promptRenderer";
 import { createVaultWatcher, type VaultWatcher } from "./services/vaultWatcher";
@@ -16,7 +19,20 @@ export async function setup(
   | { success: false; error: string }
 > {
   try {
-    promptRegistry.setLister(() => discoverPrompts(app));
+    // Memoized discovery: prompts/list used to re-scan every markdown
+    // file and cachedRead each candidate on every call. The watcher
+    // below invalidates on create/delete/rename/modify under Prompts/.
+    // The epoch guard prevents caching a scan that raced an
+    // invalidation (event fired while discoverPrompts was running).
+    let epoch = 0;
+    let cached: { epoch: number; list: PromptListEntry[] } | null = null;
+    promptRegistry.setLister(async () => {
+      if (cached && cached.epoch === epoch) return cached.list;
+      const startEpoch = epoch;
+      const list = await discoverPrompts(app);
+      if (epoch === startEpoch) cached = { epoch: startEpoch, list };
+      return list;
+    });
 
     promptRegistry.setHandler("*", async (name, args) => {
       const path = `Prompts/${name}.md`;
@@ -69,7 +85,10 @@ export async function setup(
     });
 
     const watcher = createVaultWatcher(app, () => {
-      // no-op: stateless transport has no persistent session to notify
+      // Invalidate the memoized prompt list; the stateless transport
+      // has no persistent session to notify beyond that.
+      epoch += 1;
+      cached = null;
     });
 
     return { success: true, state: { watcher } };

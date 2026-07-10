@@ -31,7 +31,7 @@ import { createEmbeddingGemmaProvider } from "./embeddingGemmaProvider";
 import { createMultilingualE5Provider } from "./multilingualE5Provider";
 import { detectNonAsciiRatio } from "./langDetect";
 import type { VaultAdapter } from "./store";
-import { FORMAT_VERSION } from "./store";
+import { FORMAT_VERSION, SEGMENT_COUNT } from "./store";
 import {
   createLiveIndexer,
   createLowPowerIndexer,
@@ -467,13 +467,25 @@ export async function probeAndWipeStaleStores(
   for (const key of staleKeys) {
     const dirPath = `${baseDir}/${key}`;
     try {
-      await adapter.remove(`${dirPath}/embeddings.bin`);
-      await adapter.remove(`${dirPath}/embeddings.index.json`);
-      await adapter
-        .remove(`${dirPath}/embeddings.index.json.writing`)
-        .catch(() => {});
-      await adapter.remove(`${dirPath}/mtimes.json`).catch(() => {});
-      await adapter.remove(`${dirPath}/embeddings.meta.json`).catch(() => {});
+      // A stale store may be in the legacy single-pair layout, the
+      // segmented layout, or (mid-migration) both — remove every
+      // candidate file, tolerating absence.
+      const targets = [
+        `${dirPath}/embeddings.bin`,
+        `${dirPath}/embeddings.index.json`,
+        `${dirPath}/embeddings.index.json.writing`,
+        `${dirPath}/mtimes.json`,
+        `${dirPath}/embeddings.meta.json`,
+      ];
+      for (let seg = 0; seg < SEGMENT_COUNT; seg++) {
+        targets.push(
+          `${dirPath}/embeddings.seg${seg}.bin`,
+          `${dirPath}/embeddings.seg${seg}.index.json`,
+        );
+      }
+      for (const target of targets) {
+        await adapter.remove(target).catch(() => {});
+      }
     } catch (err) {
       logger.warn("semantic-search: failed to wipe stale index directory", {
         dir: dirPath,

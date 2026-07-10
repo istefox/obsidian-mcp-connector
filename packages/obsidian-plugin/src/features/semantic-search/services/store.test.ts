@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach } from "bun:test";
 import {
   createEmbeddingStore,
   FORMAT_VERSION,
+  segmentOfPath,
   type EmbeddingRecord,
   type VaultAdapter,
 } from "./store";
@@ -50,6 +51,35 @@ function makeMemAdapter(): {
 }
 
 const DIM = 4; // small fixed dimension to keep test math readable
+
+const SEG_INDEX_RE = /embeddings\.seg\d+\.index\.json$/;
+const SEG_BIN_RE = /embeddings\.seg\d+\.bin$/;
+
+/** All records across the persisted segment index files. */
+function persistedRecords(
+  mem: ReturnType<typeof makeMemAdapter>,
+): Array<{ chunkId: string }> {
+  return [...mem.files.entries()]
+    .filter(([path]) => SEG_INDEX_RE.test(path))
+    .flatMap(
+      ([, text]) =>
+        (JSON.parse(text) as { records: Array<{ chunkId: string }> }).records,
+    );
+}
+
+/** Versions carried by the persisted segment index files. */
+function persistedVersions(mem: ReturnType<typeof makeMemAdapter>): number[] {
+  return [...mem.files.entries()]
+    .filter(([path]) => SEG_INDEX_RE.test(path))
+    .map(([, text]) => (JSON.parse(text) as { version: number }).version);
+}
+
+/** Total byte length across the persisted segment bins. */
+function persistedBinBytes(mem: ReturnType<typeof makeMemAdapter>): number {
+  return [...mem.bins.entries()]
+    .filter(([path]) => SEG_BIN_RE.test(path))
+    .reduce((n, [, buf]) => n + buf.byteLength, 0);
+}
 
 function makeVector(seed: number): Float32Array {
   const v = new Float32Array(DIM);
@@ -208,22 +238,17 @@ describe("embedding store", () => {
     });
     await store.init();
     expect(store.size()).toBe(0);
-    // Flush on empty store should produce a zero-records bin artifact.
+    // Flush on empty store should produce zero-record segment artifacts,
+    // and the stale legacy index must be gone.
     await store.flush();
-    const emptyWritten = JSON.parse(
-      mem.files.get("/p/embeddings.index.json") ?? "{}",
-    );
-    expect(emptyWritten.records).toHaveLength(0);
-    const emptyBin = mem.bins.get("/p/embeddings.bin");
-    expect(emptyBin !== undefined ? emptyBin.byteLength : 0).toBe(0);
-    // Subsequent upsert + flush should overwrite with the current version.
+    expect(mem.files.has("/p/embeddings.index.json")).toBe(false);
+    expect(persistedRecords(mem)).toHaveLength(0);
+    expect(persistedBinBytes(mem)).toBe(0);
+    // Subsequent upsert + flush should persist with the current version.
     await store.upsert([makeRecord({ chunkId: "a:0" })]);
     await store.flush();
-    const written = JSON.parse(
-      mem.files.get("/p/embeddings.index.json") ?? "{}",
-    );
-    expect(written.version).toBe(FORMAT_VERSION);
-    expect(written.records).toHaveLength(1);
+    expect(persistedRecords(mem)).toHaveLength(1);
+    for (const v of persistedVersions(mem)) expect(v).toBe(FORMAT_VERSION);
   });
 
   test("upsert rejects vector with wrong dimensionality", async () => {
@@ -250,8 +275,8 @@ describe("embedding store", () => {
     await store.init();
     await store.upsert([makeRecord({ chunkId: "a:0" })]);
     await store.close();
-    // The index file should be on disk after close.
-    expect(mem.files.has("/p/embeddings.index.json")).toBe(true);
+    // The record must be on disk (in its segment index) after close.
+    expect(persistedRecords(mem).map((r) => r.chunkId)).toContain("a:0");
     // size() reads internal state which was cleared.
     expect(store.size()).toBe(0);
   });
@@ -272,14 +297,14 @@ describe("embedding store", () => {
     await a.flush();
     expect(await mem.adapter.exists(sentinelPath)).toBe(false);
 
-    // Second store: simulate a crash mid-flush. The bin write succeeds
-    // (a NEW, larger bin lands) but the index write throws before the
-    // index is updated, so disk holds a NEW bin + OLD index — the
-    // silent-corruption scenario.
+    // Second store: simulate a crash mid-flush. The segment bin write
+    // succeeds (a NEW, larger bin lands) but the segment index write
+    // throws before the index is updated, so disk holds a NEW bin +
+    // OLD index — the silent-corruption scenario.
     const failingAdapter: VaultAdapter = {
       ...mem.adapter,
       async write(path, data) {
-        if (path === opts.indexPath) {
+        if (SEG_INDEX_RE.test(path)) {
           throw new Error("simulated crash during index write");
         }
         return mem.adapter.write(path, data);
@@ -305,14 +330,11 @@ describe("embedding store", () => {
     expect(c.size()).toBe(0);
     expect(await mem.adapter.exists(sentinelPath)).toBe(false);
 
-    // dirty === true is observable: a flush now rewrites the pair even
-    // though no upsert happened after init.
+    // The discard is observable: a flush now rewrites clean (empty)
+    // segments even though no upsert happened after init.
     await c.flush();
-    const written = JSON.parse(
-      mem.files.get("/p/embeddings.index.json") ?? "{}",
-    );
-    expect(written.version).toBe(FORMAT_VERSION);
-    expect(written.records).toHaveLength(0);
+    expect(persistedRecords(mem)).toHaveLength(0);
+    for (const v of persistedVersions(mem)) expect(v).toBe(FORMAT_VERSION);
   });
 
   test("FORMAT_VERSION round-trip: flushed index carries current FORMAT_VERSION", async () => {
@@ -326,10 +348,9 @@ describe("embedding store", () => {
     await store.init();
     await store.upsert([makeRecord({ chunkId: "a:0" })]);
     await store.flush();
-    const written = JSON.parse(
-      mem.files.get("/p/embeddings.index.json") ?? "{}",
-    );
-    expect(written.version).toBe(FORMAT_VERSION);
+    const versions = persistedVersions(mem);
+    expect(versions.length).toBeGreaterThan(0);
+    for (const v of versions) expect(v).toBe(FORMAT_VERSION);
     expect(FORMAT_VERSION).toBe(4);
   });
 
@@ -367,15 +388,116 @@ describe("embedding store", () => {
 
     const store = createEmbeddingStore(opts);
     await store.init();
-    // Version mismatch → re-init from scratch, no records loaded.
+    // Version mismatch → re-init from scratch, no records loaded, and
+    // the stale legacy pair removed.
     expect(store.size()).toBe(0);
-    // Flush should write a FORMAT_VERSION index with no records.
+    expect(mem.files.has("/p/embeddings.index.json")).toBe(false);
+    // Flush should write FORMAT_VERSION segments with no records.
     await store.flush();
-    const written = JSON.parse(
-      mem.files.get("/p/embeddings.index.json") ?? "{}",
+    expect(persistedRecords(mem)).toHaveLength(0);
+    for (const v of persistedVersions(mem)) expect(v).toBe(FORMAT_VERSION);
+  });
+
+  test("legacy single-pair layout migrates to segments without losing vectors", async () => {
+    // Hand-write a current-version LEGACY pair (pre-segmentation layout).
+    const v0 = makeVector(7);
+    const bin = new Float32Array(DIM);
+    bin.set(v0, 0);
+    await mem.adapter.writeBinary("/p/embeddings.bin", bin.buffer.slice(0));
+    await mem.adapter.write(
+      "/p/embeddings.index.json",
+      JSON.stringify({
+        version: FORMAT_VERSION,
+        records: [
+          {
+            chunkId: "old:0",
+            filePath: "Old.md",
+            offset: 0,
+            heading: null,
+            contentHash: "h0",
+            byteOffset: 0,
+            byteLength: DIM * 4,
+          },
+        ],
+      }),
     );
-    expect(written.version).toBe(FORMAT_VERSION);
-    expect(written.records).toHaveLength(0);
+
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: DIM,
+    });
+    await store.init();
+
+    // Vector preserved in memory (no re-embed needed)...
+    expect(store.size()).toBe(1);
+    const rec0 = [...store.recordsFor("Old.md")][0];
+    for (let i = 0; i < DIM; i++) {
+      expect(rec0?.vector[i]).toBeCloseTo(v0[i] ?? 0, 6);
+    }
+    // ...persisted in the segmented layout, legacy pair removed.
+    expect(persistedRecords(mem).map((r) => r.chunkId)).toEqual(["old:0"]);
+    expect(mem.files.has("/p/embeddings.index.json")).toBe(false);
+    expect(mem.bins.has("/p/embeddings.bin")).toBe(false);
+
+    // Round trip: a fresh store over the segmented layout loads it.
+    const reopened = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: DIM,
+    });
+    await reopened.init();
+    expect(reopened.size()).toBe(1);
+    const rec1 = [...reopened.recordsFor("Old.md")][0];
+    for (let i = 0; i < DIM; i++) {
+      expect(rec1?.vector[i]).toBeCloseTo(v0[i] ?? 0, 6);
+    }
+  });
+
+  test("editing one file rewrites only that file's segment", async () => {
+    // Two paths guaranteed to live in different segments.
+    const pathA = "Notes/a.md";
+    let pathB = "Notes/b.md";
+    for (let i = 0; segmentOfPath(pathB) === segmentOfPath(pathA); i++) {
+      pathB = `Notes/b${i}.md`;
+    }
+
+    const store = createEmbeddingStore({
+      adapter: mem.adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: DIM,
+    });
+    await store.init();
+    await store.upsert([
+      makeRecord({ chunkId: "a:0", filePath: pathA }),
+      makeRecord({ chunkId: "b:0", filePath: pathB }),
+    ]);
+    await store.flush();
+
+    // Tripwire: delete pathB's persisted segment pair. Touching only
+    // pathA must NOT re-create them.
+    const segB = segmentOfPath(pathB);
+    mem.bins.delete(`/p/embeddings.seg${segB}.bin`);
+    mem.files.delete(`/p/embeddings.seg${segB}.index.json`);
+
+    await store.upsert([
+      makeRecord({ chunkId: "a:0", filePath: pathA, contentHash: "changed" }),
+    ]);
+    await store.flush();
+
+    expect(mem.bins.has(`/p/embeddings.seg${segB}.bin`)).toBe(false);
+    expect(mem.files.has(`/p/embeddings.seg${segB}.index.json`)).toBe(false);
+    // pathA's segment carries the update.
+    const segA = segmentOfPath(pathA);
+    const idxA = JSON.parse(
+      mem.files.get(`/p/embeddings.seg${segA}.index.json`) ?? "{}",
+    ) as { records: Array<{ chunkId: string; contentHash: string }> };
+    expect(idxA.records.find((r) => r.chunkId === "a:0")?.contentHash).toBe(
+      "changed",
+    );
   });
 
   test("bin shorter than a record's byteOffset+byteLength: skip that record, keep valid ones, no throw", async () => {
@@ -556,14 +678,16 @@ describe("embedding store — mtimes sidecar", () => {
     await store.upsert([rec("a.md#0", "a.md")]);
     store.setMtime("a.md", 1);
     await store.flush();
-    const binAfterFirst = mem.bins.get(A);
+    const segBinsAfterFirst = [...mem.bins.keys()].filter((p) =>
+      SEG_BIN_RE.test(p),
+    );
+    expect(segBinsAfterFirst.length).toBeGreaterThan(0);
 
-    // Advance only the mtime: the record pair must not be rewritten.
-    mem.bins.delete(A); // tripwire: a bin rewrite would re-create it
+    // Advance only the mtime: the record pairs must not be rewritten.
+    for (const p of segBinsAfterFirst) mem.bins.delete(p); // tripwire
     store.setMtime("a.md", 2);
     await store.flush();
-    expect(mem.bins.has(A)).toBe(false);
-    expect(binAfterFirst).toBeDefined();
+    expect([...mem.bins.keys()].some((p) => SEG_BIN_RE.test(p))).toBe(false);
     expect(
       (JSON.parse(mem.files.get(M) ?? "{}") as Record<string, number>)["a.md"],
     ).toBe(2);

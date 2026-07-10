@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
+  fireMockVaultEvent,
   mockApp,
   resetMockVault,
   setMockFile,
@@ -40,6 +41,56 @@ describe("prompts feature setup", () => {
     expect(list.prompts[0].name).toBe("greet");
     expect(list.prompts[0].description).toBe("A greeting");
     expect(list.prompts[0].arguments[0].name).toBe("who");
+
+    if (result.success) teardown(result.state);
+  });
+
+  test("list() is memoized and invalidated by vault events", async () => {
+    setMockFile("Prompts/greet.md", `Hello`);
+    setMockMetadata("Prompts/greet.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"] },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+
+    expect((await registry.list()).prompts).toHaveLength(1);
+
+    // A new prompt file with NO vault event: the memoized list must
+    // still be served (this is what proves the cache exists).
+    setMockFile("Prompts/other.md", `Bye`);
+    setMockMetadata("Prompts/other.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"] },
+    });
+    expect((await registry.list()).prompts).toHaveLength(1);
+
+    // The create event invalidates; the next list re-discovers.
+    fireMockVaultEvent("create", { path: "Prompts/other.md" });
+    expect((await registry.list()).prompts).toHaveLength(2);
+
+    if (result.success) teardown(result.state);
+  });
+
+  test("modify event invalidates the memoized list", async () => {
+    setMockFile("Prompts/greet.md", `Hello`);
+    setMockMetadata("Prompts/greet.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"], description: "old" },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+
+    expect((await registry.list()).prompts[0].description).toBe("old");
+
+    setMockMetadata("Prompts/greet.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"], description: "new" },
+    });
+    fireMockVaultEvent("modify", { path: "Prompts/greet.md" });
+    expect((await registry.list()).prompts[0].description).toBe("new");
 
     if (result.success) teardown(result.state);
   });
