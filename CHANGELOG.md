@@ -3,6 +3,30 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.23.0] — 2026-07-11
+
+Full-codebase audit release: seven bug fixes, measured hot-path speedups, and a segmented embedding store that cuts the write volume per edit to about 1/16 of the previous layout.
+
+### Changed
+
+- **Segmented embedding store.** The semantic-search index now persists as 16 segment pairs sharded by file path instead of one bin+index pair. Editing a note rewrites only its segment (about 2MB instead of 31MB at 20k chunks; steady-state flush measured 5.0ms to 0.9ms). The old layout migrates in place on the first load after the update: vectors are preserved, nothing re-embeds.
+- **Tool-call counters batch their writes.** Adaptive-tool-loading counters accumulate in memory and persist on a 2-second debounce: one write per window instead of a full data.json read and write per tool call, which was the largest fixed cost on the request path (measured about 210x faster). "Reset counters" in settings also clears the unpersisted batch.
+- **Faster heading renames and bulk replace.** `rename_heading` precomputes code-fence state once per document instead of once per line (295ms to 0.8ms on a 5,000-line note), and `search_and_replace` reads files in concurrent batches of 8 like `search_vault_simple` already did.
+- **`prompts/list` is cached.** The prompt list re-scans the vault only after a create, delete, rename, or edit under `Prompts/`.
+- **`patch_active_file` shares `patch_vault_file`'s implementation.** Success and error messages now match `patch_vault_file` exactly (success text is "File patched successfully" instead of "OK"), and block resolution gains the same metadataCache-miss regex fallback.
+
+### Fixed
+
+- **Semantic search died for the whole session after one failed model load.** The native provider cached the rejected load promise forever and served rejected embeds from the query cache. Both retry now.
+- **`patch_active_file` could corrupt fenced code blocks on heading replace.** The section-end scan treated a `##` line inside a code fence as the section boundary. The fence-aware fix from #137 had landed only in `patch_vault_file`; the two tools now share it.
+- **Search excerpts were wrong for long sections.** Every sliding window of an oversized section carried the section's start offset, so excerpts past the first window showed the section head instead of their own content.
+- **Stale search results after editing the end of the previous section.** The chunk reuse key now covers the overlap-prefixed text the embedding was computed from. Unchanged files keep their vectors; the first edit of a file re-embeds that file once.
+- **Oversized chunked requests now get HTTP 413.** A body over 1MiB without a Content-Length header used to produce a misleading JSON-RPC parse error and the socket kept receiving.
+- **The v1 store migration is crash-safe.** The migration removes sources only after the copy commits; an interrupted migration retries instead of silently re-embedding the vault.
+- **The Smart Connections detection poll stops on plugin unload.** Disabling the plugin inside the 5-second window no longer leaves a timer running against the unloaded instance.
+
+---
+
 ## [0.22.0] — 2026-07-04
 
 Makes progressive tool loading (`activate_tool`, the Core and Adaptive profiles) work through real MCP clients, and adds two ways to load your working set without runtime activation.
