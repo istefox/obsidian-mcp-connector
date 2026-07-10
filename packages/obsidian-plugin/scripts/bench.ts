@@ -31,6 +31,11 @@ import {
 import type { PluginDataLike } from "$/shared/types";
 import type { App, TFile } from "obsidian";
 
+// Plain bun has no `window`; production code uses window.setTimeout /
+// window.clearTimeout (Obsidian popout-window compat). Same shim as
+// test-setup.ts.
+(globalThis as unknown as Record<string, unknown>).window ??= globalThis;
+
 const now = (): number => performance.now();
 
 function median(samples: number[]): number {

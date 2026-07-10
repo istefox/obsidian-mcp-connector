@@ -50,9 +50,8 @@ export async function listPropertyValuesHandler(
 
   for (const file of ctx.app.vault.getMarkdownFiles()) {
     if (prefix && !file.path.startsWith(prefix)) continue;
-    const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter as
-      | Record<string, unknown>
-      | undefined;
+    const fm: Record<string, unknown> | undefined =
+      ctx.app.metadataCache.getFileCache(file)?.frontmatter;
     if (!fm || !Object.prototype.hasOwnProperty.call(fm, key)) continue;
     const raw = fm[key];
     if (Array.isArray(raw)) {

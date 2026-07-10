@@ -93,10 +93,7 @@ class SmartConnectionsProviderImpl implements SemanticSearchProvider {
     if (!sc) throw new SmartConnectionsUnavailableError();
 
     const filter = mapFolderFilter(opts);
-    const raw = (await sc.search(
-      query,
-      filter as Parameters<SmartConnections.SmartSearch["search"]>[1],
-    )) as RawSmartSearchResult[];
+    const raw = (await sc.search(query, filter)) as RawSmartSearchResult[];
 
     return Promise.all(
       raw.map(async (r): Promise<SearchResult> => {

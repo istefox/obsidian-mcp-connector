@@ -2,7 +2,7 @@ import { type } from "arktype";
 import { errorText } from "../services/responseBuilders";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
-import { moment } from "obsidian";
+import { momentFn } from "$/shared/typedMoment";
 import type McpToolsPlugin from "$/main";
 import { Templater, type PromptArgAccessor } from "shared";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
@@ -268,8 +268,8 @@ async function runCoreTemplates(
 
   const processed = raw
     .replace(/\{\{title\}\}/g, title)
-    .replace(/\{\{date\}\}/g, moment().format(dateFormat))
-    .replace(/\{\{time\}\}/g, moment().format(timeFormat));
+    .replace(/\{\{date\}\}/g, momentFn().format(dateFormat))
+    .replace(/\{\{time\}\}/g, momentFn().format(timeFormat));
 
   const createFile = createFileArg === "true";
   const hasArgs = argMap && Object.keys(argMap).length > 0;

@@ -242,7 +242,7 @@ class EmbedderImpl implements Embedder {
   private cacheSet(text: string, promise: Promise<Float32Array>): void {
     const max = this.opts.cacheSize ?? DEFAULT_CACHE_SIZE;
     if (this.cache.size >= max) {
-      const oldest = this.cache.keys().next().value as string | undefined;
+      const oldest: string | undefined = this.cache.keys().next().value;
       if (oldest !== undefined) this.cache.delete(oldest);
     }
     this.cache.set(text, promise);
@@ -329,8 +329,11 @@ let _backendConfig: Promise<BackendKind> | null = null;
  * in `afterEach` to clear the cache.
  */
 export function resolveBackend(
+  // The DOM lib in this tsconfig predates WebGPU, so Navigator has no
+  // `gpu` member; widen with an intersection instead of an
+  // unknown-bridge double cast.
   navigatorRef: NavigatorLike | undefined = typeof navigator !== "undefined"
-    ? (navigator as unknown as NavigatorLike)
+    ? (navigator as Navigator & NavigatorLike)
     : undefined,
 ): Promise<BackendKind> {
   if (!_backendConfig) {
@@ -385,7 +388,7 @@ export async function realPipelineFactory(
       device: "webgpu",
       progress_callback: onProgress,
     } as Parameters<typeof _hfPipeline>[2]);
-    return pipe as unknown as PipelineFn;
+    return pipe;
   }
 
   const pipe = await _hfPipeline("feature-extraction", model, {
@@ -393,5 +396,5 @@ export async function realPipelineFactory(
     progress_callback: onProgress,
     ...(opts?.dtype !== undefined ? { dtype: opts.dtype } : {}),
   } as Parameters<typeof _hfPipeline>[2]);
-  return pipe as unknown as PipelineFn;
+  return pipe;
 }

@@ -1,11 +1,39 @@
 import type { App, TFile } from "obsidian";
-import { moment } from "obsidian";
-
-// Obsidian bundles moment and re-exports it; deriving the instance type
-// from the bundled export avoids importing the restricted "moment" package.
-type Moment = ReturnType<typeof moment>;
 import * as periodicNotesLib from "obsidian-daily-notes-interface";
+import { momentFn, type MomentLike } from "$/shared/typedMoment";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
+
+// Locally-declared surface of obsidian-daily-notes-interface. Its
+// published `.d.ts` references the external `moment` typings, which a
+// production-deps-only type resolution (the community-plugin scanner)
+// cannot load — the whole lib degrades to `any` there and every call
+// trips the no-unsafe-* rules. One boundary cast keeps call sites
+// typed in every environment.
+interface PeriodicNoteSettings {
+  folder?: string;
+  format?: string;
+  template?: string;
+}
+
+interface PeriodicNotesLibLike {
+  appHasDailyNotesPluginLoaded(): boolean;
+  appHasWeeklyNotesPluginLoaded(): boolean;
+  appHasMonthlyNotesPluginLoaded(): boolean;
+  appHasQuarterlyNotesPluginLoaded(): boolean;
+  appHasYearlyNotesPluginLoaded(): boolean;
+  getDailyNoteSettings(): PeriodicNoteSettings;
+  getWeeklyNoteSettings(): PeriodicNoteSettings;
+  getMonthlyNoteSettings(): PeriodicNoteSettings;
+  getQuarterlyNoteSettings(): PeriodicNoteSettings;
+  getYearlyNoteSettings(): PeriodicNoteSettings;
+  createDailyNote(m: MomentLike): Promise<TFile>;
+  createWeeklyNote(m: MomentLike): Promise<TFile>;
+  createMonthlyNote(m: MomentLike): Promise<TFile>;
+  createQuarterlyNote(m: MomentLike): Promise<TFile>;
+  createYearlyNote(m: MomentLike): Promise<TFile>;
+}
+
+const lib = periodicNotesLib as unknown as PeriodicNotesLibLike;
 
 export type PeriodType =
   | "daily"
@@ -94,47 +122,45 @@ export function resolvePeriodicNote(
 function pluginLoadedFor(period: PeriodType): boolean {
   switch (period) {
     case "daily":
-      return periodicNotesLib.appHasDailyNotesPluginLoaded();
+      return lib.appHasDailyNotesPluginLoaded();
     case "weekly":
-      return periodicNotesLib.appHasWeeklyNotesPluginLoaded();
+      return lib.appHasWeeklyNotesPluginLoaded();
     case "monthly":
-      return periodicNotesLib.appHasMonthlyNotesPluginLoaded();
+      return lib.appHasMonthlyNotesPluginLoaded();
     case "quarterly":
-      return periodicNotesLib.appHasQuarterlyNotesPluginLoaded();
+      return lib.appHasQuarterlyNotesPluginLoaded();
     case "yearly":
-      return periodicNotesLib.appHasYearlyNotesPluginLoaded();
+      return lib.appHasYearlyNotesPluginLoaded();
   }
 }
 
-function settingsFor(
-  period: PeriodType,
-): periodicNotesLib.PeriodicNoteSettings {
+function settingsFor(period: PeriodType): PeriodicNoteSettings {
   switch (period) {
     case "daily":
-      return periodicNotesLib.getDailyNoteSettings();
+      return lib.getDailyNoteSettings();
     case "weekly":
-      return periodicNotesLib.getWeeklyNoteSettings();
+      return lib.getWeeklyNoteSettings();
     case "monthly":
-      return periodicNotesLib.getMonthlyNoteSettings();
+      return lib.getMonthlyNoteSettings();
     case "quarterly":
-      return periodicNotesLib.getQuarterlyNoteSettings();
+      return lib.getQuarterlyNoteSettings();
     case "yearly":
-      return periodicNotesLib.getYearlyNoteSettings();
+      return lib.getYearlyNoteSettings();
   }
 }
 
-function createForPeriod(period: PeriodType, m: Moment): Promise<TFile> {
+function createForPeriod(period: PeriodType, m: MomentLike): Promise<TFile> {
   switch (period) {
     case "daily":
-      return periodicNotesLib.createDailyNote(m);
+      return lib.createDailyNote(m);
     case "weekly":
-      return periodicNotesLib.createWeeklyNote(m);
+      return lib.createWeeklyNote(m);
     case "monthly":
-      return periodicNotesLib.createMonthlyNote(m);
+      return lib.createMonthlyNote(m);
     case "quarterly":
-      return periodicNotesLib.createQuarterlyNote(m);
+      return lib.createQuarterlyNote(m);
     case "yearly":
-      return periodicNotesLib.createYearlyNote(m);
+      return lib.createYearlyNote(m);
   }
 }
 
@@ -188,31 +214,31 @@ export function isValidPeriodicDate(
   return parsePeriodicDate(period, dateStr).isValid();
 }
 
-function parsePeriodicDate(period: PeriodType, dateStr: string): Moment {
+function parsePeriodicDate(period: PeriodType, dateStr: string): MomentLike {
   switch (period) {
     case "daily":
-      return moment(dateStr, "YYYY-MM-DD", true);
+      return momentFn(dateStr, "YYYY-MM-DD", true);
     case "weekly":
-      return moment(dateStr, "GGGG-[W]WW", true);
+      return momentFn(dateStr, "GGGG-[W]WW", true);
     case "monthly":
-      return moment(dateStr, "YYYY-MM", true);
+      return momentFn(dateStr, "YYYY-MM", true);
     case "quarterly": {
       // moment cannot parse `YYYY-QN` directly (`Q` is output-only in
       // older versions); split and seed the moment manually.
       const m = /^(\d{4})-Q([1-4])$/.exec(dateStr);
-      if (!m) return moment.invalid();
-      return moment()
+      if (!m) return momentFn.invalid();
+      return momentFn()
         .year(parseInt(m[1], 10))
         .quarter(parseInt(m[2], 10))
         .startOf("quarter");
     }
     case "yearly":
-      return moment(dateStr, "YYYY", true);
+      return momentFn(dateStr, "YYYY", true);
   }
 }
 
 function defaultIsoForPeriod(period: PeriodType): string {
-  const now = moment();
+  const now = momentFn();
   switch (period) {
     case "daily":
       return now.format("YYYY-MM-DD");
@@ -229,8 +255,8 @@ function defaultIsoForPeriod(period: PeriodType): string {
 
 function computePath(
   period: PeriodType,
-  m: Moment,
-  settings: periodicNotesLib.PeriodicNoteSettings | null,
+  m: MomentLike,
+  settings: PeriodicNoteSettings | null,
 ): string {
   const format = settings?.format ?? DEFAULT_FORMAT_BY_PERIOD[period];
   // Trim leading/trailing slashes so a settings folder of `Daily/` or

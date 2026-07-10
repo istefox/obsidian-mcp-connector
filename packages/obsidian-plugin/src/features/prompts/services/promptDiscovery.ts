@@ -41,10 +41,8 @@ export async function discoverPrompts(app: App): Promise<PromptListEntry[]> {
   const entries: PromptListEntry[] = [];
 
   for (const file of files) {
-    const cache = app.metadataCache.getFileCache(
-      file as unknown as InstanceType<typeof TFile>,
-    );
-    const fm = cache?.frontmatter as Record<string, unknown> | undefined;
+    const cache = app.metadataCache.getFileCache(file);
+    const fm: Record<string, unknown> | undefined = cache?.frontmatter;
     if (!fm) continue;
 
     const rawTags = fm.tags;
@@ -61,9 +59,7 @@ export async function discoverPrompts(app: App): Promise<PromptListEntry[]> {
       continue;
     }
 
-    const content = await app.vault.cachedRead(
-      file as unknown as InstanceType<typeof TFile>,
-    );
+    const content = await app.vault.cachedRead(file);
     const args = parseArgDeclarations(content);
     const name = file.basename;
 

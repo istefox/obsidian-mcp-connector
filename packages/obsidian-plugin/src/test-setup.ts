@@ -22,16 +22,20 @@
 import { mock } from "bun:test";
 // Real moment package, declared in devDependencies. Test-only: at
 // production runtime Obsidian injects its own bundled moment via the
-// "obsidian" module; this import backs the mock's `moment` re-export
-// so periodic-notes date logic behaves identically under test.
-import moment from "moment";
+// "obsidian" module; this loads the npm package to back the mock's
+// `moment` re-export so periodic-notes date logic behaves identically
+// under test. A static `import moment from "moment"` would trip the
+// community-plugin scanner's restricted-import rule, which exists to
+// stop SHIPPED code from bundling its own moment — this file is test
+// infrastructure and is never bundled, so load it dynamically instead.
+const moment = (await import("moment")).default;
 
 // Bun's test runner has no `window` global; production code that calls
 // window.setTimeout/clearTimeout (required for Obsidian popout-window compat)
-// needs it to exist. Assign before any module that uses window.* loads.
-// `global` is Node/Bun's name for the global object — the same object the
-// production code reaches as `window` once this assignment runs.
-(global as unknown as Record<string, unknown>).window = global;
+// needs it to exist. Assign before any module that uses window.* loads —
+// globalThis is the same object the production code reaches as `window`
+// once this assignment runs.
+(globalThis as unknown as Record<string, unknown>).window = globalThis;
 
 // Obsidian injects `activeWindow` as a global (points to the focused Window
 // in popout-window scenarios). Tests run outside Obsidian, so we stub it to
@@ -1019,8 +1023,12 @@ export function mockApp(): App {
     readBinary: async (file: ApiTFile): Promise<ArrayBuffer> => {
       const path = (file as unknown as MockTFile).path;
       const content = _mockState.files.get(path) ?? "";
-      const buf = new TextEncoder().encode(content).buffer;
-      return buf as ArrayBuffer;
+      // Copy into a fresh ArrayBuffer: TextEncoder's .buffer is typed
+      // ArrayBufferLike, and the vault API contract is ArrayBuffer.
+      const bytes = new TextEncoder().encode(content);
+      const buf = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(buf).set(bytes);
+      return buf;
     },
     create: async (path: string, content: string): Promise<ApiTFile> => {
       // Mirror Obsidian semantics: bottom-level fs operation throws
@@ -1309,34 +1317,37 @@ export function mockApp(): App {
   // without re-creating the App. Only the `dataview` slot is wired today —
   // additional community plugins can be added the same way (see ADR-0003).
   const plugins = {
-    plugins: new Proxy({} as Record<string, unknown>, {
-      get: (_target, prop) => {
-        if (prop !== "dataview") return undefined;
-        if (_mockDataview.state === "absent") return undefined;
-        if (_mockDataview.state === "not_ready") {
-          // Plugin object exists, but `.api` is undefined. Same shape Dataview
-          // exposes during the post-load / pre-index-ready window.
-          return {};
-        }
-        // ready
-        return {
-          api: {
-            query: async (
-              source: string,
-              originFile?: string,
-              _settings?: unknown,
-            ) => {
-              _mockDataview.calls.push({ source, originFile });
-              return await _mockDataview.queryImpl(source, originFile);
+    plugins: new Proxy<Record<string, unknown>>(
+      {},
+      {
+        get: (_target, prop) => {
+          if (prop !== "dataview") return undefined;
+          if (_mockDataview.state === "absent") return undefined;
+          if (_mockDataview.state === "not_ready") {
+            // Plugin object exists, but `.api` is undefined. Same shape Dataview
+            // exposes during the post-load / pre-index-ready window.
+            return {};
+          }
+          // ready
+          return {
+            api: {
+              query: async (
+                source: string,
+                originFile?: string,
+                _settings?: unknown,
+              ) => {
+                _mockDataview.calls.push({ source, originFile });
+                return await _mockDataview.queryImpl(source, originFile);
+              },
             },
-          },
-        };
+          };
+        },
+        has: (_target, prop) => {
+          if (prop !== "dataview") return false;
+          return _mockDataview.state !== "absent";
+        },
       },
-      has: (_target, prop) => {
-        if (prop !== "dataview") return false;
-        return _mockDataview.state !== "absent";
-      },
-    }),
+    ),
   };
 
   return {

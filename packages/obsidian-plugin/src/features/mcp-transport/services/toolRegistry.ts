@@ -121,7 +121,7 @@ export function normalizeInputSchema(
     ap !== undefined &&
     typeof ap === "object" &&
     ap !== null &&
-    Object.keys(ap as Record<string, unknown>).length === 0
+    Object.keys(ap).length === 0
   ) {
     delete result.additionalProperties;
   }
@@ -239,16 +239,13 @@ export class ToolRegistryClass<
       context: HandlerContext,
     ) => ResultSchema | Promise<ResultSchema>,
   >(schema: Schema, handler: Handler) {
-    const name = this.toolNameOf(schema as unknown as TSchema);
+    const name = this.toolNameOf(schema);
     if (this.byName.has(name)) {
       throw new Error(`Tool already registered: ${name}`);
     }
-    this.byName.set(name, schema as unknown as TSchema);
+    this.byName.set(name, schema);
     this.enable(schema);
-    this.handlers.set(
-      schema as unknown as TSchema,
-      handler as unknown as THandler,
-    );
+    this.handlers.set(schema, handler as unknown as THandler);
     return this;
   }
 
