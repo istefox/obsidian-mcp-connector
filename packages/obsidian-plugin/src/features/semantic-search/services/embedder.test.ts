@@ -62,6 +62,44 @@ describe("embedder", () => {
     expect(callCount()).toBe(1);
   });
 
+  test("load failure: a rejected factory does not poison later calls", async () => {
+    let factoryCalls = 0;
+    const { factory: workingFactory } = makeMockFactory();
+    const factory: PipelineFactory = async (model: string) => {
+      factoryCalls += 1;
+      if (factoryCalls === 1) throw new Error("transient load failure");
+      return workingFactory(model);
+    };
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    await expect(embedder.embed("hello")).rejects.toThrow(
+      "transient load failure",
+    );
+    // The retry must re-invoke the factory instead of replaying the
+    // cached rejection.
+    const vec = await embedder.embed("world");
+    expect(vec.length).toBe(8);
+    expect(factoryCalls).toBe(2);
+    expect(embedder.isLoaded()).toBe(true);
+  });
+
+  test("load failure: rejected embed is evicted from the query cache", async () => {
+    let factoryCalls = 0;
+    const { factory: workingFactory } = makeMockFactory();
+    const factory: PipelineFactory = async (model: string) => {
+      factoryCalls += 1;
+      if (factoryCalls === 1) throw new Error("transient load failure");
+      return workingFactory(model);
+    };
+    const embedder = createEmbedder({ pipelineFactory: factory });
+    await expect(embedder.embed("hello")).rejects.toThrow(
+      "transient load failure",
+    );
+    // Same text again: the cached rejection must not be replayed.
+    const vec = await embedder.embed("hello");
+    expect(vec.length).toBe(8);
+    expect(factoryCalls).toBe(2);
+  });
+
   test("LRU cache: same text → same Float32Array reference", async () => {
     const { factory, embedCount } = makeMockFactory();
     const embedder = createEmbedder({ pipelineFactory: factory });

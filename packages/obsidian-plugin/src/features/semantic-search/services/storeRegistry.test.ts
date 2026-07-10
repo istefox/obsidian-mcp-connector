@@ -158,6 +158,40 @@ describe("migrateV1FlatStore", () => {
     ).resolves.toBeUndefined();
   });
 
+  test("interrupted migration (leftover sentinel) retries and completes", async () => {
+    const binData = new Float32Array([1, 2]).buffer;
+    const indexData = JSON.stringify({ version: 1, records: [] });
+    await mem.adapter.writeBinary("/plugin/embeddings.bin", binData);
+    await mem.adapter.write("/plugin/embeddings.index.json", indexData);
+    // Simulate a crash mid-copy: sentinel written, destination partial,
+    // sources still intact (sources are only removed after commit).
+    await mem.adapter.mkdir("/plugin/embeddings/native-minilm-l6-v2");
+    await mem.adapter.write(
+      "/plugin/embeddings/native-minilm-l6-v2/.migrating",
+      "",
+    );
+
+    await migrateV1FlatStore(mem.adapter, "/plugin");
+
+    // The retry must complete the move, not abandon the store.
+    expect(await mem.adapter.exists("/plugin/embeddings.bin")).toBe(false);
+    expect(
+      await mem.adapter.exists(
+        "/plugin/embeddings/native-minilm-l6-v2/embeddings.bin",
+      ),
+    ).toBe(true);
+    expect(
+      await mem.adapter.exists(
+        "/plugin/embeddings/native-minilm-l6-v2/embeddings.index.json",
+      ),
+    ).toBe(true);
+    expect(
+      await mem.adapter.exists(
+        "/plugin/embeddings/native-minilm-l6-v2/.migrating",
+      ),
+    ).toBe(false);
+  });
+
   test("gracefully handles missing index file (bin-only state)", async () => {
     const binData = new Float32Array([1]).buffer;
     await mem.adapter.writeBinary("/plugin/embeddings.bin", binData);

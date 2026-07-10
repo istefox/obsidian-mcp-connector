@@ -28,11 +28,19 @@ export function createVaultWatcher(
     },
   );
 
+  // Content edits matter too: the prompt list embeds argument
+  // declarations and the frontmatter description, both derived from the
+  // file body.
+  const modifyRef: EventRef = app.vault.on("modify", (file: TAbstractFile) => {
+    if (isPromptFile(file.path)) notifier();
+  });
+
   return {
     stop: () => {
       app.vault.offref(createRef);
       app.vault.offref(deleteRef);
       app.vault.offref(renameRef);
+      app.vault.offref(modifyRef);
     },
   };
 }

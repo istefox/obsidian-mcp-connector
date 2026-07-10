@@ -39,9 +39,10 @@ export function bodyTargetsActivateTool(parsed: unknown): boolean {
  *
  * `httpServer.ts` only rejects oversize bodies via the declared
  * Content-Length; a chunked request with no length still reaches here, so
- * we re-cap while buffering. Returns `null` when the cap is exceeded (the
- * caller falls back to the SDK's own parser + JSON response) so a hostile
- * payload never accumulates unbounded in the renderer.
+ * we re-cap while buffering. Returns `null` when the cap is exceeded so a
+ * hostile payload never accumulates unbounded in the renderer; the caller
+ * must answer 413 and destroy the request instead of handing the drained
+ * stream to the SDK.
  *
  * Precondition: the stream must not have been consumed yet. The caller
  * passes the parsed result back to `transport.handleRequest(req, res,

@@ -1,15 +1,22 @@
 /**
  * Persistent embedding store for the semantic-search feature.
  *
- * Format:
- * - `<dir>/embeddings.bin` — sequential Float32 vectors. One vector
- *   per chunk, dimensions implicit from the model (default 384 for
- *   MiniLM-L6-v2). Vectors are written contiguously; the JSON index
- *   carries the byteOffset/byteLength to slice them back out.
- * - `<dir>/embeddings.index.json` — `{ version: 3, records: [...] }`.
+ * Format (segmented):
+ * - `<dir>/embeddings.seg<k>.bin` (k in 0..15) — sequential Float32
+ *   vectors. One vector per chunk, dimensions implicit from the model
+ *   (default 384 for MiniLM-L6-v2). Vectors are written contiguously;
+ *   the segment's JSON index carries byteOffset/byteLength to slice
+ *   them back out.
+ * - `<dir>/embeddings.seg<k>.index.json` — `{ version, records: [...] }`.
  *   Each record maps a chunkId to its `(filePath, offset, heading,
  *   contentHash, byteOffset, byteLength)`. Bumping `version` triggers
  *   a clean re-index on next `init()` (logged warning, no error).
+ *
+ * Records shard by filePath (FNV-1a % 16), so all of a file's chunks
+ * live in one segment and an edit rewrites ~1/16 of the store instead
+ * of all of it. The pre-segmentation single-pair layout
+ * (`embeddings.bin` + `embeddings.index.json`) is migrated in place on
+ * init — vectors are preserved, nothing re-embeds.
  *
  * Why flat-file instead of SQLite or HNSW:
  * - Vault sizes targeted at 0.4.0 are well under 100k chunks. Cosine
@@ -95,6 +102,33 @@ export type EmbeddingStoreOpts = {
 export const FORMAT_VERSION = 4;
 const DEFAULT_VECTOR_DIM = 384;
 
+/**
+ * Number of persistence segments. 16 keeps the per-edit rewrite near
+ * 1/16 of the store while the startup init stays a handful of small
+ * sequential reads. Changing this constant reshuffles the path→segment
+ * assignment; the loader tolerates that (records are keyed by chunkId,
+ * segments are only a persistence grouping) but the next flush after a
+ * change rewrites every dirty segment it touches.
+ *
+ * Exported for the stale-store wipe in productionWiring.ts, which must
+ * remove every segment pair.
+ */
+export const SEGMENT_COUNT = 16;
+
+/**
+ * Deterministic FNV-1a path hash — segment assignment must be stable
+ * across sessions. Exported so tests can compute how many segments a
+ * fixture's paths span.
+ */
+export function segmentOfPath(filePath: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < filePath.length; i++) {
+    h = (h ^ filePath.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h % SEGMENT_COUNT;
+}
+
 type IndexRecord = {
   chunkId: string;
   filePath: string;
@@ -113,7 +147,8 @@ type IndexFile = {
 class EmbeddingStoreImpl implements EmbeddingStore {
   private records = new Map<string, EmbeddingRecord>();
   private fileIndex = new Map<string, Set<string>>();
-  private dirty = false;
+  /** Segments whose on-disk pair no longer matches memory. */
+  private dirtySegments = new Set<number>();
   // Per-file mtimes live in their own sidecar with their own dirty
   // flag: an autosave that only advances mtime must cost one small
   // JSON write, never the full bin+index rewrite.
@@ -143,6 +178,23 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       : "embeddings.meta.json";
   }
 
+  /** `<dir>/embeddings.seg<k>.bin`, derived from the legacy binPath. */
+  private segBinPath(seg: number): string {
+    return this.opts.binPath.replace(/\.bin$/, `.seg${seg}.bin`);
+  }
+
+  /** `<dir>/embeddings.seg<k>.index.json`, derived from the legacy indexPath. */
+  private segIndexPath(seg: number): string {
+    return this.opts.indexPath.replace(
+      /\.index\.json$/,
+      `.seg${seg}.index.json`,
+    );
+  }
+
+  private markAllSegmentsDirty(): void {
+    for (let k = 0; k < SEGMENT_COUNT; k++) this.dirtySegments.add(k);
+  }
+
   async probe(): Promise<{ version: number; recordCount: number } | null> {
     if (await this.opts.adapter.exists(this.sentinelPath)) return null;
     try {
@@ -164,15 +216,32 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       // Corrupt meta: fall through to the index parse below.
     }
     try {
-      if (!(await this.opts.adapter.exists(this.opts.indexPath))) return null;
-      const parsed = JSON.parse(
-        await this.opts.adapter.read(this.opts.indexPath),
-      ) as IndexFile;
-      if (typeof parsed.version !== "number") return null;
-      return {
-        version: parsed.version,
-        recordCount: parsed.records?.length ?? 0,
-      };
+      // Legacy single-pair store (pre-sidecar): one index parse.
+      if (await this.opts.adapter.exists(this.opts.indexPath)) {
+        const parsed = JSON.parse(
+          await this.opts.adapter.read(this.opts.indexPath),
+        ) as IndexFile;
+        if (typeof parsed.version !== "number") return null;
+        return {
+          version: parsed.version,
+          recordCount: parsed.records?.length ?? 0,
+        };
+      }
+      // Segmented store with a missing/corrupt meta sidecar: sum the
+      // segment indexes so a healthy store is not misreported as absent.
+      let version: number | null = null;
+      let recordCount = 0;
+      for (let seg = 0; seg < SEGMENT_COUNT; seg++) {
+        const indexPath = this.segIndexPath(seg);
+        if (!(await this.opts.adapter.exists(indexPath))) continue;
+        const parsed = JSON.parse(
+          await this.opts.adapter.read(indexPath),
+        ) as IndexFile;
+        if (typeof parsed.version !== "number") return null;
+        version ??= parsed.version;
+        recordCount += parsed.records?.length ?? 0;
+      }
+      return version === null ? null : { version, recordCount };
     } catch {
       return null;
     }
@@ -182,15 +251,15 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     if (this.initialized) return;
 
     if (await this.opts.adapter.exists(this.sentinelPath)) {
-      // A previous flush was interrupted between the bin and index
-      // writes. The pair on disk is known-inconsistent; loading it
-      // would silently slice vectors at wrong offsets. The lost index
-      // is re-derivable (the indexer re-embeds from the vault), so
+      // A previous flush was interrupted mid-write. The touched
+      // segments on disk are known-inconsistent; loading them would
+      // silently slice vectors at wrong offsets. The lost records are
+      // re-derivable (the indexer re-embeds from the vault), so
       // discard and rebuild instead of trusting garbage.
       logger.warn("embedding store was mid-write, discarding and rebuilding");
       await this.removeSentinel();
       this.initialized = true;
-      this.dirty = true; // next flush rewrites a clean bin/index pair
+      this.markAllSegmentsDirty(); // next flush rewrites clean pairs
       // Discard mtimes too: a sidecar claiming "current" while the
       // records are gone would make the rebuild skip everything.
       this.fileMtimes.clear();
@@ -198,24 +267,85 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       return;
     }
 
-    const indexExists = await this.opts.adapter.exists(this.opts.indexPath);
-    if (!indexExists) {
+    // Legacy single-pair layout (`embeddings.bin` + `embeddings.index.json`)
+    // → migrate in place: load it with the same validation, then rewrite
+    // as segments and remove the legacy pair. Vectors are preserved —
+    // nothing re-embeds. A crash during the migration flush leaves the
+    // sentinel up, which degrades to the discard-and-rebuild path above
+    // (same guarantee a crash during any flush has always had).
+    if (await this.opts.adapter.exists(this.opts.indexPath)) {
+      const outcome = await this.loadPairIntoMemory(
+        this.opts.binPath,
+        this.opts.indexPath,
+      );
       this.initialized = true;
-      this.dirty = false;
+      if (outcome === "version-mismatch" || outcome === "unreadable") {
+        this.markAllSegmentsDirty();
+      } else {
+        logger.info(
+          "embedding store: migrating single-pair layout to segments",
+          {
+            records: this.records.size,
+          },
+        );
+        this.markAllSegmentsDirty();
+        await this.loadMtimes();
+        await this.flush();
+      }
+      // Legacy pair is superseded either way (migrated or scheduled for
+      // re-index); remove it so the next init takes the segment path.
+      await this.removeQuietly(this.opts.indexPath);
+      await this.removeQuietly(this.opts.binPath);
       return;
     }
 
+    // Segmented layout: load every existing segment pair.
+    let anyVersionMismatch = false;
+    for (let seg = 0; seg < SEGMENT_COUNT; seg++) {
+      const indexPath = this.segIndexPath(seg);
+      if (!(await this.opts.adapter.exists(indexPath))) continue;
+      const outcome = await this.loadPairIntoMemory(
+        this.segBinPath(seg),
+        indexPath,
+      );
+      if (outcome === "version-mismatch") {
+        anyVersionMismatch = true;
+        break;
+      }
+      if (outcome !== "ok") this.dirtySegments.add(seg);
+    }
+    if (anyVersionMismatch) {
+      // Segments are always written together under one FORMAT_VERSION;
+      // a mismatch means a plugin upgrade with incompatible hashes —
+      // same clean re-index the single-pair layout performed.
+      this.records.clear();
+      this.fileIndex.clear();
+      this.markAllSegmentsDirty();
+    }
+    this.initialized = true;
+    await this.loadMtimes();
+  }
+
+  /**
+   * Load one bin+index pair into memory with bounds validation.
+   * Returns "ok", "ok-partial" (some records skipped — caller marks
+   * the segment dirty so the next flush self-heals), "unreadable", or
+   * "version-mismatch".
+   */
+  private async loadPairIntoMemory(
+    binPath: string,
+    indexPath: string,
+  ): Promise<"ok" | "ok-partial" | "unreadable" | "version-mismatch"> {
     let parsed: IndexFile;
     try {
-      const text = await this.opts.adapter.read(this.opts.indexPath);
+      const text = await this.opts.adapter.read(indexPath);
       parsed = JSON.parse(text) as IndexFile;
     } catch (error) {
       logger.warn("embedding index unreadable, starting fresh", {
+        indexPath,
         error: error instanceof Error ? error.message : String(error),
       });
-      this.initialized = true;
-      this.dirty = true; // signal a flush is needed to overwrite the bad file
-      return;
+      return "unreadable";
     }
 
     // v1 is intentionally not grandfathered: all v1 stores were migrated
@@ -226,19 +356,15 @@ class EmbeddingStoreImpl implements EmbeddingStore {
         expected: FORMAT_VERSION,
         found: parsed.version,
       });
-      this.initialized = true;
-      this.dirty = true;
-      return;
+      return "version-mismatch";
     }
 
-    const binExists = await this.opts.adapter.exists(this.opts.binPath);
-    if (!binExists || parsed.records.length === 0) {
-      this.initialized = true;
-      this.dirty = false;
-      return;
+    if (parsed.records.length === 0) return "ok";
+    if (!(await this.opts.adapter.exists(binPath))) {
+      return parsed.records.length > 0 ? "ok-partial" : "ok";
     }
 
-    const buf = await this.opts.adapter.readBinary(this.opts.binPath);
+    const buf = await this.opts.adapter.readBinary(binPath);
     const all = new Float32Array(buf);
 
     let skippedAny = false;
@@ -286,9 +412,21 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       fileSet.add(idx.chunkId);
     }
 
-    this.initialized = true;
-    this.dirty = skippedAny;
-    await this.loadMtimes();
+    return skippedAny ? "ok-partial" : "ok";
+  }
+
+  /** Remove a file, tolerating absence and adapter errors. */
+  private async removeQuietly(path: string): Promise<void> {
+    try {
+      if (await this.opts.adapter.exists(path)) {
+        await this.opts.adapter.remove(path);
+      }
+    } catch (error) {
+      logger.warn("could not remove superseded store file", {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /** Best-effort load of the mtimes sidecar; absent/corrupt → empty map. */
@@ -336,7 +474,8 @@ class EmbeddingStoreImpl implements EmbeddingStore {
         );
       }
       // If the chunkId already exists under a different filePath, remove it
-      // from the old fileIndex entry before overwriting.
+      // from the old fileIndex entry before overwriting — and mark the
+      // old path's segment dirty so the moved record vanishes on disk.
       const existing = this.records.get(r.chunkId);
       if (existing && existing.filePath !== r.filePath) {
         const oldSet = this.fileIndex.get(existing.filePath);
@@ -344,6 +483,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
           oldSet.delete(r.chunkId);
           if (oldSet.size === 0) this.fileIndex.delete(existing.filePath);
         }
+        this.dirtySegments.add(segmentOfPath(existing.filePath));
       }
       this.records.set(r.chunkId, r);
       let fileSet = this.fileIndex.get(r.filePath);
@@ -352,8 +492,8 @@ class EmbeddingStoreImpl implements EmbeddingStore {
         this.fileIndex.set(r.filePath, fileSet);
       }
       fileSet.add(r.chunkId);
+      this.dirtySegments.add(segmentOfPath(r.filePath));
     }
-    this.dirty = true;
   }
 
   async delete(filePath: string): Promise<void> {
@@ -365,7 +505,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       this.records.delete(chunkId);
     }
     this.fileIndex.delete(filePath);
-    this.dirty = true;
+    this.dirtySegments.add(segmentOfPath(filePath));
   }
 
   recordsFor(filePath: string): Iterable<EmbeddingRecord> {
@@ -387,10 +527,10 @@ class EmbeddingStoreImpl implements EmbeddingStore {
   }
 
   async flush(): Promise<void> {
-    if (!this.dirty) {
+    if (this.dirtySegments.size === 0) {
       // mtime-only change (the common autosave case): one small JSON
       // write, no sentinel needed — the sidecar is advisory and the
-      // record pair is untouched.
+      // record pairs are untouched.
       if (this.mtimeDirty) await this.flushMtimes();
       return;
     }
@@ -400,58 +540,63 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     const dir = this.opts.binPath.split("/").slice(0, -1).join("/");
     if (dir) await this.opts.adapter.mkdir(dir);
 
-    const recordList = Array.from(this.records.values());
-    let totalFloats = 0;
-    for (const r of recordList) totalFloats += r.vector.length;
-
-    const bin = new Float32Array(totalFloats);
-    const indexRecs: IndexRecord[] = [];
-    let floatOffset = 0;
-    for (const r of recordList) {
-      const byteOffset = floatOffset * 4;
-      const byteLength = r.vector.length * 4;
-      bin.set(r.vector, floatOffset);
-      floatOffset += r.vector.length;
-      indexRecs.push({
-        chunkId: r.chunkId,
-        filePath: r.filePath,
-        offset: r.offset,
-        heading: r.heading,
-        contentHash: r.contentHash,
-        byteOffset,
-        byteLength,
-      });
+    // Group records by dirty segment in one pass. Dirty segments with
+    // no remaining records still get (empty) pairs written, so a
+    // deleted file's records vanish from disk.
+    const bySegment = new Map<number, EmbeddingRecord[]>();
+    for (const seg of this.dirtySegments) bySegment.set(seg, []);
+    for (const r of this.records.values()) {
+      const seg = segmentOfPath(r.filePath);
+      bySegment.get(seg)?.push(r);
     }
 
-    // Slice to exact byte length — bin.buffer can be larger than the
-    // logical content if Float32Array was allocated with padding by
-    // some runtimes.
-    const exactBuffer = bin.buffer.slice(
-      bin.byteOffset,
-      bin.byteOffset + bin.byteLength,
-    );
-
-    // Raise the sentinel before touching either file: if the process
-    // dies between the bin and index writes the sentinel stays,
-    // signalling the next init() that the pair is inconsistent.
+    // Raise the sentinel before touching any file: if the process dies
+    // mid-flush the sentinel stays, signalling the next init() that the
+    // touched segments are inconsistent.
     await this.opts.adapter.write(this.sentinelPath, "1");
-    await this.opts.adapter.writeBinary(this.opts.binPath, exactBuffer);
 
-    const indexFile: IndexFile = {
-      version: FORMAT_VERSION,
-      records: indexRecs,
-    };
-    await this.opts.adapter.write(
-      this.opts.indexPath,
-      JSON.stringify(indexFile),
-    );
+    for (const [seg, recordList] of bySegment) {
+      let totalFloats = 0;
+      for (const r of recordList) totalFloats += r.vector.length;
 
-    // After the pair, inside the sentinel window: a crash here leaves
+      // `new Float32Array(n)` owns a fresh ArrayBuffer of exactly n*4
+      // bytes (byteOffset 0) — write it directly, no copy needed.
+      const bin = new Float32Array(totalFloats);
+      const indexRecs: IndexRecord[] = [];
+      let floatOffset = 0;
+      for (const r of recordList) {
+        const byteOffset = floatOffset * 4;
+        const byteLength = r.vector.length * 4;
+        bin.set(r.vector, floatOffset);
+        floatOffset += r.vector.length;
+        indexRecs.push({
+          chunkId: r.chunkId,
+          filePath: r.filePath,
+          offset: r.offset,
+          heading: r.heading,
+          contentHash: r.contentHash,
+          byteOffset,
+          byteLength,
+        });
+      }
+
+      await this.opts.adapter.writeBinary(this.segBinPath(seg), bin.buffer);
+      const indexFile: IndexFile = {
+        version: FORMAT_VERSION,
+        records: indexRecs,
+      };
+      await this.opts.adapter.write(
+        this.segIndexPath(seg),
+        JSON.stringify(indexFile),
+      );
+    }
+
+    // After the pairs, inside the sentinel window: a crash here leaves
     // the sentinel up, so init() discards records AND mtimes together.
     if (this.mtimeDirty) await this.flushMtimes();
 
     // Meta sidecar last, still inside the window: it doubles as the
-    // commit marker probe() trusts, so it must never describe a pair
+    // commit marker probe() trusts, so it must never describe segments
     // that didn't finish writing.
     await this.opts.adapter.write(
       this.metaPath,
@@ -461,9 +606,9 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       }),
     );
 
-    // Both writes succeeded — the pair is consistent, clear the sentinel.
+    // All writes succeeded — the segments are consistent, clear the sentinel.
     await this.removeSentinel();
-    this.dirty = false;
+    this.dirtySegments.clear();
   }
 
   private async flushMtimes(): Promise<void> {
@@ -496,7 +641,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     this.records.clear();
     this.fileIndex.clear();
     this.fileMtimes.clear();
-    this.dirty = false;
+    this.dirtySegments.clear();
     this.mtimeDirty = false;
     this.initialized = false;
   }

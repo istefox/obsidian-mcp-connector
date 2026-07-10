@@ -156,30 +156,6 @@ export function dotProduct(a: Float32Array, b: Float32Array): number {
   return dot;
 }
 
-/**
- * Vectorized cosine similarity over Float32 typed arrays. Returns 0
- * for zero-norm inputs so the call site does not need a guard. The
- * result is in [-1, 1] for any non-zero pair. Kept for callers with
- * non-normalized inputs; the search hot loop uses dotProduct.
- */
-export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) {
-    throw new Error(`cosine: dim mismatch ${a.length} vs ${b.length}`);
-  }
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    const ai = a[i] ?? 0;
-    const bi = b[i] ?? 0;
-    dot += ai * bi;
-    normA += ai * ai;
-    normB += bi * bi;
-  }
-  const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
-}
-
 function truncateExcerpt(body: string): string {
   if (body.length === 0) return "(no preview)";
   if (body.length <= EXCERPT_MAX_LENGTH) return body;

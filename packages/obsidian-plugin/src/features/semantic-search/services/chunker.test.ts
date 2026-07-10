@@ -162,6 +162,24 @@ describe("chunker", () => {
     expect(sliced.length).toBeGreaterThan(1);
   });
 
+  test("sliding windows carry their own offset, not the section's", async () => {
+    // Distinct numbered words so each window has unique content.
+    const words = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
+    const content = `# T\n\n${words}`;
+    const chunks = await chunk(content, { maxTokens: 20, overlapTokens: 4 });
+    expect(chunks.length).toBeGreaterThan(1);
+
+    // Every window's offset must point at its OWN body in the file —
+    // excerpt resolution slices the file at `offset`.
+    for (const c of chunks) {
+      const prefixEnd = c.text.startsWith("#") ? c.text.indexOf("\n") + 1 : 0;
+      const body = c.text.slice(prefixEnd);
+      expect(content.slice(c.offset, c.offset + body.length)).toBe(body);
+    }
+    // Regression (audit): all windows used to share the section offset.
+    expect(new Set(chunks.map((c) => c.offset)).size).toBe(chunks.length);
+  });
+
   test("offset reflects section position in file", async () => {
     const content = ["# A", "", lorem(30), "", "## B", "", lorem(30)].join(
       "\n",
@@ -266,6 +284,40 @@ describe("chunker", () => {
     );
     // First chunk is unchanged.
     expect(chunks[0]?.text.startsWith("# First")).toBe(true);
+  });
+
+  test("wrapChunkerWithOverlap: contentHash covers the overlap prefix", async () => {
+    const tail = (s: string) => `${lorem(20)} Opening sentence. ${s}`;
+    const contentA = [
+      "# First",
+      "",
+      tail("Tail sentence A."),
+      "",
+      "# Second",
+      "",
+      lorem(30),
+    ].join("\n");
+    const contentB = [
+      "# First",
+      "",
+      tail("Tail sentence B."),
+      "",
+      "# Second",
+      "",
+      lorem(30),
+    ].join("\n");
+
+    const wrapped = wrapChunkerWithOverlap(chunk);
+    const [a, b] = [await wrapped(contentA), await wrapped(contentB)];
+
+    // Second section's own text is identical in A and B; only the
+    // overlap prefix (previous chunk's tail) differs. The hash must
+    // differ too, or the indexer reuses a vector embedded against the
+    // stale prefix.
+    expect(a[1]?.text).not.toBe(b[1]?.text);
+    expect(a[1]?.contentHash).not.toBe(b[1]?.contentHash);
+    // Hash must equal the hash of the enriched text it describes.
+    expect(a[1]?.contentHash).toBe(await hashChunk(a[1]!.text));
   });
 
   test("wrapChunkerWithOverlap: #frontmatter chunk not used as overlap source", async () => {

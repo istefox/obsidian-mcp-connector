@@ -25,7 +25,10 @@
  *   subheading separator.
  */
 
-import { isInsideTableOrFencedCode } from "./patchHelpers";
+import {
+  computeFenceOpenState,
+  isInsideTableOrFencedCodeAt,
+} from "./patchHelpers";
 
 /** Match descriptor for the heading the caller wants to rename. */
 export type HeadingFrom = {
@@ -124,13 +127,15 @@ export function findSourceHeading(
   from: HeadingFrom,
 ): HeadingCandidate | RenameError {
   const matches: HeadingCandidate[] = [];
+  const fenceOpen = computeFenceOpenState(lines);
   for (const h of headings) {
     if (h.heading !== from.text) continue;
     if (from.level !== undefined && h.level !== from.level) continue;
     // Defensive code-fence skip. Obsidian's cache already excludes
     // fenced-code lines from `headings`, but if a future bug or a
     // synthetic test fixture inserts one, treat it as not-a-heading.
-    if (isInsideTableOrFencedCode(lines, h.position.start.line)) continue;
+    if (isInsideTableOrFencedCodeAt(lines, h.position.start.line, fenceOpen))
+      continue;
     matches.push({
       line: h.position.start.line,
       level: h.level,
@@ -170,11 +175,13 @@ export function checkHeadingCollision(
   matchedLevel: number,
   matchedLine: number,
 ): RenameError | null {
+  const fenceOpen = computeFenceOpenState(lines);
   for (const h of headings) {
     if (h.position.start.line === matchedLine) continue;
     if (h.heading !== to) continue;
     if (h.level !== matchedLevel) continue;
-    if (isInsideTableOrFencedCode(lines, h.position.start.line)) continue;
+    if (isInsideTableOrFencedCodeAt(lines, h.position.start.line, fenceOpen))
+      continue;
     return {
       errorCode: "heading-collision",
       message: `Heading collision: "${to}" already exists at level ${matchedLevel} on line ${h.position.start.line + 1}. Refusing to rename; resolve the collision first or rename the existing heading instead.`,
@@ -389,11 +396,16 @@ export function rewriteBacklinker(
   // RFC edge case #2 / fork #137 bug class: a `[[…#…]]` or `[…](…#…)`
   // sitting inside a fenced code block or a markdown table is literal
   // text — Obsidian does not resolve it — so it must NOT be rewritten.
-  // Guard per line with the canonical `isInsideTableOrFencedCode` walk
-  // (the same guard the source scan uses; also covers `~~~` fences).
+  // Guard per line with the canonical table/fence walk (also covers
+  // `~~~` fences). Fence state is precomputed once: the single-shot
+  // helper recomputes it per call, which made this map O(n²) in file
+  // length — multiplied by every backlinker file the rename touches.
   const lines = text.split("\n");
+  const fenceOpen = computeFenceOpenState(lines);
   const outLines = lines.map((line, idx) =>
-    isInsideTableOrFencedCode(lines, idx) ? line : rewriteLine(line),
+    isInsideTableOrFencedCodeAt(lines, idx, fenceOpen)
+      ? line
+      : rewriteLine(line),
   );
 
   return { newText: outLines.join("\n"), rewriteCount };

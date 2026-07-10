@@ -172,7 +172,13 @@ export class ToolRegistryClass<
     request: TSchema["infer"],
     context: HandlerContext,
   ) => Promise<Result>,
-> extends Map<TSchema, THandler> {
+> {
+  // Composition over `extends Map`: the inherited mutators (set/delete/
+  // clear) bypassed register()'s bookkeeping (byName/enabled/listCache)
+  // and could silently desync the registry if any caller reached for
+  // them. The handler map is now private; register() is the only way in.
+  private handlers = new Map<TSchema, THandler>();
+
   private enabled = new Set<TSchema>();
 
   /**
@@ -239,10 +245,11 @@ export class ToolRegistryClass<
     }
     this.byName.set(name, schema as unknown as TSchema);
     this.enable(schema);
-    return super.set(
+    this.handlers.set(
       schema as unknown as TSchema,
       handler as unknown as THandler,
     );
+    return this;
   }
 
   enable = <Schema extends TSchema>(schema: Schema) => {
@@ -298,7 +305,7 @@ export class ToolRegistryClass<
   };
 
   listAll = (): { name: string; description: string; enabled: boolean }[] =>
-    Array.from(this.keys()).map((schema) => ({
+    Array.from(this.handlers.keys()).map((schema) => ({
       name: this.toolNameOf(schema),
       description: schema.description ?? "",
       enabled: this.enabled.has(schema),
@@ -359,7 +366,7 @@ export class ToolRegistryClass<
       // exist — otherwise `list()` and `dispatch()` would disagree and
       // clients could invoke tools the user explicitly turned off.
       const schema = this.byName.get(params.name);
-      const handler = schema ? this.get(schema) : undefined;
+      const handler = schema ? this.handlers.get(schema) : undefined;
       if (schema && handler && this.enabled.has(schema)) {
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),

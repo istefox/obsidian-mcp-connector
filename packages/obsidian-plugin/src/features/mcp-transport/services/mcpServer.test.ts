@@ -65,6 +65,65 @@ describe("end-to-end: HTTP → McpServer", () => {
     }
   });
 
+  test("chunked body over the cap answers 413, not a JSON parse error", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const { request } = await import("node:http");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      // No Content-Length: chunked transfer bypasses httpServer.ts's
+      // declared-length gate, so the cap must be enforced by
+      // readBodyWithCap + the 413 short-circuit in mcpServer.ts.
+      const status = await new Promise<number>((resolve, reject) => {
+        const req = request(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            path: "/mcp",
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${"t".repeat(32)}`,
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              "transfer-encoding": "chunked",
+            },
+          },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          },
+        );
+        // The server destroys the socket after responding; a late
+        // write error must not fail the test once we have the status.
+        let settled = false;
+        req.on("response", () => {
+          settled = true;
+        });
+        req.on("error", (err) => {
+          if (!settled) reject(err);
+        });
+        const chunk = Buffer.alloc(64 * 1024, 0x61);
+        for (let sent = 0; sent <= 1_048_576; sent += chunk.length) {
+          req.write(chunk);
+        }
+        req.end();
+      });
+      expect(status).toBe(413);
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
   test("tools/list exposes the full registry (regression-guards every tool name)", async () => {
     // Lock in the exact set of registered tools. Catches the silent-regression
     // class where a refactor in mcp-tools/index.ts drops a registry.register()

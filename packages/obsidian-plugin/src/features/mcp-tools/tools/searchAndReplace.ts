@@ -2,6 +2,9 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 
+/** Reads per batch: bounds memory while hiding vault.read latency. */
+const READ_BATCH_SIZE = 8;
+
 export const searchAndReplaceSchema = type({
   name: '"search_and_replace"',
   arguments: {
@@ -120,46 +123,68 @@ export async function searchAndReplaceHandler(
   const details: SearchReplaceDetail[] = [];
   let totalReplacements = 0;
 
-  for (const file of files) {
-    const content = await ctx.app.vault.read(file);
+  // Read+scan in sequential batches (parallel reads within a batch,
+  // file order preserved) — same shape as searchVaultSimple's
+  // READ_BATCH_SIZE loop. Writes stay serial, in file order, below.
+  for (let start = 0; start < files.length; start += READ_BATCH_SIZE) {
+    const batch = files.slice(start, start + READ_BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (file) => {
+        const content = await ctx.app.vault.read(file);
 
-    // Count matches.
-    const matchCount = (content.match(regex) ?? []).length;
-    if (matchCount === 0) continue;
+        // Per-file regex: files in a batch scan concurrently, so the
+        // shared stateful global regex would race on lastIndex.
+        const fileRegex = new RegExp(regex.source, regex.flags);
 
-    // Build preview: split by line, find matching lines.
-    const lines = content.split("\n");
-    const preview: MatchPreview[] = [];
-    for (let i = 0; i < lines.length && preview.length < 5; i++) {
-      regex.lastIndex = 0;
-      if (!regex.test(lines[i])) continue;
-      regex.lastIndex = 0; // reset stateful global regex
-      const after = lines[i].replace(regex, replacement);
-      regex.lastIndex = 0;
-      preview.push({
-        line_number: i + 1,
-        before: lines[i].slice(0, 200),
-        after: after.slice(0, 200),
+        // Count matches.
+        const matchCount = (content.match(fileRegex) ?? []).length;
+        if (matchCount === 0) return null;
+
+        // Build preview: split by line, find matching lines.
+        const lines = content.split("\n");
+        const preview: MatchPreview[] = [];
+        for (let i = 0; i < lines.length && preview.length < 5; i++) {
+          fileRegex.lastIndex = 0;
+          if (!fileRegex.test(lines[i])) continue;
+          fileRegex.lastIndex = 0; // reset stateful global regex
+          const after = lines[i].replace(fileRegex, replacement);
+          fileRegex.lastIndex = 0;
+          preview.push({
+            line_number: i + 1,
+            before: lines[i].slice(0, 200),
+            after: after.slice(0, 200),
+          });
+        }
+        fileRegex.lastIndex = 0;
+
+        if (preview.length === 0 && matchCount > 0) {
+          preview.push({
+            line_number: 0,
+            before: "(multi-line match — no per-line preview)",
+            after: '(apply with dry_run:"false" to see result)',
+          });
+        }
+
+        return { file, content, matchCount, preview, fileRegex };
+      }),
+    );
+
+    for (const r of batchResults) {
+      if (r === null) continue;
+
+      if (!dryRun) {
+        const newContent = r.content.replace(r.fileRegex, replacement);
+        r.fileRegex.lastIndex = 0;
+        await ctx.app.vault.modify(r.file, newContent);
+      }
+
+      totalReplacements += r.matchCount;
+      details.push({
+        path: r.file.path,
+        replacements: r.matchCount,
+        preview: r.preview,
       });
     }
-    regex.lastIndex = 0;
-
-    if (preview.length === 0 && matchCount > 0) {
-      preview.push({
-        line_number: 0,
-        before: "(multi-line match — no per-line preview)",
-        after: '(apply with dry_run:"false" to see result)',
-      });
-    }
-
-    if (!dryRun) {
-      const newContent = content.replace(regex, replacement);
-      regex.lastIndex = 0;
-      await ctx.app.vault.modify(file, newContent);
-    }
-
-    totalReplacements += matchCount;
-    details.push({ path: file.path, replacements: matchCount, preview });
   }
 
   return {

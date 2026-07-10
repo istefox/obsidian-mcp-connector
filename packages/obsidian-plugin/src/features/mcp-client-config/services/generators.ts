@@ -49,19 +49,33 @@ export type ClaudeDesktopEntry = {
   args: string[];
 };
 
-export function claudeDesktopConfig(
-  input: ClientConfigInput,
+/**
+ * The canonical `npx mcp-remote` bridge invocation. Single source of
+ * truth for every consumer of this shape — the Settings-tab copy
+ * button (claudeDesktopConfig), the direct config writer
+ * (claudeDesktop.ts), and the .mcpb manifest (mcpbGenerator.ts) — so a
+ * future flag or header change cannot drift between them.
+ */
+export function mcpRemoteInvocation(
+  url: string,
+  token: string,
 ): ClaudeDesktopEntry {
   return {
     command: "npx",
     args: [
       "-y",
       "mcp-remote",
-      input.url,
+      url,
       "--header",
-      `Authorization: Bearer ${input.token}`,
+      `Authorization: Bearer ${token}`,
     ],
   };
+}
+
+export function claudeDesktopConfig(
+  input: ClientConfigInput,
+): ClaudeDesktopEntry {
+  return mcpRemoteInvocation(input.url, input.token);
 }
 
 // ---------------------------------------------------------------------------

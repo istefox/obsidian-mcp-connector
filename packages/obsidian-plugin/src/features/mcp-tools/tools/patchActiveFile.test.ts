@@ -430,4 +430,55 @@ describe("patch_active_file tool", () => {
     if (!file) throw new Error("expected file");
     expect(await app.vault.read(file as never)).toBe(fixture);
   });
+
+  // ── #137 parity: fence-aware section boundary in the heading branch ────
+  test("issue #137: heading replace honours fenced code with internal ## (no orphan tail)", async () => {
+    const fixture = [
+      "# Root",
+      "",
+      "## Section A",
+      "",
+      "Preamble prose.",
+      "",
+      "```text",
+      "## Identity",
+      "In-fence block.",
+      "## Language",
+      "In-fence tail.",
+      "```",
+      "",
+      "Postamble prose.",
+      "",
+      "## Section B",
+      "",
+      "Other content.",
+      "",
+    ].join("\n");
+    setMockFile("a.md", fixture);
+    setMockActiveFile("a.md");
+    const app = mockApp();
+
+    const result = await patchActiveFileHandler({
+      arguments: {
+        operation: "replace",
+        targetType: "heading",
+        target: "Section A",
+        content: "New Section A body.",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    const file = app.workspace.getActiveFile()!;
+    const final = await app.vault.read(file);
+    expect(final).toContain("New Section A body.");
+    // Section B must survive intact.
+    expect(final).toContain("## Section B");
+    expect(final).toContain("Other content.");
+    // The original section body — including everything after the in-fence
+    // `## Identity` line — must be GONE. Its survival is the #137
+    // silent-destruction signature (orphan headings + dangling fence).
+    expect(final).not.toContain("In-fence block.");
+    expect(final).not.toContain("In-fence tail.");
+    expect(final).not.toContain("Postamble prose.");
+  });
 });

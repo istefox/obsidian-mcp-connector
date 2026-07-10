@@ -1,5 +1,5 @@
 import { Notice, Plugin } from "obsidian";
-import { lastValueFrom } from "rxjs";
+import type { Subscription } from "rxjs";
 import { type SmartConnections } from "shared";
 import { checkCommandPermission as runCommandPermissionCheck } from "./features/command-permissions/services/checkCommandPermission";
 import { SettingsStore } from "./shared/settingsStore";
@@ -39,6 +39,14 @@ export default class McpToolsPlugin extends Plugin {
    * Connections is not installed (#99).
    */
   smartSearch?: SmartConnections.SmartSearch;
+
+  /**
+   * Subscription of the Smart Connections detection poll (up to 5s at
+   * onload). Kept so onunload can cancel it — without this, disabling
+   * the plugin inside the poll window leaves the timer running against
+   * an unloaded plugin instance.
+   */
+  private smartSearchSub?: Subscription;
 
   /**
    * In-process permission check for `execute_obsidian_command`,
@@ -101,9 +109,13 @@ export default class McpToolsPlugin extends Plugin {
     // undefined and the provider can never become ready even with
     // Smart Connections fully loaded (#99). Best-effort, same shape as
     // the Local REST API binding above.
-    lastValueFrom(loadSmartSearchAPI(this))
-      .then((dep) => {
+    // Subscribed (not lastValueFrom) so onunload can cancel the poll if
+    // the plugin is disabled inside the 5s detection window.
+    this.smartSearchSub = loadSmartSearchAPI(this).subscribe({
+      next: (dep) => {
         this.smartSearch = dep.api;
+      },
+      complete: () => {
         if (this.smartSearch) {
           logger.info(
             "Smart Connections detected — `search_vault_smart` can use it",
@@ -113,18 +125,21 @@ export default class McpToolsPlugin extends Plugin {
             "Smart Connections not installed — `search_vault_smart` falls back to the native provider unless reconfigured",
           );
         }
-      })
-      .catch((error: unknown) => {
+      },
+      error: (error: unknown) => {
         logger.debug("Smart Connections load skipped", {
           error: error instanceof Error ? error.message : String(error),
         });
-      });
+      },
+    });
 
     logger.info("MCP Tools Plugin loaded");
   }
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Obsidian calls onunload synchronously; the returned Promise is not awaited by the plugin lifecycle
   async onunload() {
+    this.smartSearchSub?.unsubscribe();
+    this.smartSearchSub = undefined;
     if (this.promptsState) {
       promptsTeardown(this.promptsState);
       this.promptsState = undefined;

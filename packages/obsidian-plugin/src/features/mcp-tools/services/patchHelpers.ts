@@ -188,8 +188,14 @@ export function hasAnyH1(lines: string[]): boolean {
  * open fenced code block — i.e. `fenceOpen[i]` is the value the old
  * `count ``` up to lineIdx` loop would have produced for `lineIdx = i`.
  * Used so a range scan does not rescan from line 0 per line (was O(n²)).
+ *
+ * Exported for callers that check many lines of the same document
+ * (e.g. headingRename's per-line backlink rewrite): precompute once and
+ * pass to `isInsideTableOrFencedCodeAt` — calling the single-shot
+ * `isInsideTableOrFencedCode` in a per-line loop is the O(n²) trap this
+ * pass exists to avoid.
  */
-function computeFenceOpenState(lines: string[]): boolean[] {
+export function computeFenceOpenState(lines: string[]): boolean[] {
   const fenceOpen = new Array<boolean>(lines.length);
   let inFence = false;
   for (let i = 0; i < lines.length; i++) {
@@ -210,7 +216,7 @@ function computeFenceOpenState(lines: string[]): boolean[] {
  * array instead of rescanning from line 0. Behaviour is byte-identical
  * to the original single-function form.
  */
-function isInsideTableOrFencedCodeAt(
+export function isInsideTableOrFencedCodeAt(
   lines: string[],
   lineIdx: number,
   fenceOpen: boolean[],
