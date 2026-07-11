@@ -1,6 +1,7 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { createServer, type Server } from "node:http";
-import { bindWithFallback } from "./port";
+import { bindWithFallback, resolvePorts } from "./port";
+import { PORT_RANGE } from "../constants";
 
 const openServers: Server[] = [];
 
@@ -52,5 +53,36 @@ describe("bindWithFallback", () => {
     await expect(bindWithFallback(server, [p0, p1])).rejects.toThrow(
       /no free port/i,
     );
+  });
+
+  test("throws immediately when a single fixed port is busy, no fallback (#337)", async () => {
+    const { port } = await occupyFreePort();
+
+    const server = createServer();
+    openServers.push(server);
+    await expect(bindWithFallback(server, [port])).rejects.toThrow(
+      /no free port/i,
+    );
+  });
+});
+
+describe("resolvePorts", () => {
+  test("returns the default range when unset", () => {
+    expect(resolvePorts(undefined)).toEqual(PORT_RANGE);
+  });
+
+  test("returns a single-element list for a valid configured port", () => {
+    expect(resolvePorts(27210)).toEqual([27210]);
+  });
+
+  test("falls back to the default range for an out-of-range port", () => {
+    expect(resolvePorts(80)).toEqual(PORT_RANGE);
+    expect(resolvePorts(70000)).toEqual(PORT_RANGE);
+  });
+
+  test("falls back to the default range for a non-integer or non-numeric value", () => {
+    expect(resolvePorts(27200.5)).toEqual(PORT_RANGE);
+    expect(resolvePorts("27200")).toEqual(PORT_RANGE);
+    expect(resolvePorts(null)).toEqual(PORT_RANGE);
   });
 });

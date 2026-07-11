@@ -11,6 +11,7 @@ import {
   destroyMcpService,
   type McpService,
 } from "./mcpServer";
+import { resolvePorts } from "./port";
 import { generateToken } from "./token";
 
 export type McpTransportState = {
@@ -61,15 +62,38 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
       return current; // NO_CHANGE: keep the existing valid token
     });
 
+    const mcpTransportSlice = (await new SettingsStore(plugin).readSlice(
+      "mcpTransport",
+    )) as { port?: unknown } | undefined;
+    const ports = resolvePorts(mcpTransportSlice?.port);
+
     const mcp = await createMcpService({
       app: plugin.app,
       plugin,
       pluginVersion: plugin.manifest.version,
     });
-    const server = await startHttpServer({
-      bearerToken,
-      requestHandler: mcp.handleRequest,
-    });
+    let server: RunningServer;
+    try {
+      server = await startHttpServer({
+        bearerToken,
+        requestHandler: mcp.handleRequest,
+        ports,
+      });
+    } catch (err) {
+      // A single-element `ports` list means the user configured a fixed
+      // port: bindWithFallback's own "range exhausted" error (no .code)
+      // means that one port was busy. Any other error (e.g. a genuine
+      // EACCES/EADDRNOTAVAIL, which carries a .code) passes through
+      // unchanged — only the busy-fixed-port case gets the friendlier
+      // message. No fallback to the range: that would reintroduce the
+      // cross-session port drift a fixed port is meant to fix (#337).
+      if (ports.length === 1 && err instanceof Error && !("code" in err)) {
+        throw new Error(
+          `Port ${ports[0]} is in use — the MCP server did not start. Free it or change the port in settings.`,
+        );
+      }
+      throw err;
+    }
 
     logger.info("MCP Connector HTTP server listening", {
       port: server.port,
