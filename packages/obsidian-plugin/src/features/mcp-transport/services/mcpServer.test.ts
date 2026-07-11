@@ -5,6 +5,7 @@ import {
   destroyMcpService,
   type McpService,
 } from "./mcpServer";
+import { resolveServerName } from "./setup";
 
 beforeEach(() => resetMockVault());
 
@@ -19,6 +20,7 @@ describe("createMcpService", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
     expect(typeof svc.handleRequest).toBe("function");
@@ -32,6 +34,7 @@ describe("end-to-end: HTTP → McpServer", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
 
@@ -72,6 +75,7 @@ describe("end-to-end: HTTP → McpServer", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
 
@@ -135,6 +139,7 @@ describe("end-to-end: HTTP → McpServer", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
 
@@ -245,6 +250,7 @@ describe("end-to-end: HTTP → McpServer", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
 
@@ -289,6 +295,7 @@ describe("end-to-end: HTTP → McpServer", () => {
       app: mockApp(),
       plugin: mockPlugin(),
       pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
     });
     active.push(svc);
 
@@ -331,5 +338,103 @@ describe("end-to-end: HTTP → McpServer", () => {
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
+  });
+
+  test("initialize reports the configured serverInfo.name", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "Obsidian - Test Vault",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "test-client", version: "0.0.0" },
+          },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body?.result?.serverInfo?.name).toBe("Obsidian - Test Vault");
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("initialize reports a custom serverInfo.name override", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "My Custom Name",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "test-client", version: "0.0.0" },
+          },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body?.result?.serverInfo?.name).toBe("My Custom Name");
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+});
+
+describe("resolveServerName", () => {
+  test('falls back to "Obsidian - <vault name>" when unset, empty, or whitespace-only', () => {
+    const app = mockApp();
+    expect(resolveServerName(app, undefined)).toBe("Obsidian - Test Vault");
+    expect(resolveServerName(app, "")).toBe("Obsidian - Test Vault");
+    expect(resolveServerName(app, "   ")).toBe("Obsidian - Test Vault");
+  });
+
+  test("uses the configured name, trimmed", () => {
+    const app = mockApp();
+    expect(resolveServerName(app, "  Foo  ")).toBe("Foo");
   });
 });
