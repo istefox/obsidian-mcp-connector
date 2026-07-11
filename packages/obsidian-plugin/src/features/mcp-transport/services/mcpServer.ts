@@ -24,6 +24,8 @@ export type McpServiceConfig = {
   app: App;
   plugin: McpToolsPlugin;
   pluginVersion: string;
+  /** Reported as `serverInfo.name` in the MCP `initialize` handshake (see issue #329). */
+  serverName: string;
 };
 
 export type McpService = {
@@ -71,7 +73,7 @@ export async function createMcpService(
   ): Promise<void> => {
     const server = new McpServer(
       {
-        name: "mcp-connector",
+        name: config.serverName,
         version: config.pluginVersion,
       },
       {

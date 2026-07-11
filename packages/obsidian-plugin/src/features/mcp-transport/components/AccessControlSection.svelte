@@ -1,6 +1,7 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
+  import { onMount } from "svelte";
   import {
     setup as mcpTransportSetup,
     teardown as mcpTransportTeardown,
@@ -9,6 +10,7 @@
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
   import { applyAutoWrite } from "$/features/mcp-client-config";
   import { globalSettingsMutex } from "$/features/command-permissions";
+  import { SettingsStore } from "$/shared/settingsStore";
 
   export let plugin: McpToolsPlugin;
 
@@ -19,6 +21,66 @@
 
   let showToken = false;
   let busy = false;
+
+  // The configured (possibly blank) server-name override, read from
+  // data.json on mount. Blank means "use the computed default" — see
+  // resolveServerName in services/setup.ts.
+  let serverNameInput = "";
+  let serverNameBusy = false;
+
+  onMount(async () => {
+    const raw = (await new SettingsStore(plugin).readSlice("mcpTransport")) as
+      | { serverName?: string }
+      | undefined;
+    serverNameInput = raw?.serverName ?? "";
+  });
+
+  /**
+   * Persist the server-name override and restart the transport so the
+   * next MCP `initialize` handshake reports it (see issue #329).
+   *
+   * Mirrors handleRegenerate(): persist → teardown → setup → update
+   * local/plugin state.
+   */
+  async function handleSaveServerName(): Promise<void> {
+    serverNameBusy = true;
+    try {
+      const trimmed = serverNameInput.trim();
+      await globalSettingsMutex.run(async () => {
+        const data = ((await plugin.loadData()) ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const existing = (data.mcpTransport ?? {}) as Record<string, unknown>;
+        await plugin.saveData({
+          ...data,
+          mcpTransport: { ...existing, serverName: trimmed },
+        });
+      });
+
+      if (plugin.mcpTransportState) {
+        await mcpTransportTeardown(plugin.mcpTransportState);
+        plugin.mcpTransportState = undefined;
+      }
+
+      const result = await mcpTransportSetup(plugin);
+      if (!result.success) {
+        new Notice(`MCP Connector: failed to restart — ${result.error}`);
+        return;
+      }
+
+      plugin.mcpTransportState = result.state;
+      bearerToken = result.state.bearerToken;
+      port = result.state.server.port;
+      serverNameInput = trimmed;
+      new Notice("Server name saved.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`MCP Connector: failed to save server name — ${message}`);
+    } finally {
+      serverNameBusy = false;
+    }
+  }
 
   /**
    * Copy a string value to the clipboard and show a brief Notice.
@@ -173,6 +235,32 @@
       </div>
     </div>
   </div>
+
+  <div class="setting-item">
+    <div class="setting-item-info">
+      <div class="setting-item-name">Server name</div>
+      <div class="setting-item-description">
+        Shown as this server's identity in MCP clients that list multiple
+        servers. Leave blank to use "Obsidian - &lt;vault name&gt;".
+      </div>
+    </div>
+    <div class="setting-item-control token-control">
+      <input
+        type="text"
+        bind:value={serverNameInput}
+        placeholder="Obsidian - {plugin.app.vault.getName()}"
+        aria-label="Server name"
+        class="server-name-input"
+      />
+      <button
+        type="button"
+        on:click={handleSaveServerName}
+        disabled={serverNameBusy}
+      >
+        {serverNameBusy ? "Saving…" : "Save"}
+      </button>
+    </div>
+  </div>
 </div>
 
 <style>
@@ -198,6 +286,11 @@
     color: var(--text-muted);
     font-size: 0.9em;
     font-style: italic;
+  }
+
+  .server-name-input {
+    flex: 1;
+    min-width: 180px;
   }
 
   code {
