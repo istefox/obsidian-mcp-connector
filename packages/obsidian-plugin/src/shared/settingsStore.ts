@@ -92,7 +92,7 @@ export class SettingsStore {
       const stored = raw[key];
       const merged = {
         ...(opts.defaults as object),
-        ...((stored && typeof stored === "object" ? stored : {}) as object),
+        ...(stored && typeof stored === "object" ? stored : {}),
       } as T;
 
       let resolved: T = merged;

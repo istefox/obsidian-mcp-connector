@@ -55,7 +55,7 @@ const RECORD_FLUSH_DELAY_MS = 2_000;
  */
 type PendingState = {
   counts: Map<string, number>;
-  timer: ReturnType<typeof setTimeout> | null;
+  timer: number | null;
 };
 const pendingByPlugin = new WeakMap<PluginDataLike, PendingState>();
 
@@ -111,7 +111,10 @@ export class ToolLoadingManager {
       return;
     }
     if (pending.timer === null) {
-      pending.timer = setTimeout(() => {
+      // window.setTimeout (not the bare global): Obsidian popout-window
+      // compatibility, and the plugin runs in the renderer where window
+      // is always present.
+      pending.timer = window.setTimeout(() => {
         pending.timer = null;
         // Fire-and-forget: a failed flush restores the batch in memory
         // (see flushPendingCalls) and the next call retries.
@@ -129,7 +132,7 @@ export class ToolLoadingManager {
   async flushPendingCalls(plugin: PluginDataLike): Promise<void> {
     const pending = pendingFor(plugin);
     if (pending.timer !== null) {
-      clearTimeout(pending.timer);
+      window.clearTimeout(pending.timer);
       pending.timer = null;
     }
     if (pending.counts.size === 0) return;
@@ -239,7 +242,7 @@ export class ToolLoadingManager {
     // before the reset cannot re-add pre-reset counts afterwards.
     const pending = pendingFor(plugin);
     if (pending.timer !== null) {
-      clearTimeout(pending.timer);
+      window.clearTimeout(pending.timer);
       pending.timer = null;
     }
     pending.counts.clear();

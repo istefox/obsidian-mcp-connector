@@ -120,7 +120,7 @@ export async function updateClaudeDesktopConfig(
             servers && typeof servers === "object"
               ? { ...(servers as Record<string, unknown>) }
               : {},
-        } as typeof config;
+        };
       }
     } catch (err) {
       throw new Error(

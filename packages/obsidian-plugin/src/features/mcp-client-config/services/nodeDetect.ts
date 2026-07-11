@@ -53,7 +53,7 @@ export type ExecRunner = (
   stderr: string;
 }>;
 
-const defaultRunner: ExecRunner = promisify(execFile) as unknown as ExecRunner;
+const defaultRunner: ExecRunner = promisify(execFile);
 
 let cached: NodeDetectResult | null = null;
 let cachedNodePath: string | null = null;

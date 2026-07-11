@@ -49,9 +49,8 @@ export async function getNotePropertyHandler(
     };
   }
   const file = resolved.file;
-  const fm = ctx.app.metadataCache.getFileCache(file)?.frontmatter as
-    | Record<string, unknown>
-    | undefined;
+  const fm: Record<string, unknown> | undefined =
+    ctx.app.metadataCache.getFileCache(file)?.frontmatter;
   const value =
     fm && Object.prototype.hasOwnProperty.call(fm, ctx.arguments.key)
       ? fm[ctx.arguments.key]
