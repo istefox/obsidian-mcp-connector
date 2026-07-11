@@ -3,6 +3,17 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.23.2] — 2026-07-11
+
+Second cleanup pass on the community-plugin automated review. No feature changes.
+
+### Fixed
+
+- **Shared logger fully typed for the scanner.** Node builtins sit behind locally-declared signatures, clearing the remaining `no-unsafe-*` warnings (the scanner type-checks without `@types/node`, so the previous devDependency fix had no effect there).
+- **Backend probe and test bootstrap.** The navigator probe reads the global through a form both type environments accept, the test-runner `window` bootstrap moves to plain JS outside the TypeScript tree, and an unused import is gone.
+
+---
+
 ## [0.23.1] — 2026-07-11
 
 Cleanup release addressing the community-plugin automated review of 0.23.0. No feature changes.
