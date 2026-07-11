@@ -3,6 +3,17 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.24.0] — 2026-07-11
+
+Two new Access Control settings for multi-vault setups: a configurable server identity and an optional fixed port.
+
+### Added
+
+- **Configurable `serverInfo.name`.** MCP clients that aggregate multiple servers into one list (VS Code, Continue.dev) show this handshake field verbatim instead of the client-side config label, so multiple vaults used to show up as indistinguishable "mcp-connector" entries. A new "Server name" field under Settings → MCP Connector → Access Control lets you set it directly, defaulting to "Obsidian - <vault name>" when left blank. (#329)
+- **Fixed port per vault.** With two or more vaults open, the port each one gets depends on startup order, so it can flip between sessions and a client config pinned to a URL ends up pointing at the wrong vault. A new "Fixed port" field lets you pin a vault to one port; if that port is already in use, the server does not start and says so, with no silent fallback to the automatic range. Leave it blank to keep the existing automatic 27200-27205 behavior. (#337)
+
+---
+
 ## [0.23.2] — 2026-07-11
 
 Second cleanup pass on the community-plugin automated review. No feature changes.
