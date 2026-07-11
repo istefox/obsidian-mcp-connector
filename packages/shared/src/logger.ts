@@ -1,8 +1,24 @@
 import { type } from "arktype";
-import { existsSync, mkdirSync } from "fs";
-import { appendFile } from "fs/promises";
-import { homedir, platform } from "os";
-import { dirname, resolve } from "path";
+import { existsSync as _existsSync, mkdirSync as _mkdirSync } from "fs";
+import { appendFile as _appendFile } from "fs/promises";
+import { homedir as _homedir, platform as _platform } from "os";
+import { dirname as _dirname, resolve as _resolve } from "path";
+
+// Node builtins behind locally-declared signatures: the
+// community-plugin scanner type-checks without @types/node, so the
+// bare imports resolve as `any` there and every call trips the
+// no-unsafe-* rules. The assertions are exact subsets of the real
+// @types/node signatures this module uses.
+const existsSync = _existsSync as (path: string) => boolean;
+const mkdirSync = _mkdirSync as (
+  path: string,
+  options?: { recursive?: boolean },
+) => void;
+const appendFile = _appendFile as (path: string, data: string) => Promise<void>;
+const homedir = _homedir as () => string;
+const platform = _platform as () => string;
+const dirname = _dirname as (path: string) => string;
+const resolve = _resolve as (...paths: string[]) => string;
 
 /**
  * Determines the appropriate log directory path based on the current operating system.

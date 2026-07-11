@@ -30,12 +30,10 @@ import { mock } from "bun:test";
 // infrastructure and is never bundled, so load it dynamically instead.
 const moment = (await import("moment")).default;
 
-// Bun's test runner has no `window` global; production code that calls
-// window.setTimeout/clearTimeout (required for Obsidian popout-window compat)
-// needs it to exist. Assign before any module that uses window.* loads —
-// globalThis is the same object the production code reaches as `window`
-// once this assignment runs.
-(globalThis as unknown as Record<string, unknown>).window = globalThis;
+// `window` already exists here: ../test-preload.js (plain JS, first in
+// the bunfig preload list) aliases the global object as `window` before
+// any TS module loads. See that file for why the assignment lives
+// outside the TypeScript tree.
 
 // Obsidian injects `activeWindow` as a global (points to the focused Window
 // in popout-window scenarios). Tests run outside Obsidian, so we stub it to

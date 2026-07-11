@@ -328,13 +328,21 @@ let _backendConfig: Promise<BackendKind> | null = null;
  * Cached after first call. Tests should call `__resetBackendForTesting()`
  * in `afterEach` to clear the cache.
  */
+/**
+ * Read the global navigator as NavigatorLike. The `unknown` hop is
+ * deliberate: this repo's DOM lib predates WebGPU (Navigator has no
+ * `gpu`, so a direct assignment fails the weak-type check), while a
+ * WebGPU-aware lib makes any direct cast redundant. Widening to
+ * `unknown` first is the one spelling both type environments accept.
+ */
+function detectNavigator(): NavigatorLike | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  const nav: unknown = navigator;
+  return nav as NavigatorLike;
+}
+
 export function resolveBackend(
-  // The DOM lib in this tsconfig predates WebGPU, so Navigator has no
-  // `gpu` member; widen with an intersection instead of an
-  // unknown-bridge double cast.
-  navigatorRef: NavigatorLike | undefined = typeof navigator !== "undefined"
-    ? (navigator as Navigator & NavigatorLike)
-    : undefined,
+  navigatorRef: NavigatorLike | undefined = detectNavigator(),
 ): Promise<BackendKind> {
   if (!_backendConfig) {
     _backendConfig = (async (): Promise<BackendKind> => {

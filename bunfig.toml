@@ -6,4 +6,4 @@
 # be loaded at runtime outside Obsidian itself).
 
 [test]
-preload = ["./packages/obsidian-plugin/src/test-setup.ts"]
+preload = ["./packages/obsidian-plugin/test-preload.js", "./packages/obsidian-plugin/src/test-setup.ts"]
