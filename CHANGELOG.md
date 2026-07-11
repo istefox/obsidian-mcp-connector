@@ -3,6 +3,21 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.23.1] — 2026-07-11
+
+Cleanup release addressing the community-plugin automated review of 0.23.0. No feature changes.
+
+### Fixed
+
+- **Timer calls use `window.setTimeout`/`window.clearTimeout`** for popout-window compatibility.
+- **Dependency advisories closed.** `tmp` moves to ^0.2.7 and `protobufjs` to ^7.6.5; `bun audit` reports no vulnerabilities.
+
+### Changed
+
+- **Typed boundaries for bundled libraries.** A local typed surface wraps Obsidian's bundled moment and `obsidian-daily-notes-interface`, and `packages/shared` declares `@types/node`, so the scanner's type-aware rules see typed values in every environment. Nine files drop redundant type assertions. No runtime behavior changes.
+
+---
+
 ## [0.23.0] — 2026-07-11
 
 Full-codebase audit release: seven bug fixes, measured hot-path speedups, and a segmented embedding store that cuts the write volume per edit to about 1/16 of the previous layout.
