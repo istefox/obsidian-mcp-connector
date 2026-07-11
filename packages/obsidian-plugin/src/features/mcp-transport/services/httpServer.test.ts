@@ -1,5 +1,5 @@
 import { describe, expect, test, afterEach } from "bun:test";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import {
   startHttpServer,
   stopHttpServer,
@@ -11,6 +11,18 @@ const running: RunningServer[] = [];
 afterEach(async () => {
   for (const s of running.splice(0)) await stopHttpServer(s);
 });
+
+// Bind to port 0 to let the OS assign a free ephemeral port, then
+// release it immediately so it can be reused as a fixed `ports`
+// override below. Small TOCTOU window, acceptable for a unit test
+// (same approach as port.test.ts's occupyFreePort).
+async function freePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as { port: number }).port;
+  await new Promise<void>((r) => server.close(() => r()));
+  return port;
+}
 
 describe("startHttpServer", () => {
   test("binds to a port in range and exposes it", async () => {
@@ -24,6 +36,20 @@ describe("startHttpServer", () => {
     running.push(server);
     expect(server.port).toBeGreaterThanOrEqual(27200);
     expect(server.port).toBeLessThanOrEqual(27205);
+  });
+
+  test("honors a custom ports override instead of PORT_RANGE (#337)", async () => {
+    const port = await freePort();
+    const server = await startHttpServer({
+      bearerToken: "test-token-12345678901234567890abcd",
+      requestHandler: async (_req, res) => {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("ok");
+      },
+      ports: [port],
+    });
+    running.push(server);
+    expect(server.port).toBe(port);
   });
 
   test("rejects POST /mcp without auth (401)", async () => {

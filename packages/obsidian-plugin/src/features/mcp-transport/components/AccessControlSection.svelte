@@ -2,12 +2,14 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { onMount } from "svelte";
+  import { type } from "arktype";
   import {
     setup as mcpTransportSetup,
     teardown as mcpTransportTeardown,
   } from "$/features/mcp-transport/services/setup";
   import { generateToken } from "$/features/mcp-transport/services/token";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
+  import { PortNumber } from "$/features/mcp-transport/types";
   import { applyAutoWrite } from "$/features/mcp-client-config";
   import { globalSettingsMutex } from "$/features/command-permissions";
   import { SettingsStore } from "$/shared/settingsStore";
@@ -22,6 +24,13 @@
   let showToken = false;
   let busy = false;
 
+  // The configured (possibly blank) fixed-port override, read from
+  // data.json on mount. Kept as a string so an empty field is
+  // representable; blank means "use the automatic range" — see
+  // resolvePorts in services/port.ts.
+  let portInput = "";
+  let portBusy = false;
+
   // The configured (possibly blank) server-name override, read from
   // data.json on mount. Blank means "use the computed default" — see
   // resolveServerName in services/setup.ts.
@@ -30,10 +39,74 @@
 
   onMount(async () => {
     const raw = (await new SettingsStore(plugin).readSlice("mcpTransport")) as
-      | { serverName?: string }
+      | { port?: number; serverName?: string }
       | undefined;
+    portInput = raw?.port !== undefined ? String(raw.port) : "";
     serverNameInput = raw?.serverName ?? "";
   });
+
+  /**
+   * Persist the fixed-port override and restart the transport so it
+   * rebinds to the new port (see issue #337). Validates client-side
+   * before touching data.json; an invalid entry shows a Notice and
+   * changes nothing.
+   *
+   * Mirrors handleRegenerate(): persist → teardown → setup → update
+   * local/plugin state. On a busy configured port, setup() fails and
+   * the transport is left down — no silent fallback to the range.
+   */
+  async function handleSavePort(): Promise<void> {
+    const trimmed = portInput.trim();
+    let portValue: number | undefined;
+    if (trimmed) {
+      const parsed = Number(trimmed);
+      const validated = Number.isFinite(parsed) ? PortNumber(parsed) : undefined;
+      if (validated === undefined || validated instanceof type.errors) {
+        new Notice(
+          "Port must be a whole number between 1024 and 65535.",
+        );
+        return;
+      }
+      portValue = validated;
+    }
+
+    portBusy = true;
+    try {
+      await globalSettingsMutex.run(async () => {
+        const data = ((await plugin.loadData()) ?? {}) as Record<
+          string,
+          unknown
+        >;
+        const existing = (data.mcpTransport ?? {}) as Record<string, unknown>;
+        await plugin.saveData({
+          ...data,
+          mcpTransport: { ...existing, port: portValue },
+        });
+      });
+
+      if (plugin.mcpTransportState) {
+        await mcpTransportTeardown(plugin.mcpTransportState);
+        plugin.mcpTransportState = undefined;
+      }
+
+      const result = await mcpTransportSetup(plugin);
+      if (!result.success) {
+        new Notice(`MCP Connector: failed to restart — ${result.error}`);
+        return;
+      }
+
+      plugin.mcpTransportState = result.state;
+      bearerToken = result.state.bearerToken;
+      port = result.state.server.port;
+      portInput = portValue !== undefined ? String(portValue) : "";
+      new Notice("Fixed port saved.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`MCP Connector: failed to save port — ${message}`);
+    } finally {
+      portBusy = false;
+    }
+  }
 
   /**
    * Persist the server-name override and restart the transport so the
@@ -238,6 +311,31 @@
 
   <div class="setting-item">
     <div class="setting-item-info">
+      <div class="setting-item-name">Fixed port</div>
+      <div class="setting-item-description">
+        Pin this vault to one port so its MCP client config never drifts
+        across sessions. Leave blank for the automatic 27200-27205 range.
+        If the port is already in use, the server will not start.
+      </div>
+    </div>
+    <div class="setting-item-control token-control">
+      <input
+        type="number"
+        bind:value={portInput}
+        placeholder="Automatic"
+        min="1024"
+        max="65535"
+        aria-label="Fixed port"
+        class="port-input"
+      />
+      <button type="button" on:click={handleSavePort} disabled={portBusy}>
+        {portBusy ? "Saving…" : "Save"}
+      </button>
+    </div>
+  </div>
+
+  <div class="setting-item">
+    <div class="setting-item-info">
       <div class="setting-item-name">Server name</div>
       <div class="setting-item-description">
         Shown as this server's identity in MCP clients that list multiple
@@ -286,6 +384,11 @@
     color: var(--text-muted);
     font-size: 0.9em;
     font-style: italic;
+  }
+
+  .port-input {
+    flex: 1;
+    min-width: 120px;
   }
 
   .server-name-input {

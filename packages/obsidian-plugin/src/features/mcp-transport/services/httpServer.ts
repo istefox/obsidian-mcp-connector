@@ -17,6 +17,8 @@ export type RequestHandler = (
 export type HttpServerConfig = {
   bearerToken: string;
   requestHandler: RequestHandler;
+  /** Ports to try, in order. Defaults to PORT_RANGE. */
+  ports?: readonly number[];
 };
 
 export type RunningServer = {
@@ -26,7 +28,9 @@ export type RunningServer = {
 
 /**
  * Start an HTTP server bound to 127.0.0.1 on the first available port
- * in PORT_RANGE.
+ * in `config.ports` (defaults to PORT_RANGE). A single-element `ports`
+ * list (a fixed port configured by the user) throws instead of falling
+ * back elsewhere — see resolvePorts in port.ts.
  *
  * The server runs a middleware chain (method/path → origin → bearer auth)
  * before delegating to the caller-provided requestHandler. This keeps auth
@@ -90,7 +94,7 @@ export async function startHttpServer(
 
   let port: number;
   try {
-    port = await bindWithFallback(server, [...PORT_RANGE]);
+    port = await bindWithFallback(server, [...(config.ports ?? PORT_RANGE)]);
   } catch (err) {
     // Best-effort cleanup; no-op if server never listened.
     try {
