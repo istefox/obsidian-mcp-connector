@@ -1,3 +1,4 @@
+import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { SettingsStore } from "$/shared/settingsStore";
 import { logger } from "$/shared";
@@ -23,6 +24,21 @@ export type McpTransportState = {
 export type SetupResult =
   | { success: true; state: McpTransportState }
   | { success: false; error: string };
+
+/**
+ * Resolve the effective MCP `serverInfo.name` reported during the
+ * `initialize` handshake: the user's configured value if non-blank,
+ * else "Obsidian - <vault name>" so multi-vault setups are
+ * distinguishable in MCP clients that display this field verbatim
+ * (see issue #329).
+ */
+export function resolveServerName(
+  app: App,
+  configured: string | undefined,
+): string {
+  const trimmed = configured?.trim();
+  return trimmed ? trimmed : `Obsidian - ${app.vault.getName()}`;
+}
 
 /**
  * Initialize the MCP HTTP transport for the plugin.
@@ -64,13 +80,18 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
 
     const mcpTransportSlice = (await new SettingsStore(plugin).readSlice(
       "mcpTransport",
-    )) as { port?: unknown } | undefined;
+    )) as { port?: unknown; serverName?: string } | undefined;
     const ports = resolvePorts(mcpTransportSlice?.port);
+    const serverName = resolveServerName(
+      plugin.app,
+      mcpTransportSlice?.serverName,
+    );
 
     const mcp = await createMcpService({
       app: plugin.app,
       plugin,
       pluginVersion: plugin.manifest.version,
+      serverName,
     });
     let server: RunningServer;
     try {

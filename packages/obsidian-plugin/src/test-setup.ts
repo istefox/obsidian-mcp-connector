@@ -988,6 +988,7 @@ import type {
 
 export function mockApp(): App {
   const vault = {
+    getName: (): string => "Test Vault",
     getAbstractFileByPath: (path: string): TAbstractFile | null => {
       const f = fileFromPath(path);
       if (f) return f as unknown as TAbstractFile;
