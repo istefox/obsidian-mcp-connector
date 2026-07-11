@@ -7,4 +7,4 @@
 # for details.
 
 [test]
-preload = ["./src/test-setup.ts"]
+preload = ["./test-preload.js", "./src/test-setup.ts"]

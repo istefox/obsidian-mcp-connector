@@ -1,5 +1,4 @@
 import type { App } from "obsidian";
-import { TFile } from "obsidian";
 import { PromptFrontmatterSchema } from "shared";
 import type { PromptListEntry } from "$/features/mcp-transport/services/promptRegistry";
 
