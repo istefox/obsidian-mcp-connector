@@ -19,16 +19,16 @@ The plugin hosts the MCP server in-process inside Obsidian and exposes Streamabl
 
 ## Features
 
-> **Tip:** all 48 tools are active by default. You can cut the per-session token cost with [adaptive tool loading](#adaptive-tool-loading), which keeps a small core active and promotes the rest on demand.
+> **Tip:** all 51 tools are active by default. You can cut the per-session token cost with [adaptive tool loading](#adaptive-tool-loading), which keeps a small core active and promotes the rest on demand.
 
 When connected to an MCP-compatible client, this plugin enables:
 
-- **Vault access**: read, write, and patch notes through typed tools (`get_vault_file`, `create_vault_file`, `patch_vault_file`, `rename_vault_file`, `rename_heading`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory`, and more) with native binary content for images and audio. Missing parent directories on a `create` or `append` path are auto-created. `rename_vault_file` preserves link integrity across the vault via `app.fileManager.renameFile`; `rename_heading` renames a heading in place and rewrites every wikilink, markdown link, and subheading-path reference pointing at it across the vault.
+- **Vault access**: read, write, and patch notes through typed tools (`get_vault_file`, `create_vault_file`, `patch_vault_file`, `rename_vault_file`, `rename_heading`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory`, and more) with native binary content for images and audio. Missing parent directories on a `create` or `append` path are auto-created. `rename_vault_file` preserves link integrity across the vault via `app.fileManager.renameFile`; `rename_heading` renames a heading in place and rewrites every wikilink, markdown link, and subheading-path reference pointing at it across the vault. `get_vault_files` reads up to 20 text/markdown files in a single call, one result per path, so a multi-note task no longer costs one round-trip per file.
 - **Note properties**: `get_note_property`, `set_note_property`, `delete_note_property`, and `list_property_values` read and edit frontmatter fields directly, including listing every value a property takes across the whole vault.
 - **Semantic search**: `search_vault_smart` over an on-device embedding index. Four providers are available on demand: native MiniLM-L6-v2 (~25 MB, default), Gemma 300M (768d, recommended for non-Latin vaults), Multilingual-E5-Base (768d), and Smart Connections (if installed). Providers download once and swap live without a restart; the vault is re-indexed in the background while the previous provider keeps serving. A startup banner suggests the best provider based on your vault's character distribution. The index persists as 16 segments sharded by file path, so editing one note only rewrites that note's segment, not the whole index, keeping saves fast in large vaults.
 - **Plain-text and structured search**: `search_vault_simple` (text plus context windows) and `search_vault` (Dataview DQL or JsonLogic). `execute_dataview_query` runs Dataview DQL in-process via the plugin API and returns typed results (`table`, `list`, `task`, `calendar`). DQL needs the Dataview community plugin; the JsonLogic path needs nothing.
 - **Periodic notes**: `get_or_create_daily_note`, `get_or_create_periodic_note` (daily, weekly, monthly, quarterly, yearly), and `append_to_periodic_note`. Each call auto-creates the note with your configured template if it does not exist yet. Works with both the native Daily Notes plugin and the Periodic Notes community plugin.
-- **Vault graph and navigation**: `get_vault_file_partial` (frontmatter field, heading section, block range, or document outline, a context-efficient partial read), `list_tags` (all vault tags with usage counts), `get_files_by_tag` (hierarchical matching), `get_recent_files` (ordered by mtime), `get_outgoing_links`, `get_backlinks`, and `show_file_in_obsidian` (reveal a note in the Obsidian UI).
+- **Vault graph and navigation**: `get_vault_file_partial` (frontmatter field, heading section, block range, or document outline, a context-efficient partial read), `list_tags` (all vault tags with usage counts), `get_files_by_tag` (hierarchical matching), `get_recent_files` (ordered by mtime), `get_outgoing_links`, `get_backlinks`, and `show_file_in_obsidian` (reveal a note in the Obsidian UI). `get_vault_overview` returns a one-call snapshot (active file, note count, top-level folder distribution, top tags, recent files), replacing the 3-5 separate calls a session otherwise needs just to get oriented.
 - **Vault intelligence**: `find_broken_links` (link targets that do not resolve, with source file and line number), `find_orphaned_notes` (notes with zero incoming resolved links), `search_and_replace` (regex find-and-replace across the vault or scoped paths, `dry_run:"true"` by default for a safe preview), `get_note_outline` (heading TOC with level, text, line number, and anchor slug), and `list_bookmarks` (the full native Obsidian bookmark hierarchy: files, folders, searches, headings, blocks, groups).
 - **Canvas**: `get_canvas` reads a `.canvas` file as structured nodes and edges, capping long text-node content with a `textTruncated` flag to bound token cost. `add_canvas_node` appends a text, file, or link node with automatic placement to the right of the existing layout, creating the canvas and parent folders if the path does not exist. `connect_canvas_nodes` draws an edge between two nodes by id. Writes preserve every existing field, including styling, so a canvas edited in Obsidian round-trips through a tool write with clean diffs.
 - **Template execution**: invoke Templater templates as MCP tool calls with dynamic parameters.
@@ -38,11 +38,11 @@ When connected to an MCP-compatible client, this plugin enables:
 
 **Typed output on every tool.** Each tool result carries a `structuredContent` object next to the text payload, so clients that support it (Claude Desktop, Claude Code) get a typed object without parsing a JSON string. The text stays byte-identical, so clients that read only text keep working unchanged. Every tool also declares MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so a client can skip the confirmation prompt on read-only calls and gate it on destructive ones. List and scan tools take a `limit` (default 200, clamped to 1000) and flag `truncated: true` with a full `total` when a large vault would otherwise return an unbounded array.
 
-46 vault tools in total, plus two always-on meta-tools (`tool_catalog`, `activate_tool`) that power [adaptive tool loading](#adaptive-tool-loading), for 48 tools in all. Full list in the plugin's settings, **Tools available** section.
+48 vault tools in total, plus three always-on meta-tools (`tool_catalog`, `activate_tool`, `activate_tools`) that power [adaptive tool loading](#adaptive-tool-loading), for 51 tools in all. Full list in the plugin's settings, **Tools available** section.
 
 ## Adaptive tool loading
 
-Every tool a server advertises costs context-window tokens on each session: the client downloads the full JSON schema of every active tool before the model says a word. With all 48 tools active that is roughly 10K tokens per session. Adaptive tool loading lets you cut that cost without losing access to any tool.
+Every tool a server advertises costs context-window tokens on each session: the client downloads the full JSON schema of every active tool before the model says a word. With all 51 tools active that is roughly 10K tokens per session. Adaptive tool loading lets you cut that cost without losing access to any tool.
 
 ### Profiles
 
@@ -50,16 +50,17 @@ Pick a profile in **Settings, MCP Connector, Tool Loading**:
 
 | Profile | Active tools | Best for |
 |---|---|---|
-| **All** (default) | All 46 tools + both meta-tools | Maximum capability, no behavior change from earlier versions |
+| **All** (default) | All 48 tools + all three meta-tools | Maximum capability, no behavior change from earlier versions |
 | **Core** | 13 essential tools + `tool_catalog` | Minimum token cost, static surface that never changes mid-session |
-| **Adaptive** | Core + frequency-promoted tools + both meta-tools | Token savings that converge on your actual usage |
+| **Adaptive** | Core + frequency-promoted tools + all three meta-tools | Token savings that converge on your actual usage |
 
 The Core set covers the everyday operations: server info, active-file read/write/append, vault file read/create/list, both search tools, tags, note properties, and the daily note.
 
-### The two meta-tools
+### The three meta-tools
 
 - **`tool_catalog`** (always active, read-only): returns the full inventory of all tools with their status (`active`, `inactive`, `promoted`), call counts, and descriptions for inactive ones. The model always knows what exists and what is switched off, regardless of profile.
 - **`activate_tool`** (Adaptive and All profiles only): promotes an inactive tool by name. The tool becomes available immediately, no reconnect needed. By default the promotion lasts until the plugin reloads; pass `persist: true` to write it to the plugin data so it survives reloads. Every promotion shows an Obsidian notice (`MCP Connector: "<tool>" promoted to active`) so you always see when the model expands its own tool surface. In the Core profile this meta-tool is not exposed: Core means a fixed surface, and the model cannot grow it.
+- **`activate_tools`** (Adaptive and All profiles only): promotes several inactive tools in one call instead of one `activate_tool` call per tool, refreshing the client's tool list only once. Use it whenever a task needs more than one inactive tool at a time.
 
 ### Frequency promotion
 
@@ -197,7 +198,7 @@ Click **Copy config for streamable-http clients**. The snippet uses the generic 
 
 ### Verifying the setup
 
-Once configured, your client should expose **48 MCP tools** from this server (46 vault tools + 2 meta-tools, with the default **All** profile, fewer if you selected the Core or Adaptive [tool loading profile](#adaptive-tool-loading)), plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
+Once configured, your client should expose **51 MCP tools** from this server (48 vault tools + 3 meta-tools, with the default **All** profile, fewer if you selected the Core or Adaptive [tool loading profile](#adaptive-tool-loading)), plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
 
 To verify the connection works end-to-end, ask the agent to call `get_server_info`. A successful response confirms the client can reach the in-process server and the bearer token is correct. For deeper inspection (request/response logs, tool schema inspection without an LLM in the loop), use [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector):
 

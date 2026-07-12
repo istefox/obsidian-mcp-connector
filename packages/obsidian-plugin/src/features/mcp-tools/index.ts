@@ -37,6 +37,10 @@ import {
 } from "./tools/listVaultFiles";
 import { getVaultFileHandler, getVaultFileSchema } from "./tools/getVaultFile";
 import {
+  getVaultFilesHandler,
+  getVaultFilesSchema,
+} from "./tools/getVaultFiles";
+import {
   createVaultFileHandler,
   createVaultFileSchema,
 } from "./tools/createVaultFile";
@@ -115,6 +119,10 @@ import {
   getRecentFilesHandler,
   getRecentFilesSchema,
 } from "./tools/getRecentFiles";
+import {
+  getVaultOverviewHandler,
+  getVaultOverviewSchema,
+} from "./tools/getVaultOverview";
 import {
   getVaultFilePartialHandler,
   getVaultFilePartialSchema,
@@ -228,6 +236,9 @@ export async function registerTools(
   registry.register(getVaultFileSchema, async ({ arguments: args }) =>
     getVaultFileHandler({ arguments: args, app: ctx.app }),
   );
+  registry.register(getVaultFilesSchema, async ({ arguments: args }) =>
+    getVaultFilesHandler({ arguments: args, app: ctx.app }),
+  );
   registry.register(createVaultFileSchema, async ({ arguments: args }) =>
     createVaultFileHandler({ arguments: args, app: ctx.app }),
   );
@@ -274,6 +285,9 @@ export async function registerTools(
   );
   registry.register(getRecentFilesSchema, async ({ arguments: args }) =>
     getRecentFilesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(getVaultOverviewSchema, async ({ arguments: args }) =>
+    getVaultOverviewHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(getVaultFilePartialSchema, async ({ arguments: args }) =>
     getVaultFilePartialHandler({ arguments: args, app: ctx.app }),

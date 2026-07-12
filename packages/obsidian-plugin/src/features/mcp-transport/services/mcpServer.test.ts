@@ -202,6 +202,8 @@ describe("end-to-end: HTTP → McpServer", () => {
         "get_server_info",
         "get_vault_file",
         "get_vault_file_partial",
+        "get_vault_files",
+        "get_vault_overview",
         "list_bookmarks",
         "list_obsidian_commands",
         "list_property_values",
@@ -220,7 +222,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "tool_catalog",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(49);
+      expect(names).toHaveLength(51);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.
