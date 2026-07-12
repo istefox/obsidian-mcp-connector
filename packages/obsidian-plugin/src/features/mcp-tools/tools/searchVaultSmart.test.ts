@@ -7,6 +7,7 @@ import {
   mockApp,
   mockPlugin,
   resetMockVault,
+  setMockFile,
   setMockIgnored,
 } from "$/test-setup";
 import { _resetIsUserIgnoredWarning } from "$/shared/isUserIgnored";
@@ -339,5 +340,58 @@ describe("search_vault_smart — provider-aware not-ready message (#99)", () => 
     expect(result.content[0]?.text).toMatch(
       /embedding model|still be loading/i,
     );
+  });
+});
+
+describe("search_vault_smart — structured index_building error (#344)", () => {
+  test("pendingProvider with no store: filesIndexed and percent are 0", async () => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    const spy = fakeProvider({ ready: false });
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        pendingProvider: "embedding-gemma",
+        store: undefined,
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.errorCode).toBe("index_building");
+    expect(parsed.filesTotal).toBe(2);
+    expect(parsed.filesIndexed).toBe(0);
+    expect(parsed.percent).toBe(0);
+  });
+
+  test("pendingProvider with a store: reports real indexed/total/percent", async () => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    const spy = fakeProvider({ ready: false });
+    const fakeStore = { hasRecords: (path: string) => path === "a.md" };
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        pendingProvider: "embedding-gemma",
+        store: fakeStore,
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.errorCode).toBe("index_building");
+    expect(parsed.filesTotal).toBe(2);
+    expect(parsed.filesIndexed).toBe(1);
+    expect(parsed.percent).toBe(50);
   });
 });

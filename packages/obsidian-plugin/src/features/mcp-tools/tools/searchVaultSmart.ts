@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
@@ -109,8 +109,17 @@ export async function searchVaultSmartHandler(
   const provider = state.provider;
   if (!provider.isReady()) {
     if (state.pendingProvider) {
-      return errorResult(
+      const files = ctx.app.vault.getMarkdownFiles();
+      const filesTotal = files.length;
+      const filesIndexed = state.store
+        ? files.filter((f) => state.store!.hasRecords(f.path)).length
+        : 0;
+      const percent =
+        filesTotal > 0 ? Math.round((filesIndexed / filesTotal) * 100) : 0;
+      return errorJson(
         `Semantic search is not ready: the "${state.pendingProvider}" index is still being built. Open Settings → MCP Connector → Semantic Search and click "Rebuild now" if the build has not started yet.`,
+        "index_building",
+        { filesIndexed, filesTotal, percent },
       );
     }
     return errorResult(

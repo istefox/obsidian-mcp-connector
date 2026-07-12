@@ -50,6 +50,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   // Vault files
   list_vault_files: READ_ONLY,
   get_vault_file: READ_ONLY,
+  get_vault_files: READ_ONLY,
   get_vault_file_partial: READ_ONLY,
   // Overwrites when the path already exists (documented behavior).
   create_vault_file: { ...DESTRUCTIVE, idempotentHint: true },
@@ -96,6 +97,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
 
   // Periodic notes / misc
   get_recent_files: READ_ONLY,
+  get_vault_overview: READ_ONLY,
   list_bookmarks: READ_ONLY,
   get_or_create_daily_note: { ...SAFE_WRITE, idempotentHint: true },
   get_or_create_periodic_note: { ...SAFE_WRITE, idempotentHint: true },

@@ -33,21 +33,25 @@ export function _resetMissingIsUserIgnoredWarning(): void {
   _warnedMissingIsUserIgnored = false;
 }
 
-export async function getRecentFilesHandler(
-  ctx: GetRecentFilesContext,
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
-  const limit = ctx.arguments.limit ?? 20;
-
+/**
+ * Returns every visible (non-`isUserIgnored`) markdown file in the vault,
+ * sorted by `mtime` descending with a locale-pinned `path` ascending
+ * tiebreaker. Unsliced — callers apply their own limit. Exported so
+ * get_vault_overview reuses the same exclusion + sort instead of
+ * duplicating the one-shot missing-API warning below (a second copy
+ * would need its own module flag and could double-fire the warning).
+ */
+export function getSortedVisibleMarkdownFiles(app: App): TFile[] {
   // `MetadataCache.isUserIgnored(path)` is part of Obsidian's runtime API
   // but is not surfaced by the bundled `obsidian.d.ts`. The cast through
   // `unknown` keeps us aligned with the codebase pattern used for other
   // metadata-cache accessors (see listTags.ts:30). Treated as optional so
   // tests that do not stub it keep working.
   const isUserIgnored = (
-    ctx.app.metadataCache as unknown as {
+    app.metadataCache as unknown as {
       isUserIgnored?: (path: string) => boolean;
     }
-  ).isUserIgnored?.bind(ctx.app.metadataCache);
+  ).isUserIgnored?.bind(app.metadataCache);
 
   if (!isUserIgnored && !_warnedMissingIsUserIgnored) {
     _warnedMissingIsUserIgnored = true;
@@ -60,15 +64,10 @@ export async function getRecentFilesHandler(
     );
   }
 
-  const allMarkdown = ctx.app.vault.getMarkdownFiles();
+  const allMarkdown = app.vault.getMarkdownFiles();
   const visible = isUserIgnored
     ? allMarkdown.filter((f: TFile) => !isUserIgnored(f.path))
     : allMarkdown;
-
-  // `totalFiles` reports the size of the visible (post-exclusion) set,
-  // before the recency slice. Matches the contract of `get_files_by_tag`
-  // where `totalFiles` is the total match count, not the page size.
-  const totalFiles = visible.length;
 
   // Pinned locale + sensitivity for cross-platform deterministic order
   // on the tiebreaker (matches the contract used by `list_tags` /
@@ -78,25 +77,36 @@ export async function getRecentFilesHandler(
   const comparePath = (a: string, b: string): number =>
     a.localeCompare(b, "en", { sensitivity: "variant" });
 
-  const files = visible
-    .slice()
-    .sort((a, b) => {
-      // Primary: mtime descending (most-recent first).
-      if (b.stat.mtime !== a.stat.mtime) return b.stat.mtime - a.stat.mtime;
-      // Secondary: path ascending. `Array.prototype.sort` stability is
-      // guaranteed by ES2019 (V8 / Bun honour it) but the response
-      // contract should not rely on that — an explicit tiebreaker keeps
-      // the API deterministic across repeat calls when several files
-      // share an `mtime` (common on bulk imports / sync events).
-      return comparePath(a.path, b.path);
-    })
-    .slice(0, limit)
-    .map((f) => ({
-      path: f.path,
-      mtime: f.stat.mtime,
-      ctime: f.stat.ctime,
-      size: f.stat.size,
-    }));
+  return visible.slice().sort((a, b) => {
+    // Primary: mtime descending (most-recent first).
+    if (b.stat.mtime !== a.stat.mtime) return b.stat.mtime - a.stat.mtime;
+    // Secondary: path ascending. `Array.prototype.sort` stability is
+    // guaranteed by ES2019 (V8 / Bun honour it) but the response
+    // contract should not rely on that — an explicit tiebreaker keeps
+    // the API deterministic across repeat calls when several files
+    // share an `mtime` (common on bulk imports / sync events).
+    return comparePath(a.path, b.path);
+  });
+}
+
+export async function getRecentFilesHandler(
+  ctx: GetRecentFilesContext,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const limit = ctx.arguments.limit ?? 20;
+
+  const visible = getSortedVisibleMarkdownFiles(ctx.app);
+
+  // `totalFiles` reports the size of the visible (post-exclusion) set,
+  // before the recency slice. Matches the contract of `get_files_by_tag`
+  // where `totalFiles` is the total match count, not the page size.
+  const totalFiles = visible.length;
+
+  const files = visible.slice(0, limit).map((f) => ({
+    path: f.path,
+    mtime: f.stat.mtime,
+    ctime: f.stat.ctime,
+    size: f.stat.size,
+  }));
 
   const output = { totalFiles, files };
 
