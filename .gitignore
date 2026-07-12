@@ -204,6 +204,7 @@ tmp/
 CLAUDE.md
 .clinerules
 docs/deep-refactor/
+20260620_obsidian-mcp-connector_MCPB-generator_architecture_v1.md
 # Local dev tool version pin (mise/asdf) — not required for contributors
 mise.toml
 handoff*.md
