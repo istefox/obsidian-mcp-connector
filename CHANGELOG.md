@@ -3,6 +3,21 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.25.0] — 2026-07-14
+
+Hardening pass on parallel tool calls, from the 2026-07-14 audit: the registry now distinguishes why a tool is hidden, inactive tools tell clients how to recover, and the Windows bridge handles SSE and concurrency.
+
+### Added
+
+- **Recoverable error for inactive tools.** Calling a tool that adaptive loading has deactivated used to fail with the same "Unknown tool" error as a nonexistent one, which broke parallel activate-and-call batches. The call now returns an isError result with the exact recovery step (`Tool 'X' exists but is inactive. Call activate_tools({"names":["X"]}) first, then retry this call.`), and a call that did not execute no longer counts toward frequency-based promotion. (#354)
+- **Bridge SSE parsing and parallel requests.** The Windows stdio bridge could not parse the `text/event-stream` responses the server sends for activation calls since 0.22.0, so every activation through it failed with `-32000 non-JSON response`; it also processed requests one at a time behind a 30 s timeout, so parallel calls queued in cascade. It now parses SSE bodies, forwards `tools/list_changed` notifications to the client, and runs each request in its own thread. Still a single stdlib file with nothing to install. (#355)
+
+### Fixed
+
+- **User-disabled tools can no longer be re-enabled by MCP clients.** The registry kept one shared enabled set, so `activate_tool`/`activate_tools` could silently re-enable a tool the user disabled in the tool-toggle settings. The registry now splits disable states by concern (adaptive vs user); activation clears only the adaptive flag, answers `not_allowed` for user-disabled tools, and `tool_catalog` no longer offers them. (#353)
+
+---
+
 ## [0.24.0] — 2026-07-11
 
 Two new Access Control settings for multi-vault setups: a configurable server identity and an optional fixed port.
