@@ -325,6 +325,12 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 - **Fix**: fully quit Claude Desktop (Cmd+Q on macOS) and reopen it. Claude Desktop only re-reads `claude_desktop_config.json` at launch, so closing the window or an in-app restart is not enough. With auto-write on (the default) the plugin keeps the config in sync afterward.
 - Still failing? Confirm the port in `claude_desktop_config.json` (`http://127.0.0.1:<port>/mcp`) matches the port the plugin logs on start (Settings, **Open Logs**), and make sure only one Obsidian vault has the plugin enabled (two instances contend for the port). Then fully restart Claude Desktop again.
 
+### Claude Desktop extension (.mcpb) shows disconnected most of the time
+
+- **Symptom**: the installed Claude Desktop extension is disconnected, stuck, or "busy" on most connection attempts, with no clear error in Claude.
+- **Cause** (fixed in v0.26.0): before that version, the downloaded `.mcpb` baked the HTTP port and bearer token into `manifest.json` as a literal command, captured once at export. If the plugin later bound to a different port (no Fixed Port set, multiple vaults open) or the token changed, the installed extension kept using the stale values indefinitely.
+- **Fix**: update the plugin to v0.26.0 or later, then re-export the `.mcpb` from Settings, **Quick setup for clients**, **Download .mcpb**, and reinstall it in Claude Desktop once. From that version on, the bundle reads the live port and token from the vault at connect time, so it keeps working across a token rotation or a port change with no further re-export.
+
 ### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
 
 - **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
