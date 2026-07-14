@@ -15,5 +15,10 @@ declare module "obsidian" {
  * Extend locally where a consumer needs more (e.g. disableByName).
  */
 export type RegistryLike = {
-  listAll: () => { name: string; description: string; enabled: boolean }[];
+  listAll: () => {
+    name: string;
+    description: string;
+    enabled: boolean;
+    userDisabled: boolean;
+  }[];
 };

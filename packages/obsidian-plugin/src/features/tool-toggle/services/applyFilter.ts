@@ -6,10 +6,10 @@ import type { PluginReadLike } from "$/shared/types";
  * registered ToolRegistry.
  *
  * The `ToolRegistry` already separates registration from enablement
- * via its internal `enabled` set + `disableByName(name)` API. This
- * helper reads the user's preference from `data.json` and flips each
- * named tool to disabled. Once disabled, the tool no longer appears
- * in `tools/list` and any `tools/call` against it returns
+ * via its internal disable-state sets + `setUserDisabled(name, bool)`
+ * API. This helper reads the user's preference from `data.json` and
+ * flips each named tool to disabled. Once disabled, the tool no longer
+ * appears in `tools/list` and any `tools/call` against it returns
  * MethodNotFound.
  *
  * Failure modes (non-fatal):
@@ -21,7 +21,7 @@ import type { PluginReadLike } from "$/shared/types";
  */
 
 type RegistryLike = {
-  disableByName: (name: string) => boolean;
+  setUserDisabled: (name: string, disabled: boolean) => boolean;
 };
 
 type PluginLike = PluginReadLike;
@@ -72,7 +72,7 @@ export async function applyDisabledToolsFilter(
     if (typeof entry !== "string") continue;
     const name = entry.trim();
     if (name.length === 0) continue;
-    if (registry.disableByName(name)) {
+    if (registry.setUserDisabled(name, true)) {
       disabled.push(name);
     } else {
       unknown.push(name);

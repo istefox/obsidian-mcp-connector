@@ -15,10 +15,10 @@ function makeRegistry(names: string[]) {
   return {
     listAll: () =>
       entries.map((e) => ({ ...e, enabled: !disabled.includes(e.name) })),
-    disableByName: (name: string) => {
+    setAdaptiveDisabled: (name: string, isDisabled: boolean) => {
       const found = entries.find((e) => e.name === name);
       if (!found) return false;
-      disabled.push(name);
+      if (isDisabled) disabled.push(name);
       return true;
     },
     _disabled: () => disabled,
