@@ -6,6 +6,7 @@ repo root. Deliberately NOT part of `.claude/test-cmd` (which stays
 """
 import io
 import json
+import threading
 import time
 import unittest
 import urllib.error
@@ -217,11 +218,25 @@ class ConcurrencyTests(unittest.TestCase):
         return out.getvalue(), elapsed
 
     def test_two_slow_requests_run_in_parallel(self):
+        # Concurrency proof without wall-clock bounds: each tool call blocks
+        # until BOTH calls are in flight. A serial bridge would never reach
+        # in_flight == 2, so the bounded wait fails the first call instead of
+        # deadlocking, and both_in_flight stays unset.
+        both_in_flight = threading.Event()
+        counter_lock = threading.Lock()
+        in_flight = 0
+
         def fake_urlopen(req, timeout=None):
+            nonlocal in_flight
             payload = json.loads(req.data.decode("utf-8"))
             req_id = payload.get("id")
             if req_id in (1, 2):
-                time.sleep(0.3)
+                with counter_lock:
+                    in_flight += 1
+                    if in_flight == 2:
+                        both_in_flight.set()
+                if not both_in_flight.wait(timeout=5.0):
+                    raise urllib.error.URLError("request never became concurrent")
             body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}).encode()
             return _FakeResponse(200, {"Content-Type": "application/json"}, body)
 
@@ -230,8 +245,8 @@ class ConcurrencyTests(unittest.TestCase):
             json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}}),
             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {}}),
         ]
-        out, elapsed = self._run_main(fake_urlopen, lines)
-        self.assertLess(elapsed, 0.55)
+        out, _ = self._run_main(fake_urlopen, lines)
+        self.assertTrue(both_in_flight.is_set())
         received = [json.loads(line) for line in out.strip().splitlines()]
         self.assertEqual(len(received), 3)
         self.assertEqual({msg["id"] for msg in received}, {0, 1, 2})
@@ -279,6 +294,35 @@ class ConcurrencyTests(unittest.TestCase):
         self.assertEqual(len(received), 2)
         self.assertNotIn("id", received[0])
         self.assertEqual(received[1].get("id"), 5)
+
+    def test_negotiated_protocol_version_header_on_concurrent_requests(self):
+        # Pins the "single write before any worker thread" claim from
+        # ADR-0012: after initialize negotiates a version, every follow-up
+        # request thread must send it in the MCP-Protocol-Version header.
+        seen_headers = {}
+        headers_lock = threading.Lock()
+
+        def fake_urlopen(req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            req_id = payload.get("id")
+            with headers_lock:
+                seen_headers[req_id] = req.get_header("Mcp-protocol-version")
+            if payload.get("method") == "initialize":
+                result = {"protocolVersion": "2099-01-01"}
+            else:
+                result = {}
+            body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}).encode()
+            return _FakeResponse(200, {"Content-Type": "application/json"}, body)
+
+        lines = [
+            json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {}}),
+        ]
+        self._run_main(fake_urlopen, lines)
+        self.assertIsNone(seen_headers[0])
+        self.assertEqual(seen_headers[1], "2099-01-01")
+        self.assertEqual(seen_headers[2], "2099-01-01")
 
     def test_stdin_eof_with_no_pending_work_returns_promptly(self):
         def fake_urlopen(req, timeout=None):

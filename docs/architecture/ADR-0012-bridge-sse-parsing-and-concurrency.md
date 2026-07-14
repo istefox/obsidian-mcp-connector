@@ -244,6 +244,16 @@ before any thread that reads it exists to race with. Every later
   for the stated single-user scale, but this is not a design that would
   scale to a shared/multi-tenant deployment of this script (it isn't one,
   and SPEC explicitly rules that concern out of scope).
+- Client-to-server notifications are POSTed synchronously on the main
+  thread (SPEC-sanctioned simplification), so a hung notification POST
+  head-of-line-blocks the stdin loop for up to `REQUEST_TIMEOUT_SECONDS`
+  (30s): no new request thread can be spawned for lines the client sends
+  after that notification until the POST resolves. Low-probability trigger
+  (requires a stalled server on a fire-and-forget message) and bounded by
+  the timeout, but it is a known exception to the "parallel calls never
+  queue behind one slow call" property, which strictly holds for requests
+  only. If it ever bites in practice, the fix is mechanical: spawn
+  notifications on daemon threads exactly like requests.
 - Stdout line ordering across *different* requests is no longer strictly
   request-order (responses can interleave when calls run concurrently and
   finish out of order). This is correct per JSON-RPC (clients correlate by

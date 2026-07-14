@@ -226,3 +226,4 @@ docs/clean-report/
 embeddings/
 # non-shipped dev scratch package (removed from the repo; local leftover)
 packages/test-site/
+.claude/.triage-fix-last-feat_bridge-sse-parsing-and-concurrency.json
