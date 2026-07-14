@@ -497,8 +497,14 @@ describe("ToolRegistry list() memoization", () => {
     tools.enable(alphaSchema);
     const afterEnable = tools.list();
     expect(afterEnable).not.toBe(afterDisable);
-    // Re-enabling appends to the Set, so alpha moves to the end.
-    expect(afterEnable.tools.map((t) => t.name)).toEqual(["beta", "alpha"]);
+    // After ADR-0010: list()/listAll() iterate registration order
+    // (handlers.keys()) filtered by the two disable flags, so order is
+    // stable regardless of how many times a tool is toggled. See
+    // ADR-0010, "Alternative B" for why the old reshuffle-on-re-enable
+    // behavior was not preserved.
+    // (Before ADR-0010: re-enabling moved a tool to the end of the
+    // enabled Set's insertion order, so this asserted ["beta", "alpha"].)
+    expect(afterEnable.tools.map((t) => t.name)).toEqual(["alpha", "beta"]);
   });
 
   test("enableByName/disableByName also invalidate the cache", () => {
@@ -508,6 +514,104 @@ describe("ToolRegistry list() memoization", () => {
     tools.disableByName("beta");
     expect(tools.list().tools.map((t) => t.name)).toEqual(["alpha"]);
     expect(tools.list()).not.toBe(first);
+  });
+
+  test("setAdaptiveDisabled also invalidates the cache", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setAdaptiveDisabled("beta", true);
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["alpha"]);
+    expect(tools.list()).not.toBe(first);
+  });
+
+  test("setUserDisabled also invalidates the cache", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setUserDisabled("beta", true);
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["alpha"]);
+    expect(tools.list()).not.toBe(first);
+  });
+});
+
+describe("ToolRegistry — split disable states (issue #353)", () => {
+  test("setAdaptiveDisabled(name, true) hides the tool from list()/dispatch(); listAll() reports enabled:false, userDisabled:false", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const result = tools.setAdaptiveDisabled("alpha", true);
+    expect(result).toBe(true);
+
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["beta"]);
+
+    const dispatchResult = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { isError?: boolean };
+    expect(dispatchResult.isError).toBe(true);
+
+    const entry = tools.listAll().find((e) => e.name === "alpha");
+    expect(entry).toEqual({
+      name: "alpha",
+      description: "Alpha tool",
+      enabled: false,
+      userDisabled: false,
+    });
+  });
+
+  test("setUserDisabled(name, true) hides the tool from list()/dispatch(); listAll() reports enabled:false, userDisabled:true", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const result = tools.setUserDisabled("alpha", true);
+    expect(result).toBe(true);
+
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["beta"]);
+
+    const dispatchResult = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { isError?: boolean };
+    expect(dispatchResult.isError).toBe(true);
+
+    const entry = tools.listAll().find((e) => e.name === "alpha");
+    expect(entry).toEqual({
+      name: "alpha",
+      description: "Alpha tool",
+      enabled: false,
+      userDisabled: true,
+    });
+  });
+
+  test("a tool with both flags set stays hidden; enableByName (activate_tool) clears only the adaptive flag — regression for #353", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setAdaptiveDisabled("alpha", true);
+    tools.setUserDisabled("alpha", true);
+    expect(tools.list().tools.map((t) => t.name)).toEqual(["beta"]);
+
+    // Simulates activate_tool clearing the adaptive flag via enableByName.
+    const result = tools.enableByName("alpha");
+    expect(result).toBe(true);
+
+    // Still hidden: the user-disabled flag was not cleared.
+    expect(tools.list().tools.map((t) => t.name)).not.toContain("alpha");
+    const entry = tools.listAll().find((e) => e.name === "alpha");
+    expect(entry).toEqual({
+      name: "alpha",
+      description: "Alpha tool",
+      enabled: false,
+      userDisabled: true,
+    });
+  });
+
+  test("setAdaptiveDisabled returns false for an unknown name and does not throw", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    expect(tools.setAdaptiveDisabled("nonexistent", true)).toBe(false);
+  });
+
+  test("setUserDisabled returns false for an unknown name and does not throw", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    expect(tools.setUserDisabled("nonexistent", true)).toBe(false);
   });
 });
 

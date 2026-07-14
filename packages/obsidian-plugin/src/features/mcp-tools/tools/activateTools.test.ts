@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { activateToolsHandler } from "./activateTools";
 
 function makeRegistry(
-  entries: { name: string; enabled: boolean }[],
+  entries: { name: string; enabled: boolean; userDisabled?: boolean }[],
 ): Parameters<typeof activateToolsHandler>[0]["registry"] {
   return {
     listAll: () =>
@@ -11,6 +11,7 @@ function makeRegistry(
         name: e.name,
         description: `${e.name} description`,
         enabled: e.enabled,
+        userDisabled: e.userDisabled ?? false,
       })),
   };
 }
@@ -42,6 +43,7 @@ const ENTRIES = [
   { name: "search_vault", enabled: true },
   { name: "find_broken_links", enabled: false },
   { name: "rename_vault_file", enabled: false },
+  { name: "delete_vault_file", enabled: false, userDisabled: true },
 ];
 
 function parse(result: { content: Array<{ text: string }> }) {
@@ -95,6 +97,56 @@ describe("activateToolsHandler", () => {
       does_not_exist: "not_found",
     });
     expect(out.activated).toBe(1);
+  });
+
+  test("single-name batch on a user-disabled tool reports not_allowed", async () => {
+    const plugin = makePlugin();
+    const enabled: string[] = [];
+    const { server, notifications } = makeServer();
+    const result = await activateToolsHandler({
+      arguments: { names: ["delete_vault_file"], persist: true },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: (n) => (enabled.push(n), true),
+    });
+    const out = parse(result);
+    expect(out.outcomes).toEqual({ delete_vault_file: "not_allowed" });
+    expect(out.activated).toBe(0);
+    expect(enabled).toHaveLength(0);
+    expect(notifications).toHaveLength(0);
+    expect(plugin._store().toolLoading).toBeUndefined();
+  });
+
+  test("mixed batch reports the correct outcome per name and enables only the adaptive-inactive one (SPEC success criterion)", async () => {
+    const plugin = makePlugin();
+    const enabled: string[] = [];
+    const { server, notifications } = makeServer();
+    const result = await activateToolsHandler({
+      arguments: {
+        names: [
+          "does_not_exist",
+          "search_vault",
+          "find_broken_links",
+          "delete_vault_file",
+        ],
+      },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: (n) => (enabled.push(n), true),
+    });
+    const out = parse(result);
+    expect(out.outcomes).toEqual({
+      does_not_exist: "not_found",
+      search_vault: "already_active",
+      find_broken_links: "activated",
+      delete_vault_file: "not_allowed",
+    });
+    expect(enabled).toEqual(["find_broken_links"]);
+    // Real activation happened alongside a not_allowed name — the
+    // single-notification-per-batch behavior must not regress.
+    expect(notifications).toEqual(["notifications/tools/list_changed"]);
   });
 
   test("no-op batch fires no notification and writes nothing", async () => {

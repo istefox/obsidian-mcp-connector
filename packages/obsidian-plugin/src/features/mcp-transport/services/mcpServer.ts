@@ -92,7 +92,7 @@ export async function createMcpService(
 
     // Wire the ArkType-based registry against the underlying SDK
     // Server so tools/list and tools/call go through our boolean
-    // coercion + error formatting + disableByName support.
+    // coercion + error formatting + adaptive/user disable-state support.
     server.server.setRequestHandler(ListToolsRequestSchema, registry.list);
     server.server.setRequestHandler(
       CallToolRequestSchema,

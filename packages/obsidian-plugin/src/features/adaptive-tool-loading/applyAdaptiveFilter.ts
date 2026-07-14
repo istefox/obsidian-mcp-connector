@@ -3,7 +3,7 @@ import type { PluginDataLike } from "$/shared/types";
 import { ToolLoadingManager } from "./toolLoadingManager";
 
 type RegistryLike = {
-  disableByName: (name: string) => boolean;
+  setAdaptiveDisabled: (name: string, disabled: boolean) => boolean;
   listAll: () => { name: string; description: string; enabled: boolean }[];
 };
 
@@ -23,7 +23,7 @@ export async function applyAdaptiveFilter(
   const disabled: string[] = [];
   for (const name of allNames) {
     if (!active.has(name)) {
-      registry.disableByName(name);
+      registry.setAdaptiveDisabled(name, true);
       disabled.push(name);
     }
   }
