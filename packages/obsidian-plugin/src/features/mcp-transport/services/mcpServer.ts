@@ -97,6 +97,14 @@ export async function createMcpService(
     server.server.setRequestHandler(
       CallToolRequestSchema,
       async (request, extra) => {
+        // Read the outcome classification synchronously, in the same tick
+        // as dispatch() will read it (dispatch()'s own branch check runs
+        // synchronously before its first await) — no interleaving is
+        // possible between this check and dispatch()'s internal one. See
+        // ADR-0011.
+        const isAdaptiveInactive = registry.isAdaptiveInactive(
+          request.params.name,
+        );
         // Pass the SDK's request-scoped sendNotification down to the
         // handler. activate_tool uses it so its tools/list_changed carries
         // this call's relatedRequestId and is flushed on the POST response
@@ -105,8 +113,13 @@ export async function createMcpService(
           server,
           sendNotification: extra.sendNotification,
         });
-        // Record the call for frequency-based promotion (meta-tools are excluded).
-        if (!(META_TOOLS as string[]).includes(request.params.name)) {
+        // Record the call for frequency-based promotion (meta-tools and
+        // adaptive-inactive calls are excluded — the latter did not
+        // execute, see ADR-0011).
+        if (
+          !isAdaptiveInactive &&
+          !(META_TOOLS as string[]).includes(request.params.name)
+        ) {
           toolLoadingManager
             .recordCall(request.params.name, config.plugin)
             .catch((error: unknown) => {

@@ -276,9 +276,13 @@ describe("ToolRegistry enable/disable", () => {
   });
 
   test("dispatch() on a disabled tool returns isError: true with Unknown tool message", async () => {
-    const { tools, alphaSchema } = buildRegistryWithTwoTools();
+    const { tools } = buildRegistryWithTwoTools();
 
-    tools.disable(alphaSchema);
+    // Post-#354 (ADR-0011): an ADAPTIVE-only-disabled tool now gets the
+    // recoverable "exists but is inactive" error (see the new describe
+    // block below), not this opaque one. Use setUserDisabled here to keep
+    // testing the case this assertion actually documents.
+    tools.setUserDisabled("alpha", true);
 
     // A disabled tool must be indistinguishable from an unregistered
     // one — otherwise `list()` and `dispatch()` would disagree.
@@ -547,8 +551,17 @@ describe("ToolRegistry — split disable states (issue #353)", () => {
     const dispatchResult = (await tools.dispatch(
       { name: "alpha", arguments: {} },
       fakeContext,
-    )) as { isError?: boolean };
+    )) as {
+      content?: Array<{ type: "text"; text: string }>;
+      isError?: boolean;
+    };
     expect(dispatchResult.isError).toBe(true);
+    // Locks in the outcome (b) recovery message contract (ADR-0011,
+    // issue #354) at the exact scenario this describe block already sets
+    // up, avoiding a near-duplicate test.
+    expect(dispatchResult.content?.[0]?.text).toBe(
+      'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.',
+    );
 
     const entry = tools.listAll().find((e) => e.name === "alpha");
     expect(entry).toEqual({
@@ -570,8 +583,15 @@ describe("ToolRegistry — split disable states (issue #353)", () => {
     const dispatchResult = (await tools.dispatch(
       { name: "alpha", arguments: {} },
       fakeContext,
-    )) as { isError?: boolean };
+    )) as {
+      content?: Array<{ type: "text"; text: string }>;
+      isError?: boolean;
+    };
     expect(dispatchResult.isError).toBe(true);
+    // Locks in the outcome (c) opaque-error contract for user-disabled
+    // tools (ADR-0011, issue #354): must stay indistinguishable from an
+    // unregistered name.
+    expect(dispatchResult.content?.[0]?.text).toMatch(/Unknown tool: alpha/);
 
     const entry = tools.listAll().find((e) => e.name === "alpha");
     expect(entry).toEqual({
@@ -612,6 +632,122 @@ describe("ToolRegistry — split disable states (issue #353)", () => {
   test("setUserDisabled returns false for an unknown name and does not throw", () => {
     const { tools } = buildRegistryWithTwoTools();
     expect(tools.setUserDisabled("nonexistent", true)).toBe(false);
+  });
+});
+
+describe("ToolRegistry dispatch() — self-healing inactive tool error (issue #354)", () => {
+  const RECOVERY_MESSAGE =
+    'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.';
+
+  test("outcome (b): adaptive-disabled only returns isError:true with the exact recovery message", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setAdaptiveDisabled("alpha", true);
+
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(RECOVERY_MESSAGE);
+  });
+
+  test("outcome (c): user-disabled only returns opaque Unknown tool, not the inactive message", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setUserDisabled("alpha", true);
+
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Unknown tool: alpha/);
+    expect(result.content[0]?.text).not.toContain("exists but is inactive");
+  });
+
+  test("outcome (c): both adaptive-disabled AND user-disabled returns opaque Unknown tool, not (b)", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setAdaptiveDisabled("alpha", true);
+    tools.setUserDisabled("alpha", true);
+
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Unknown tool: alpha/);
+    expect(result.content[0]?.text).not.toContain("exists but is inactive");
+  });
+
+  test("outcome (c): unregistered name returns opaque Unknown tool, not (b)", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const result = (await tools.dispatch(
+      { name: "nonexistent", arguments: {} },
+      fakeContext,
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Unknown tool: nonexistent/);
+    expect(result.content[0]?.text).not.toContain("exists but is inactive");
+  });
+
+  test("round trip (SPEC success criterion 3): outcome (b), then enableByName, then the identical retried call succeeds", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setAdaptiveDisabled("alpha", true);
+
+    const firstResult = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+    expect(firstResult.isError).toBe(true);
+    expect(firstResult.content[0]?.text).toBe(RECOVERY_MESSAGE);
+
+    // This is exactly what composeToolRegistry.ts's enableInRegistry callback
+    // does on behalf of activate_tool/activate_tools (see ADR-0010).
+    tools.enableByName("alpha");
+
+    const secondResult = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    );
+    expect(secondResult).toEqual({
+      content: [{ type: "text", text: "alpha-ok" }],
+    });
+    expect((secondResult as { isError?: boolean }).isError).toBeUndefined();
+  });
+
+  describe("isAdaptiveInactive(name) — table-driven", () => {
+    test("registered, neither flag set → false", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+    });
+
+    test("registered, adaptiveDisabled only → true", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      tools.setAdaptiveDisabled("alpha", true);
+      expect(tools.isAdaptiveInactive("alpha")).toBe(true);
+    });
+
+    test("registered, userDisabled only → false", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      tools.setUserDisabled("alpha", true);
+      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+    });
+
+    test("registered, both flags set → false", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      tools.setAdaptiveDisabled("alpha", true);
+      tools.setUserDisabled("alpha", true);
+      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+    });
+
+    test("unregistered name → false", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      expect(tools.isAdaptiveInactive("nonexistent")).toBe(false);
+    });
   });
 });
 
