@@ -4,10 +4,32 @@ Run: `python3 -m unittest discover -s scripts -p "test_*.py" -v` from the
 repo root. Deliberately NOT part of `.claude/test-cmd` (which stays
 `bun test`) — stdlib unittest only, no pytest, per SPEC.md for issue #355.
 """
+import io
 import json
+import time
 import unittest
+import urllib.error
+from unittest import mock
 
 import obsidian_mcp_bridge as bridge
+
+
+class _FakeResponse:
+    """Fake `urllib.request.urlopen` context-manager result, no real socket."""
+
+    def __init__(self, status: int, headers: dict, body: bytes):
+        self.status = status
+        self.headers = headers
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 class ParseSseTests(unittest.TestCase):
@@ -180,6 +202,97 @@ class ResolveResponseMessagesTests(unittest.TestCase):
             bridge.resolve_response_messages("application/json", b"", 1, 202),
             [bridge.build_error(1, -32000, "empty response (HTTP 202)")],
         )
+
+
+class ConcurrencyTests(unittest.TestCase):
+    def _run_main(self, fake_urlopen, lines):
+        stdin = io.StringIO("\n".join(lines) + "\n")
+        out = io.StringIO()
+        with mock.patch(
+            "obsidian_mcp_bridge.urllib.request.urlopen", fake_urlopen
+        ), mock.patch("sys.stdout", out):
+            start = time.monotonic()
+            bridge.main(argv=["bridge.py", "http://fake.local/mcp", "tok"], stdin=stdin)
+            elapsed = time.monotonic() - start
+        return out.getvalue(), elapsed
+
+    def test_two_slow_requests_run_in_parallel(self):
+        def fake_urlopen(req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            req_id = payload.get("id")
+            if req_id in (1, 2):
+                time.sleep(0.3)
+            body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}).encode()
+            return _FakeResponse(200, {"Content-Type": "application/json"}, body)
+
+        lines = [
+            json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {}}),
+        ]
+        out, elapsed = self._run_main(fake_urlopen, lines)
+        self.assertLess(elapsed, 0.55)
+        received = [json.loads(line) for line in out.strip().splitlines()]
+        self.assertEqual(len(received), 3)
+        self.assertEqual({msg["id"] for msg in received}, {0, 1, 2})
+
+    def test_slow_failure_does_not_affect_fast_concurrent_request(self):
+        def fake_urlopen(req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            req_id = payload.get("id")
+            if req_id == 1:
+                raise urllib.error.URLError("boom")
+            body = json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}).encode()
+            return _FakeResponse(200, {"Content-Type": "application/json"}, body)
+
+        lines = [
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {}}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {}}),
+        ]
+        out, _ = self._run_main(fake_urlopen, lines)
+        messages = {msg["id"]: msg for msg in (json.loads(l) for l in out.strip().splitlines())}
+        self.assertIn("bridge POST failed", messages[1]["error"]["message"])
+        self.assertEqual(messages[2].get("result"), {})
+
+    def test_sse_notification_then_response_two_stdout_lines(self):
+        def fake_urlopen(req, timeout=None):
+            notification = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+            response = {"jsonrpc": "2.0", "id": 5, "result": {}}
+            body = (
+                "data: " + json.dumps(notification) + "\n\n"
+                "data: " + json.dumps(response) + "\n\n"
+            ).encode()
+            return _FakeResponse(200, {"Content-Type": "text/event-stream"}, body)
+
+        lines = [
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {"name": "activate_tools"},
+                }
+            ),
+        ]
+        out, _ = self._run_main(fake_urlopen, lines)
+        received = [json.loads(line) for line in out.strip().splitlines()]
+        self.assertEqual(len(received), 2)
+        self.assertNotIn("id", received[0])
+        self.assertEqual(received[1].get("id"), 5)
+
+    def test_stdin_eof_with_no_pending_work_returns_promptly(self):
+        def fake_urlopen(req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            body = json.dumps(
+                {"jsonrpc": "2.0", "id": payload.get("id"), "result": {}}
+            ).encode()
+            return _FakeResponse(200, {"Content-Type": "application/json"}, body)
+
+        lines = [
+            json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}),
+        ]
+        _, elapsed = self._run_main(fake_urlopen, lines)
+        self.assertLess(elapsed, 1.0)
 
 
 if __name__ == "__main__":
