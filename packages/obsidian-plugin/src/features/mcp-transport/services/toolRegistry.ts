@@ -336,6 +336,24 @@ export class ToolRegistryClass<
     return true;
   };
 
+  /**
+   * True iff `name` resolves to a registered tool that dispatch() would
+   * answer with the recoverable "exists but is inactive" error (branch b)
+   * rather than executing it or returning the opaque Unknown-tool error.
+   * Exposed so callers outside the registry — specifically mcpServer.ts's
+   * call-frequency counter — can make the same outcome distinction without
+   * re-deriving it from listAll(), and without dispatch() leaking the
+   * distinction onto the wire. See ADR-0011.
+   */
+  isAdaptiveInactive = (name: string): boolean => {
+    const schema = this.byName.get(name);
+    return (
+      !!schema &&
+      this.adaptiveDisabled.has(schema) &&
+      !this.userDisabled.has(schema)
+    );
+  };
+
   list = () => {
     this.listCache ??= {
       tools: Array.from(this.handlers.keys())
@@ -432,6 +450,27 @@ export class ToolRegistryClass<
         // return await to handle runtime errors here
         return await handler(validParams, context);
       }
+      // (b) registered, adaptive-inactive, NOT user-disabled — recoverable.
+      // Returned directly (not thrown), so it bypasses the catch block's
+      // McpError/formatMcpError wrapping and the diagnostic error log: this
+      // is an expected, benign race outcome under normal adaptive-loading
+      // usage, not an operator-actionable failure. See ADR-0011.
+      if (
+        schema &&
+        this.adaptiveDisabled.has(schema) &&
+        !this.userDisabled.has(schema)
+      ) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Tool '${params.name}' exists but is inactive. Call activate_tools({"names":["${params.name}"]}) first, then retry this call.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      // (c) unregistered OR user-disabled (or both flags set) — unchanged.
       throw new McpError(
         ErrorCode.InvalidRequest,
         `Unknown tool: ${params.name}`,
