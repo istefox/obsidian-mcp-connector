@@ -3,8 +3,7 @@ import { unzipSync, strFromU8 } from "fflate";
 import { generateMcpb } from "./mcpbGenerator";
 
 const VERSION = "1.2.3";
-const PORT = 27200;
-const TOKEN = "test-bearer-tok-abcdef1234567890";
+const VAULT_PATH = "/Users/test/Obsidian/MockVault";
 
 function getManifest(bytes: Uint8Array): Record<string, unknown> {
   const files = unzipSync(bytes);
@@ -17,16 +16,23 @@ function getFiles(bytes: Uint8Array): Record<string, Uint8Array> {
   return unzipSync(bytes);
 }
 
+function getShimSource(bytes: Uint8Array): string {
+  const files = getFiles(bytes);
+  const shimBytes = files["server/index.js"];
+  if (!shimBytes) throw new Error("server/index.js missing from zip");
+  return strFromU8(shimBytes);
+}
+
 describe("generateMcpb", () => {
   test("returns a non-empty Uint8Array", () => {
-    const bytes = generateMcpb({ version: VERSION, port: PORT, token: TOKEN });
+    const bytes = generateMcpb({ version: VERSION, vaultPath: VAULT_PATH });
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(0);
   });
 
   test("zip contains manifest.json, server/index.js, and icon.png", () => {
     const files = getFiles(
-      generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+      generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
     );
     expect(Object.keys(files)).toContain("manifest.json");
     expect(Object.keys(files)).toContain("server/index.js");
@@ -35,7 +41,7 @@ describe("generateMcpb", () => {
 
   test("icon.png is non-empty", () => {
     const files = getFiles(
-      generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+      generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
     );
     expect(files["icon.png"].length).toBeGreaterThan(0);
   });
@@ -43,21 +49,21 @@ describe("generateMcpb", () => {
   describe("manifest.json structure", () => {
     test("manifest_version is 0.3", () => {
       const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       expect(m.manifest_version).toBe("0.3");
     });
 
     test("version is injected from input", () => {
       const m = getManifest(
-        generateMcpb({ version: "9.9.9", port: PORT, token: TOKEN }),
+        generateMcpb({ version: "9.9.9", vaultPath: VAULT_PATH }),
       );
       expect(m.version).toBe("9.9.9");
     });
 
     test("required top-level fields are present", () => {
       const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       expect(m.name).toBe("obsidian-mcp-connector");
       expect(m.display_name).toBeTruthy();
@@ -67,108 +73,80 @@ describe("generateMcpb", () => {
 
     test("icon field points to icon.png", () => {
       const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       expect(m.icon).toBe("icon.png");
     });
 
-    test("server uses type node with entry_point and mcp_config", () => {
+    test("server invokes the entry_point shim via mcp_config — no bypass", () => {
       const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       const server = m.server as Record<string, unknown>;
       expect(server.type).toBe("node");
       expect(server.entry_point).toBe("server/index.js");
-      const config = server.mcp_config as Record<string, unknown>;
-      expect(config.command).toBe("npx");
-      expect(Array.isArray(config.args)).toBe(true);
+      expect(server.mcp_config).toEqual({
+        command: "node",
+        args: ["server/index.js"],
+      });
     });
 
     test("no user_config block — zero-prompt install", () => {
       const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       expect(m.user_config).toBeUndefined();
     });
   });
 
-  describe("token and port embedding", () => {
-    test("literal token is in the Authorization arg", () => {
-      const m = getManifest(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+  describe("dynamic port/token resolution (shim)", () => {
+    test("manifest.json contains no port or token literal", () => {
+      const manifest = strFromU8(
+        getFiles(generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }))[
+          "manifest.json"
+        ],
       );
-      const args = (
-        (m.server as Record<string, unknown>).mcp_config as Record<
-          string,
-          unknown
-        >
-      ).args as string[];
-      const headerArg = args.find((a) => a.startsWith("Authorization:"));
-      expect(headerArg).toBe(`Authorization: Bearer ${TOKEN}`);
+      expect(manifest).not.toMatch(/Bearer /);
+      expect(manifest).not.toMatch(/127\.0\.0\.1:\d+/);
     });
 
-    test("literal port is in the URL arg", () => {
-      const m = getManifest(
-        generateMcpb({ version: VERSION, port: 28000, token: TOKEN }),
+    test("shim bakes in the vault path", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
-      const args = (
-        (m.server as Record<string, unknown>).mcp_config as Record<
-          string,
-          unknown
-        >
-      ).args as string[];
-      const urlArg = args.find((a) => a.includes("/mcp"));
-      expect(urlArg).toContain(":28000/");
+      expect(shim).toContain(VAULT_PATH);
     });
 
-    test("${user_config.token} placeholder is absent", () => {
-      const files = getFiles(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+    test("shim reads data.json under the plugin's own folder id", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
-      for (const [name, content] of Object.entries(files)) {
-        if (name === "icon.png") continue;
-        const text = strFromU8(content);
-        expect(
-          text,
-          `${name} must not contain user_config placeholder`,
-        ).not.toContain("${user_config.token}");
-      }
+      expect(shim).toContain(
+        '".obsidian", "plugins", "mcp-tools-istefox", "data.json"',
+      );
     });
 
-    test("${user_config.port} placeholder is absent", () => {
-      const files = getFiles(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+    test("shim resolves port and token from mcpTransport, not from literals", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
-      for (const [name, content] of Object.entries(files)) {
-        if (name === "icon.png") continue;
-        const text = strFromU8(content);
-        expect(
-          text,
-          `${name} must not contain user_config placeholder`,
-        ).not.toContain("${user_config.port}");
-      }
+      expect(shim).toContain("transport.livePort");
+      expect(shim).toContain("transport.bearerToken");
+      expect(shim).not.toMatch(/127\.0\.0\.1:\d+/);
+      expect(shim).not.toMatch(/Bearer [A-Za-z0-9_-]{10,}/);
     });
 
-    test("token value IS embedded in the manifest args", () => {
-      const files = getFiles(
-        generateMcpb({ version: VERSION, port: PORT, token: TOKEN }),
+    test("shim exits non-zero with a clear message when data.json is unreadable", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
-      const manifest = strFromU8(files["manifest.json"]);
-      expect(manifest).toContain(TOKEN);
+      expect(shim).toContain("process.exit(1)");
+      expect(shim).toContain("could not read");
     });
 
-    test("different tokens produce different bundles", () => {
-      const a = generateMcpb({
-        version: VERSION,
-        port: PORT,
-        token: "token-aaa",
-      });
-      const b = generateMcpb({
-        version: VERSION,
-        port: PORT,
-        token: "token-bbb",
-      });
-      // Manifests differ; zip bytes will differ.
+    test("different vault paths produce different bundles", () => {
+      const a = generateMcpb({ version: VERSION, vaultPath: "/vault/a" });
+      const b = generateMcpb({ version: VERSION, vaultPath: "/vault/b" });
       expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
     });
   });

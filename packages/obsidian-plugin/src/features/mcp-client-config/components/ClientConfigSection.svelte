@@ -1,6 +1,6 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
-  import { Notice } from "obsidian";
+  import { FileSystemAdapter, Notice } from "obsidian";
   import { onMount } from "svelte";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
   import {
@@ -167,7 +167,17 @@
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      const bytes = generateMcpb({ version: plugin.manifest.version, port, token });
+      const adapter = plugin.app.vault.adapter;
+      if (!(adapter instanceof FileSystemAdapter)) {
+        new Notice(
+          "Download .mcpb requires a desktop vault (FileSystemAdapter).",
+        );
+        return;
+      }
+      const bytes = generateMcpb({
+        version: plugin.manifest.version,
+        vaultPath: adapter.getBasePath(),
+      });
       const filename = "obsidian-mcp-connector.mcpb";
 
       // Detect Electron remote (desktop only). If unavailable, fall back to vault.
@@ -328,9 +338,10 @@
     <div class="setting-item-info">
       <div class="setting-item-name">Claude Desktop extension</div>
       <div class="setting-item-description">
-        Drag the downloaded file onto Claude Desktop. The token is embedded —
-        no paste needed. Do not share this file. Node.js must be on your PATH
-        (see below).
+        Drag the downloaded file onto Claude Desktop — no paste needed. It
+        resolves the current port and token from this vault at connect time,
+        so it keeps working even after a token rotation or a port change.
+        Node.js must be on your PATH (see below).
       </div>
     </div>
     <div class="setting-item-control">

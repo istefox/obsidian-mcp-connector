@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The Claude Desktop `.mcpb` extension now resolves its port and token at connect time instead of baking them in.** The old bundle embedded the HTTP port and bearer token as a literal `mcp-remote` command in `manifest.json`, captured once at export. If the plugin later fell back to a different port (no Fixed Port set, multi-vault startup races) or the token changed, the installed extension kept using the stale values with no visible error until someone re-exported and reinstalled it. The bundle's `server/index.js` shim now runs on every reconnect and reads the current port and token from the plugin's own `data.json`, via a new `mcpTransport.livePort` field written back after every successful startup, alongside the existing `bearerToken`. Only the vault path is baked into the bundle now, and it no longer embeds a live bearer token.
+
 ## [0.25.0] — 2026-07-14
 
 Hardening pass on parallel tool calls, from the 2026-07-14 audit: the registry now distinguishes why a tool is hidden, inactive tools tell clients how to recover, and the Windows bridge handles SSE and concurrency.
