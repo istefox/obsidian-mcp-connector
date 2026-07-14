@@ -179,14 +179,24 @@ export class ToolRegistryClass<
   // them. The handler map is now private; register() is the only way in.
   private handlers = new Map<TSchema, THandler>();
 
-  private enabled = new Set<TSchema>();
+  // ADR-0010: the single `enabled` Set is split into two independent
+  // disable flags so `list()`/`dispatch()` can tell WHY a tool is
+  // hidden — adaptive-tool-loading (soft, session-scoped, reversible
+  // via activate_tool) vs the user's tool-toggle settings (hard,
+  // user-authored, must never be cleared by an MCP client). A tool is
+  // served only when it is in NEITHER set.
+  private adaptiveDisabled = new Set<TSchema>();
+  private userDisabled = new Set<TSchema>();
+
+  private isServed = (schema: TSchema): boolean =>
+    !this.adaptiveDisabled.has(schema) && !this.userDisabled.has(schema);
 
   /**
    * Memoized `list()` result. ArkType `toJsonSchema()` + the
-   * normalization walk are pure functions of the enabled set, which
-   * only changes via `enable()`/`disable()` — recomputing them on
-   * every `tools/list` request (one per client session in stateless
-   * transport) is wasted work.
+   * normalization walk are pure functions of the two disable-state
+   * Sets, which only change via `setFlag()` (routed through by every
+   * mutator below) — recomputing them on every `tools/list` request
+   * (one per client session in stateless transport) is wasted work.
    */
   private listCache: {
     tools: {
@@ -244,30 +254,54 @@ export class ToolRegistryClass<
       throw new Error(`Tool already registered: ${name}`);
     }
     this.byName.set(name, schema);
-    this.enable(schema);
+    // A newly registered tool starts in neither disable Set (served by
+    // default), so no explicit "add to enabled" step is needed — but
+    // the memoized list() must still be invalidated explicitly since
+    // that no longer happens as a side effect of an enable() call.
+    this.listCache = null;
     this.handlers.set(schema, handler as unknown as THandler);
     return this;
   }
 
-  enable = <Schema extends TSchema>(schema: Schema) => {
-    this.enabled.add(schema);
+  /**
+   * Mutate one of the two disable-state Sets and invalidate the
+   * memoized `list()` result. Every mutator below routes through this
+   * so cache invalidation cannot be forgotten on one path.
+   */
+  private setFlag = <Schema extends TSchema>(
+    set: Set<TSchema>,
+    schema: Schema,
+    disabled: boolean,
+  ) => {
+    if (disabled) {
+      set.add(schema);
+    } else {
+      set.delete(schema);
+    }
     this.listCache = null;
+  };
+
+  // `enable`/`disable` (schema-based) and `enableByName`/`disableByName`
+  // (name-based) are kept, per SPEC, with their existing signatures —
+  // they are documented aliases for the ADAPTIVE concern only. See
+  // ADR-0010: this is what lets `composeToolRegistry.ts`'s existing
+  // `enableInRegistry: (name) => toolRegistry.enableByName(name)` wiring
+  // satisfy "activate_tool clears only the adaptive flag" with zero
+  // changes to the composition root.
+  enable = <Schema extends TSchema>(schema: Schema) => {
+    this.setFlag(this.adaptiveDisabled, schema, false);
     return this;
   };
 
   disable = <Schema extends TSchema>(schema: Schema) => {
-    this.enabled.delete(schema);
-    this.listCache = null;
+    this.setFlag(this.adaptiveDisabled, schema, true);
     return this;
   };
 
   /**
-   * Disable a tool by its public name (the string used in MCP
-   * `tools/list` / `tools/call`). Returns `true` if a matching tool
-   * was found and disabled, `false` otherwise.
-   *
-   * Useful for applying user-controlled disable lists (e.g. from an
-   * env var) after all features have registered their tools.
+   * Enable/disable a tool by its public name (the string used in MCP
+   * `tools/list` / `tools/call`), operating on the adaptive flag only.
+   * Returns `true` if a matching tool was found, `false` otherwise.
    */
   enableByName = (name: string): boolean => {
     const schema = this.byName.get(name);
@@ -283,29 +317,74 @@ export class ToolRegistryClass<
     return true;
   };
 
+  /**
+   * Canonical, concern-specific mutators (ADR-0010). Resolve the schema
+   * by public name and flip the given flag; return `false` for an
+   * unknown name without throwing.
+   */
+  setAdaptiveDisabled = (name: string, disabled: boolean): boolean => {
+    const schema = this.byName.get(name);
+    if (!schema) return false;
+    this.setFlag(this.adaptiveDisabled, schema, disabled);
+    return true;
+  };
+
+  setUserDisabled = (name: string, disabled: boolean): boolean => {
+    const schema = this.byName.get(name);
+    if (!schema) return false;
+    this.setFlag(this.userDisabled, schema, disabled);
+    return true;
+  };
+
+  /**
+   * True iff `name` resolves to a registered tool that dispatch() would
+   * answer with the recoverable "exists but is inactive" error (branch b)
+   * rather than executing it or returning the opaque Unknown-tool error.
+   * Exposed so callers outside the registry — specifically mcpServer.ts's
+   * call-frequency counter — can make the same outcome distinction without
+   * re-deriving it from listAll(), and without dispatch() leaking the
+   * distinction onto the wire. See ADR-0011.
+   */
+  isAdaptiveInactive = (name: string): boolean => {
+    const schema = this.byName.get(name);
+    return (
+      !!schema &&
+      this.adaptiveDisabled.has(schema) &&
+      !this.userDisabled.has(schema)
+    );
+  };
+
   list = () => {
     this.listCache ??= {
-      tools: Array.from(this.enabled.values()).map((schema) => {
-        const name = this.toolNameOf(schema);
-        const annotations = this.annotationsByName.get(name);
-        return {
-          name,
-          description: schema.description,
-          inputSchema: normalizeInputSchema(
-            schema.get("arguments").toJsonSchema(),
-          ),
-          ...(annotations ? { annotations } : {}),
-        };
-      }),
+      tools: Array.from(this.handlers.keys())
+        .filter((schema) => this.isServed(schema))
+        .map((schema) => {
+          const name = this.toolNameOf(schema);
+          const annotations = this.annotationsByName.get(name);
+          return {
+            name,
+            description: schema.description,
+            inputSchema: normalizeInputSchema(
+              schema.get("arguments").toJsonSchema(),
+            ),
+            ...(annotations ? { annotations } : {}),
+          };
+        }),
     };
     return this.listCache;
   };
 
-  listAll = (): { name: string; description: string; enabled: boolean }[] =>
+  listAll = (): {
+    name: string;
+    description: string;
+    enabled: boolean;
+    userDisabled: boolean;
+  }[] =>
     Array.from(this.handlers.keys()).map((schema) => ({
       name: this.toolNameOf(schema),
       description: schema.description ?? "",
-      enabled: this.enabled.has(schema),
+      enabled: this.isServed(schema),
+      userDisabled: this.userDisabled.has(schema),
     }));
 
   /**
@@ -364,13 +443,34 @@ export class ToolRegistryClass<
       // clients could invoke tools the user explicitly turned off.
       const schema = this.byName.get(params.name);
       const handler = schema ? this.handlers.get(schema) : undefined;
-      if (schema && handler && this.enabled.has(schema)) {
+      if (schema && handler && this.isServed(schema)) {
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),
         );
         // return await to handle runtime errors here
         return await handler(validParams, context);
       }
+      // (b) registered, adaptive-inactive, NOT user-disabled — recoverable.
+      // Returned directly (not thrown), so it bypasses the catch block's
+      // McpError/formatMcpError wrapping and the diagnostic error log: this
+      // is an expected, benign race outcome under normal adaptive-loading
+      // usage, not an operator-actionable failure. See ADR-0011.
+      if (
+        schema &&
+        this.adaptiveDisabled.has(schema) &&
+        !this.userDisabled.has(schema)
+      ) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Tool '${params.name}' exists but is inactive. Call activate_tools({"names":["${params.name}"]}) first, then retry this call.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      // (c) unregistered OR user-disabled (or both flags set) — unchanged.
       throw new McpError(
         ErrorCode.InvalidRequest,
         `Unknown tool: ${params.name}`,

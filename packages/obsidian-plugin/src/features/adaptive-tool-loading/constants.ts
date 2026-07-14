@@ -8,8 +8,8 @@ export const PROMOTION_THRESHOLD = 3;
  * so demoting it (as the `core` profile used to) makes promotion impossible
  * — an inactive tool cannot activate other tools, a circular dead end where
  * `tool_catalog` advertises a tool as promotable but the promotion call
- * returns "Unknown tool: activate_tool". `tool_catalog` is here so the
- * catalog itself is always discoverable.
+ * fails. `tool_catalog` is here so the catalog itself is always
+ * discoverable.
  */
 export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
   "tool_catalog",

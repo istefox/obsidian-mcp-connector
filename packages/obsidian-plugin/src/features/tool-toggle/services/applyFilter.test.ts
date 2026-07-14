@@ -4,7 +4,7 @@ import { applyDisabledToolsFilter } from "./applyFilter";
 /**
  * Tests for the tool-toggle filter applied to a freshly-registered
  * ToolRegistry. We stub the registry with a recording
- * `disableByName` so we don't depend on any specific tool actually
+ * `setUserDisabled` so we don't depend on any specific tool actually
  * being registered.
  */
 
@@ -12,9 +12,9 @@ function fakeRegistry(known: string[]) {
   const knownSet = new Set(known);
   const disabled = new Set<string>();
   return {
-    disableByName: (name: string) => {
+    setUserDisabled: (name: string, isDisabled: boolean) => {
       if (knownSet.has(name)) {
-        disabled.add(name);
+        if (isDisabled) disabled.add(name);
         return true;
       }
       return false;
