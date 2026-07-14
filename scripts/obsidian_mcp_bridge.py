@@ -28,16 +28,159 @@ the env var keeps it out of the process list.
 """
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
+from typing import Any, Optional
 
 PROTOCOL_VERSION_FALLBACK = "2025-06-18"
+
+# SSE line endings per the spec: CRLF, CR, or LF. Deliberately not
+# str.splitlines(), which also breaks on Unicode line/paragraph separators
+# that could appear unescaped inside a JSON string value.
+_SSE_LINE_SPLIT = re.compile(r"\r\n|\r|\n")
 
 
 def log(msg):
     # stderr only: stdout is the JSON-RPC channel the MCP client reads.
     print(f"[obsidian-bridge] {msg}", file=sys.stderr, flush=True)
+
+
+def parse_sse(body: str) -> list[dict]:
+    """Parse an SSE response body into ordered JSON-RPC messages.
+
+    Implements the subset of the SSE format this bridge needs: `data:`
+    lines are buffered and, on a blank line (event dispatch) or end of
+    body, joined with "\\n" and JSON-decoded as one message. `event:`,
+    `id:`, `retry:` fields and `:`-comment lines are ignored — this bridge
+    only forwards the JSON-RPC payload, not SSE event metadata. An event
+    whose joined data does not decode as JSON is dropped, not raised, so
+    one bad event does not lose the rest of an otherwise-valid body.
+
+    Args:
+        body: Decoded (str) SSE response body. Recognizes CRLF, CR, and LF
+            line endings per the SSE spec.
+
+    Returns:
+        Parsed JSON-RPC message dicts, in the order their events appeared
+        in the body. Non-dict JSON values (e.g. a bare number) are skipped.
+    """
+    messages: list[dict] = []
+    data_lines: list[str] = []
+
+    def dispatch() -> None:
+        if not data_lines:
+            return
+        raw = "\n".join(data_lines)
+        data_lines.clear()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        if isinstance(parsed, dict):
+            messages.append(parsed)
+
+    for line in _SSE_LINE_SPLIT.split(body):
+        if line == "":
+            dispatch()
+        elif line.startswith(":"):
+            continue  # comment line
+        elif line.startswith("data:"):
+            value = line[len("data:"):]
+            if value.startswith(" "):
+                value = value[1:]
+            data_lines.append(value)
+        else:
+            continue  # event:, id:, retry:, or unknown field
+
+    dispatch()  # flush a final event with no trailing blank line
+    return messages
+
+
+def build_error(req_id: Any, code: int, msg: str) -> dict:
+    """Build a JSON-RPC 2.0 error response object.
+
+    Args:
+        req_id: The id of the request being answered.
+        code: JSON-RPC error code.
+        msg: Human-readable error message.
+
+    Returns:
+        A JSON-RPC error response dict.
+    """
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}
+
+
+def route_sse_messages(
+    messages: list[dict], request_id: Any
+) -> tuple[list[dict], Optional[dict]]:
+    """Split parsed SSE messages into notifications and the matching response.
+
+    Args:
+        messages: Ordered messages returned by parse_sse().
+        request_id: The id of the outgoing request this SSE body answers.
+
+    Returns:
+        (notifications_in_original_order, response_or_None). A message
+        counts as the response only if its "id" equals request_id; every
+        other message (id-less, or carrying a different id) is treated as
+        a notification and kept in its original order.
+    """
+    notifications: list[dict] = []
+    response: Optional[dict] = None
+    for msg in messages:
+        if response is None and "id" in msg and msg.get("id") == request_id:
+            response = msg
+        else:
+            notifications.append(msg)
+    return notifications, response
+
+
+def resolve_response_messages(
+    content_type: str, raw: bytes, request_id: Any, status: int
+) -> list[dict]:
+    """Resolve one HTTP response body into the messages to emit on stdout.
+
+    Branches on the response Content-Type: `application/json` decodes the
+    whole body as a single JSON-RPC message; `text/event-stream` parses SSE
+    and returns any notifications followed by the message matching
+    request_id. Malformed or empty bodies, and SSE bodies with no message
+    matching request_id, all fall back to one `-32000` error message so
+    every caller has a single, uniform failure shape.
+
+    Args:
+        content_type: The response's raw Content-Type header value
+            (charset parameter, if any, is ignored).
+        raw: The raw (undecoded) response body.
+        request_id: The id of the request this response answers.
+        status: HTTP status code, included in fallback error messages for
+            diagnosis.
+
+    Returns:
+        Messages to write to stdout, in order. Always non-empty.
+    """
+    if not raw:
+        return [build_error(request_id, -32000, f"empty response (HTTP {status})")]
+
+    media_type = content_type.split(";")[0].strip().lower()
+
+    if media_type == "text/event-stream":
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return [build_error(request_id, -32000, f"non-JSON response (HTTP {status})")]
+        notifications, response = route_sse_messages(parse_sse(text), request_id)
+        if response is None:
+            return notifications + [
+                build_error(request_id, -32000, f"non-JSON response (HTTP {status})")
+            ]
+        return notifications + [response]
+
+    try:
+        return [json.loads(raw.decode("utf-8"))]
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return [build_error(request_id, -32000, f"non-JSON response (HTTP {status})")]
 
 
 def emit_error(req_id, code, msg):
