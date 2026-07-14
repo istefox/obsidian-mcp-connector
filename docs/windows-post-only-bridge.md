@@ -35,7 +35,11 @@ Ask Claude to list your vault files. If the tools respond, the bridge is working
 
 ## Limits
 
-The bridge carries requests and responses, which covers every tool call and prompt. It does not carry server-initiated notifications, because the plugin's stateless server never sends any. This is the same trade-off the plugin already makes for `mcp-remote` (the `tools/list_changed` notification is best-effort).
+The bridge carries requests and responses, which covers every tool call and prompt. It also parses `text/event-stream` responses, which the plugin uses today for `activate_tool` / `activate_tools`, and forwards any `notifications/tools/list_changed` message in that stream to the client as an unsolicited notification, the same as a normal MCP transport would.
+
+## Concurrency
+
+Each request the client sends runs on its own thread, so parallel tool calls no longer queue behind one slow call. The CLI usage and the `claude_desktop_config.json` example above are unaffected.
 
 ## When you can drop it
 
