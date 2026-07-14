@@ -116,6 +116,17 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
       throw err;
     }
 
+    // Persist the actually-bound port (post-fallback), distinct from the
+    // user's optional Fixed Port setting (`mcpTransport.port`). The
+    // generated .mcpb reads this at spawn time (mcpbGenerator.ts) so an
+    // already-installed Claude Desktop extension keeps working across a
+    // port that drifted, without a manual re-export.
+    await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => {
+      const slice = (current as Record<string, unknown> | undefined) ?? {};
+      if (slice.livePort === server.port) return current; // NO_CHANGE
+      return { ...slice, livePort: server.port };
+    });
+
     logger.info("MCP Connector HTTP server listening", {
       port: server.port,
       pluginVersion: plugin.manifest.version,
