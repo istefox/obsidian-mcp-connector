@@ -18,34 +18,88 @@ const OBSIDIAN_PLUGIN_ID = "mcp-tools-istefox";
 // already-installed bundle keeps working across a token rotation or a
 // port that fell back to a different value in the range, with no
 // re-export/reinstall (see setup.ts's `livePort` write-back).
+//
+// Claude Desktop can launch this before Obsidian's window has finished
+// opening (the app process can be alive with no vault loaded yet, e.g.
+// after the window was closed rather than quit), so the server may not
+// be listening on the first attempt. waitForServer() polls data.json +
+// a raw TCP probe for up to 30s before giving up, instead of failing
+// immediately against a port nothing is listening on yet.
 function buildShim(input: McpbGeneratorInput): string {
   return `#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
+const net = require("net");
 const { spawn } = require("child_process");
 
 const vaultPath = ${JSON.stringify(input.vaultPath)};
 const dataPath = path.join(vaultPath, ".obsidian", "plugins", ${JSON.stringify(OBSIDIAN_PLUGIN_ID)}, "data.json");
 
-let data;
-try {
-  data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
-} catch (err) {
-  console.error(\`obsidian-mcp-connector: could not read \${dataPath}: \${err.message}\`);
+const RETRY_WINDOW_MS = 30000;
+const RETRY_INTERVAL_MS = 1000;
+
+function readTransport() {
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(dataPath, "utf8"));
+  } catch (err) {
+    return { error: \`could not read \${dataPath}: \${err.message}\` };
+  }
+  const transport = data.mcpTransport || {};
+  const port = transport.livePort;
+  const token = transport.bearerToken;
+  if (!port || !token) {
+    return { error: \`\${dataPath} is missing mcpTransport.livePort or mcpTransport.bearerToken\` };
+  }
+  return { port, token };
+}
+
+function probePort(port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ port, host: "127.0.0.1" });
+    const finish = (ok) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(1000, () => finish(false));
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Re-reads data.json on every attempt, not just once: a slow-starting
+// plugin can still be mid-fallback across the port range when this
+// first runs, so an early read could catch a livePort value that is
+// about to change.
+async function waitForServer() {
+  const deadline = Date.now() + RETRY_WINDOW_MS;
+  let lastError = "timed out waiting for the MCP server";
+  while (Date.now() < deadline) {
+    const resolved = readTransport();
+    if (resolved.error) {
+      lastError = resolved.error;
+    } else if (await probePort(resolved.port)) {
+      return resolved;
+    } else {
+      lastError = \`port \${resolved.port} is not accepting connections yet\`;
+    }
+    await sleep(RETRY_INTERVAL_MS);
+  }
+  console.error(\`obsidian-mcp-connector: \${lastError} — is Obsidian open with the vault loaded?\`);
   process.exit(1);
 }
 
-const transport = data.mcpTransport || {};
-const port = transport.livePort;
-const token = transport.bearerToken;
-if (!port || !token) {
-  console.error(\`obsidian-mcp-connector: \${dataPath} is missing mcpTransport.livePort or mcpTransport.bearerToken — is Obsidian running?\`);
-  process.exit(1);
-}
-
-const url = \`http://127.0.0.1:\${port}/mcp\`;
-const args = ["-y", "mcp-remote", url, "--header", \`Authorization: Bearer \${token}\`];
-spawn("npx", args, { stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 0));
+(async () => {
+  const { port, token } = await waitForServer();
+  const url = \`http://127.0.0.1:\${port}/mcp\`;
+  const args = ["-y", "mcp-remote", url, "--header", \`Authorization: Bearer \${token}\`];
+  spawn("npx", args, { stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 0));
+})();
 `;
 }
 

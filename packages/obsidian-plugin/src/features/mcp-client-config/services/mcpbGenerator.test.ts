@@ -150,4 +150,50 @@ describe("generateMcpb", () => {
       expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
     });
   });
+
+  describe("wait-for-server retry (server not listening yet)", () => {
+    test("shim probes a real TCP connection instead of assuming the port is open", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
+      );
+      expect(shim).toContain('require("net")');
+      expect(shim).toContain("net.createConnection");
+    });
+
+    test("shim bounds the retry window instead of retrying forever", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
+      );
+      expect(shim).toContain("RETRY_WINDOW_MS");
+      expect(shim).toContain("30000");
+      expect(shim).toContain("while (Date.now() < deadline)");
+    });
+
+    test("shim re-reads data.json on every retry attempt, not just once", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
+      );
+      const loopStart = shim.indexOf("while (Date.now() < deadline)");
+      const readCallInLoop = shim.indexOf("readTransport()", loopStart);
+      expect(loopStart).toBeGreaterThan(-1);
+      expect(readCallInLoop).toBeGreaterThan(loopStart);
+    });
+
+    test("shim reports a clear timeout message pointing at Obsidian, not a raw connection error", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
+      );
+      expect(shim).toContain("is Obsidian open with the vault loaded?");
+    });
+
+    test("mcp-remote is only spawned after the wait-for-server promise resolves", () => {
+      const shim = getShimSource(
+        generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
+      );
+      const waitCall = shim.indexOf("await waitForServer()");
+      const spawnCall = shim.indexOf('spawn("npx"');
+      expect(waitCall).toBeGreaterThan(-1);
+      expect(spawnCall).toBeGreaterThan(waitCall);
+    });
+  });
 });
