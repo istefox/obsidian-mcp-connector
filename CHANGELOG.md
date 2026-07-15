@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.26.2] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension now resolves its server path independently of the process's working directory.** The generated manifest's `mcp_config.args` pointed at a bare relative path (`"server/index.js"`). That resolves against whatever working directory Claude Desktop spawns `node` with, a likely cause of the connector getting stuck. `args` now uses the `${__dirname}` template variable documented by the DXT/MCPB spec, which Claude Desktop substitutes with the extension's own install directory at spawn time.
+
 ## [0.26.1] — 2026-07-15
 
 ### Fixed
