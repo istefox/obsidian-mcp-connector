@@ -10,6 +10,7 @@ import {
   parseJsonRpcLine,
   parseTransportFile,
   buildErrorResponse,
+  buildProgressNotification,
   parseSse,
   routeSseMessages,
   resolveResponseMessages,
@@ -20,6 +21,7 @@ import {
   runMain,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  PROTOCOL_VERSION_FALLBACK,
 } from "./connectorShim.js";
 
 // connectorShim.js is plain, untyped CommonJS (SPEC hard constraint: no
@@ -181,6 +183,28 @@ describe("buildErrorResponse", () => {
         message: "obsidian-mcp-connector: boom",
         data: { port: 27200 },
       }),
+    });
+  });
+});
+
+describe("buildProgressNotification", () => {
+  test("without message", () => {
+    expect(buildProgressNotification("tok-1", 3)).toEqual({
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: { progressToken: "tok-1", progress: 3 },
+    });
+  });
+
+  test("with message", () => {
+    expect(buildProgressNotification("tok-1", 3, "still waiting")).toEqual({
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: {
+        progressToken: "tok-1",
+        progress: 3,
+        message: "still waiting",
+      },
     });
   });
 });
@@ -540,6 +564,29 @@ describe("resolveTransportWithRetry", () => {
     expect(readCalls).toBeGreaterThan(1);
     expect(result.error).toBeDefined();
   });
+
+  test("onAttempt fires once per retry iteration, not on the successful iteration", async () => {
+    const { nowImpl, sleepMsImpl } = fakeClock();
+    let attempts = 0;
+    let probeCalls = 0;
+    const result = await resolveTransportWithRetry("/fake/data.json", {
+      readTransportImpl: () => ({ port: 27200, token: "tok" }),
+      probePortImpl: async () => {
+        probeCalls++;
+        // Fail the first 3 probes, succeed on the 4th.
+        return probeCalls > 3;
+      },
+      nowImpl,
+      sleepMsImpl,
+      onAttempt: () => {
+        attempts++;
+      },
+    });
+    expect(result).toEqual({ port: 27200, token: "tok" });
+    // 3 failing iterations each fire onAttempt before sleeping; the 4th
+    // returns before reaching onAttempt/sleep.
+    expect(attempts).toBe(3);
+  });
 });
 
 function makeResponse(status: number, contentType: string, rawBody: string) {
@@ -603,6 +650,47 @@ describe("postJsonRpc", () => {
         withFetchImpl(fetchImpl),
       ),
     ).rejects.toHaveProperty("name", "AbortError");
+  });
+
+  test("sends MCP-Protocol-Version header when protocolVersion is provided", async () => {
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
+      makeResponse(
+        200,
+        "application/json",
+        '{"jsonrpc":"2.0","id":1,"result":{}}',
+      ),
+    );
+    await postJsonRpc(
+      "http://127.0.0.1:27200/mcp",
+      "tok",
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      1000,
+      {
+        fetchImpl,
+        protocolVersion: "2025-06-18",
+      } as unknown as PostJsonRpcOptions,
+    );
+    const [, options] = fetchImpl.mock.calls[0];
+    expect(options.headers["MCP-Protocol-Version"]).toBe("2025-06-18");
+  });
+
+  test("omits MCP-Protocol-Version header when protocolVersion is absent", async () => {
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
+      makeResponse(
+        200,
+        "application/json",
+        '{"jsonrpc":"2.0","id":1,"result":{}}',
+      ),
+    );
+    await postJsonRpc(
+      "http://127.0.0.1:27200/mcp",
+      "tok",
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      1000,
+      withFetchImpl(fetchImpl),
+    );
+    const [, options] = fetchImpl.mock.calls[0];
+    expect("MCP-Protocol-Version" in options.headers).toBe(false);
   });
 });
 
@@ -1157,5 +1245,191 @@ describe("runMain", () => {
       l.mock.calls.filter((c) => String(c[0]).includes("retrying once"));
     expect(retries(debugLog)).toHaveLength(1);
     expect(retries(quietLog)).toHaveLength(0);
+  });
+
+  // ── MCP-Protocol-Version echo (items 1 & 4) ────────────────────────────────
+
+  // Drives initialize then a follow-up request through runMain the way a real
+  // client does: initialize completes (its response is written) before the
+  // next request is sent. Returns the fetchImpl mock for header assertions.
+  async function runInitializeThen(
+    followUpMethod: string,
+    initializeResult: Record<string, unknown>,
+  ) {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const fetchImpl = mock(async (_url: string, init: FakeFetchInit) => {
+      const body = JSON.parse(init.body as string);
+      const result = body.method === "initialize" ? initializeResult : {};
+      return makeResponse(
+        200,
+        "application/json",
+        JSON.stringify({ jsonrpc: "2.0", id: body.id, result }),
+      );
+    });
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl,
+      dataPath: "/fake/data.json",
+      readTransportImpl: () => successTransport,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+    // Let the initialize round-trip finish (and set the negotiated version)
+    // before the follow-up request is sent, matching real client ordering.
+    await new Promise((r) => setTimeout(r, 5));
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: followUpMethod }) +
+          "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    return fetchImpl;
+  }
+
+  function callForMethod(
+    fetchImpl: ReturnType<typeof mock>,
+    method: string,
+  ): FakeFetchInit | undefined {
+    const call = fetchImpl.mock.calls.find(
+      (c) =>
+        JSON.parse((c[1] as FakeFetchInit).body as string).method === method,
+    );
+    return call?.[1] as FakeFetchInit | undefined;
+  }
+
+  test("after initialize, the next request's POST echoes the negotiated MCP-Protocol-Version", async () => {
+    const fetchImpl = await runInitializeThen("tools/list", {
+      protocolVersion: "2025-03-26",
+    });
+    const followUp = callForMethod(fetchImpl, "tools/list");
+    expect(followUp?.headers["MCP-Protocol-Version"]).toBe("2025-03-26");
+  });
+
+  test("the initialize POST itself carries no MCP-Protocol-Version header (not yet negotiated)", async () => {
+    const fetchImpl = await runInitializeThen("tools/list", {
+      protocolVersion: "2025-03-26",
+    });
+    const init = callForMethod(fetchImpl, "initialize");
+    expect(init && "MCP-Protocol-Version" in init.headers).toBe(false);
+  });
+
+  test("initialize response without result.protocolVersion falls back to PROTOCOL_VERSION_FALLBACK", async () => {
+    const fetchImpl = await runInitializeThen("tools/list", {});
+    const followUp = callForMethod(fetchImpl, "tools/list");
+    expect(followUp?.headers["MCP-Protocol-Version"]).toBe(
+      PROTOCOL_VERSION_FALLBACK,
+    );
+  });
+
+  // ── Progress notifications during retry (item 4) ───────────────────────────
+
+  test("progressToken + transport retry emits notifications/progress before the response", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const expected = { jsonrpc: "2.0", id: 1, result: { ok: true } };
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
+      makeResponse(200, "application/json", JSON.stringify(expected)),
+    );
+    // Force the retry path (readTransport errors) and fire onAttempt twice.
+    const resolveTransportWithRetryImpl = mock(
+      async (_dataPath: string, opts: { onAttempt?: () => void }) => {
+        opts.onAttempt?.();
+        opts.onAttempt?.();
+        return successTransport;
+      },
+    );
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl,
+      dataPath: "/fake/data.json",
+      readTransportImpl: () => ({ error: "not ready yet" }),
+      resolveTransportWithRetryImpl,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { _meta: { progressToken: "p-42" } },
+        }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    const written = writeChunk.mock.calls.map((c) => c[0] as string);
+    const progressWrites = written.filter((s) =>
+      s.includes("notifications/progress"),
+    );
+    expect(progressWrites.length).toBeGreaterThanOrEqual(1);
+    const first = JSON.parse(progressWrites[0].trim());
+    expect(first.method).toBe("notifications/progress");
+    expect(first.params.progressToken).toBe("p-42");
+
+    // Progress must be written BEFORE the final response.
+    const firstProgressIdx = written.findIndex((s) =>
+      s.includes("notifications/progress"),
+    );
+    const responseIdx = written.findIndex((s) => s.includes('"result"'));
+    expect(firstProgressIdx).toBeLessThan(responseIdx);
+  });
+
+  test("no progressToken → never writes notifications/progress, even when the transport retries", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const expected = { jsonrpc: "2.0", id: 1, result: { ok: true } };
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
+      makeResponse(200, "application/json", JSON.stringify(expected)),
+    );
+    const resolveTransportWithRetryImpl = mock(
+      async (_dataPath: string, opts: { onAttempt?: () => void }) => {
+        // Even if the retry impl invokes the callback, the default no-op
+        // must apply (handleRequest passes no progress callback here).
+        opts.onAttempt?.();
+        opts.onAttempt?.();
+        return successTransport;
+      },
+    );
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl,
+      dataPath: "/fake/data.json",
+      readTransportImpl: () => ({ error: "not ready yet" }),
+      resolveTransportWithRetryImpl,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    const written = writeChunk.mock.calls.map((c) => c[0] as string);
+    expect(written.some((s) => s.includes("notifications/progress"))).toBe(
+      false,
+    );
+    // The real response is still delivered.
+    expect(written.some((s) => s.includes('"result"'))).toBe(true);
   });
 });

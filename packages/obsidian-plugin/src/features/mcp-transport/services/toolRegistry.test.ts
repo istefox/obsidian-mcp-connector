@@ -783,6 +783,39 @@ describe("ToolRegistry annotations", () => {
   });
 });
 
+describe("ToolRegistry outputSchema", () => {
+  test("list() includes outputSchema for matching names and omits it otherwise", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setOutputSchemas({
+      alpha: { type: "object", properties: { ok: { type: "boolean" } } },
+      never_registered: { type: "object" },
+    });
+
+    const listed = tools.list().tools;
+    const alpha = listed.find((t) => t.name === "alpha");
+    const beta = listed.find((t) => t.name === "beta");
+    expect(alpha?.outputSchema).toEqual({
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+    });
+    // Absent, not undefined — mirrors annotations behavior.
+    expect(beta && "outputSchema" in beta).toBe(false);
+  });
+
+  test("setOutputSchemas invalidates the memoized list()", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setOutputSchemas({ alpha: { type: "object" } });
+    const second = tools.list();
+    expect(second).not.toBe(first);
+    expect(second.tools.find((t) => t.name === "alpha")?.outputSchema).toEqual({
+      type: "object",
+    });
+  });
+});
+
 describe("ToolRegistry name-keyed lookups", () => {
   test("registering two distinct schemas with the same name throws", () => {
     const tools = new ToolRegistryClass();

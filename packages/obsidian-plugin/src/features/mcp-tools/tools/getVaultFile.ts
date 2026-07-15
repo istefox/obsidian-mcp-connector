@@ -114,6 +114,24 @@ export type VaultFileJson = {
 };
 
 /**
+ * Output schema for the `format=json` response (the `structuredContent`
+ * shape). Describes VaultFileJson only — the polymorphic text/image/audio
+ * content-block cases are deliberately not modeled here. Kept structurally
+ * in lockstep with VaultFileJson and readVaultFileAsJson().
+ */
+export const getVaultFileOutputSchema = type({
+  path: "string",
+  content: "string",
+  frontmatter: type("Record<string, unknown>"),
+  tags: "string[]",
+  stat: {
+    ctime: "number",
+    mtime: "number",
+    size: "number",
+  },
+});
+
+/**
  * Builds the `format=json` shape: `{ path, content, frontmatter, tags, stat }`.
  * Shared with get_vault_files so both tools stay byte-identical for the
  * same file — see the "kept in sync" note on MIME_BY_EXT above for why a
