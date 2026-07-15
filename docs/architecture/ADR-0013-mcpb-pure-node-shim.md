@@ -404,3 +404,24 @@ doubles the states to test and document.
 - The manual-JSON-config Claude Desktop path (`npx mcp-remote`, copy-paste
   button): unchanged, still documented as the non-`.mcpb` alternative.
 - The `.mcpb` manifest structure and `@anthropic-ai/mcpb validate` CI gate.
+
+## Addendum (0.27.1): timeout retune
+
+The 30 s retry window / 60 s per-request timeout from the original decision above
+collided with Claude Desktop's own MCP client, which uses the standard SDK default
+request timeout of 60000ms for every request including `initialize`. Observed in
+production: a fresh 0.27.0 install hit this exactly. Claude Desktop sent `initialize` at
+17:43:30.071 while Obsidian's vault window was still cold-starting; the shim's single
+POST attempt hung for the full `requestTimeoutMs`, and at 17:44:30.075, 60.004 s later,
+Claude's own client gave up first (`notifications/cancelled`, `Server transport closed
+(renderer released port)`) and disconnected before the shim could answer with its own
+descriptive error. Since the two timeouts were equal, the client always won this race on
+any cold-start or slow-response scenario.
+
+Fix: `RETRY_WINDOW_MS` 30000 → 20000, and the per-request timeout (now a named constant,
+`DEFAULT_REQUEST_TIMEOUT_MS`) 60000 → 25000. Worst composed path (connection error on the
+first POST, re-resolve transport, retry once) is now `RETRY_WINDOW_MS +
+DEFAULT_REQUEST_TIMEOUT_MS` = 45 s, a 15 s margin under Claude's 60 s ceiling. Each
+individual path (transport-resolve-only: 20 s; single-POST-hang: 25 s) is comfortably
+under 60 s on its own. A unit test (`connectorShim.test.ts`) pins the sum invariant
+directly, so retuning one constant without the other fails the suite.

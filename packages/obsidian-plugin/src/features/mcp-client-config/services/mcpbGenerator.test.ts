@@ -200,7 +200,7 @@ describe("generateMcpb", () => {
         generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
       expect(shim).toContain("RETRY_WINDOW_MS");
-      expect(shim).toContain("30000");
+      expect(shim).toContain("20000");
       expect(shim).toContain("requestTimeoutMs");
     });
 

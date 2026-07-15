@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.1] — 2026-07-15
+
+### Fixed
+
+- **The `.mcpb` connector could disconnect on a cold Obsidian start instead of reporting a clear error.** The 0.27.0 shim's per-request retry window (30 s) and request timeout (60 s) could together take close to a minute to answer, the same default request timeout Claude Desktop's own MCP client uses. When Obsidian's vault window was still opening at the moment Claude Desktop connected, Claude's client gave up first and showed a generic disconnect instead of the shim's own descriptive error. The retry window is now 20 s and the request timeout 25 s, well under Claude's 60-second ceiling in every case, including the worst-case retry-then-retry path. See the addendum in `docs/architecture/ADR-0013-mcpb-pure-node-shim.md`.
+
 ## [0.27.0] — 2026-07-15
 
 ### Fixed
