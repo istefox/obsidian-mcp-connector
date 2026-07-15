@@ -114,7 +114,7 @@ The plugin settings expose three **Copy config** buttons, one per supported clie
 
 ### Claude Desktop
 
-Claude Desktop only speaks stdio MCP, so it reaches the in-process server through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path). Node.js must be on your PATH. The plugin auto-detects it and offers a one-click Homebrew install if it is missing.
+Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges to the in-process server directly, with no external runtime dependency. The alternative manual JSON config instead reaches it through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path), which needs Node.js on your PATH.
 
 **Recommended: download the `.mcpb` extension**
 
@@ -122,13 +122,13 @@ Claude Desktop only speaks stdio MCP, so it reaches the in-process server throug
 2. Drag the file onto Claude Desktop.
 3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
-The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. Node.js must be on your PATH (the plugin settings show a warning if it is missing).
+The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
 
 If you rotate your token or change the server port, download a fresh `.mcpb` and drag it onto Claude Desktop to replace the existing extension.
 
 **Alternative: manual JSON config**
 
-For advanced users or when the `.mcpb` flow is not available:
+For advanced users or when the `.mcpb` flow is not available. This path runs `npx mcp-remote` via your own Node install, so Node.js must be on your PATH; the plugin auto-detects it and offers a one-click Homebrew install if it is missing.
 
 1. Click **Claude Desktop** under **Copy config snippets**. The snippet looks like:
    ```json
