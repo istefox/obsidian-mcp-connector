@@ -87,7 +87,7 @@ describe("generateMcpb", () => {
       expect(server.entry_point).toBe("server/index.js");
       expect(server.mcp_config).toEqual({
         command: "node",
-        args: ["server/index.js"],
+        args: ["${__dirname}/server/index.js"],
       });
     });
 
