@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.26.1] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension now waits for the server instead of failing immediately when Obsidian's window isn't open yet.** The bundle's `server/index.js` shim used to spawn `mcp-remote` right away against the last known port, so it failed instantly whenever Obsidian's main process was alive but its window (and therefore the plugin's HTTP server) hadn't started yet, a common state after closing the window without quitting the app. The shim now polls `data.json` and probes the port for up to 30 seconds before spawning `mcp-remote`, re-reading `data.json` on every attempt since the port can still be mid-fallback.
+
 ## [0.26.0] — 2026-07-15
 
 ### Changed
