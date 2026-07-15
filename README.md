@@ -337,6 +337,12 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 - **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. The plugin answers an identical request in milliseconds over direct HTTP, and Claude Code is unaffected. Tracked upstream at [geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296).
 - **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Quick setup for clients](#claude-desktop).
 
+### Claude Desktop extension hangs ~60s on macOS with "Use Built-in Node.js for MCP" enabled
+
+- **Symptom**: the extension installs and shows as enabled, but every connection attempt sits silent for exactly 60 seconds, then Claude Desktop's logs show `MCP error -32001: Request timed out`. No response, not even the connector's own internal timeout error, ever reaches Claude Desktop first.
+- **Cause**: a bug in Claude Desktop's `UtilityProcess` sandbox, used when "Use Built-in Node.js for MCP" is on (Settings, Extensions). Not specific to this connector: [korotovsky/slack-mcp-server#152](https://github.com/korotovsky/slack-mcp-server/issues/152) documents an identical failure signature for a different `.mcpb` extension under the same setting.
+- **Fix**: Claude Desktop, Settings, Extensions, disable **Use Built-in Node.js for MCP**, then fully quit (Cmd+Q) and reopen Claude Desktop. This makes Claude Desktop spawn the connector as a normal child process on system Node.js instead of the sandboxed one. The connector needs no `npx` or shell PATH resolution (fixed in v0.27.0), so any system Node.js install works.
+
 ### `tool/call` returns HTTP 401
 
 - The bearer token in your client config does not match the plugin's current token. Open the plugin settings, **Bearer token**, click **Show** to reveal the current token and **Copy** to copy it. Update your client config and restart the client.

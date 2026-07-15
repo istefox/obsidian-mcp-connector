@@ -461,3 +461,39 @@ DEFAULT_REQUEST_TIMEOUT_MS` = 45 s, a 15 s margin under Claude's 60 s ceiling. E
 individual path (transport-resolve-only: 20 s; single-POST-hang: 25 s) is comfortably
 under 60 s on its own. A unit test (`connectorShim.test.ts`) pins the sum invariant
 directly, so retuning one constant without the other fails the suite.
+
+## Addendum (0.27.3): watchdog for unreliable AbortController
+
+A live incident reproduced a different 60 s hang than the one fixed in 0.27.1, this time
+with zero response from the shim at all, not even its own timeout error. Root-caused by
+running `connectorShim.js` directly under plain system `node` against the same running
+Obsidian server: it answered instantly and correctly, ruling out a bug in the shim's own
+logic. The hang was specific to Claude Desktop's Electron `UtilityProcess` sandbox, used
+when the app's "Use Built-in Node.js for MCP" setting is on (logged by Claude Desktop
+itself as "compatibility matrix is not specified"). A near-identical public report,
+[korotovsky/slack-mcp-server#152](https://github.com/korotovsky/slack-mcp-server/issues/152),
+documents the same failure signature for an unrelated `.mcpb` extension under the same
+setting. This is an external Claude Desktop bug, not one in the connector, and the
+immediate user-facing workaround (disable "Use Built-in Node.js for MCP", fully restart
+Claude Desktop) is documented in the README's Troubleshooting section.
+
+The working theory, consistent with the evidence: `AbortController.abort()` does not
+reliably cancel an in-flight `fetch()` in that sandbox, so `postJsonRpc`'s own
+`DEFAULT_REQUEST_TIMEOUT_MS` timer fires but the awaited fetch promise never settles.
+
+Fix: `postJsonRpc` now races its fetch attempt against a second, independent timer
+(`WATCHDOG_GRACE_MS`, 2000 ms) that does not touch `fetch`/`AbortController` at all. If
+the watchdog wins, it rejects with an `AbortError`-shaped error, reusing `handleRequest`'s
+existing timeout-handling path unchanged, so a hang now always ends in the connector's own
+descriptive error instead of an unbounded wait. The abandoned fetch attempt gets a no-op
+`.catch()` so a delayed settle never surfaces as an unhandled rejection. Worst-case timing:
+single attempt `DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS` = 27 s; the retry-branch
+path `RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS` = 47 s, both still
+comfortably under Claude's 60 s ceiling. A unit test pins this three-constant sum
+invariant, same pattern as the 0.27.1 addendum above.
+
+**Known residual risk, not fixed in this round**: `probePort`'s `net.createConnection`
+relies on its own timer (`socket.setTimeout`) that could theoretically be equally
+unreliable in the same sandbox, but this was never exercised in the reproduced failure
+(transport was already resolved, so `probePort` was never reached). Worth the same
+watchdog treatment if it's ever confirmed to hang in practice.

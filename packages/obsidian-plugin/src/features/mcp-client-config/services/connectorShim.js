@@ -193,6 +193,12 @@ const RETRY_WINDOW_MS = 20000;
 const RETRY_INTERVAL_MS = 1000;
 // Sum with RETRY_WINDOW_MS must stay under the MCP client's 60000ms default request timeout.
 const DEFAULT_REQUEST_TIMEOUT_MS = 25000;
+// Grace period added on top of the AbortController-based timeout. Guards against
+// environments (observed: Claude Desktop's UtilityProcess sandbox on macOS) where
+// AbortController.abort() does not reliably cancel an in-flight fetch(). Sum of
+// RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS must stay under
+// the MCP client's 60000ms default request timeout.
+const WATCHDOG_GRACE_MS = 2000;
 // Echoed back in the MCP-Protocol-Version header when the initialize response
 // omits protocolVersion. Mirrors the Python bridge's PROTOCOL_VERSION_FALLBACK.
 const PROTOCOL_VERSION_FALLBACK = "2025-06-18";
@@ -231,7 +237,11 @@ async function postJsonRpc(
   token,
   message,
   timeoutMs,
-  { fetchImpl = fetch, protocolVersion } = {},
+  {
+    fetchImpl = fetch,
+    protocolVersion,
+    watchdogGraceMs = WATCHDOG_GRACE_MS,
+  } = {},
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -243,22 +253,45 @@ async function postJsonRpc(
   // Only echo the negotiated version once initialize has completed; before
   // that protocolVersion is falsy and the header is omitted.
   if (protocolVersion) headers["MCP-Protocol-Version"] = protocolVersion;
-  try {
-    const res = await fetchImpl(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(message),
-      signal: controller.signal,
-    });
-    const rawBody = await res.text();
-    return {
-      status: res.status,
-      contentType: res.headers.get("content-type") || "",
-      rawBody,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+
+  const attempt = (async () => {
+    try {
+      const res = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(message),
+        signal: controller.signal,
+      });
+      const rawBody = await res.text();
+      return {
+        status: res.status,
+        contentType: res.headers.get("content-type") || "",
+        rawBody,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  // If the watchdog below wins the race, `attempt` is abandoned but may still
+  // settle later on its own. Swallow that so it never surfaces as an
+  // unhandled rejection.
+  attempt.catch(() => {});
+
+  // Independent of controller.abort() actually cancelling the fetch: some
+  // environments (Claude Desktop's UtilityProcess sandbox, observed on macOS)
+  // do not honor AbortSignal on an in-flight fetch, leaving `attempt` pending
+  // forever. This plain timer guarantees postJsonRpc always settles.
+  const watchdog = new Promise((_resolve, reject) => {
+    setTimeout(() => {
+      const err = new Error(
+        `watchdog: no response within ${timeoutMs + watchdogGraceMs}ms (AbortController may not be honored in this environment)`,
+      );
+      err.name = "AbortError";
+      reject(err);
+    }, timeoutMs + watchdogGraceMs);
+  });
+
+  return Promise.race([attempt, watchdog]);
 }
 
 function runMain({
@@ -477,6 +510,7 @@ module.exports = {
   runMain,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  WATCHDOG_GRACE_MS,
   PROTOCOL_VERSION_FALLBACK,
 };
 
