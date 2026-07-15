@@ -18,6 +18,8 @@ import {
   resolveTransportWithRetry,
   postJsonRpc,
   runMain,
+  RETRY_WINDOW_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
 } from "./connectorShim.js";
 
 // connectorShim.js is plain, untyped CommonJS (SPEC hard constraint: no
@@ -458,6 +460,10 @@ describe("probePort", () => {
 });
 
 describe("resolveTransportWithRetry", () => {
+  test("RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS stays under the MCP client's 60000ms default request timeout", () => {
+    expect(RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS).toBeLessThan(60000);
+  });
+
   function fakeClock() {
     let clock = 0;
     return {

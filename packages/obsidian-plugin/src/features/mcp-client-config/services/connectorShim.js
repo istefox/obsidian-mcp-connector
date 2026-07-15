@@ -181,8 +181,10 @@ function probePort(port, { createConnection = net.createConnection } = {}) {
   });
 }
 
-const RETRY_WINDOW_MS = 30000;
+const RETRY_WINDOW_MS = 20000;
 const RETRY_INTERVAL_MS = 1000;
+// Sum with RETRY_WINDOW_MS must stay under the MCP client's 60000ms default request timeout.
+const DEFAULT_REQUEST_TIMEOUT_MS = 25000;
 
 async function resolveTransportWithRetry(
   dataPath,
@@ -249,7 +251,7 @@ function runMain({
   dataPath,
   log = (msg) => process.stderr.write(`obsidian-mcp-connector: ${msg}\n`),
   debug = process.env.OBSIDIAN_MCP_DEBUG === "1",
-  requestTimeoutMs = 60000,
+  requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   resolveTransportWithRetryImpl = resolveTransportWithRetry,
   readTransportImpl = readTransport,
 } = {}) {
@@ -419,6 +421,8 @@ module.exports = {
   resolveTransportWithRetry,
   postJsonRpc,
   runMain,
+  RETRY_WINDOW_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
 };
 
 if (require.main === module) {
