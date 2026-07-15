@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.3] — 2026-07-15
+
+### Fixed
+
+- **The `.mcpb` connector could hang for a full 60 seconds with no error at all, specific to Claude Desktop's "Use Built-in Node.js for MCP" setting on macOS.** That setting routes the connector through Claude Desktop's Electron `UtilityProcess` sandbox, which does not reliably cancel an in-flight network request even when the connector's own timeout fires. The connector's per-request timeout now has an independent backstop that does not depend on that cancellation working, so a hang always ends in the connector's own descriptive error well under Claude Desktop's 60-second limit. If you hit this, disabling "Use Built-in Node.js for MCP" in Claude Desktop's Extensions settings and restarting the app also resolves it immediately, see the new Troubleshooting entry in the README.
+
 ## [0.27.2] — 2026-07-15
 
 ### Added

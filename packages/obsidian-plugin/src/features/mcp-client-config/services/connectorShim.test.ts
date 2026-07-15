@@ -21,6 +21,7 @@ import {
   runMain,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  WATCHDOG_GRACE_MS,
   PROTOCOL_VERSION_FALLBACK,
 } from "./connectorShim.js";
 
@@ -691,6 +692,70 @@ describe("postJsonRpc", () => {
     );
     const [, options] = fetchImpl.mock.calls[0];
     expect("MCP-Protocol-Version" in options.headers).toBe(false);
+  });
+
+  test("RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS stays under the MCP client's 60000ms default request timeout", () => {
+    expect(
+      RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS,
+    ).toBeLessThan(60000);
+  });
+
+  test("watchdog rejects with AbortError when fetch hangs and never honors the abort signal", async () => {
+    // Simulates the observed Claude Desktop UtilityProcess sandbox bug: the
+    // fetch promise ignores controller.abort() entirely and never settles.
+    const fetchImpl = () => new Promise(() => {});
+    await expect(
+      postJsonRpc(
+        "http://127.0.0.1:27200/mcp",
+        "tok",
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        20,
+        { fetchImpl, watchdogGraceMs: 10 } as unknown as PostJsonRpcOptions,
+      ),
+    ).rejects.toHaveProperty("name", "AbortError");
+  });
+
+  test("watchdog does not mask a working AbortController", async () => {
+    const fetchImpl = (_url: string, options: FakeFetchInit) =>
+      new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => {
+          const err = new Error("aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    await expect(
+      postJsonRpc(
+        "http://127.0.0.1:27200/mcp",
+        "tok",
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        20,
+        {
+          fetchImpl,
+          watchdogGraceMs: 500,
+        } as unknown as PostJsonRpcOptions,
+      ),
+    ).rejects.toHaveProperty("message", "aborted");
+  });
+
+  test("an abandoned attempt that settles after the watchdog wins does not surface as an unhandled rejection", async () => {
+    const fetchImpl = () =>
+      new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error("late failure")), 60);
+      });
+    await expect(
+      postJsonRpc(
+        "http://127.0.0.1:27200/mcp",
+        "tok",
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        20,
+        { fetchImpl, watchdogGraceMs: 10 } as unknown as PostJsonRpcOptions,
+      ),
+    ).rejects.toHaveProperty("name", "AbortError");
+    // Give the abandoned fetch time to reject on its own; a missing .catch()
+    // on the loser promise would surface here as an unhandled rejection and
+    // fail the test run.
+    await new Promise((resolve) => setTimeout(resolve, 80));
   });
 });
 
