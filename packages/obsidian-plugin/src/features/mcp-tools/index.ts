@@ -35,7 +35,11 @@ import {
   listVaultFilesHandler,
   listVaultFilesSchema,
 } from "./tools/listVaultFiles";
-import { getVaultFileHandler, getVaultFileSchema } from "./tools/getVaultFile";
+import {
+  getVaultFileHandler,
+  getVaultFileOutputSchema,
+  getVaultFileSchema,
+} from "./tools/getVaultFile";
 import {
   getVaultFilesHandler,
   getVaultFilesSchema,
@@ -390,4 +394,16 @@ export async function registerTools(
   // Covers the meta-tools registered later in mcpServer.ts too:
   // annotations are looked up by name at list() time.
   registry.setAnnotations(TOOL_ANNOTATIONS);
+
+  // Output schemas are looked up by name at list() time, same as
+  // annotations. Only get_vault_file's format=json response is modeled.
+  registry.setOutputSchemas({
+    // toJsonSchema() returns ArkType's JsonSchema union; the registry stores
+    // an opaque JSON-schema record, so narrow it to that shape here.
+    get_vault_file:
+      getVaultFileOutputSchema.toJsonSchema() as unknown as Record<
+        string,
+        unknown
+      >,
+  });
 }

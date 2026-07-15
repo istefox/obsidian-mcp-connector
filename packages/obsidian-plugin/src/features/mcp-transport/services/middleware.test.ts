@@ -168,6 +168,66 @@ describe("runMiddleware", () => {
     expect(result).toEqual({ ok: false, status: 404 });
   });
 
+  test("allows a request with no MCP-Protocol-Version header (absent is legal)", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: { authorization: `Bearer ${token}` },
+      },
+      token,
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  test("allows a request with a supported MCP-Protocol-Version", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "2025-11-25",
+        },
+      },
+      token,
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  test("rejects an unsupported MCP-Protocol-Version with 400", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "1.0.0",
+        },
+      },
+      token,
+    );
+    expect(result).toEqual({ ok: false, status: 400 });
+  });
+
+  test("protocol-version check runs after Origin: bad Origin + bad version → 403", () => {
+    // Proves check order: Origin (403) short-circuits before the
+    // protocol-version check (400) can fire.
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          origin: "http://evil.example.com",
+          "mcp-protocol-version": "1.0.0",
+        },
+      },
+      token,
+    );
+    expect(result).toEqual({ ok: false, status: 403 });
+  });
+
   test("uses first occurrence when Authorization header is multi-valued", () => {
     // HTTP forbids duplicate Authorization per RFC 7230 §3.2.2 (singleton
     // field), but if a pathological client sends two, we accept the first

@@ -3,6 +3,14 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.2] — 2026-07-15
+
+### Added
+
+- **The `.mcpb` shim now sends the standard `MCP-Protocol-Version` header, and the server validates it.** The shim echoes the version negotiated during `initialize` on every later request, matching the spec and the existing Windows Python bridge's behavior. The Obsidian-side server now validates this header itself instead of relying only on the MCP SDK's internal check, rejecting an unsupported version with a clear 400 response.
+- **`get_vault_file` now declares an output schema for its JSON response.** Clients that support typed tool results (structured output, programmatic tool calling) get a precise shape for the `format=json` path instead of an untyped object.
+- **The shim can report progress while waiting for Obsidian to finish starting up.** If a client asks for progress updates on a request (via the standard `_meta.progressToken` field), the shim now sends periodic progress notifications while it retries the connection, letting clients extend their own timeout instead of giving up early. This is opt-in and has no effect on clients that don't request it, which includes Claude Desktop today.
+
 ## [0.27.1] — 2026-07-15
 
 ### Fixed

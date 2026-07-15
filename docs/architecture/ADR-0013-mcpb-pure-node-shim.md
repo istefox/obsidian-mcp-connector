@@ -405,6 +405,42 @@ doubles the states to test and document.
   button): unchanged, still documented as the non-`.mcpb` alternative.
 - The `.mcpb` manifest structure and `@anthropic-ai/mcpb validate` CI gate.
 
+## Addendum (0.27.2): MCP-Protocol-Version echo, progress notifications, outputSchema
+
+A spec compliance review against modelcontextprotocol.io surfaced three gaps and one
+forward-looking hardening opportunity, all closed in this release.
+
+**`MCP-Protocol-Version` header, shim to server.** The spec requires clients to echo the
+negotiated protocol version on every request after `initialize`. The shim now extracts
+`result.protocolVersion` from the `initialize` response (falling back to
+`PROTOCOL_VERSION_FALLBACK = "2025-06-18"` if the server omits it) and sends it as
+`MCP-Protocol-Version` on every subsequent POST. This mirrors
+`scripts/obsidian_mcp_bridge.py`'s existing `set_protocol_version`/`get_protocol_version`
+pattern, which already did this correctly for the Windows bridge.
+
+**`MCP-Protocol-Version` header, server-side validation.** Previously this only worked
+because `@modelcontextprotocol/sdk`'s `StreamableHTTPServerTransport` validates the
+header internally. `mcp-transport/services/middleware.ts` now has a first-party
+`checkProtocolVersion` step (absent header allowed, unsupported value rejected with 400),
+checked after Origin and before bearer auth, and covered by this project's own tests
+instead of relying entirely on SDK internals.
+
+**Progress notifications during the shim's retry window.** The spec allows a client to
+reset its own request timeout on receipt of `notifications/progress`. When an incoming
+request carries `params._meta.progressToken`, the shim now emits a
+`notifications/progress` message on each transport-resolve retry attempt. This is
+opt-in and inert for clients that don't request it (no behavior change for the common
+case, Claude Desktop's `initialize` request does not carry a `progressToken` today, so
+this does not affect the 0.27.1 timeout fix; it hardens the shim for any future request a
+client asks to track this way).
+
+**`outputSchema` on tools.** `ToolRegistryClass` gained `setOutputSchemas()`, mirroring
+the existing `setAnnotations()` side-channel pattern exactly, surfaced in `tools/list`.
+Only `get_vault_file`'s `format=json` response is modeled (the one tool with a genuinely
+reusable named result type, `VaultFileJson`); the other ~50 tools each have their own
+distinct inline shape and are out of scope for this pass, since no client this project
+supports currently uses `outputSchema` for programmatic/code-mode tool calling.
+
 ## Addendum (0.27.1): timeout retune
 
 The 30 s retry window / 60 s per-request timeout from the original decision above

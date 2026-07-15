@@ -55,6 +55,14 @@ function buildErrorResponse(id, message, data) {
   return { jsonrpc: "2.0", id, error };
 }
 
+function buildProgressNotification(progressToken, progress, message) {
+  return {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken, progress, ...(message ? { message } : {}) },
+  };
+}
+
 const SSE_LINE_SPLIT = /\r\n|\r|\n/;
 
 function parseSse(body) {
@@ -185,6 +193,9 @@ const RETRY_WINDOW_MS = 20000;
 const RETRY_INTERVAL_MS = 1000;
 // Sum with RETRY_WINDOW_MS must stay under the MCP client's 60000ms default request timeout.
 const DEFAULT_REQUEST_TIMEOUT_MS = 25000;
+// Echoed back in the MCP-Protocol-Version header when the initialize response
+// omits protocolVersion. Mirrors the Python bridge's PROTOCOL_VERSION_FALLBACK.
+const PROTOCOL_VERSION_FALLBACK = "2025-06-18";
 
 async function resolveTransportWithRetry(
   dataPath,
@@ -195,6 +206,7 @@ async function resolveTransportWithRetry(
     sleepMsImpl = (ms) => new Promise((r) => setTimeout(r, ms)),
     windowMs = RETRY_WINDOW_MS,
     intervalMs = RETRY_INTERVAL_MS,
+    onAttempt = () => {},
   } = {},
 ) {
   const deadline = nowImpl() + windowMs;
@@ -208,6 +220,7 @@ async function resolveTransportWithRetry(
     } else {
       lastError = `port ${resolved.port} is not accepting connections yet`;
     }
+    onAttempt();
     await sleepMsImpl(intervalMs);
   }
   return { error: `${lastError} — is Obsidian open with the vault loaded?` };
@@ -218,18 +231,22 @@ async function postJsonRpc(
   token,
   message,
   timeoutMs,
-  { fetchImpl = fetch } = {},
+  { fetchImpl = fetch, protocolVersion } = {},
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+    Authorization: `Bearer ${token}`,
+  };
+  // Only echo the negotiated version once initialize has completed; before
+  // that protocolVersion is falsy and the header is omitted.
+  if (protocolVersion) headers["MCP-Protocol-Version"] = protocolVersion;
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(message),
       signal: controller.signal,
     });
@@ -257,13 +274,32 @@ function runMain({
 } = {}) {
   const pending = [];
   let remainder = "";
+  let negotiatedProtocolVersion = null;
 
   async function handleRequest(message) {
     const id = message.id;
     if (debug) log(`-> ${message.method} (id=${id})`);
+    // A client requesting progress sets params._meta.progressToken; while the
+    // transport is being re-resolved (server still booting), emit a
+    // notifications/progress per poll iteration so the client sees liveness.
+    const progressToken =
+      message.params && message.params._meta
+        ? message.params._meta.progressToken
+        : undefined;
+    let progressCount = 0;
+    const onAttempt = progressToken
+      ? () => {
+          progressCount += 1;
+          writeChunk(
+            JSON.stringify(
+              buildProgressNotification(progressToken, progressCount),
+            ) + "\n",
+          );
+        }
+      : undefined;
     let transport = readTransportImpl(dataPath);
     if (transport.error) {
-      transport = await resolveTransportWithRetryImpl(dataPath);
+      transport = await resolveTransportWithRetryImpl(dataPath, { onAttempt });
     }
     if (transport.error) {
       writeChunk(
@@ -279,7 +315,7 @@ function runMain({
         transport.token,
         message,
         requestTimeoutMs,
-        { fetchImpl },
+        { fetchImpl, protocolVersion: negotiatedProtocolVersion },
       );
     } catch (err) {
       if (err.name === "AbortError") {
@@ -295,7 +331,9 @@ function runMain({
       }
       // Connection error: re-resolve once and retry once.
       if (debug) log(`request failed, retrying once: ${err.message}`);
-      const retried = await resolveTransportWithRetryImpl(dataPath);
+      const retried = await resolveTransportWithRetryImpl(dataPath, {
+        onAttempt,
+      });
       if (retried.error) {
         writeChunk(
           JSON.stringify(buildErrorResponse(id, retried.error)) + "\n",
@@ -308,7 +346,7 @@ function runMain({
           retried.token,
           message,
           requestTimeoutMs,
-          { fetchImpl },
+          { fetchImpl, protocolVersion: negotiatedProtocolVersion },
         );
       } catch (err2) {
         const message2 =
@@ -325,6 +363,20 @@ function runMain({
       id,
       result.status,
     );
+    // Record the negotiated protocol version from a successful initialize so
+    // every later request can echo it in the MCP-Protocol-Version header. Set
+    // before writeChunk so the variable is ready before any later request runs.
+    if (message.method === "initialize") {
+      const responseMessage = messages.find(
+        (m) =>
+          m && Object.prototype.hasOwnProperty.call(m, "result") && m.id === id,
+      );
+      if (responseMessage) {
+        negotiatedProtocolVersion =
+          (responseMessage.result && responseMessage.result.protocolVersion) ||
+          PROTOCOL_VERSION_FALLBACK;
+      }
+    }
     writeChunk(messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
   }
 
@@ -344,6 +396,7 @@ function runMain({
         requestTimeoutMs,
         {
           fetchImpl,
+          protocolVersion: negotiatedProtocolVersion,
         },
       );
     } catch (err) {
@@ -413,6 +466,7 @@ module.exports = {
   parseJsonRpcLine,
   parseTransportFile,
   buildErrorResponse,
+  buildProgressNotification,
   parseSse,
   routeSseMessages,
   resolveResponseMessages,
@@ -423,6 +477,7 @@ module.exports = {
   runMain,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  PROTOCOL_VERSION_FALLBACK,
 };
 
 if (require.main === module) {

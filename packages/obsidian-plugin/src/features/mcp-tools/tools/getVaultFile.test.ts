@@ -1,5 +1,10 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { getVaultFileHandler, getVaultFileSchema } from "./getVaultFile";
+import { type } from "arktype";
+import {
+  getVaultFileHandler,
+  getVaultFileOutputSchema,
+  getVaultFileSchema,
+} from "./getVaultFile";
 import {
   mockApp,
   resetMockVault,
@@ -47,6 +52,25 @@ describe("get_vault_file tool", () => {
       mtime: 0,
       size: "---\ntags: [foo]\n---\n# Body".length,
     });
+  });
+
+  test("getVaultFileOutputSchema accepts the actual format=json output shape", async () => {
+    setMockFile("a.md", "---\ntags: [foo]\n---\n# Body");
+    setMockMetadata("a.md", {
+      frontmatter: { tags: ["foo"] },
+      headings: [{ heading: "Body", level: 1, line: 3 }],
+    });
+    const result = await getVaultFileHandler({
+      arguments: { path: "a.md", format: "json" },
+      app: mockApp(),
+    });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+
+    // Schema-vs-actual consistency: the real handler output must satisfy the
+    // declared outputSchema, or clients validating structuredContent break.
+    const validated = getVaultFileOutputSchema(parsed);
+    expect(validated instanceof type.errors).toBe(false);
+    expect(validated).toEqual(parsed);
   });
 
   test("returns image content block for .png file", async () => {

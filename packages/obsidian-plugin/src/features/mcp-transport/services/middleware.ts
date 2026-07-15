@@ -1,4 +1,8 @@
-import { ERROR_CODES, MCP_PATH_PREFIX } from "../constants";
+import {
+  ERROR_CODES,
+  MCP_PATH_PREFIX,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "../constants";
 import { isOriginAllowed } from "./origin";
 import { compareTokens } from "./token";
 
@@ -55,7 +59,7 @@ export type MiddlewareRequest = {
 
 export type MiddlewareResult =
   | { ok: true }
-  | { ok: false; status: 401 | 403 | 404 | 405 };
+  | { ok: false; status: 400 | 401 | 403 | 404 | 405 };
 
 function getHeader(headers: RequestHeaders, name: string): string | undefined {
   const v = headers[name.toLowerCase()];
@@ -84,13 +88,25 @@ function checkOrigin(headers: RequestHeaders): MiddlewareResult {
     : { ok: false, status: ERROR_CODES.ORIGIN_FORBIDDEN };
 }
 
+function checkProtocolVersion(headers: RequestHeaders): MiddlewareResult {
+  const version = getHeader(headers, "mcp-protocol-version");
+  // Absent is legal per spec: the server assumes a default version. Do not
+  // require the header — that would break clients that never send it.
+  if (version === undefined) return { ok: true };
+  return (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version)
+    ? { ok: true }
+    : { ok: false, status: ERROR_CODES.PROTOCOL_VERSION_UNSUPPORTED };
+}
+
 /**
  * Run the full validation chain on an incoming HTTP request.
  *
  * Check order — load-bearing for security and observability:
  *   1. Method/path (404 path unknown → 405 method not allowed)
  *   2. Origin (403) — anti-DNS-rebinding, independent of auth
- *   3. Bearer token (401) — constant-time compare via compareTokens
+ *   3. MCP-Protocol-Version (400) — absent is legal (assume default);
+ *      an unsupported value is rejected
+ *   4. Bearer token (401) — constant-time compare via compareTokens
  *
  * Returning 405 before 401 intentionally tells unauthenticated
  * callers which methods the server speaks. This is acceptable for
@@ -109,6 +125,9 @@ export function runMiddleware(
 
   const origin = checkOrigin(req.headers);
   if (!origin.ok) return origin;
+
+  const protocolVersion = checkProtocolVersion(req.headers);
+  if (!protocolVersion.ok) return protocolVersion;
 
   const auth = checkAuth(req.headers, bearerToken);
   if (!auth.ok) return auth;

@@ -204,11 +204,15 @@ export class ToolRegistryClass<
       description: string | undefined;
       inputSchema: Record<string, unknown>;
       annotations?: ToolAnnotations;
+      outputSchema?: Record<string, unknown>;
     }[];
   } | null = null;
 
   /** MCP tool annotations, keyed by public tool name (set via setAnnotations). */
   private annotationsByName = new Map<string, ToolAnnotations>();
+
+  /** MCP tool outputSchema, keyed by public tool name (set via setOutputSchemas). */
+  private outputSchemasByName = new Map<string, Record<string, unknown>>();
 
   /** Public tool name → schema, built at register() time for O(1) lookups. */
   private byName = new Map<string, TSchema>();
@@ -237,6 +241,21 @@ export class ToolRegistryClass<
   setAnnotations = (byName: Record<string, ToolAnnotations>) => {
     for (const [name, annotations] of Object.entries(byName)) {
       this.annotationsByName.set(name, annotations);
+    }
+    this.listCache = null;
+    return this;
+  };
+
+  /**
+   * Attach MCP tool output schemas (the `outputSchema` field on a
+   * tools/list entry, describing the `structuredContent` shape) by
+   * public tool name. Same lazy-lookup / cache-invalidation contract as
+   * setAnnotations: order relative to register() does not matter, and
+   * entries for names that never register are simply unused.
+   */
+  setOutputSchemas = (byName: Record<string, Record<string, unknown>>) => {
+    for (const [name, outputSchema] of Object.entries(byName)) {
+      this.outputSchemasByName.set(name, outputSchema);
     }
     this.listCache = null;
     return this;
@@ -361,6 +380,7 @@ export class ToolRegistryClass<
         .map((schema) => {
           const name = this.toolNameOf(schema);
           const annotations = this.annotationsByName.get(name);
+          const outputSchema = this.outputSchemasByName.get(name);
           return {
             name,
             description: schema.description,
@@ -368,6 +388,7 @@ export class ToolRegistryClass<
               schema.get("arguments").toJsonSchema(),
             ),
             ...(annotations ? { annotations } : {}),
+            ...(outputSchema ? { outputSchema } : {}),
           };
         }),
     };
