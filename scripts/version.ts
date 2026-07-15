@@ -54,7 +54,7 @@ writeFileSync(pluginVersionsPath, JSON.stringify(versions, null, "\t") + "\n");
 await $`git add package.json ${pluginManifestPath} ${pluginVersionsPath}`;
 await $`git commit -m ${json.version}`;
 await $`git tag ${json.version}`;
-await $`git push`;
+await $`git push -u origin ${currentBranch}`;
 await $`git push origin ${json.version}`;
 
 function bump(semver: [number, number, number], semverPart = "patch") {
