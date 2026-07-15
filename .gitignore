@@ -220,6 +220,8 @@ packages/obsidian-plugin/.claude/.triage-fix-last-main.json
 # clean-public-repo, and interview skills; kept locally, never published
 .claude/
 SPEC.md
+SPEC.md.bak
+PROJECT.md
 docs/manifests/
 docs/clean-report/
 # semantic-search vector-store runtime directory (written by dev/test runs)
