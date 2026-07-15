@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.0] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension no longer depends on `npx`/`mcp-remote` at runtime.** The generated shim used to spawn `npx -y mcp-remote ...` as a child process. Claude Desktop launches the shim with its own bundled Node, but the restricted GUI environment it inherits has no `npx` on `PATH`, so the child spawn failed instantly (`ENOENT`) and Claude reported "Server transport closed unexpectedly" with no diagnosable cause. The shim is now a self-contained stdio↔HTTP proxy using only Node built-ins (`fetch`, `node:fs`, `node:net`), no child process, no third-party code, no PATH dependency. It also now resolves the server's port and token fresh on every request (not just at startup) and retries for up to 30 seconds on connection failure, so it recovers transparently from an Obsidian restart, a port change, or a token rotation mid-session without reinstalling the extension. See `docs/architecture/ADR-0013-mcpb-pure-node-shim.md`.
+
 ## [0.26.2] — 2026-07-15
 
 ### Fixed
