@@ -118,7 +118,7 @@ function buildManifest(input: McpbGeneratorInput): Record<string, unknown> {
       entry_point: "server/index.js",
       // Launches the shim above, which resolves port + token from
       // data.json at spawn time — no secret embedded in this manifest.
-      mcp_config: { command: "node", args: ["server/index.js"] },
+      mcp_config: { command: "node", args: ["${__dirname}/server/index.js"] },
     },
   };
 }
