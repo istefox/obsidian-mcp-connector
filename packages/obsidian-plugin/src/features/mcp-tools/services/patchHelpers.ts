@@ -599,6 +599,26 @@ export type PatchArgs = {
  * Returns:
  *   An MCP-shaped result object. Sets `isError: true` on failure.
  */
+/**
+ * Builds the standard patch response, distinguishing an actual write from a
+ * no-op (new content identical to what was already there) so callers can't
+ * report "success" when nothing on disk actually changed.
+ */
+function patchResult(changed: boolean): {
+  content: Array<{ type: "text"; text: string }>;
+} {
+  return {
+    content: [
+      {
+        type: "text",
+        text: changed
+          ? "File patched successfully"
+          : "File patched successfully — no changes detected: resulting content is identical to the existing content.",
+      },
+    ],
+  };
+}
+
 export async function applyPatch(
   app: App,
   file: TFile,
@@ -613,6 +633,25 @@ export async function applyPatch(
   const defaultCreate = args.targetType !== "block";
   const createIfMissing = args.createTargetIfMissing ?? defaultCreate;
 
+  // Frontmatter/heading targets require a markdown file: processFrontMatter and
+  // heading-section parsing both assume markdown shape, and Obsidian silently
+  // no-ops processFrontMatter on non-markdown files instead of erroring — which
+  // used to surface as a false "success" with zero actual changes. Block targets
+  // stay exempt (legitimate on non-md files per the block branch below).
+  if (args.targetType !== "block" && file.extension !== "md") {
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Cannot patch ${args.targetType} target on non-markdown file "${file.path}": ` +
+            `frontmatter and heading operations require a markdown (.md) file (got ".${file.extension}").`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   // ── frontmatter branch ──────────────────────────────────────────────────
   // Dispatches through the pure planners above so the policy stays testable
   // without needing the full `processFrontMatter` machinery. `rejection` is
@@ -623,9 +662,18 @@ export async function applyPatch(
   // mutation keeps the file untouched while letting us return a typed error.
   if (args.targetType === "frontmatter") {
     let rejection: string | null = null;
+    let valueChanged = false;
     await app.fileManager.processFrontMatter(file, (rawFm) => {
       const fm = rawFm as Record<string, unknown>;
       const existing = fm[args.target];
+      if (existing === undefined && !createIfMissing) {
+        rejection = `Frontmatter key "${args.target}" not found and createTargetIfMissing is false. Refusing to create it.`;
+        return;
+      }
+      const recordChange = (next: unknown) => {
+        valueChanged =
+          JSON.stringify(existing ?? null) !== JSON.stringify(next ?? null);
+      };
       if (args.operation === "replace") {
         const plan = planFrontmatterReplace(
           existing,
@@ -636,7 +684,9 @@ export async function applyPatch(
           rejection = plan.message;
           return;
         }
-        fm[args.target] = plan.kind === "ok" ? plan.value : args.content;
+        const next = plan.kind === "ok" ? plan.value : args.content;
+        fm[args.target] = next;
+        recordChange(next);
         return;
       }
       // append / prepend
@@ -646,18 +696,22 @@ export async function applyPatch(
         if (args.operation === "append") arr.push(...plan.values);
         else arr.unshift(...plan.values);
         fm[args.target] = arr;
+        recordChange(arr);
         return;
       }
       // string-concat: existing is scalar / null / undefined — keep the
       // legacy concatenation semantics for backward compatibility.
       if (existing == null) {
         fm[args.target] = args.content;
+        recordChange(args.content);
         return;
       }
-      fm[args.target] =
+      const next =
         args.operation === "append"
           ? String(existing) + args.content
           : args.content + String(existing);
+      fm[args.target] = next;
+      recordChange(next);
     });
     if (rejection !== null) {
       return {
@@ -665,7 +719,7 @@ export async function applyPatch(
         isError: true,
       };
     }
-    return { content: [{ type: "text", text: "File patched successfully" }] };
+    return patchResult(valueChanged);
   }
 
   // ── heading / block branch — read raw content ────────────────────────
@@ -702,8 +756,9 @@ export async function applyPatch(
       }
       // Append at EOF.
       const body = normalizeAppendBody(args.content, args.operation);
-      await app.vault.modify(file, rawContent + body);
-      return { content: [{ type: "text", text: "File patched successfully" }] };
+      const newContent = rawContent + body;
+      await app.vault.modify(file, newContent);
+      return patchResult(newContent !== rawContent);
     }
 
     const { line: headingLine, level: headingLevel } = found;
@@ -783,8 +838,9 @@ export async function applyPatch(
         ...lines.slice(sectionEnd),
       ];
     }
-    await app.vault.modify(file, newLines.join("\n"));
-    return { content: [{ type: "text", text: "File patched successfully" }] };
+    const newContent = newLines.join("\n");
+    await app.vault.modify(file, newContent);
+    return patchResult(newContent !== rawContent);
   }
 
   // ── block branch ─────────────────────────────────────────────────────
@@ -811,8 +867,9 @@ export async function applyPatch(
     }
     // Caller explicitly opted into createIfMissing — append at EOF.
     const body = normalizeAppendBody(args.content, args.operation);
-    await app.vault.modify(file, rawContent + body);
-    return { content: [{ type: "text", text: "File patched successfully" }] };
+    const newContent = rawContent + body;
+    await app.vault.modify(file, newContent);
+    return patchResult(newContent !== rawContent);
   }
 
   // 0.3.x parity: reject when block resolves inside a table or fenced code
@@ -872,6 +929,7 @@ export async function applyPatch(
       ...lines.slice(blockPos.endLine + 1),
     ];
   }
-  await app.vault.modify(file, newLines.join("\n"));
-  return { content: [{ type: "text", text: "File patched successfully" }] };
+  const newContent = newLines.join("\n");
+  await app.vault.modify(file, newContent);
+  return patchResult(newContent !== rawContent);
 }
