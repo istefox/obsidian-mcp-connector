@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.4] — 2026-07-16
+
+### Fixed
+
+- **`get_vault_file`'s `format=json` response now includes `structuredContent`, matching its declared output schema.** The output schema for this response shape was added in 0.27.2, but the handler only ever wrote the JSON into `content[0].text` and never populated `structuredContent`, so MCP clients validating structured output against the declared schema saw the field missing. The handler now goes through the same shared response builder as `get_vault_files`, keeping both consistent.
+
 ## [0.27.3] — 2026-07-15
 
 ### Fixed
