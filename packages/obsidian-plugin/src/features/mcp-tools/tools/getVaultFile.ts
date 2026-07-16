@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { type App, type TFile } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
+import { successJson } from "../services/responseBuilders";
 
 /**
  * Maps lowercased file extensions to their MIME type and MCP content-block
@@ -158,6 +159,7 @@ export async function readVaultFileAsJson(
 
 export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   content: Array<ContentBlock>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }> {
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
@@ -189,9 +191,7 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   // the drift between the description and the actual response.
   if (ctx.arguments.format === "json") {
     const json = await readVaultFileAsJson(ctx.app, file);
-    return {
-      content: [{ type: "text", text: JSON.stringify(json) }],
-    };
+    return successJson(json);
   }
 
   // ── Text content ───────────────────────────────────────────────────────────

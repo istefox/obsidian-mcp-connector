@@ -54,7 +54,7 @@ describe("get_vault_file tool", () => {
     });
   });
 
-  test("getVaultFileOutputSchema accepts the actual format=json output shape", async () => {
+  test("getVaultFileOutputSchema accepts the actual format=json structuredContent", async () => {
     setMockFile("a.md", "---\ntags: [foo]\n---\n# Body");
     setMockMetadata("a.md", {
       frontmatter: { tags: ["foo"] },
@@ -64,13 +64,15 @@ describe("get_vault_file tool", () => {
       arguments: { path: "a.md", format: "json" },
       app: mockApp(),
     });
-    const parsed = JSON.parse((result.content[0] as { text: string }).text);
 
     // Schema-vs-actual consistency: the real handler output must satisfy the
     // declared outputSchema, or clients validating structuredContent break.
-    const validated = getVaultFileOutputSchema(parsed);
+    expect(result.structuredContent).toBeDefined();
+    const validated = getVaultFileOutputSchema(result.structuredContent);
     expect(validated instanceof type.errors).toBe(false);
-    expect(validated).toEqual(parsed);
+    expect(result.structuredContent).toEqual(
+      JSON.parse((result.content[0] as { text: string }).text),
+    );
   });
 
   test("returns image content block for .png file", async () => {
