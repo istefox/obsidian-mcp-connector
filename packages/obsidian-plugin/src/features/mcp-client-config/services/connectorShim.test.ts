@@ -400,14 +400,14 @@ describe("resolveResponseMessages", () => {
   test("status 401", () => {
     const result = resolveResponseMessages("application/json", "", 1, 401);
     expect(result).toHaveLength(1);
-    expect(result[0].error.message).toContain("401");
-    expect(result[0].error.message).toMatch(/token/i);
+    expect(result[0].error!.message).toContain("401");
+    expect(result[0].error!.message).toMatch(/token/i);
   });
 
   test("status 500", () => {
     const result = resolveResponseMessages("application/json", "", 1, 500);
     expect(result).toHaveLength(1);
-    expect(result[0].error.message).toContain("500");
+    expect(result[0].error!.message).toContain("500");
   });
 });
 
