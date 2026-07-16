@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-/* eslint-disable no-nodejs-modules, obsidianmd/no-nodejs-modules, @typescript-eslint/no-require-imports, prefer-window-timers, obsidianmd/prefer-window-timers, no-fetch, obsidianmd/no-fetch --
+/*
  * This script is not part of the Obsidian plugin's own renderer bundle: it
  * is a standalone, zero-dependency Node.js CLI (embedded as a string via
  * assets/connectorShimSource.ts and shipped inside the .mcpb package),
@@ -9,7 +9,9 @@
  * plain `node`, never loaded inside Obsidian's sandboxed window. require()
  * of Node built-ins, the global fetch(), and bare setTimeout/clearTimeout
  * are the correct APIs for that runtime — `window` and `requestUrl` do not
- * exist there. See docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
+ * exist there. That is also why it lives under scripts/, not src/: it must
+ * not be linted against Obsidian plugin (renderer) rules. See
+ * docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
  */
 
 const fs = require("fs");
