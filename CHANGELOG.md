@@ -3,6 +3,13 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.5] — 2026-07-16
+
+### Fixed
+
+- **The plugin's settings tab now shows up in Obsidian's Settings search (1.13.0+).** Implemented `getSettingDefinitions()` on the settings tab; the existing UI is unchanged, and older Obsidian versions keep using the previous rendering path.
+- **The `.mcpb` connector shim no longer assumes the vault's config folder is named `.obsidian`.** It now reads the vault's actual configured folder name at generation time, fixing the connector for anyone who renamed it.
+
 ## [0.27.4] — 2026-07-16
 
 ### Fixed
