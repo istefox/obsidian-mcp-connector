@@ -2,14 +2,13 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { onMount } from "svelte";
-  import { type } from "arktype";
   import {
     setup as mcpTransportSetup,
     teardown as mcpTransportTeardown,
   } from "$/features/mcp-transport/services/setup";
   import { generateToken } from "$/features/mcp-transport/services/token";
+  import { parsePortInput } from "$/features/mcp-transport/services/portInput";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
-  import { PortNumber } from "$/features/mcp-transport/types";
   import { applyAutoWrite } from "$/features/mcp-client-config";
   import { globalSettingsMutex } from "$/features/command-permissions";
   import { SettingsStore } from "$/shared/settingsStore";
@@ -25,10 +24,17 @@
   let busy = false;
 
   // The configured (possibly blank) fixed-port override, read from
-  // data.json on mount. Kept as a string so an empty field is
-  // representable; blank means "use the automatic range" — see
-  // resolvePorts in services/port.ts.
-  let portInput = "";
+  // data.json on mount. Typed as `number | null` because the field is
+  // an `<input type="number">` and Svelte's `bind:value` coerces such
+  // inputs to `number` (or `null` when blank). `null` means "use the
+  // automatic range" — see resolvePorts in services/port.ts.
+  //
+  // Historical note: this used to be `string` (with a `.trim()` in the
+  // save handler), which throws a TypeError once Svelte hands you the
+  // coerced number back. That failure escaped the try/catch and left
+  // the save silently no-op. See #358 for the diagnosis; the pure
+  // parsing helper lives in services/portInput.ts.
+  let portInput: number | null = null;
   let portBusy = false;
 
   // The configured (possibly blank) server-name override, read from
@@ -41,7 +47,7 @@
     const raw = (await new SettingsStore(plugin).readSlice("mcpTransport")) as
       | { port?: number; serverName?: string }
       | undefined;
-    portInput = raw?.port !== undefined ? String(raw.port) : "";
+    portInput = raw?.port ?? null;
     serverNameInput = raw?.serverName ?? "";
   });
 
@@ -56,22 +62,15 @@
    * the transport is left down — no silent fallback to the range.
    */
   async function handleSavePort(): Promise<void> {
-    const trimmed = portInput.trim();
-    let portValue: number | undefined;
-    if (trimmed) {
-      const parsed = Number(trimmed);
-      const validated = Number.isFinite(parsed) ? PortNumber(parsed) : undefined;
-      if (validated === undefined || validated instanceof type.errors) {
-        new Notice(
-          "Port must be a whole number between 1024 and 65535.",
-        );
-        return;
-      }
-      portValue = validated;
-    }
-
     portBusy = true;
     try {
+      const parsed = parsePortInput(portInput);
+      if (!parsed.ok) {
+        new Notice(parsed.error);
+        return;
+      }
+      const portValue = parsed.port;
+
       await globalSettingsMutex.run(async () => {
         const data = ((await plugin.loadData()) ?? {}) as Record<
           string,
@@ -98,7 +97,7 @@
       plugin.mcpTransportState = result.state;
       bearerToken = result.state.bearerToken;
       port = result.state.server.port;
-      portInput = portValue !== undefined ? String(portValue) : "";
+      portInput = portValue ?? null;
       new Notice("Fixed port saved.");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
