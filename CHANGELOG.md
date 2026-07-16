@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.7] — 2026-07-16
+
+### Fixed
+
+- **`get_vault_file` works again.** Since 0.27.2 the tool declared an output schema, and MCP clients reject every response of a schema-declaring tool that lacks structured content, so every plain read failed with `-32600: Tool get_vault_file has an output schema but did not return structured content` (0.27.4 had only fixed the `format=json` case). The tool returns text, images, audio, or a JSON hint depending on the file, so no single schema fits: the declaration is gone. `format=json` responses still include the structured payload, and a regression test now blocks any tool from declaring an output schema unless every one of its responses carries matching structured content.
+
 ## [0.27.6] — 2026-07-16
 
 ### Changed
