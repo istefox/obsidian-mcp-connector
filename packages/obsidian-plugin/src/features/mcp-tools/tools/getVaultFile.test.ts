@@ -54,6 +54,25 @@ describe("get_vault_file tool", () => {
     });
   });
 
+  test("polymorphic contract: default format has no structuredContent, format=json does", async () => {
+    setMockFile("a.md", "# Body");
+    const plain = await getVaultFileHandler({
+      arguments: { path: "a.md" },
+      app: mockApp(),
+    });
+    // The tool declares no MCP outputSchema (see index.test.ts), so the
+    // default text response legitimately omits structuredContent — with a
+    // declared schema this same response would be rejected client-side
+    // with -32600 (the 0.27.2–0.27.6 bug).
+    expect(plain.structuredContent).toBeUndefined();
+
+    const json = await getVaultFileHandler({
+      arguments: { path: "a.md", format: "json" },
+      app: mockApp(),
+    });
+    expect(json.structuredContent).toBeDefined();
+  });
+
   test("getVaultFileOutputSchema accepts the actual format=json structuredContent", async () => {
     setMockFile("a.md", "---\ntags: [foo]\n---\n# Body");
     setMockMetadata("a.md", {
