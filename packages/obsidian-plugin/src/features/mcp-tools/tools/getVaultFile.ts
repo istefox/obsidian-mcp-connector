@@ -115,10 +115,17 @@ export type VaultFileJson = {
 };
 
 /**
- * Output schema for the `format=json` response (the `structuredContent`
- * shape). Describes VaultFileJson only — the polymorphic text/image/audio
- * content-block cases are deliberately not modeled here. Kept structurally
- * in lockstep with VaultFileJson and readVaultFileAsJson().
+ * Internal contract for the `format=json` response's `structuredContent`
+ * shape, kept structurally in lockstep with VaultFileJson and
+ * readVaultFileAsJson() and asserted by getVaultFile.test.ts.
+ *
+ * Deliberately NOT declared as the tool's MCP outputSchema: the SDK client
+ * rejects every non-error response lacking structuredContent once a tool
+ * advertises one, and this tool is polymorphic (default text, image, audio,
+ * and binary-hint branches carry no structuredContent). Declaring it in
+ * 0.27.2 broke every default-format call with -32600; emitting
+ * structuredContent without a declared schema is spec-legal and is what the
+ * format=json branch still does via successJson().
  */
 export const getVaultFileOutputSchema = type({
   path: "string",

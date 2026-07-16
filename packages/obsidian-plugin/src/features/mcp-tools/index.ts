@@ -35,11 +35,7 @@ import {
   listVaultFilesHandler,
   listVaultFilesSchema,
 } from "./tools/listVaultFiles";
-import {
-  getVaultFileHandler,
-  getVaultFileOutputSchema,
-  getVaultFileSchema,
-} from "./tools/getVaultFile";
+import { getVaultFileHandler, getVaultFileSchema } from "./tools/getVaultFile";
 import {
   getVaultFilesHandler,
   getVaultFilesSchema,
@@ -395,15 +391,10 @@ export async function registerTools(
   // annotations are looked up by name at list() time.
   registry.setAnnotations(TOOL_ANNOTATIONS);
 
-  // Output schemas are looked up by name at list() time, same as
-  // annotations. Only get_vault_file's format=json response is modeled.
-  registry.setOutputSchemas({
-    // toJsonSchema() returns ArkType's JsonSchema union; the registry stores
-    // an opaque JSON-schema record, so narrow it to that shape here.
-    get_vault_file:
-      getVaultFileOutputSchema.toJsonSchema() as unknown as Record<
-        string,
-        unknown
-      >,
-  });
+  // Deliberately NO registry.setOutputSchemas() call here. The MCP SDK
+  // client rejects every non-error response of a tool that advertises an
+  // outputSchema unless it carries structuredContent, so a polymorphic
+  // tool (get_vault_file returns text OR image OR audio OR a JSON hint)
+  // can never declare one — doing so in 0.27.2 broke every default-format
+  // get_vault_file call with -32600. index.test.ts guards this.
 }

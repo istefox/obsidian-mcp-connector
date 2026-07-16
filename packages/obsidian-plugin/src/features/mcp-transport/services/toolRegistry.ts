@@ -252,6 +252,13 @@ export class ToolRegistryClass<
    * public tool name. Same lazy-lookup / cache-invalidation contract as
    * setAnnotations: order relative to register() does not matter, and
    * entries for names that never register are simply unused.
+   *
+   * WARNING: only declare a schema for a tool whose EVERY non-error
+   * response includes a conforming `structuredContent`. The MCP SDK
+   * client hard-fails (-32600) any non-error response without it once
+   * the schema is advertised, so polymorphic tools (mixed text/image/
+   * audio outputs) must never appear here — get_vault_file did in
+   * 0.27.2–0.27.6 and every default-format call broke.
    */
   setOutputSchemas = (byName: Record<string, Record<string, unknown>>) => {
     for (const [name, outputSchema] of Object.entries(byName)) {
