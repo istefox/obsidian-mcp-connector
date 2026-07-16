@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.9] — 2026-07-17
+
+### Changed
+
+- **Releases now publish only after every asset is attached, with release immutability enabled.** The release workflow used to create the GitHub release as public before the build even ran, then attach `main.js`, `manifest.json`, and the `.mcpb` afterward, leaving a window where the published release had no assets yet. Releases are now created as a draft, get the build, the artifact attestation, and all assets attached first, and only then get published, with this repository's release-immutability setting turned on. This makes the release's build-provenance attestation verifiable end to end by third parties, instead of racing the asset upload.
+
 ## [0.27.8] — 2026-07-17
 
 ### Fixed

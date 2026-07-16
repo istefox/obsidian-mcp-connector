@@ -28,7 +28,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
-          draft: false
+          # Stays a draft (mutable, not public) until the final "Publish release" step
+          # below, after every asset and attestation is already in place — required
+          # for the immutable-release attestation to snapshot the complete release
+          # instead of racing the asset-upload step.
+          draft: true
           # Pre-release tags carry a SemVer suffix with a hyphen
           # (`0.7.0-beta.1`, `-rc.1`, `-alpha.2`). Mark those prerelease
           # so GitHub does NOT move `/releases/latest` to them — otherwise
@@ -78,6 +82,10 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
+          # Leaves the draft flag untouched on this update — the release stays a
+          # draft (set above by "Create Release") through asset upload; the explicit
+          # "Publish release" step below is the only place that flips it public.
+          omitDraftDuringUpdate: true
           omitName: true
           tag: ${{ github.ref_name }}
           # styles.css intentionally omitted — Svelte 5 inlines component CSS into main.js.
@@ -91,3 +99,8 @@ jobs:
             ---
             ✨ This release includes attested build artifacts.
             📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
+
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false --repo "${{ github.repository }}"
