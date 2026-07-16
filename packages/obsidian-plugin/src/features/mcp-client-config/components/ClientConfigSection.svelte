@@ -177,6 +177,7 @@
       const bytes = generateMcpb({
         version: plugin.manifest.version,
         vaultPath: adapter.getBasePath(),
+        configDir: plugin.app.vault.configDir,
       });
       const filename = "obsidian-mcp-connector.mcpb";
 

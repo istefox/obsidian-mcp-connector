@@ -147,9 +147,22 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({ version: VERSION, vaultPath: VAULT_PATH }),
       );
+      expect(shim).toContain('const configDir = ".obsidian";');
       expect(shim).toContain(
-        '".obsidian", "plugins", "mcp-tools-istefox", "data.json"',
+        'configDir, "plugins", "mcp-tools-istefox", "data.json"',
       );
+    });
+
+    test("shim bakes in a custom config dir when the vault uses one", () => {
+      const shim = getShimSource(
+        generateMcpb({
+          version: VERSION,
+          vaultPath: VAULT_PATH,
+          configDir: ".obsidian-custom",
+        }),
+      );
+      expect(shim).toContain('const configDir = ".obsidian-custom";');
+      expect(shim).not.toContain('const configDir = ".obsidian";');
     });
 
     test("shim resolves port and token from mcpTransport, not from literals", () => {

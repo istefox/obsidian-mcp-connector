@@ -6,6 +6,13 @@ export type McpbGeneratorInput = {
   version: string;
   /** Absolute filesystem path to the vault root (`FileSystemAdapter.getBasePath()`). */
   vaultPath: string;
+  /**
+   * Vault's configured settings folder name (`Vault#configDir`). Almost
+   * always `.obsidian`, but user-configurable — baking in the literal would
+   * silently break the shim for anyone who renamed it. Defaults to
+   * `.obsidian` for callers without a live App instance.
+   */
+  configDir?: string;
 };
 
 /**
@@ -32,21 +39,28 @@ export interface McpbManifest {
 }
 
 const VAULT_PATH_PLACEHOLDER = '"__OBSIDIAN_MCP_VAULT_PATH__"';
+const CONFIG_DIR_PLACEHOLDER = '"__OBSIDIAN_MCP_CONFIG_DIR__"';
 
 // The shim's real source lives at services/connectorShim.js — a
 // standalone, unit-tested (bun test) CommonJS Node script with zero
-// dependencies. This function only substitutes the one thing that
-// differs per generated bundle: the vault path. See
+// dependencies. This function only substitutes the things that differ per
+// generated bundle: the vault path and the vault's config folder name. See
 // docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
 function buildShim(input: McpbGeneratorInput): string {
-  if (!CONNECTOR_SHIM_SOURCE.includes(VAULT_PATH_PLACEHOLDER)) {
+  if (
+    !CONNECTOR_SHIM_SOURCE.includes(VAULT_PATH_PLACEHOLDER) ||
+    !CONNECTOR_SHIM_SOURCE.includes(CONFIG_DIR_PLACEHOLDER)
+  ) {
     throw new Error(
-      "connectorShim.js is missing the vault-path placeholder — regenerate assets/connectorShimSource.ts",
+      "connectorShim.js is missing a placeholder — regenerate assets/connectorShimSource.ts",
     );
   }
   return CONNECTOR_SHIM_SOURCE.replace(
     VAULT_PATH_PLACEHOLDER,
     JSON.stringify(input.vaultPath),
+  ).replace(
+    CONFIG_DIR_PLACEHOLDER,
+    JSON.stringify(input.configDir ?? ".obsidian"),
   );
 }
 

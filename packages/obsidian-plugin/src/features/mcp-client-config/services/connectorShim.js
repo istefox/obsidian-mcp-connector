@@ -1,24 +1,100 @@
 #!/usr/bin/env node
 "use strict";
 
+/* eslint-disable no-nodejs-modules, obsidianmd/no-nodejs-modules, @typescript-eslint/no-require-imports, prefer-window-timers, obsidianmd/prefer-window-timers, no-fetch, obsidianmd/no-fetch --
+ * This script is not part of the Obsidian plugin's own renderer bundle: it
+ * is a standalone, zero-dependency Node.js CLI (embedded as a string via
+ * assets/connectorShimSource.ts and shipped inside the .mcpb package),
+ * launched as its own separate process by Claude Desktop and executed by a
+ * plain `node`, never loaded inside Obsidian's sandboxed window. require()
+ * of Node built-ins, the global fetch(), and bare setTimeout/clearTimeout
+ * are the correct APIs for that runtime — `window` and `requestUrl` do not
+ * exist there. See docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
+ */
+
 const fs = require("fs");
 const net = require("net");
 
+/**
+ * @typedef {Object} JsonRpcMessage
+ * @property {string} [jsonrpc]
+ * @property {string|number|null} [id]
+ * @property {string} [method]
+ * @property {{ _meta?: { progressToken?: string|number } }} [params]
+ * @property {Record<string, unknown> & { protocolVersion?: string }} [result]
+ * @property {{ code: number, message: string, data?: unknown }} [error]
+ */
+
+/**
+ * @typedef {Object} TransportOk
+ * @property {number} port
+ * @property {string} token
+ * @property {undefined} [error]
+ */
+
+/**
+ * @typedef {Object} TransportErr
+ * @property {string} error
+ * @property {undefined} [port]
+ * @property {undefined} [token]
+ */
+
+/** @typedef {TransportOk | TransportErr} TransportResult */
+
+/**
+ * @typedef {Object} PostJsonRpcResult
+ * @property {number} status
+ * @property {string} contentType
+ * @property {string} rawBody
+ */
+
+/**
+ * Safely extract a diagnostic message from a caught value. JS lets `throw`
+ * raise anything, not just an Error instance.
+ * @param {unknown} err
+ * @returns {string}
+ */
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+function isAbortError(err) {
+  return err instanceof Error && err.name === "AbortError";
+}
+
+/**
+ * @param {string} remainder
+ * @param {string} chunk
+ * @returns {{ lines: string[], remainder: string }}
+ */
 function splitLines(remainder, chunk) {
   const combined = remainder + chunk;
   const parts = combined.split("\n");
   const newRemainder = parts.pop();
-  return { lines: parts, remainder: newRemainder };
+  return { lines: parts, remainder: newRemainder ?? "" };
 }
 
+/**
+ * @param {string} line
+ * @returns {
+ *   { skip: true, error?: undefined, message?: undefined } |
+ *   { error: string, skip?: undefined, message?: undefined } |
+ *   { message: JsonRpcMessage, skip?: undefined, error?: undefined }
+ * }
+ */
 function parseJsonRpcLine(line) {
   const trimmed = line.trim();
   if (trimmed === "") return { skip: true };
+  /** @type {unknown} */
   let message;
   try {
     message = JSON.parse(trimmed);
   } catch (err) {
-    return { error: `unparseable stdin line: ${err.message}` };
+    return { error: `unparseable stdin line: ${errorMessage(err)}` };
   }
   if (
     typeof message !== "object" ||
@@ -27,15 +103,20 @@ function parseJsonRpcLine(line) {
   ) {
     return { error: "stdin line is not a JSON-RPC object" };
   }
-  return { message };
+  return { message: /** @type {JsonRpcMessage} */ (message) };
 }
 
+/**
+ * @param {string} jsonText
+ * @returns {TransportResult}
+ */
 function parseTransportFile(jsonText) {
+  /** @type {{ mcpTransport?: { livePort?: unknown, bearerToken?: unknown } }} */
   let data;
   try {
     data = JSON.parse(jsonText);
   } catch (err) {
-    return { error: `data.json is not valid JSON: ${err.message}` };
+    return { error: `data.json is not valid JSON: ${errorMessage(err)}` };
   }
   const transport = (data && data.mcpTransport) || {};
   const port = transport.livePort;
@@ -49,12 +130,25 @@ function parseTransportFile(jsonText) {
   return { port, token };
 }
 
+/**
+ * @param {string|number|null|undefined} id
+ * @param {string} message
+ * @param {unknown} [data]
+ * @returns {JsonRpcMessage}
+ */
 function buildErrorResponse(id, message, data) {
+  /** @type {{ code: number, message: string, data?: unknown }} */
   const error = { code: -32000, message: `obsidian-mcp-connector: ${message}` };
   if (data !== undefined) error.data = data;
   return { jsonrpc: "2.0", id, error };
 }
 
+/**
+ * @param {string|number} progressToken
+ * @param {number} progress
+ * @param {string} [message]
+ * @returns {{ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: string|number, progress: number, message?: string } }}
+ */
 function buildProgressNotification(progressToken, progress, message) {
   return {
     jsonrpc: "2.0",
@@ -65,13 +159,20 @@ function buildProgressNotification(progressToken, progress, message) {
 
 const SSE_LINE_SPLIT = /\r\n|\r|\n/;
 
+/**
+ * @param {string} body
+ * @returns {JsonRpcMessage[]}
+ */
 function parseSse(body) {
+  /** @type {JsonRpcMessage[]} */
   const messages = [];
+  /** @type {string[]} */
   let dataLines = [];
   const dispatch = () => {
     if (dataLines.length === 0) return;
     const raw = dataLines.join("\n");
     dataLines = [];
+    /** @type {unknown} */
     let parsed;
     try {
       parsed = JSON.parse(raw);
@@ -83,7 +184,7 @@ function parseSse(body) {
       typeof parsed === "object" &&
       !Array.isArray(parsed)
     ) {
-      messages.push(parsed);
+      messages.push(/** @type {JsonRpcMessage} */ (parsed));
     }
   };
   for (const line of body.split(SSE_LINE_SPLIT)) {
@@ -102,8 +203,15 @@ function parseSse(body) {
   return messages;
 }
 
+/**
+ * @param {JsonRpcMessage[]} messages
+ * @param {string|number|null|undefined} requestId
+ * @returns {{ notifications: JsonRpcMessage[], response: JsonRpcMessage | null }}
+ */
 function routeSseMessages(messages, requestId) {
+  /** @type {JsonRpcMessage[]} */
   const notifications = [];
+  /** @type {JsonRpcMessage | null} */
   let response = null;
   for (const msg of messages) {
     if (
@@ -119,6 +227,13 @@ function routeSseMessages(messages, requestId) {
   return { notifications, response };
 }
 
+/**
+ * @param {string} contentType
+ * @param {string} rawBody
+ * @param {string|number|null|undefined} requestId
+ * @param {number} status
+ * @returns {JsonRpcMessage[]}
+ */
 function resolveResponseMessages(contentType, rawBody, requestId, status) {
   if (status === 401) {
     return [
@@ -157,7 +272,7 @@ function resolveResponseMessages(contentType, rawBody, requestId, status) {
   }
 
   try {
-    return [JSON.parse(rawBody)];
+    return [/** @type {JsonRpcMessage} */ (JSON.parse(rawBody))];
   } catch {
     return [
       buildErrorResponse(requestId, `non-JSON response (HTTP ${status})`),
@@ -165,19 +280,31 @@ function resolveResponseMessages(contentType, rawBody, requestId, status) {
   }
 }
 
+/**
+ * @param {string} dataPath
+ * @param {{ readFileSync?: typeof fs.readFileSync }} [options]
+ * @returns {TransportResult}
+ */
 function readTransport(dataPath, { readFileSync = fs.readFileSync } = {}) {
+  /** @type {string} */
   let text;
   try {
-    text = readFileSync(dataPath, "utf8");
+    text = /** @type {string} */ (readFileSync(dataPath, "utf8"));
   } catch (err) {
-    return { error: `could not read ${dataPath}: ${err.message}` };
+    return { error: `could not read ${dataPath}: ${errorMessage(err)}` };
   }
   return parseTransportFile(text);
 }
 
+/**
+ * @param {number} port
+ * @param {{ createConnection?: typeof net.createConnection }} [options]
+ * @returns {Promise<boolean>}
+ */
 function probePort(port, { createConnection = net.createConnection } = {}) {
   return new Promise((resolve) => {
     const socket = createConnection({ port, host: "127.0.0.1" });
+    /** @param {boolean} ok */
     const finish = (ok) => {
       socket.removeAllListeners();
       socket.destroy();
@@ -203,6 +330,19 @@ const WATCHDOG_GRACE_MS = 2000;
 // omits protocolVersion. Mirrors the Python bridge's PROTOCOL_VERSION_FALLBACK.
 const PROTOCOL_VERSION_FALLBACK = "2025-06-18";
 
+/**
+ * @param {string} dataPath
+ * @param {{
+ *   readTransportImpl?: typeof readTransport,
+ *   probePortImpl?: typeof probePort,
+ *   nowImpl?: () => number,
+ *   sleepMsImpl?: (ms: number) => Promise<void>,
+ *   windowMs?: number,
+ *   intervalMs?: number,
+ *   onAttempt?: () => void,
+ * }} [options]
+ * @returns {Promise<TransportResult>}
+ */
 async function resolveTransportWithRetry(
   dataPath,
   {
@@ -232,6 +372,18 @@ async function resolveTransportWithRetry(
   return { error: `${lastError} — is Obsidian open with the vault loaded?` };
 }
 
+/**
+ * @param {string} url
+ * @param {string} token
+ * @param {JsonRpcMessage} message
+ * @param {number} timeoutMs
+ * @param {{
+ *   fetchImpl?: typeof fetch,
+ *   protocolVersion?: string | null,
+ *   watchdogGraceMs?: number,
+ * }} [options]
+ * @returns {Promise<PostJsonRpcResult>}
+ */
 async function postJsonRpc(
   url,
   token,
@@ -245,6 +397,7 @@ async function postJsonRpc(
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  /** @type {Record<string, string>} */
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
@@ -291,9 +444,25 @@ async function postJsonRpc(
     }, timeoutMs + watchdogGraceMs);
   });
 
-  return Promise.race([attempt, watchdog]);
+  return /** @type {Promise<PostJsonRpcResult>} */ (
+    Promise.race([attempt, watchdog])
+  );
 }
 
+/**
+ * @param {{
+ *   stdin?: NodeJS.ReadStream,
+ *   writeChunk?: (s: string) => void,
+ *   fetchImpl?: typeof fetch,
+ *   dataPath: string,
+ *   log?: (msg: string) => void,
+ *   debug?: boolean,
+ *   requestTimeoutMs?: number,
+ *   resolveTransportWithRetryImpl?: typeof resolveTransportWithRetry,
+ *   readTransportImpl?: typeof readTransport,
+ * }} options
+ * @returns {Promise<void>}
+ */
 function runMain({
   stdin = process.stdin,
   writeChunk = (s) => process.stdout.write(s),
@@ -305,10 +474,15 @@ function runMain({
   resolveTransportWithRetryImpl = resolveTransportWithRetry,
   readTransportImpl = readTransport,
 } = {}) {
+  /** @type {Promise<void>[]} */
   const pending = [];
   let remainder = "";
+  /** @type {string | null} */
   let negotiatedProtocolVersion = null;
 
+  /**
+   * @param {JsonRpcMessage} message
+   */
   async function handleRequest(message) {
     const id = message.id;
     if (debug) log(`-> ${message.method} (id=${id})`);
@@ -341,6 +515,7 @@ function runMain({
       return;
     }
     const url = `http://127.0.0.1:${transport.port}/mcp`;
+    /** @type {PostJsonRpcResult} */
     let result;
     try {
       result = await postJsonRpc(
@@ -351,7 +526,7 @@ function runMain({
         { fetchImpl, protocolVersion: negotiatedProtocolVersion },
       );
     } catch (err) {
-      if (err.name === "AbortError") {
+      if (isAbortError(err)) {
         writeChunk(
           JSON.stringify(
             buildErrorResponse(
@@ -363,7 +538,7 @@ function runMain({
         return;
       }
       // Connection error: re-resolve once and retry once.
-      if (debug) log(`request failed, retrying once: ${err.message}`);
+      if (debug) log(`request failed, retrying once: ${errorMessage(err)}`);
       const retried = await resolveTransportWithRetryImpl(dataPath, {
         onAttempt,
       });
@@ -382,10 +557,9 @@ function runMain({
           { fetchImpl, protocolVersion: negotiatedProtocolVersion },
         );
       } catch (err2) {
-        const message2 =
-          err2.name === "AbortError"
-            ? `request timed out after ${requestTimeoutMs}ms`
-            : `request failed: ${err2.message}`;
+        const message2 = isAbortError(err2)
+          ? `request timed out after ${requestTimeoutMs}ms`
+          : `request failed: ${errorMessage(err2)}`;
         writeChunk(JSON.stringify(buildErrorResponse(id, message2)) + "\n");
         return;
       }
@@ -413,6 +587,9 @@ function runMain({
     writeChunk(messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
   }
 
+  /**
+   * @param {JsonRpcMessage} message
+   */
   async function handleNotification(message) {
     let transport = readTransportImpl(dataPath);
     if (transport.error)
@@ -433,7 +610,7 @@ function runMain({
         },
       );
     } catch (err) {
-      log(`notification POST failed: ${err.message}`);
+      log(`notification POST failed: ${errorMessage(err)}`);
     }
   }
 
@@ -454,7 +631,7 @@ function runMain({
           Object.prototype.hasOwnProperty.call(msg, "id") && msg.id !== null;
         const p = (hasId ? handleRequest(msg) : handleNotification(msg)).catch(
           (err) => {
-            log(`unexpected error: ${err.message}`);
+            log(`unexpected error: ${errorMessage(err)}`);
             // For a request (has id) the client is blocked waiting on a
             // response with that id; without one it would hang forever, so
             // emit a JSON-RPC error. Notifications owe no response.
@@ -464,12 +641,14 @@ function runMain({
                   JSON.stringify(
                     buildErrorResponse(
                       msg.id,
-                      `unexpected error: ${err.message}`,
+                      `unexpected error: ${errorMessage(err)}`,
                     ),
                   ) + "\n",
                 );
               } catch (writeErr) {
-                log(`failed to write error response: ${writeErr.message}`);
+                log(
+                  `failed to write error response: ${errorMessage(writeErr)}`,
+                );
               }
             }
           },
@@ -485,9 +664,10 @@ function runMain({
 }
 
 const vaultPath = "__OBSIDIAN_MCP_VAULT_PATH__";
+const configDir = "__OBSIDIAN_MCP_CONFIG_DIR__";
 const path = require("path");
 // prettier-ignore
-const shimDataPath = path.join(vaultPath, ".obsidian", "plugins", "mcp-tools-istefox", "data.json");
+const shimDataPath = path.join(vaultPath, configDir, "plugins", "mcp-tools-istefox", "data.json");
 
 function main() {
   process.stderr.write(`obsidian-mcp-connector: started, vault=${vaultPath}\n`);
