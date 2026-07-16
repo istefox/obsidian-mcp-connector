@@ -3,6 +3,13 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.6] — 2026-07-16
+
+### Changed
+
+- **The `.mcpb` connector shim source moved out of the plugin source tree** (`src/` → `scripts/`) and no longer carries any lint-suppression comments. The shim is a standalone Node.js program shipped inside the `.mcpb`, not plugin code that runs inside Obsidian, and the repository layout now reflects that. This resolves the blocking errors reported by the community plugin review scan on 0.27.5; the shipped shim's behavior is unchanged.
+- **Internal fallbacks no longer assume the vault's config folder is named `.obsidian`.** The `.mcpb` generator now requires the vault's actual configured folder name, and the semantic-search storage path fallback reads it from the vault settings too.
+
 ## [0.27.5] — 2026-07-16
 
 ### Fixed
