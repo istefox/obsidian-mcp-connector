@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.8] — 2026-07-17
+
+### Fixed
+
+- **`patch_vault_file` no longer reports success when nothing was actually written.** Two gaps let this happen: `createTargetIfMissing: false` was computed but never checked by the frontmatter branch, so it had no effect there; and there was no file-type guard, so a frontmatter or heading patch against a non-markdown file (e.g. `.json`) silently no-op'd inside `app.fileManager.processFrontMatter` while still returning "File patched successfully." Frontmatter/heading targets on non-markdown files now return an explicit error, `createTargetIfMissing: false` now works for frontmatter too, and every success response now says so only when the file's content actually changed.
+
 ## [0.27.7] — 2026-07-16
 
 ### Fixed
