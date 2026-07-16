@@ -8,11 +8,11 @@ export type McpbGeneratorInput = {
   vaultPath: string;
   /**
    * Vault's configured settings folder name (`Vault#configDir`). Almost
-   * always `.obsidian`, but user-configurable — baking in the literal would
-   * silently break the shim for anyone who renamed it. Defaults to
-   * `.obsidian` for callers without a live App instance.
+   * always `.obsidian`, but user-configurable — baking in a literal would
+   * silently break the shim for anyone who renamed it, so callers must
+   * always pass the live value.
    */
-  configDir?: string;
+  configDir: string;
 };
 
 /**
@@ -58,10 +58,7 @@ function buildShim(input: McpbGeneratorInput): string {
   return CONNECTOR_SHIM_SOURCE.replace(
     VAULT_PATH_PLACEHOLDER,
     JSON.stringify(input.vaultPath),
-  ).replace(
-    CONFIG_DIR_PLACEHOLDER,
-    JSON.stringify(input.configDir ?? ".obsidian"),
-  );
+  ).replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir));
 }
 
 function buildManifest(input: McpbGeneratorInput): McpbManifest {
