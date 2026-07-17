@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.14] — 2026-07-17
+
+### Changed
+
+- **No code changes.** Re-release to request a fresh automated review from the community store. Verification of 0.27.13 shows the review's attestation error is service-side: the build provenance verifies cleanly with the GitHub CLI, and GitHub's attestation API no longer returns inline bundles on any API version, which breaks verifiers that still read that field.
+
 ## [0.27.13] — 2026-07-17
 
 ### Changed
