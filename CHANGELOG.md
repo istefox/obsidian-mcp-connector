@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.12] — 2026-07-17
+
+### Fixed
+
+- **Every release's `main.js` now carries a unique digest.** The generated-file banner now embeds the plugin version. Releases 0.27.8 through 0.27.11 shipped a byte-identical bundle, so all their attestations piled onto one digest and the community-store review matched the wrong tag's attestation, rejecting valid releases. With the version in the banner, each release maps to exactly one attestation.
+
 ## [0.27.11] — 2026-07-17
 
 ### Changed
