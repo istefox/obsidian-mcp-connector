@@ -23,24 +23,6 @@ jobs:
         with:
           bun-version: 1.3.12
 
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v3
-        with:
-          generate_release_notes: true
-          # Stays a draft (mutable, not public) until the final "Publish release" step
-          # below, after every asset and attestation is already in place — required
-          # for the immutable-release attestation to snapshot the complete release
-          # instead of racing the asset-upload step.
-          draft: true
-          # Pre-release tags carry a SemVer suffix with a hyphen
-          # (`0.7.0-beta.1`, `-rc.1`, `-alpha.2`). Mark those prerelease
-          # so GitHub does NOT move `/releases/latest` to them — otherwise
-          # the community store + BRAT-default users would pull an
-          # unfinished beta as "latest". Stable tags (`0.6.0`) have no
-          # hyphen, so prerelease resolves to false.
-          prerelease: ${{ contains(github.ref_name, '-') }}
-
       - name: Install Dependencies
         run: bun install --frozen-lockfile
 
@@ -63,42 +45,34 @@ jobs:
             main.js
             obsidian-mcp-connector.mcpb
 
-      - name: Get existing release body
-        id: get_release_body
-        uses: actions/github-script@v9
+      # Community-verified attestation recipe ordering
+      # (forum.obsidian.md/t/114445): the attestation must exist BEFORE the
+      # release object is created. The release is still created as a draft and
+      # published as a separate last step because this repository enforces
+      # release immutability — a non-draft release locks its assets at
+      # publication, so assets must be attached while still in draft.
+      - name: Create Release with artifacts
+        uses: softprops/action-gh-release@v3
         with:
-          result-encoding: string
-          script: |
-            const release = await github.rest.repos.getRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ steps.create_release.outputs.id }}
-            });
-            return release.data.body || '';
-
-      - name: Upload plugin artifacts
-        env:
-          GH_WORKFLOW_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          # Leaves the draft flag untouched on this update — the release stays a
-          # draft (set above by "Create Release") through asset upload; the explicit
-          # "Publish release" step below is the only place that flips it public.
-          omitDraftDuringUpdate: true
-          omitName: true
-          tag: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: true
+          # Pre-release tags carry a SemVer suffix with a hyphen
+          # (`0.7.0-beta.1`, `-rc.1`, `-alpha.2`). Mark those prerelease
+          # so GitHub does NOT move `/releases/latest` to them — otherwise
+          # the community store + BRAT-default users would pull an
+          # unfinished beta as "latest". Stable tags (`0.6.0`) have no
+          # hyphen, so prerelease resolves to false.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           # styles.css intentionally omitted — Svelte 5 inlines component CSS into main.js.
           # NOTE: obsidian-mcp-connector.mcpb is a Claude Desktop extension (not a plugin zip).
-          # The GH013 rule targets .zip plugin archives; .mcpb has not triggered it.
-          # If the store reviewer flags this, move the .mcpb upload to a separate step.
-          artifacts: "main.js,manifest.json,obsidian-mcp-connector.mcpb"
+          files: |
+            main.js
+            manifest.json
+            obsidian-mcp-connector.mcpb
           body: |
-            ${{ steps.get_release_body.outputs.result }}
-
             ---
             ✨ This release includes attested build artifacts.
-            📝 View attestation details in the [workflow run](${{ env.GH_WORKFLOW_URL }})
+            📝 View attestation details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
       - name: Publish release
         env:

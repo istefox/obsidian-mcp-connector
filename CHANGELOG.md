@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.13] — 2026-07-17
+
+### Changed
+
+- **The release workflow now creates the GitHub release only after the artifact attestation exists.** This matches the community-verified recipe for attested plugin artifacts: attest first, then create the release with its assets in a single step, publish last. No plugin code changes.
+
 ## [0.27.12] — 2026-07-17
 
 ### Fixed
