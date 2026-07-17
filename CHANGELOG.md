@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.11] — 2026-07-17
+
+### Changed
+
+- **No code changes.** New submission to the community store, same reason as 0.27.10.
+
 ## [0.27.10] — 2026-07-17
 
 ### Changed
