@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.27.10] — 2026-07-17
+
+### Changed
+
+- **No code changes.** This release exists to request a fresh community-store automated review. The attestation-check failures reported on 0.27.8 and 0.27.9 were false positives: the released artifacts verify cleanly with `gh attestation verify`, and the review system's own build verification reproduced `main.js` byte-for-byte from source.
+
 ## [0.27.9] — 2026-07-17
 
 ### Changed
