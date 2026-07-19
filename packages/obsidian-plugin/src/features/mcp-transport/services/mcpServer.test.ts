@@ -178,6 +178,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "append_to_periodic_note",
         "append_to_vault_file",
         "connect_canvas_nodes",
+        "create_vault_binary_file",
         "create_vault_directory",
         "create_vault_file",
         "delete_active_file",
@@ -223,7 +224,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "tool_catalog",
         "update_active_file",
       ]);
-      expect(names).toHaveLength(51);
+      expect(names).toHaveLength(52);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.
