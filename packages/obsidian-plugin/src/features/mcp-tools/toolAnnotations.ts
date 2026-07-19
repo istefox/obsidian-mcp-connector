@@ -54,6 +54,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_vault_file_partial: READ_ONLY,
   // Overwrites when the path already exists (documented behavior).
   create_vault_file: { ...DESTRUCTIVE, idempotentHint: true },
+  // Same overwrite semantics as create_vault_file, for binary content.
+  create_vault_binary_file: { ...DESTRUCTIVE, idempotentHint: true },
   append_to_vault_file: SAFE_WRITE,
   patch_vault_file: DESTRUCTIVE,
   delete_vault_file: DESTRUCTIVE,
