@@ -1046,6 +1046,23 @@ export function mockApp(): App {
       _mockState.files.set(path, content);
       return fileFromPath(path) as unknown as ApiTFile;
     },
+    createBinary: async (path: string, data: ArrayBuffer): Promise<ApiTFile> => {
+      // Same ENOENT-on-missing-parent semantics as create(). Storage
+      // reuses the string-keyed files map via TextDecoder, the inverse
+      // of readBinary's TextEncoder — a round trip for any valid UTF-8
+      // byte sequence (sufficient for tests, which control the bytes).
+      const slash = path.lastIndexOf("/");
+      if (slash > 0) {
+        const parent = path.slice(0, slash);
+        if (!_mockState.folders.has(parent)) {
+          throw new Error(
+            `ENOENT: no such file or directory, open '<vault>/${path}'`,
+          );
+        }
+      }
+      _mockState.files.set(path, new TextDecoder().decode(data));
+      return fileFromPath(path) as unknown as ApiTFile;
+    },
     createFolder: async (path: string): Promise<ApiTFolder> => {
       // Real Obsidian throws "Folder already exists" on a duplicate.
       // The production helper swallows that case, so the mock must
@@ -1055,6 +1072,13 @@ export function mockApp(): App {
       }
       _mockState.folders.add(path);
       return folderFromPath(path) as unknown as ApiTFolder;
+    },
+    modifyBinary: async (file: ApiTFile, data: ArrayBuffer): Promise<void> => {
+      const path = (file as unknown as MockTFile).path;
+      if (_mockState.modifyFailPaths.has(path)) {
+        throw new Error(`mock modify failure: ${path}`);
+      }
+      _mockState.files.set(path, new TextDecoder().decode(data));
     },
     modify: async (file: ApiTFile, content: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
