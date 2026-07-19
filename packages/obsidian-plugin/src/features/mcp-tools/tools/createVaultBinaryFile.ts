@@ -14,7 +14,7 @@ export const createVaultBinaryFileSchema = type({
     ),
   },
 }).describe(
-  "Creates or overwrites a binary file (image, audio, or any other non-text file) at the given vault-relative path from base64-encoded content. Missing parent directories along the path are created automatically. Use create_vault_file instead for plain text content.",
+  "Creates or overwrites a binary file (image, audio, or any other non-text file) at the given vault-relative path from base64-encoded content. Missing parent directories along the path are created automatically. Use create_vault_file instead for plain text content. Note: the plugin's HTTP transport caps request bodies at 1 MiB, so the maximum writable file is roughly 750 KB after base64 overhead; larger uploads fail with HTTP 413 before reaching this tool.",
 );
 
 export type CreateVaultBinaryFileContext = {
