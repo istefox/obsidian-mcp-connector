@@ -1,5 +1,10 @@
 import { describe, expect, test, beforeEach } from "bun:test";
-import { getVaultFileHandler, getVaultFileSchema } from "./getVaultFile";
+import { type } from "arktype";
+import {
+  getVaultFileHandler,
+  getVaultFileOutputSchema,
+  getVaultFileSchema,
+} from "./getVaultFile";
 import {
   mockApp,
   resetMockVault,
@@ -47,6 +52,46 @@ describe("get_vault_file tool", () => {
       mtime: 0,
       size: "---\ntags: [foo]\n---\n# Body".length,
     });
+  });
+
+  test("polymorphic contract: default format has no structuredContent, format=json does", async () => {
+    setMockFile("a.md", "# Body");
+    const plain = await getVaultFileHandler({
+      arguments: { path: "a.md" },
+      app: mockApp(),
+    });
+    // The tool declares no MCP outputSchema (see index.test.ts), so the
+    // default text response legitimately omits structuredContent — with a
+    // declared schema this same response would be rejected client-side
+    // with -32600 (the 0.27.2–0.27.6 bug).
+    expect(plain.structuredContent).toBeUndefined();
+
+    const json = await getVaultFileHandler({
+      arguments: { path: "a.md", format: "json" },
+      app: mockApp(),
+    });
+    expect(json.structuredContent).toBeDefined();
+  });
+
+  test("getVaultFileOutputSchema accepts the actual format=json structuredContent", async () => {
+    setMockFile("a.md", "---\ntags: [foo]\n---\n# Body");
+    setMockMetadata("a.md", {
+      frontmatter: { tags: ["foo"] },
+      headings: [{ heading: "Body", level: 1, line: 3 }],
+    });
+    const result = await getVaultFileHandler({
+      arguments: { path: "a.md", format: "json" },
+      app: mockApp(),
+    });
+
+    // Schema-vs-actual consistency: the real handler output must satisfy the
+    // declared outputSchema, or clients validating structuredContent break.
+    expect(result.structuredContent).toBeDefined();
+    const validated = getVaultFileOutputSchema(result.structuredContent);
+    expect(validated instanceof type.errors).toBe(false);
+    expect(result.structuredContent).toEqual(
+      JSON.parse((result.content[0] as { text: string }).text),
+    );
   });
 
   test("returns image content block for .png file", async () => {

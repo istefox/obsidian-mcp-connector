@@ -48,24 +48,26 @@ export async function toolCatalogHandler({
     Array.isArray(toolLoading.promoted) ? toolLoading.promoted : [],
   );
 
-  const catalog: ToolEntry[] = entries.map((entry) => {
-    const callCount = counters[entry.name] ?? 0;
-    if (!entry.enabled) {
+  const catalog: ToolEntry[] = entries
+    .filter((entry) => !entry.userDisabled)
+    .map((entry) => {
+      const callCount = counters[entry.name] ?? 0;
+      if (!entry.enabled) {
+        return {
+          name: entry.name,
+          status: "inactive",
+          call_count: callCount,
+          description: entry.description
+            ? firstSentence(entry.description)
+            : undefined,
+        };
+      }
       return {
         name: entry.name,
-        status: "inactive",
+        status: promoted.has(entry.name) ? "promoted" : "active",
         call_count: callCount,
-        description: entry.description
-          ? firstSentence(entry.description)
-          : undefined,
       };
-    }
-    return {
-      name: entry.name,
-      status: promoted.has(entry.name) ? "promoted" : "active",
-      call_count: callCount,
-    };
-  });
+    });
 
   return successText(JSON.stringify(catalog));
 }

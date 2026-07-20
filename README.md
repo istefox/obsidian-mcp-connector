@@ -114,7 +114,7 @@ The plugin settings expose three **Copy config** buttons, one per supported clie
 
 ### Claude Desktop
 
-Claude Desktop only speaks stdio MCP, so it reaches the in-process server through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path). Node.js must be on your PATH. The plugin auto-detects it and offers a one-click Homebrew install if it is missing.
+Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges to the in-process server directly, with no external runtime dependency. The alternative manual JSON config instead reaches it through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path), which needs Node.js on your PATH.
 
 **Recommended: download the `.mcpb` extension**
 
@@ -122,13 +122,13 @@ Claude Desktop only speaks stdio MCP, so it reaches the in-process server throug
 2. Drag the file onto Claude Desktop.
 3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
-The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. Node.js must be on your PATH (the plugin settings show a warning if it is missing).
+The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
 
 If you rotate your token or change the server port, download a fresh `.mcpb` and drag it onto Claude Desktop to replace the existing extension.
 
 **Alternative: manual JSON config**
 
-For advanced users or when the `.mcpb` flow is not available:
+For advanced users or when the `.mcpb` flow is not available. This path runs `npx mcp-remote` via your own Node install, so Node.js must be on your PATH; the plugin auto-detects it and offers a one-click Homebrew install if it is missing.
 
 1. Click **Claude Desktop** under **Copy config snippets**. The snippet looks like:
    ```json
@@ -325,11 +325,23 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 - **Fix**: fully quit Claude Desktop (Cmd+Q on macOS) and reopen it. Claude Desktop only re-reads `claude_desktop_config.json` at launch, so closing the window or an in-app restart is not enough. With auto-write on (the default) the plugin keeps the config in sync afterward.
 - Still failing? Confirm the port in `claude_desktop_config.json` (`http://127.0.0.1:<port>/mcp`) matches the port the plugin logs on start (Settings, **Open Logs**), and make sure only one Obsidian vault has the plugin enabled (two instances contend for the port). Then fully restart Claude Desktop again.
 
+### Claude Desktop extension (.mcpb) shows disconnected most of the time
+
+- **Symptom**: the installed Claude Desktop extension is disconnected, stuck, or "busy" on most connection attempts, with no clear error in Claude.
+- **Cause** (fixed in v0.26.0): before that version, the downloaded `.mcpb` baked the HTTP port and bearer token into `manifest.json` as a literal command, captured once at export. If the plugin later bound to a different port (no Fixed Port set, multiple vaults open) or the token changed, the installed extension kept using the stale values indefinitely.
+- **Fix**: update the plugin to v0.26.0 or later, then re-export the `.mcpb` from Settings, **Quick setup for clients**, **Download .mcpb**, and reinstall it in Claude Desktop once. From that version on, the bundle reads the live port and token from the vault at connect time, so it keeps working across a token rotation or a port change with no further re-export.
+
 ### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
 
 - **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
 - **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. The plugin answers an identical request in milliseconds over direct HTTP, and Claude Code is unaffected. Tracked upstream at [geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296).
 - **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Quick setup for clients](#claude-desktop).
+
+### Claude Desktop extension hangs ~60s on macOS with "Use Built-in Node.js for MCP" enabled
+
+- **Symptom**: the extension installs and shows as enabled, but every connection attempt sits silent for exactly 60 seconds, then Claude Desktop's logs show `MCP error -32001: Request timed out`. No response, not even the connector's own internal timeout error, ever reaches Claude Desktop first.
+- **Cause**: a bug in Claude Desktop's `UtilityProcess` sandbox, used when "Use Built-in Node.js for MCP" is on (Settings, Extensions). Not specific to this connector: [korotovsky/slack-mcp-server#152](https://github.com/korotovsky/slack-mcp-server/issues/152) documents an identical failure signature for a different `.mcpb` extension under the same setting.
+- **Fix**: Claude Desktop, Settings, Extensions, disable **Use Built-in Node.js for MCP**, then fully quit (Cmd+Q) and reopen Claude Desktop. This makes Claude Desktop spawn the connector as a normal child process on system Node.js instead of the sandboxed one. The connector needs no `npx` or shell PATH resolution (fixed in v0.27.0), so any system Node.js install works.
 
 ### `tool/call` returns HTTP 401
 

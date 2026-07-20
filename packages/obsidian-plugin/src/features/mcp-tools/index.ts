@@ -390,4 +390,11 @@ export async function registerTools(
   // Covers the meta-tools registered later in mcpServer.ts too:
   // annotations are looked up by name at list() time.
   registry.setAnnotations(TOOL_ANNOTATIONS);
+
+  // Deliberately NO registry.setOutputSchemas() call here. The MCP SDK
+  // client rejects every non-error response of a tool that advertises an
+  // outputSchema unless it carries structuredContent, so a polymorphic
+  // tool (get_vault_file returns text OR image OR audio OR a JSON hint)
+  // can never declare one — doing so in 0.27.2 broke every default-format
+  // get_vault_file call with -32600. index.test.ts guards this.
 }

@@ -6,6 +6,7 @@ import {
   type McpService,
 } from "./mcpServer";
 import { resolveServerName } from "./setup";
+import { ToolLoadingManager } from "$/features/adaptive-tool-loading";
 
 beforeEach(() => resetMockVault());
 
@@ -421,6 +422,147 @@ describe("end-to-end: HTTP → McpServer", () => {
       expect(res.status).toBe(200);
       const body = await res.json();
       expect(body?.result?.serverInfo?.name).toBe("My Custom Name");
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+});
+
+/** In-memory-backed plugin so recordCall counters can be read back after
+ * a call — the default `mockPlugin()` discards `saveData`. */
+function makeCountingPlugin() {
+  let store: Record<string, unknown> = {};
+  return mockPlugin({
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+  });
+}
+
+describe("recordCall gating — self-healing inactive tool error (issue #354)", () => {
+  test("adaptive-inactive call does not increment the counter", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeCountingPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    svc.registry.setAdaptiveDisabled("get_server_info", true);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get_server_info", arguments: {} },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const text = body?.result?.content?.[0]?.text as string;
+      expect(text).toContain("Tool 'get_server_info' exists but is inactive");
+
+      await svc.flushPendingCalls();
+      const state = await new ToolLoadingManager().loadState(plugin);
+      expect(state.counters.get_server_info).toBeUndefined();
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("baseline / regression guard: an enabled call still increments the counter", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeCountingPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "get_server_info", arguments: {} },
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      await svc.flushPendingCalls();
+      const state = await new ToolLoadingManager().loadState(plugin);
+      expect(state.counters.get_server_info).toBe(1);
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("meta-tools are still excluded (unchanged behavior, touched line)", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeCountingPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      bearerToken: "t".repeat(32),
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "tool_catalog", arguments: {} },
+        }),
+      });
+      expect(res.status).toBe(200);
+
+      await svc.flushPendingCalls();
+      const state = await new ToolLoadingManager().loadState(plugin);
+      expect(state.counters.tool_catalog).toBeUndefined();
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }

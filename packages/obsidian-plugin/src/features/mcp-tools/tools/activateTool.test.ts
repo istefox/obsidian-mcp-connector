@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { activateToolHandler } from "./activateTool";
 
 function makeRegistry(
-  entries: { name: string; enabled: boolean }[],
+  entries: { name: string; enabled: boolean; userDisabled?: boolean }[],
 ): Parameters<typeof activateToolHandler>[0]["registry"] {
   return {
     listAll: () =>
@@ -11,6 +11,7 @@ function makeRegistry(
         name: e.name,
         description: `${e.name} description`,
         enabled: e.enabled,
+        userDisabled: e.userDisabled ?? false,
       })),
   };
 }
@@ -41,6 +42,7 @@ function makeServer(): { server: McpServer; notifications: string[] } {
 const ENTRIES = [
   { name: "search_vault", enabled: true },
   { name: "find_broken_links", enabled: false },
+  { name: "delete_vault_file", enabled: false, userDisabled: true },
 ];
 
 describe("activateToolHandler", () => {
@@ -73,6 +75,61 @@ describe("activateToolHandler", () => {
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("already active");
+    expect(enabled).toHaveLength(0);
+    expect(plugin._store().toolLoading).toBeUndefined();
+  });
+
+  test("user-disabled tool returns isError without side effects", async () => {
+    const plugin = makePlugin();
+    const enabled: string[] = [];
+    const { server, notifications } = makeServer();
+    const result = await activateToolHandler({
+      arguments: { name: "delete_vault_file" },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: (n) => (enabled.push(n), true),
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text.toLowerCase()).toContain("disabled");
+    expect(enabled).toHaveLength(0);
+    expect(plugin._store().toolLoading).toBeUndefined();
+    expect(notifications).toHaveLength(0);
+  });
+
+  test("user-disabled tool never invokes sendNotification either", async () => {
+    const plugin = makePlugin();
+    const { server } = makeServer();
+    const scoped: string[] = [];
+    const result = await activateToolHandler({
+      arguments: { name: "delete_vault_file" },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: () => true,
+      sendNotification: async (n) => {
+        scoped.push(n.method);
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(scoped).toHaveLength(0);
+  });
+
+  test("user-disabled AND adaptive-inactive tool still resolves to not-allowed, not activation", async () => {
+    // ENTRIES' delete_vault_file fixture already models "both flags set"
+    // (enabled: false, userDisabled: true) — confirms the userDisabled
+    // check runs before the "activate" branch, not after.
+    const plugin = makePlugin();
+    const enabled: string[] = [];
+    const { server } = makeServer();
+    const result = await activateToolHandler({
+      arguments: { name: "delete_vault_file", persist: true },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: (n) => (enabled.push(n), true),
+    });
+    expect(result.isError).toBe(true);
     expect(enabled).toHaveLength(0);
     expect(plugin._store().toolLoading).toBeUndefined();
   });

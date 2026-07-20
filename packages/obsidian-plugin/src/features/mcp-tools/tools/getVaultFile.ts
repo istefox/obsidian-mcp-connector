@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { type App, type TFile } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
+import { successJson } from "../services/responseBuilders";
 
 /**
  * Maps lowercased file extensions to their MIME type and MCP content-block
@@ -114,6 +115,31 @@ export type VaultFileJson = {
 };
 
 /**
+ * Internal contract for the `format=json` response's `structuredContent`
+ * shape, kept structurally in lockstep with VaultFileJson and
+ * readVaultFileAsJson() and asserted by getVaultFile.test.ts.
+ *
+ * Deliberately NOT declared as the tool's MCP outputSchema: the SDK client
+ * rejects every non-error response lacking structuredContent once a tool
+ * advertises one, and this tool is polymorphic (default text, image, audio,
+ * and binary-hint branches carry no structuredContent). Declaring it in
+ * 0.27.2 broke every default-format call with -32600; emitting
+ * structuredContent without a declared schema is spec-legal and is what the
+ * format=json branch still does via successJson().
+ */
+export const getVaultFileOutputSchema = type({
+  path: "string",
+  content: "string",
+  frontmatter: type("Record<string, unknown>"),
+  tags: "string[]",
+  stat: {
+    ctime: "number",
+    mtime: "number",
+    size: "number",
+  },
+});
+
+/**
  * Builds the `format=json` shape: `{ path, content, frontmatter, tags, stat }`.
  * Shared with get_vault_files so both tools stay byte-identical for the
  * same file — see the "kept in sync" note on MIME_BY_EXT above for why a
@@ -140,6 +166,7 @@ export async function readVaultFileAsJson(
 
 export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   content: Array<ContentBlock>;
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }> {
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
@@ -171,9 +198,7 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   // the drift between the description and the actual response.
   if (ctx.arguments.format === "json") {
     const json = await readVaultFileAsJson(ctx.app, file);
-    return {
-      content: [{ type: "text", text: JSON.stringify(json) }],
-    };
+    return successJson(json);
   }
 
   // ── Text content ───────────────────────────────────────────────────────────

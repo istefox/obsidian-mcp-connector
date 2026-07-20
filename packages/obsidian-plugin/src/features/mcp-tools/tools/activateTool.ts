@@ -55,6 +55,12 @@ export async function activateToolHandler({
     );
   }
 
+  if (found.userDisabled) {
+    return errorText(
+      `Tool '${args.name}' was disabled by the user and cannot be activated via MCP. Ask the user to re-enable it in the plugin's tool-toggle settings.`,
+    );
+  }
+
   if (found.enabled) {
     return successText("Tool is already active in the current session.");
   }

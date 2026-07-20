@@ -3,6 +3,134 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`Fixed port` setting now persists.** Setting a value in Settings → MCP Connector → Access Control → *Fixed port* and clicking **Save** silently failed since 0.24.0: the input is `<input type="number">` so Svelte's `bind:value` coerces to `number | null`, but the save handler called `.trim()` on it before the try/catch, which threw a `TypeError` that escaped the handler entirely — no Notice, no `port` written to `data.json`, no transport restart. The port binding is now typed `number | null` end-to-end, the string coercion is gone, and the parse/validate step lives inside the try/catch so any residual failure surfaces a Notice. Parsing is extracted to a pure `parsePortInput()` helper in `services/portInput.ts` (15 unit tests covering null, boundary, out-of-range, non-integer, plus an explicit regression note for the string-coercion escape hatch). Fixes #358.
+- **"Pre-warm now" no longer fails with `spawn EINVAL` on Windows.** The button resolves npx to `npx.cmd` on Windows, but the previous version called it via `execFile()` with no `shell` option. Node's CVE-2024-27980 mitigation refuses to exec a `.cmd`/`.bat` file directly without `shell: true`, so every Windows click threw `EINVAL` instead of pre-warming the cache. The runner now sets `shell: true` when the resolved npx path ends in `.cmd`/`.bat` (a no-op on macOS/Linux), and the child's `PATH` prefix now uses the platform delimiter (`node:path`'s `delimiter`) instead of a hardcoded `:`, which previously produced a broken PATH entry on Windows too. Fixes the pre-warm half of #398.
+
+## [0.27.13] — 2026-07-17
+
+### Changed
+
+- **The release workflow now creates the GitHub release only after the artifact attestation exists.** This matches the community-verified recipe for attested plugin artifacts: attest first, then create the release with its assets in a single step, publish last. No plugin code changes.
+
+## [0.27.12] — 2026-07-17
+
+### Fixed
+
+- **Every release's `main.js` now carries a unique digest.** The generated-file banner now embeds the plugin version. Releases 0.27.8 through 0.27.11 shipped a byte-identical bundle, so all their attestations piled onto one digest and the community-store review matched the wrong tag's attestation, rejecting valid releases. With the version in the banner, each release maps to exactly one attestation.
+
+## [0.27.11] — 2026-07-17
+
+### Changed
+
+- **No code changes.** New submission to the community store, same reason as 0.27.10.
+
+## [0.27.10] — 2026-07-17
+
+### Changed
+
+- **No code changes.** This release exists to request a fresh community-store automated review. The attestation-check failures reported on 0.27.8 and 0.27.9 were false positives: the released artifacts verify cleanly with `gh attestation verify`, and the review system's own build verification reproduced `main.js` byte-for-byte from source.
+
+## [0.27.9] — 2026-07-17
+
+### Changed
+
+- **Releases now publish only after every asset is attached, with release immutability enabled.** The release workflow used to create the GitHub release as public before the build even ran, then attach `main.js`, `manifest.json`, and the `.mcpb` afterward, leaving a window where the published release had no assets yet. Releases are now created as a draft, get the build, the artifact attestation, and all assets attached first, and only then get published, with this repository's release-immutability setting turned on. This makes the release's build-provenance attestation verifiable end to end by third parties, instead of racing the asset upload.
+
+## [0.27.8] — 2026-07-17
+
+### Fixed
+
+- **`patch_vault_file` no longer reports success when nothing was actually written.** Two gaps let this happen: `createTargetIfMissing: false` was computed but never checked by the frontmatter branch, so it had no effect there; and there was no file-type guard, so a frontmatter or heading patch against a non-markdown file (e.g. `.json`) silently no-op'd inside `app.fileManager.processFrontMatter` while still returning "File patched successfully." Frontmatter/heading targets on non-markdown files now return an explicit error, `createTargetIfMissing: false` now works for frontmatter too, and every success response now says so only when the file's content actually changed.
+
+## [0.27.7] — 2026-07-16
+
+### Fixed
+
+- **`get_vault_file` works again.** Since 0.27.2 the tool declared an output schema, and MCP clients reject every response of a schema-declaring tool that lacks structured content, so every plain read failed with `-32600: Tool get_vault_file has an output schema but did not return structured content` (0.27.4 had only fixed the `format=json` case). The tool returns text, images, audio, or a JSON hint depending on the file, so no single schema fits: the declaration is gone. `format=json` responses still include the structured payload, and a regression test now blocks any tool from declaring an output schema unless every one of its responses carries matching structured content.
+
+## [0.27.6] — 2026-07-16
+
+### Changed
+
+- **The `.mcpb` connector shim source moved out of the plugin source tree** (`src/` → `scripts/`) and no longer carries any lint-suppression comments. The shim is a standalone Node.js program shipped inside the `.mcpb`, not plugin code that runs inside Obsidian, and the repository layout now reflects that. This resolves the blocking errors reported by the community plugin review scan on 0.27.5; the shipped shim's behavior is unchanged.
+- **Internal fallbacks no longer assume the vault's config folder is named `.obsidian`.** The `.mcpb` generator now requires the vault's actual configured folder name, and the semantic-search storage path fallback reads it from the vault settings too.
+
+## [0.27.5] — 2026-07-16
+
+### Fixed
+
+- **The plugin's settings tab now shows up in Obsidian's Settings search (1.13.0+).** Implemented `getSettingDefinitions()` on the settings tab; the existing UI is unchanged, and older Obsidian versions keep using the previous rendering path.
+- **The `.mcpb` connector shim no longer assumes the vault's config folder is named `.obsidian`.** It now reads the vault's actual configured folder name at generation time, fixing the connector for anyone who renamed it.
+
+## [0.27.4] — 2026-07-16
+
+### Fixed
+
+- **`get_vault_file`'s `format=json` response now includes `structuredContent`, matching its declared output schema.** The output schema for this response shape was added in 0.27.2, but the handler only ever wrote the JSON into `content[0].text` and never populated `structuredContent`, so MCP clients validating structured output against the declared schema saw the field missing. The handler now goes through the same shared response builder as `get_vault_files`, keeping both consistent.
+
+## [0.27.3] — 2026-07-15
+
+### Fixed
+
+- **The `.mcpb` connector could hang for a full 60 seconds with no error at all, specific to Claude Desktop's "Use Built-in Node.js for MCP" setting on macOS.** That setting routes the connector through Claude Desktop's Electron `UtilityProcess` sandbox, which does not reliably cancel an in-flight network request even when the connector's own timeout fires. The connector's per-request timeout now has an independent backstop that does not depend on that cancellation working, so a hang always ends in the connector's own descriptive error well under Claude Desktop's 60-second limit. If you hit this, disabling "Use Built-in Node.js for MCP" in Claude Desktop's Extensions settings and restarting the app also resolves it immediately, see the new Troubleshooting entry in the README.
+
+## [0.27.2] — 2026-07-15
+
+### Added
+
+- **The `.mcpb` shim now sends the standard `MCP-Protocol-Version` header, and the server validates it.** The shim echoes the version negotiated during `initialize` on every later request, matching the spec and the existing Windows Python bridge's behavior. The Obsidian-side server now validates this header itself instead of relying only on the MCP SDK's internal check, rejecting an unsupported version with a clear 400 response.
+- **`get_vault_file` now declares an output schema for its JSON response.** Clients that support typed tool results (structured output, programmatic tool calling) get a precise shape for the `format=json` path instead of an untyped object.
+- **The shim can report progress while waiting for Obsidian to finish starting up.** If a client asks for progress updates on a request (via the standard `_meta.progressToken` field), the shim now sends periodic progress notifications while it retries the connection, letting clients extend their own timeout instead of giving up early. This is opt-in and has no effect on clients that don't request it, which includes Claude Desktop today.
+
+## [0.27.1] — 2026-07-15
+
+### Fixed
+
+- **The `.mcpb` connector could disconnect on a cold Obsidian start instead of reporting a clear error.** The 0.27.0 shim's per-request retry window (30 s) and request timeout (60 s) could together take close to a minute to answer, the same default request timeout Claude Desktop's own MCP client uses. When Obsidian's vault window was still opening at the moment Claude Desktop connected, Claude's client gave up first and showed a generic disconnect instead of the shim's own descriptive error. The retry window is now 20 s and the request timeout 25 s, well under Claude's 60-second ceiling in every case, including the worst-case retry-then-retry path. See the addendum in `docs/architecture/ADR-0013-mcpb-pure-node-shim.md`.
+
+## [0.27.0] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension no longer depends on `npx`/`mcp-remote` at runtime.** The generated shim used to spawn `npx -y mcp-remote ...` as a child process. Claude Desktop launches the shim with its own bundled Node, but the restricted GUI environment it inherits has no `npx` on `PATH`, so the child spawn failed instantly (`ENOENT`) and Claude reported "Server transport closed unexpectedly" with no diagnosable cause. The shim is now a self-contained stdio↔HTTP proxy using only Node built-ins (`fetch`, `node:fs`, `node:net`), no child process, no third-party code, no PATH dependency. It also now resolves the server's port and token fresh on every request (not just at startup) and retries for up to 30 seconds on connection failure, so it recovers transparently from an Obsidian restart, a port change, or a token rotation mid-session without reinstalling the extension. See `docs/architecture/ADR-0013-mcpb-pure-node-shim.md`.
+
+## [0.26.2] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension now resolves its server path independently of the process's working directory.** The generated manifest's `mcp_config.args` pointed at a bare relative path (`"server/index.js"`). That resolves against whatever working directory Claude Desktop spawns `node` with, a likely cause of the connector getting stuck. `args` now uses the `${__dirname}` template variable documented by the DXT/MCPB spec, which Claude Desktop substitutes with the extension's own install directory at spawn time.
+
+## [0.26.1] — 2026-07-15
+
+### Fixed
+
+- **The Claude Desktop `.mcpb` extension now waits for the server instead of failing immediately when Obsidian's window isn't open yet.** The bundle's `server/index.js` shim used to spawn `mcp-remote` right away against the last known port, so it failed instantly whenever Obsidian's main process was alive but its window (and therefore the plugin's HTTP server) hadn't started yet, a common state after closing the window without quitting the app. The shim now polls `data.json` and probes the port for up to 30 seconds before spawning `mcp-remote`, re-reading `data.json` on every attempt since the port can still be mid-fallback.
+
+## [0.26.0] — 2026-07-15
+
+### Changed
+
+- **The Claude Desktop `.mcpb` extension now resolves its port and token at connect time instead of baking them in.** The old bundle embedded the HTTP port and bearer token as a literal `mcp-remote` command in `manifest.json`, captured once at export. If the plugin later fell back to a different port (no Fixed Port set, multi-vault startup races) or the token changed, the installed extension kept using the stale values with no visible error until someone re-exported and reinstalled it. The bundle's `server/index.js` shim now runs on every reconnect and reads the current port and token from the plugin's own `data.json`, via a new `mcpTransport.livePort` field written back after every successful startup, alongside the existing `bearerToken`. Only the vault path is baked into the bundle now, and it no longer embeds a live bearer token.
+
+## [0.25.0] — 2026-07-14
+
+Hardening pass on parallel tool calls, from the 2026-07-14 audit: the registry now distinguishes why a tool is hidden, inactive tools tell clients how to recover, and the Windows bridge handles SSE and concurrency.
+
+### Added
+
+- **Recoverable error for inactive tools.** Calling a tool that adaptive loading has deactivated used to fail with the same "Unknown tool" error as a nonexistent one, which broke parallel activate-and-call batches. The call now returns an isError result with the exact recovery step (`Tool 'X' exists but is inactive. Call activate_tools({"names":["X"]}) first, then retry this call.`), and a call that did not execute no longer counts toward frequency-based promotion. (#354)
+- **Bridge SSE parsing and parallel requests.** The Windows stdio bridge could not parse the `text/event-stream` responses the server sends for activation calls since 0.22.0, so every activation through it failed with `-32000 non-JSON response`; it also processed requests one at a time behind a 30 s timeout, so parallel calls queued in cascade. It now parses SSE bodies, forwards `tools/list_changed` notifications to the client, and runs each request in its own thread. Still a single stdlib file with nothing to install. (#355)
+
+### Fixed
+
+- **User-disabled tools can no longer be re-enabled by MCP clients.** The registry kept one shared enabled set, so `activate_tool`/`activate_tools` could silently re-enable a tool the user disabled in the tool-toggle settings. The registry now splits disable states by concern (adaptive vs user); activation clears only the adaptive flag, answers `not_allowed` for user-disabled tools, and `tool_catalog` no longer offers them. (#353)
+
+---
+
 ## [0.24.0] — 2026-07-11
 
 Two new Access Control settings for multi-vault setups: a configurable server identity and an optional fixed port.

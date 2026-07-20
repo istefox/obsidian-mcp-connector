@@ -112,7 +112,8 @@ export async function wireSemanticSearch(
   };
 
   const pluginDir =
-    plugin.manifest.dir ?? `.obsidian/plugins/${plugin.manifest.id}`;
+    plugin.manifest.dir ??
+    `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}`;
 
   // Migrate v1 flat store before constructing any registry entry.
   await migrateV1FlatStore(ssAdapter, pluginDir);

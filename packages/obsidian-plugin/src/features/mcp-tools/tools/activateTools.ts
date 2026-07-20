@@ -19,7 +19,7 @@ export const activateToolsSchema = type({
   "Promotes several inactive tools to active status in ONE call. Prefer this over multiple `activate_tool` calls when a task needs more than one inactive tool: it activates them all and refreshes the client's tool list only once, instead of once per tool. Run `tool_catalog` first to see available tool names. With persist=true the promotions survive plugin reloads.",
 );
 
-type Outcome = "activated" | "already_active" | "not_found";
+type Outcome = "activated" | "already_active" | "not_found" | "not_allowed";
 
 export async function activateToolsHandler({
   arguments: args,
@@ -56,6 +56,8 @@ export async function activateToolsHandler({
     const entry = byName.get(name);
     if (!entry) {
       outcomes[name] = "not_found";
+    } else if (entry.userDisabled) {
+      outcomes[name] = "not_allowed";
     } else if (entry.enabled) {
       outcomes[name] = "already_active";
     } else {
