@@ -3,6 +3,13 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`Fixed port` setting now persists.** Setting a value in Settings → MCP Connector → Access Control → *Fixed port* and clicking **Save** silently failed since 0.24.0: the input is `<input type="number">` so Svelte's `bind:value` coerces to `number | null`, but the save handler called `.trim()` on it before the try/catch, which threw a `TypeError` that escaped the handler entirely — no Notice, no `port` written to `data.json`, no transport restart. The port binding is now typed `number | null` end-to-end, the string coercion is gone, and the parse/validate step lives inside the try/catch so any residual failure surfaces a Notice. Parsing is extracted to a pure `parsePortInput()` helper in `services/portInput.ts` (15 unit tests covering null, boundary, out-of-range, non-integer, plus an explicit regression note for the string-coercion escape hatch). Fixes #358.
+- **"Pre-warm now" no longer fails with `spawn EINVAL` on Windows.** The button resolves npx to `npx.cmd` on Windows, but the previous version called it via `execFile()` with no `shell` option. Node's CVE-2024-27980 mitigation refuses to exec a `.cmd`/`.bat` file directly without `shell: true`, so every Windows click threw `EINVAL` instead of pre-warming the cache. The runner now sets `shell: true` when the resolved npx path ends in `.cmd`/`.bat` (a no-op on macOS/Linux), and the child's `PATH` prefix now uses the platform delimiter (`node:path`'s `delimiter`) instead of a hardcoded `:`, which previously produced a broken PATH entry on Windows too. Fixes the pre-warm half of #398.
+
 ## [0.27.13] — 2026-07-17
 
 ### Changed

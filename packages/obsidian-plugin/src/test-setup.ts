@@ -1087,6 +1087,39 @@ export function mockApp(): App {
       }
       _mockState.files.set(path, content);
     },
+    /**
+     * Mock of Obsidian's atomic `Vault.process`. Mirrors the real
+     * contract: reads the current content, applies the SYNCHRONOUS
+     * callback, persists the result, returns it. Honours the same test
+     * hooks as `read`/`modify` so the TOCTOU and write-failure
+     * simulations keep working against the atomic path:
+     *   - `modifyFailPaths` → throws (setMockModifyFail);
+     *   - `readMutations` → the callback sees the mutated content on
+     *     the second access (setMockReadMutation).
+     * A callback that returns its input unchanged (a handler's abort
+     * path) does not touch the stored map — matching "write back what
+     * was already on disk" being a content no-op.
+     */
+    process: async (
+      file: ApiTFile,
+      fn: (data: string) => string,
+    ): Promise<string> => {
+      const path = (file as unknown as MockTFile).path;
+      if (_mockState.modifyFailPaths.has(path)) {
+        throw new Error(`mock modify failure: ${path}`);
+      }
+      const stored = _mockState.files.get(path);
+      if (stored === undefined) throw new Error(`ENOENT: ${path}`);
+      let data = stored;
+      const mut = _mockState.readMutations.get(path);
+      if (mut) {
+        if (mut.firstReadSeen) data = mut.content;
+        else mut.firstReadSeen = true;
+      }
+      const next = fn(data);
+      if (next !== data) _mockState.files.set(path, next);
+      return next;
+    },
     append: async (file: ApiTFile, content: string): Promise<void> => {
       const path = (file as unknown as MockTFile).path;
       const existing = _mockState.files.get(path) ?? "";

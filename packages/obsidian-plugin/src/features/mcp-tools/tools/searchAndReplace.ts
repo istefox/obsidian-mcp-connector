@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
+import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 
 /** Reads per batch: bounds memory while hiding vault.read latency. */
 const READ_BATCH_SIZE = 8;
@@ -172,16 +173,29 @@ export async function searchAndReplaceHandler(
     for (const r of batchResults) {
       if (r === null) continue;
 
+      let appliedCount = r.matchCount;
       if (!dryRun) {
-        const newContent = r.content.replace(r.fileRegex, replacement);
-        r.fileRegex.lastIndex = 0;
-        await ctx.app.vault.modify(r.file, newContent);
+        // Atomic apply: re-match and replace against the CURRENT content
+        // inside vault.process, not against the scan-phase snapshot — a
+        // write landing between scan and apply (another MCP request, the
+        // editor) is neither clobbered nor double-applied. The reported
+        // count is what was actually replaced. Write lock: see
+        // vaultWriteLock.ts.
+        await withVaultWriteLock(() =>
+          ctx.app.vault.process(r.file, (current) => {
+            const applyRegex = new RegExp(regex.source, regex.flags);
+            appliedCount = (current.match(applyRegex) ?? []).length;
+            if (appliedCount === 0) return current;
+            applyRegex.lastIndex = 0;
+            return current.replace(applyRegex, replacement);
+          }),
+        );
       }
 
-      totalReplacements += r.matchCount;
+      totalReplacements += appliedCount;
       details.push({
         path: r.file.path,
-        replacements: r.matchCount,
+        replacements: appliedCount,
         preview: r.preview,
       });
     }

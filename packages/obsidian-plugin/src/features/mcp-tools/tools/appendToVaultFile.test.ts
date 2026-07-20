@@ -79,4 +79,50 @@ describe("append_to_vault_file tool", () => {
     });
     expect(getMockFolders()).toEqual(["Notes"]);
   });
+
+  // Regression guard for the lost-update race: the pre-fix handler did an
+  // unserialized vault.read → vault.modify, so two concurrent appends to
+  // the same file both read the same "before" and the last writer
+  // discarded the other's line. vault.process + the vault write lock make
+  // both survive.
+  test("concurrent appends to the same file keep both updates", async () => {
+    setMockFile("Notes/log.md", "start\n");
+    const app = mockApp();
+    const results = await Promise.all([
+      appendToVaultFileHandler({
+        arguments: { path: "Notes/log.md", content: "from-agent-A" },
+        app,
+      }),
+      appendToVaultFileHandler({
+        arguments: { path: "Notes/log.md", content: "from-agent-B" },
+        app,
+      }),
+    ]);
+    expect(results.every((r) => r.isError === undefined)).toBe(true);
+    const file = app.vault.getAbstractFileByPath("Notes/log.md");
+    const text = await app.vault.read(file as never);
+    expect(text).toContain("from-agent-A");
+    expect(text).toContain("from-agent-B");
+  });
+
+  test("concurrent appends to a MISSING file create once and keep both", async () => {
+    const app = mockApp();
+    const results = await Promise.all([
+      appendToVaultFileHandler({
+        arguments: { path: "fresh.md", content: "first" },
+        app,
+      }),
+      appendToVaultFileHandler({
+        arguments: { path: "fresh.md", content: "second" },
+        app,
+      }),
+    ]);
+    expect(results.every((r) => r.isError === undefined)).toBe(true);
+    const file = app.vault.getAbstractFileByPath("fresh.md");
+    const text = await app.vault.read(file as never);
+    // Without the write lock both calls take the create branch and the
+    // second create clobbers the first append.
+    expect(text).toContain("first");
+    expect(text).toContain("second");
+  });
 });

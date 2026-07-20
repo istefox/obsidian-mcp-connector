@@ -6,6 +6,7 @@
  */
 
 import type { App, TFile } from "obsidian";
+import { withVaultWriteLock } from "./vaultWriteLock";
 
 export type PatchOperation = "append" | "prepend" | "replace";
 
@@ -722,8 +723,59 @@ export async function applyPatch(
     return patchResult(valueChanged);
   }
 
-  // ── heading / block branch — read raw content ────────────────────────
-  const rawContent = await app.vault.read(file);
+  // ── heading / block branch — atomic read-modify-write ────────────────
+  // The compute between read and write is pure & synchronous, so it runs
+  // inside vault.process: every line number and section boundary is
+  // derived from the exact content that is written back, and no
+  // concurrent writer (another MCP request, the editor, sync) can
+  // interleave between our read and our write (lost update — the bug
+  // class vaultWriteLock.ts documents). The vault write lock on top
+  // serializes this patch against multi-step operations (create
+  // pipelines, rename_heading's multi-file apply). Error paths return
+  // the input unchanged (content no-op) and surface the message after.
+  let failureText: string | null = null;
+  let changed = false;
+  await withVaultWriteLock(() =>
+    app.vault.process(file, (rawContent) => {
+      const outcome = computePatchedContent(app, file, rawContent, args, {
+        targetDelimiter,
+        createIfMissing,
+      });
+      if (outcome.kind === "error") {
+        failureText = outcome.text;
+        return rawContent;
+      }
+      changed = outcome.newContent !== rawContent;
+      return outcome.newContent;
+    }),
+  );
+  if (failureText !== null) {
+    return { content: [{ type: "text", text: failureText }], isError: true };
+  }
+  return patchResult(changed);
+}
+
+/** Outcome of the pure patch computation inside `vault.process`. */
+type PatchOutcome =
+  | { kind: "ok"; newContent: string }
+  | { kind: "error"; text: string };
+
+/**
+ * Pure, synchronous core of `applyPatch`'s heading/block branches:
+ * takes the current file content, returns either the patched content
+ * or a typed error — never touches the vault itself. MUST stay
+ * synchronous and side-effect-free: it executes inside the
+ * `vault.process` callback (the only async-adjacent calls allowed are
+ * the sync `metadataCache` lookups).
+ */
+function computePatchedContent(
+  app: App,
+  file: TFile,
+  rawContent: string,
+  args: PatchArgs,
+  opts: { targetDelimiter: string; createIfMissing: boolean },
+): PatchOutcome {
+  const { targetDelimiter, createIfMissing } = opts;
   const lines = rawContent.split("\n");
 
   if (args.targetType === "heading") {
@@ -747,18 +799,11 @@ export async function applyPatch(
     if (found === null) {
       // Heading not found — respect createTargetIfMissing.
       if (!createIfMissing) {
-        return {
-          content: [
-            { type: "text", text: `Heading not found: ${args.target}` },
-          ],
-          isError: true,
-        };
+        return { kind: "error", text: `Heading not found: ${args.target}` };
       }
       // Append at EOF.
       const body = normalizeAppendBody(args.content, args.operation);
-      const newContent = rawContent + body;
-      await app.vault.modify(file, newContent);
-      return patchResult(newContent !== rawContent);
+      return { kind: "ok", newContent: rawContent + body };
     }
 
     const { line: headingLine, level: headingLevel } = found;
@@ -781,13 +826,8 @@ export async function applyPatch(
       hasAnyH1(lines)
     ) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`,
-          },
-        ],
-        isError: true,
+        kind: "error",
+        text: `Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`,
       };
     }
     // Section end is fence-aware: a `## …` line inside a ``` / ~~~ block
@@ -838,9 +878,7 @@ export async function applyPatch(
         ...lines.slice(sectionEnd),
       ];
     }
-    const newContent = newLines.join("\n");
-    await app.vault.modify(file, newContent);
-    return patchResult(newContent !== rawContent);
+    return { kind: "ok", newContent: newLines.join("\n") };
   }
 
   // ── block branch ─────────────────────────────────────────────────────
@@ -856,20 +894,13 @@ export async function applyPatch(
     // Block not found — for blocks the default is fail-loud (createIfMissing=false).
     if (!createIfMissing) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Block not found: ^${args.target} (unresolved — block may be inside a table, which is not indexed by Obsidian's metadataCache)`,
-          },
-        ],
-        isError: true,
+        kind: "error",
+        text: `Block not found: ^${args.target} (unresolved — block may be inside a table, which is not indexed by Obsidian's metadataCache)`,
       };
     }
     // Caller explicitly opted into createIfMissing — append at EOF.
     const body = normalizeAppendBody(args.content, args.operation);
-    const newContent = rawContent + body;
-    await app.vault.modify(file, newContent);
-    return patchResult(newContent !== rawContent);
+    return { kind: "ok", newContent: rawContent + body };
   }
 
   // 0.3.x parity: reject when block resolves inside a table or fenced code
@@ -893,13 +924,8 @@ export async function applyPatch(
     isBlockRangeStructurallyUnsafe(lines, blockPos.startLine, blockPos.endLine)
   ) {
     return {
-      content: [
-        {
-          type: "text",
-          text: `Block "^${args.target}" resolved to line ${blockPos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
-        },
-      ],
-      isError: true,
+      kind: "error",
+      text: `Block "^${args.target}" resolved to line ${blockPos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
     };
   }
 
@@ -929,7 +955,5 @@ export async function applyPatch(
       ...lines.slice(blockPos.endLine + 1),
     ];
   }
-  const newContent = newLines.join("\n");
-  await app.vault.modify(file, newContent);
-  return patchResult(newContent !== rawContent);
+  return { kind: "ok", newContent: newLines.join("\n") };
 }
