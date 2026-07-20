@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **`Fixed port` setting now persists.** Setting a value in Settings → MCP Connector → Access Control → *Fixed port* and clicking **Save** silently failed since 0.24.0: the input is `<input type="number">` so Svelte's `bind:value` coerces to `number | null`, but the save handler called `.trim()` on it before the try/catch, which threw a `TypeError` that escaped the handler entirely — no Notice, no `port` written to `data.json`, no transport restart. The port binding is now typed `number | null` end-to-end, the string coercion is gone, and the parse/validate step lives inside the try/catch so any residual failure surfaces a Notice. Parsing is extracted to a pure `parsePortInput()` helper in `services/portInput.ts` (15 unit tests covering null, boundary, out-of-range, non-integer, plus an explicit regression note for the string-coercion escape hatch). Fixes #358.
+
 ## [0.27.13] — 2026-07-17
 
 ### Changed
