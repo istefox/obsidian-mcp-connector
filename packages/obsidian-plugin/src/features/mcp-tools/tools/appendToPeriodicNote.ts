@@ -14,6 +14,7 @@ import {
   normalizeAppendBody,
   resolveHeadingPath,
 } from "$/features/mcp-tools/services/patchHelpers";
+import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 
 export const appendToPeriodicNoteSchema = type({
   name: '"append_to_periodic_note"',
@@ -70,90 +71,116 @@ export async function appendToPeriodicNoteHandler(
     }
   }
 
-  const resolved = resolvePeriodicNote(ctx.app, period, date);
-  let created = false;
-  let file = ctx.app.vault.getAbstractFileByPath(resolved.path);
-  if (!resolved.exists) {
-    file = await resolved.create();
-    created = true;
-  }
-  if (!file) {
-    return errorPayload(
-      "Internal: periodic note resolved but not retrievable after create.",
-      "internal_error",
-      { period, path: resolved.path },
-    );
-  }
-  if (!(file instanceof TFile)) {
-    return errorPayload(
-      "Internal: periodic note resolved to a folder, not a file.",
-      "internal_error",
-      { period, path: resolved.path },
-    );
-  }
-  const tfile = file;
   const normalized = normalizeAppendBody(content, "append");
 
-  if (underHeading !== undefined) {
-    const raw = await ctx.app.vault.read(tfile);
-    const lines = raw.split("\n");
-
-    // Resolve partial leaf name to full hierarchical path (same as
-    // patch_vault_file): so `underHeading: "Highlights"` matches a nested
-    // `## Weekly review > ## Highlights` without the caller knowing the path.
-    let resolvedTarget = underHeading;
-    if (!underHeading.includes(HEADING_DELIMITER)) {
-      const fullPath = resolveHeadingPath(raw, underHeading, HEADING_DELIMITER);
-      if (fullPath) resolvedTarget = fullPath;
+  // The whole exists-check → auto-create → append pipeline runs under
+  // the vault write lock: two concurrent appends to a missing note
+  // would otherwise both take the create branch (TOCTOU), and the
+  // append itself is a read-modify-write (see vaultWriteLock.ts).
+  return withVaultWriteLock(async () => {
+    const resolved = resolvePeriodicNote(ctx.app, period, date);
+    let created = false;
+    let file = ctx.app.vault.getAbstractFileByPath(resolved.path);
+    if (!resolved.exists) {
+      file = await resolved.create();
+      created = true;
     }
-    const targetParts = resolvedTarget.split(HEADING_DELIMITER);
-    const leafHeading = targetParts[targetParts.length - 1];
-
-    const found = findLeafHeadingLine(lines, leafHeading);
-
-    if (found === null) {
-      // Strict-by-default: do NOT silently fall back to EOF, do NOT
-      // rollback an auto-created file (the file's existence is the
-      // right end state regardless of this single append — see ADR-0002
-      // Negatives + spec). Caller adds the heading and retries.
+    if (!file) {
       return errorPayload(
-        `Heading not found in periodic note: "${underHeading}".`,
-        "heading_not_found",
-        {
-          period,
-          path: resolved.path,
-          created,
-          underHeading,
-        },
+        "Internal: periodic note resolved but not retrievable after create.",
+        "internal_error",
+        { period, path: resolved.path },
       );
     }
+    if (!(file instanceof TFile)) {
+      return errorPayload(
+        "Internal: periodic note resolved to a folder, not a file.",
+        "internal_error",
+        { period, path: resolved.path },
+      );
+    }
+    const tfile = file;
 
-    const { line: headingLine, level: headingLevel } = found;
-    const sectionEnd = findHeadingSectionEnd(lines, headingLine, headingLevel);
-    const newLines = [
-      ...lines.slice(0, sectionEnd),
-      normalized,
-      ...lines.slice(sectionEnd),
-    ];
-    await ctx.app.vault.modify(tfile, newLines.join("\n"));
-  } else {
-    const existing = await ctx.app.vault.read(tfile);
-    await ctx.app.vault.modify(tfile, existing + normalized);
-  }
+    if (underHeading !== undefined) {
+      // The heading lookup + splice is pure and synchronous, so it runs
+      // inside vault.process: the section boundaries are computed from
+      // the exact content that is written back — no interleaving writer
+      // can invalidate the line numbers in between. The not-found abort
+      // is signalled via a flag; the callback returns the input
+      // unchanged (content no-op).
+      let headingFound = true;
+      await ctx.app.vault.process(tfile, (raw) => {
+        const lines = raw.split("\n");
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          period,
-          path: resolved.path,
-          appended: true,
-          created,
-        }),
-      },
-    ],
-  };
+        // Resolve partial leaf name to full hierarchical path (same as
+        // patch_vault_file): so `underHeading: "Highlights"` matches a nested
+        // `## Weekly review > ## Highlights` without the caller knowing the path.
+        let resolvedTarget = underHeading;
+        if (!underHeading.includes(HEADING_DELIMITER)) {
+          const fullPath = resolveHeadingPath(
+            raw,
+            underHeading,
+            HEADING_DELIMITER,
+          );
+          if (fullPath) resolvedTarget = fullPath;
+        }
+        const targetParts = resolvedTarget.split(HEADING_DELIMITER);
+        const leafHeading = targetParts[targetParts.length - 1];
+
+        const found = findLeafHeadingLine(lines, leafHeading);
+
+        if (found === null) {
+          headingFound = false;
+          return raw;
+        }
+
+        const { line: headingLine, level: headingLevel } = found;
+        const sectionEnd = findHeadingSectionEnd(
+          lines,
+          headingLine,
+          headingLevel,
+        );
+        return [
+          ...lines.slice(0, sectionEnd),
+          normalized,
+          ...lines.slice(sectionEnd),
+        ].join("\n");
+      });
+
+      if (!headingFound) {
+        // Strict-by-default: do NOT silently fall back to EOF, do NOT
+        // rollback an auto-created file (the file's existence is the
+        // right end state regardless of this single append — see ADR-0002
+        // Negatives + spec). Caller adds the heading and retries.
+        return errorPayload(
+          `Heading not found in periodic note: "${underHeading}".`,
+          "heading_not_found",
+          {
+            period,
+            path: resolved.path,
+            created,
+            underHeading,
+          },
+        );
+      }
+    } else {
+      await ctx.app.vault.process(tfile, (existing) => existing + normalized);
+    }
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            period,
+            path: resolved.path,
+            appended: true,
+            created,
+          }),
+        },
+      ],
+    };
+  });
 }
 
 function errorPayload(

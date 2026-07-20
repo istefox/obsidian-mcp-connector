@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { errorText, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { normalizeAppendBody } from "$/features/mcp-tools/services/patchHelpers";
+import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 
 export const appendToActiveFileSchema = type({
   name: '"append_to_active_file"',
@@ -29,8 +30,10 @@ export async function appendToActiveFileHandler(
   if (!file) {
     return errorText("No active file.");
   }
-  const existing = await ctx.app.vault.read(file);
   const normalized = normalizeAppendBody(ctx.arguments.content, "append");
-  await ctx.app.vault.modify(file, existing + normalized);
+  // Atomic append under the vault write lock — see vaultWriteLock.ts.
+  await withVaultWriteLock(() =>
+    ctx.app.vault.process(file, (existing) => existing + normalized),
+  );
   return successText("OK");
 }

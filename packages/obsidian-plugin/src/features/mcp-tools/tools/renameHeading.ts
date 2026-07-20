@@ -9,6 +9,7 @@ import {
   type RenameError,
   type ResolveLinkpath,
 } from "../services/headingRename";
+import { withVaultWriteLock } from "../services/vaultWriteLock";
 
 export const renameHeadingSchema = type({
   name: '"rename_heading"',
@@ -96,6 +97,19 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
+  // The whole plan→apply pipeline holds the vault write lock: the plan
+  // is a multi-file snapshot (source + every backlinker), and the apply
+  // writes the same set — another MCP write interleaving anywhere in
+  // between would invalidate the plan (see vaultWriteLock.ts). The
+  // per-file TOCTOU guards below still run inside vault.process to
+  // cover writers the lock cannot see (the editor, sync).
+  return withVaultWriteLock(() => renameHeadingLocked(ctx));
+}
+
+async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   const { path, from, to } = ctx.arguments;
 
   // ── 1. Load source file ─────────────────────────────────────────────────
@@ -178,17 +192,26 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
   // Source first — if the source write fails, no backlinker has been
   // touched yet, so the file system is unchanged. TOCTOU guard: the plan
   // was built from a snapshot; if the file changed since (live editing in
-  // Obsidian), abort rather than clobber the concurrent edit.
+  // Obsidian), abort rather than clobber the concurrent edit. The check
+  // runs INSIDE vault.process so check and write are one atomic step —
+  // the old cachedRead-then-modify pair left a window for exactly the
+  // race it guards against.
   try {
-    const sourceNow = await ctx.app.vault.cachedRead(sourceFile);
-    if (sourceNow !== sourceText) {
+    let sourceStale = false;
+    await ctx.app.vault.process(sourceFile, (current) => {
+      if (current !== sourceText) {
+        sourceStale = true;
+        return current;
+      }
+      return plan.source.newText;
+    });
+    if (sourceStale) {
       return errorResponse({
         errorCode: "source-write-failed",
         message:
           "Source file changed between plan and apply; aborted before any write to avoid overwriting a concurrent edit. Re-run the rename.",
       });
     }
-    await ctx.app.vault.modify(sourceFile, plan.source.newText);
     updatedFiles.push(plan.source.path);
   } catch (e) {
     return errorResponse({
@@ -210,9 +233,17 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
       // TOCTOU guard: the patch was computed from the plan-phase snapshot.
       // If the file changed since, do NOT write the stale patch — surface
       // it as a failed file so the caller can re-run, not a silent
-      // lost update.
-      const currentText = await ctx.app.vault.cachedRead(f);
-      if (currentText !== backlinkerTexts[bp.path]) {
+      // lost update. Check and write are one atomic vault.process step
+      // (same rationale as the source write above).
+      let backlinkerStale = false;
+      await ctx.app.vault.process(f, (currentText) => {
+        if (currentText !== backlinkerTexts[bp.path]) {
+          backlinkerStale = true;
+          return currentText;
+        }
+        return bp.newText;
+      });
+      if (backlinkerStale) {
         failedFiles.push({
           path: bp.path,
           error:
@@ -220,7 +251,6 @@ export async function renameHeadingHandler(ctx: RenameHeadingContext): Promise<{
         });
         continue;
       }
-      await ctx.app.vault.modify(f, bp.newText);
       updatedFiles.push(bp.path);
     } catch (e) {
       failedFiles.push({

@@ -7,6 +7,7 @@ import {
   serializeCanvas,
 } from "../services/canvasDocument";
 import { errorJson, successJson } from "../services/responseBuilders";
+import { withVaultWriteLock } from "../services/vaultWriteLock";
 
 export const connectCanvasNodesSchema = type({
   name: '"connect_canvas_nodes"',
@@ -54,47 +55,64 @@ export async function connectCanvasNodesHandler(
       : errorJson(`Path is a folder: ${path}`, "not_a_file", { path });
   }
 
-  const raw = await ctx.app.vault.read(resolved.file);
-  const doc = parseCanvas(raw);
-  if (!doc) {
-    return errorJson(`Canvas file is malformed: ${path}`, "malformed_canvas", {
-      path,
-    });
-  }
+  // Parse → validate → mutate → serialize is pure and synchronous, so it
+  // all runs inside vault.process: node-id checks and the edge splice are
+  // computed from the exact content that is written back, and a concurrent
+  // canvas write cannot be lost in a read/modify window (see
+  // vaultWriteLock.ts). Error paths return the input unchanged and
+  // surface the envelope afterwards.
+  let failure: ReturnType<typeof errorJson> | null = null;
+  let edgeId = "";
+  await withVaultWriteLock(() =>
+    ctx.app.vault.process(resolved.file, (raw) => {
+      const doc = parseCanvas(raw);
+      if (!doc) {
+        failure = errorJson(
+          `Canvas file is malformed: ${path}`,
+          "malformed_canvas",
+          { path },
+        );
+        return raw;
+      }
 
-  // Verify both node ids exist before mutating.
-  const nodeIds = new Set(doc.nodes.map((n) => n.id));
-  if (!nodeIds.has(fromNode)) {
-    return errorJson(`Node not found: ${fromNode}`, "node_not_found", {
-      nodeId: fromNode,
-    });
-  }
-  if (!nodeIds.has(toNode)) {
-    return errorJson(`Node not found: ${toNode}`, "node_not_found", {
-      nodeId: toNode,
-    });
-  }
+      // Verify both node ids exist before mutating.
+      const nodeIds = new Set(doc.nodes.map((n) => n.id));
+      if (!nodeIds.has(fromNode)) {
+        failure = errorJson(`Node not found: ${fromNode}`, "node_not_found", {
+          nodeId: fromNode,
+        });
+        return raw;
+      }
+      if (!nodeIds.has(toNode)) {
+        failure = errorJson(`Node not found: ${toNode}`, "node_not_found", {
+          nodeId: toNode,
+        });
+        return raw;
+      }
 
-  // Generate a unique edge id from the combined existing node and edge id pool.
-  const existingIds = [
-    ...doc.nodes.map((n) => n.id),
-    ...doc.edges.map((e) => e.id),
-  ];
-  const id = generateNodeId(existingIds);
+      // Generate a unique edge id from the combined existing node and edge id pool.
+      const existingIds = [
+        ...doc.nodes.map((n) => n.id),
+        ...doc.edges.map((e) => e.id),
+      ];
+      edgeId = generateNodeId(existingIds);
 
-  const edge: Record<string, unknown> = {
-    id,
-    fromNode,
-    fromSide: fromSide ?? "right",
-    toNode,
-    toSide: toSide ?? "left",
-    ...(label !== undefined ? { label } : {}),
-    ...(color !== undefined ? { color } : {}),
-  };
+      const edge: Record<string, unknown> = {
+        id: edgeId,
+        fromNode,
+        fromSide: fromSide ?? "right",
+        toNode,
+        toSide: toSide ?? "left",
+        ...(label !== undefined ? { label } : {}),
+        ...(color !== undefined ? { color } : {}),
+      };
 
-  doc.edges.push(edge as never);
+      doc.edges.push(edge as never);
 
-  await ctx.app.vault.modify(resolved.file, serializeCanvas(doc));
+      return serializeCanvas(doc);
+    }),
+  );
 
-  return successJson({ id });
+  if (failure !== null) return failure;
+  return successJson({ id: edgeId });
 }
