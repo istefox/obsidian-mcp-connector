@@ -47,9 +47,7 @@ export async function createVaultBinaryFileHandler(
   try {
     buf = base64ToBuf(ctx.arguments.content);
   } catch {
-    return errorText(
-      `Content for ${ctx.arguments.path} is not valid base64.`,
-    );
+    return errorText(`Content for ${ctx.arguments.path} is not valid base64.`);
   }
 
   const existing = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);

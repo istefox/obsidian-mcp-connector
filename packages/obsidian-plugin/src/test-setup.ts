@@ -1046,7 +1046,10 @@ export function mockApp(): App {
       _mockState.files.set(path, content);
       return fileFromPath(path) as unknown as ApiTFile;
     },
-    createBinary: async (path: string, data: ArrayBuffer): Promise<ApiTFile> => {
+    createBinary: async (
+      path: string,
+      data: ArrayBuffer,
+    ): Promise<ApiTFile> => {
       // Same ENOENT-on-missing-parent semantics as create(). Storage
       // reuses the string-keyed files map via TextDecoder, the inverse
       // of readBinary's TextEncoder — a round trip for any valid UTF-8
