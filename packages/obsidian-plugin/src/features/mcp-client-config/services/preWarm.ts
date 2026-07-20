@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { delimiter } from "node:path";
 import type { PluginDataLike } from "$/shared/types";
 import { SettingsStore } from "$/shared/settingsStore";
 import { logger } from "$/shared/logger";
@@ -47,20 +48,28 @@ export type PreWarmResult =
   | { ok: true; entry: PreWarmCacheEntry }
   | { ok: false; error: string };
 
-// (file, args, options) shape — no shell. The npx path is argv[0]; a
-// path with spaces/metacharacters cannot inject because `execFile`
-// passes argv straight to the OS instead of through `/bin/sh -c`.
+// (file, args, options) shape — no shell by default. The npx path is
+// argv[0]; a path with spaces/metacharacters cannot inject because
+// `execFile` passes argv straight to the OS instead of through
+// `/bin/sh -c`. `shell` is the one opt-in exception: on Windows,
+// `getDetectedNpxPath()` resolves to `npx.cmd`, and Node's
+// CVE-2024-27980 mitigation refuses to exec a `.cmd`/`.bat` file
+// directly (`EINVAL`) unless `shell: true` is set. `preWarm()` only
+// sets it when `npxPath` itself has that extension, and `npxArgs` is
+// always the same static literal array, never user input, so this
+// does not reopen the injection surface the no-shell default exists
+// to close.
 export type ExecRunner = (
   file: string,
   args: string[],
-  options?: { timeout?: number; env?: NodeJS.ProcessEnv },
+  options?: { timeout?: number; env?: NodeJS.ProcessEnv; shell?: boolean },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 const defaultRunner: ExecRunner = (file, args, options) => {
   const execFile_ = promisify(execFile) as (
     f: string,
     a: string[],
-    opts?: { timeout?: number; env?: NodeJS.ProcessEnv },
+    opts?: { timeout?: number; env?: NodeJS.ProcessEnv; shell?: boolean },
   ) => Promise<{ stdout: string; stderr: string }>;
   return execFile_(file, args, options);
 };
@@ -131,26 +140,39 @@ export async function preWarm(
   }
 
   try {
-    // No-shell argv — npxPath is argv[0], not embedded in a shell string.
+    // Argv is a fixed literal — npxPath is argv[0], args never carry
+    // user input, so neither the no-shell default path nor the
+    // shell:true fallback below can be used to inject a command.
     const npxArgs = ["-y", "mcp-remote@latest", "--help"];
+
+    // Windows resolves npx to `npx.cmd` (see getDetectedNpxPath). Node
+    // refuses to exec a `.cmd`/`.bat` file without `shell: true`
+    // (CVE-2024-27980 mitigation) and throws EINVAL instead — that is
+    // the exact failure reported in #398. Keying off the extension
+    // rather than `process.platform` means this is a no-op on
+    // macOS/Linux, where npxPath never ends in `.cmd`/`.bat`.
+    const needsShell = /\.(cmd|bat)$/i.test(npxPath);
 
     // Build the child env. `npx` is a shebang script that re-invokes
     // `node` via `env node`, which does a PATH lookup INSIDE the
     // child process. If Obsidian's inherited PATH lacks the Node bin
     // dir (the macOS launchctl gotcha), the inner lookup fails with
     // "env: node: No such file or directory". Prepend the detected
-    // Node bin dir so the inner lookup succeeds.
+    // Node bin dir so the inner lookup succeeds. `delimiter` is `;`
+    // on Windows and `:` elsewhere — a hardcoded `:` would silently
+    // merge into one bogus PATH entry on Windows.
     const nodeBinDir = getDetectedNodeBinDir();
     const env = {
       ...process.env,
       ...(nodeBinDir
-        ? { PATH: `${nodeBinDir}:${process.env.PATH ?? ""}` }
+        ? { PATH: `${nodeBinDir}${delimiter}${process.env.PATH ?? ""}` }
         : {}),
     };
 
     const { stdout, stderr } = await runner(npxPath, npxArgs, {
       timeout: PREWARM_TIMEOUT_MS,
       env,
+      shell: needsShell,
     });
 
     // `mcp-remote` prints its help banner to stdout; some versions

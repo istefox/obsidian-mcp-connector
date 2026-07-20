@@ -94,6 +94,32 @@ describe("preWarm — success path", () => {
     });
   });
 
+  test("#398: npxPath ending in .cmd/.bat runs with shell:true (Windows CVE-2024-27980 fix)", async () => {
+    const p = fakePlugin({});
+    let receivedShell: boolean | undefined;
+    const runner: ExecRunner = async (_file, _args, options) => {
+      receivedShell = options?.shell;
+      return { stdout: "mcp-remote 1.0.0", stderr: "" };
+    };
+
+    const result = await preWarm(p, { runner, npxPath: "npx.cmd" });
+    expect(result.ok).toBe(true);
+    expect(receivedShell).toBe(true);
+  });
+
+  test("npxPath without .cmd/.bat runs without shell (macOS/Linux unchanged)", async () => {
+    const p = fakePlugin({});
+    let receivedShell: boolean | undefined;
+    const runner: ExecRunner = async (_file, _args, options) => {
+      receivedShell = options?.shell;
+      return { stdout: "mcp-remote 1.0.0", stderr: "" };
+    };
+
+    const result = await preWarm(p, { runner, npxPath: "npx" });
+    expect(result.ok).toBe(true);
+    expect(receivedShell).toBe(false);
+  });
+
   test("succeeds even when version cannot be parsed", async () => {
     const p = fakePlugin({});
     const runner: ExecRunner = async () => ({
