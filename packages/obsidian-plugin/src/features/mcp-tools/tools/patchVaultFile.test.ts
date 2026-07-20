@@ -783,3 +783,107 @@ describe("patch_vault_file — block-in-fenced-code via regex-fallback (#84)", (
     expect(final).not.toContain("Postambule prose.");
   });
 });
+
+// ── Non-markdown guard + false-success fix ──────────────────────────────
+describe("patch_vault_file — non-markdown guard and change detection", () => {
+  test("rejects frontmatter target on a non-markdown (.json) file", async () => {
+    setMockFile("state/data.json", '{"key": "value"}');
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "state/data.json",
+        operation: "replace",
+        targetType: "frontmatter",
+        target: "none",
+        content: "x",
+      },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/markdown/i);
+    const file = app.vault.getAbstractFileByPath("state/data.json");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as never);
+    expect(final).toBe('{"key": "value"}');
+  });
+
+  test("block target on a non-markdown (.json) file is exempt from the guard", async () => {
+    setMockFile("state/data.json", "para one.\n^my-block\n\npara two.\n");
+    setMockMetadata("state/data.json", {
+      blocks: { "my-block": { startLine: 1, endLine: 1 } },
+    });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "state/data.json",
+        operation: "replace",
+        targetType: "block",
+        target: "my-block",
+        createTargetIfMissing: false,
+        content: "REPLACED.",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+  });
+
+  test("frontmatter createTargetIfMissing:false + missing key returns an error, not success", async () => {
+    setMockFile("Notes/x.md", "---\nstatus: draft\n---\nBody");
+    setMockMetadata("Notes/x.md", { frontmatter: { status: "draft" } });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/x.md",
+        operation: "replace",
+        targetType: "frontmatter",
+        target: "none",
+        createTargetIfMissing: false,
+        content: "x",
+      },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not found/i);
+    const file = app.vault.getAbstractFileByPath("Notes/x.md");
+    const cache = app.metadataCache.getFileCache(file as never);
+    expect(cache?.frontmatter?.none).toBeUndefined();
+  });
+
+  test("frontmatter replace with a value identical to the existing one reports no change", async () => {
+    setMockFile("Notes/x.md", "---\nstatus: draft\n---\nBody");
+    setMockMetadata("Notes/x.md", { frontmatter: { status: "draft" } });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/x.md",
+        operation: "replace",
+        targetType: "frontmatter",
+        target: "status",
+        content: "draft",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toMatch(/no changes detected/i);
+  });
+
+  test("heading replace with content identical to the existing section reports no change", async () => {
+    // Fixture chosen so the reconstructed text (heading + normalized blank
+    // separators + body + next heading) is byte-identical to the original —
+    // replacing "old" with "old" under the same blank-line rules is a true no-op.
+    setMockFile("Notes/h.md", "## A\n\nold\n\n## B\n");
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/h.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "old",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toMatch(/no changes detected/i);
+  });
+});

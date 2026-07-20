@@ -9,6 +9,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 - **`Fixed port` setting now persists.** Setting a value in Settings → MCP Connector → Access Control → *Fixed port* and clicking **Save** silently failed since 0.24.0: the input is `<input type="number">` so Svelte's `bind:value` coerces to `number | null`, but the save handler called `.trim()` on it before the try/catch, which threw a `TypeError` that escaped the handler entirely — no Notice, no `port` written to `data.json`, no transport restart. The port binding is now typed `number | null` end-to-end, the string coercion is gone, and the parse/validate step lives inside the try/catch so any residual failure surfaces a Notice. Parsing is extracted to a pure `parsePortInput()` helper in `services/portInput.ts` (15 unit tests covering null, boundary, out-of-range, non-integer, plus an explicit regression note for the string-coercion escape hatch). Fixes #358.
 
+## [0.27.13] — 2026-07-17
+
+### Changed
+
+- **The release workflow now creates the GitHub release only after the artifact attestation exists.** This matches the community-verified recipe for attested plugin artifacts: attest first, then create the release with its assets in a single step, publish last. No plugin code changes.
+
+## [0.27.12] — 2026-07-17
+
+### Fixed
+
+- **Every release's `main.js` now carries a unique digest.** The generated-file banner now embeds the plugin version. Releases 0.27.8 through 0.27.11 shipped a byte-identical bundle, so all their attestations piled onto one digest and the community-store review matched the wrong tag's attestation, rejecting valid releases. With the version in the banner, each release maps to exactly one attestation.
+
+## [0.27.11] — 2026-07-17
+
+### Changed
+
+- **No code changes.** New submission to the community store, same reason as 0.27.10.
+
+## [0.27.10] — 2026-07-17
+
+### Changed
+
+- **No code changes.** This release exists to request a fresh community-store automated review. The attestation-check failures reported on 0.27.8 and 0.27.9 were false positives: the released artifacts verify cleanly with `gh attestation verify`, and the review system's own build verification reproduced `main.js` byte-for-byte from source.
+
+## [0.27.9] — 2026-07-17
+
+### Changed
+
+- **Releases now publish only after every asset is attached, with release immutability enabled.** The release workflow used to create the GitHub release as public before the build even ran, then attach `main.js`, `manifest.json`, and the `.mcpb` afterward, leaving a window where the published release had no assets yet. Releases are now created as a draft, get the build, the artifact attestation, and all assets attached first, and only then get published, with this repository's release-immutability setting turned on. This makes the release's build-provenance attestation verifiable end to end by third parties, instead of racing the asset upload.
+
+## [0.27.8] — 2026-07-17
+
+### Fixed
+
+- **`patch_vault_file` no longer reports success when nothing was actually written.** Two gaps let this happen: `createTargetIfMissing: false` was computed but never checked by the frontmatter branch, so it had no effect there; and there was no file-type guard, so a frontmatter or heading patch against a non-markdown file (e.g. `.json`) silently no-op'd inside `app.fileManager.processFrontMatter` while still returning "File patched successfully." Frontmatter/heading targets on non-markdown files now return an explicit error, `createTargetIfMissing: false` now works for frontmatter too, and every success response now says so only when the file's content actually changed.
+
 ## [0.27.7] — 2026-07-16
 
 ### Fixed
