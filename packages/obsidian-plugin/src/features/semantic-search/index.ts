@@ -48,6 +48,10 @@ export type SearchResult = {
   filePath: string;
   heading: string | null;
   excerpt: string;
+  /** 0-indexed line the chunk starts at, or null when unresolvable (no
+   * resolver, resolver failure, or a provider — e.g. Smart Connections —
+   * that doesn't track a character offset into the source file). */
+  line: number | null;
   score: number;
 };
 

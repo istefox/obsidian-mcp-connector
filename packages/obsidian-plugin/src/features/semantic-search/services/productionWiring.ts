@@ -104,11 +104,14 @@ export async function wireSemanticSearch(
   // indexer below.
   const ssIsExcluded = createExclusionFilter(plugin.app);
 
-  const ssExcerpt: ExcerptResolver = async (path, _offset, maxLen) => {
+  const ssExcerpt: ExcerptResolver = async (path, offset, maxLen) => {
     const f = plugin.app.vault.getAbstractFileByPath(path);
-    if (!(f instanceof TFile)) return "";
+    if (!(f instanceof TFile)) return { excerpt: "", line: null };
     const text = await plugin.app.vault.cachedRead(f);
-    return text.slice(_offset, _offset + maxLen);
+    // 0-indexed, matching the line convention get_vault_file_partial's
+    // document-map mode already exposes externally.
+    const line = text.slice(0, offset).split("\n").length - 1;
+    return { excerpt: text.slice(offset, offset + maxLen), line };
   };
 
   const pluginDir =

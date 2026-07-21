@@ -1,7 +1,10 @@
 import { type } from "arktype";
 import { type App, type TFile } from "obsidian";
+import type McpToolsPlugin from "$/main";
+import { SettingsStore } from "$/shared/settingsStore";
 import { resolveTFile } from "../services/resolveTFile";
 import { successJson } from "../services/responseBuilders";
+import { DEFAULT_MAX_TEXT_OUTPUT_KB } from "../types";
 
 /**
  * Maps lowercased file extensions to their MIME type and MCP content-block
@@ -76,12 +79,16 @@ export const getVaultFileSchema = type({
     ),
   },
 }).describe(
-  "Reads a file from the vault. Markdown and other text files return a text content block. Supported image and audio files up to 10 MiB are returned as native MCP image/audio content blocks. Video, PDF, Office documents, archives, and oversized audio/image files return a structured JSON metadata hint.",
+  "Reads a file from the vault. Markdown and other text files return a text content block. Supported image and audio files up to 10 MiB are returned as native MCP image/audio content blocks. Video, PDF, Office documents, archives, and oversized audio/image files return a structured JSON metadata hint. Text content past a configurable size ceiling (Settings → MCP Connector, default 100 KB) is truncated with a hint to use get_vault_file_partial for a specific range.",
 );
 
 export type GetVaultFileContext = {
   arguments: { path: string; format?: "text" | "json" };
   app: App;
+  /** Optional — absent in partial test fixtures. Used to resolve the
+   * `mcpTools.maxTextOutputKB` setting; falls back to the default cap
+   * when omitted. */
+  plugin?: McpToolsPlugin;
 };
 
 /**
@@ -101,6 +108,40 @@ function bufToBase64(buf: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/** Real UTF-8 byte length, not the UTF-16 string length JS reports natively. */
+function encodedByteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
+/**
+ * Truncate `text` to at most `maxBytes` UTF-8 bytes. Slicing the encoded
+ * bytes can land mid-codepoint at the boundary; decoding with a lenient
+ * (non-streaming) TextDecoder replaces a cut trailing sequence with a
+ * single U+FFFD rather than throwing — acceptable for a truncation hint,
+ * which is never meant to be read as exact byte-for-byte content anyway.
+ */
+function truncateToByteLength(text: string, maxBytes: number): string {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.byteLength <= maxBytes) return text;
+  return new TextDecoder().decode(encoded.slice(0, maxBytes));
+}
+
+/**
+ * Resolves the configured `get_vault_file` text-output ceiling (in
+ * bytes) from the plugin's `mcpTools.maxTextOutputKB` setting, falling
+ * back to DEFAULT_MAX_TEXT_OUTPUT_KB when `plugin` is absent (partial
+ * test fixtures) or the setting is unset.
+ */
+async function resolveMaxTextOutputBytes(
+  plugin?: McpToolsPlugin,
+): Promise<number> {
+  if (!plugin) return DEFAULT_MAX_TEXT_OUTPUT_KB * 1024;
+  const slice = (await new SettingsStore(plugin).readSlice("mcpTools")) as
+    | { maxTextOutputKB?: number }
+    | undefined;
+  return (slice?.maxTextOutputKB ?? DEFAULT_MAX_TEXT_OUTPUT_KB) * 1024;
+}
+
 type TextBlock = { type: "text"; text: string };
 type ImageBlock = { type: "image"; data: string; mimeType: string };
 type AudioBlock = { type: "audio"; data: string; mimeType: string };
@@ -112,6 +153,7 @@ export type VaultFileJson = {
   frontmatter: Record<string, unknown>;
   tags: string[];
   stat: { ctime: number; mtime: number; size: number };
+  truncated: boolean;
 };
 
 /**
@@ -137,6 +179,7 @@ export const getVaultFileOutputSchema = type({
     mtime: "number",
     size: "number",
   },
+  truncated: "boolean",
 });
 
 /**
@@ -148,6 +191,7 @@ export const getVaultFileOutputSchema = type({
 export async function readVaultFileAsJson(
   app: App,
   file: TFile,
+  maxBytes: number = DEFAULT_MAX_TEXT_OUTPUT_KB * 1024,
 ): Promise<VaultFileJson> {
   const text = await app.vault.read(file);
   const cache = app.metadataCache.getFileCache(file);
@@ -161,7 +205,10 @@ export async function readVaultFileAsJson(
     size: file.stat?.size ?? 0,
   };
 
-  return { path: file.path, content: text, frontmatter, tags, stat };
+  const truncated = encodedByteLength(text) > maxBytes;
+  const content = truncated ? truncateToByteLength(text, maxBytes) : text;
+
+  return { path: file.path, content, frontmatter, tags, stat, truncated };
 }
 
 export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
@@ -197,7 +244,8 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   // The `stat` field was missing in the initial 0.4.0 port — folotp flagged
   // the drift between the description and the actual response.
   if (ctx.arguments.format === "json") {
-    const json = await readVaultFileAsJson(ctx.app, file);
+    const maxBytes = await resolveMaxTextOutputBytes(ctx.plugin);
+    const json = await readVaultFileAsJson(ctx.app, file, maxBytes);
     return successJson(json);
   }
 
@@ -210,6 +258,24 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
       // If the extension is completely unknown and format is not forced, fall
       // through to the unsupported-binary branch below via the mimeEntry check.
       const text = await ctx.app.vault.read(file);
+      const maxBytes = await resolveMaxTextOutputBytes(ctx.plugin);
+      if (encodedByteLength(text) > maxBytes) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                kind: "text_truncated",
+                filename: file.path,
+                content: truncateToByteLength(text, maxBytes),
+                truncated: true,
+                maxTextOutputBytes: maxBytes,
+                hint: `This file's text content exceeds the ${maxBytes}-byte cap (Settings → MCP Connector → "Max text output size"). Use get_vault_file_partial with mode "lines", "heading", or "block" to read a specific range, or raise the cap in settings.`,
+              }),
+            },
+          ],
+        };
+      }
       return { content: [{ type: "text", text }] };
     }
 

@@ -68,6 +68,16 @@ describe("search_vault_simple tool", () => {
     expect(data.results).toEqual([]);
   });
 
+  test("reports the 0-indexed line each match starts at", async () => {
+    setMockFile("multiline.md", "line zero\nline one\nhit here\nline three");
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    expect(data.results[0].matches[0].line).toBe(2);
+  });
+
   test("is case-insensitive by default", async () => {
     setMockFile("a.md", "HELLO World");
     const result = await searchVaultSimpleHandler({

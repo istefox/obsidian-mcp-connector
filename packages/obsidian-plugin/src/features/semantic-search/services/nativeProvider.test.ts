@@ -223,8 +223,10 @@ describe("native provider", () => {
       }),
     ]);
     const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
-    const resolver: ExcerptResolver = async (_p, _o, max) =>
-      longBody.slice(0, max);
+    const resolver: ExcerptResolver = async (_p, _o, max) => ({
+      excerpt: longBody.slice(0, max),
+      line: 0,
+    });
 
     const provider = createNativeProvider({
       embedder,
@@ -236,6 +238,40 @@ describe("native provider", () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.excerpt.length).toBeLessThanOrEqual(500);
     expect(out[0]!.excerpt.startsWith("H: ")).toBe(false);
+  });
+
+  test("line comes from the resolver, and is null without one or on failure", async () => {
+    const store = await makeStore([
+      rec({ chunkId: "a", vector: vec([1, 0, 0, 0]), filePath: "a.md" }),
+      rec({ chunkId: "b", vector: vec([0.9, 0.1, 0, 0]), filePath: "b.md" }),
+      rec({ chunkId: "c", vector: vec([0.8, 0.2, 0, 0]), filePath: "c.md" }),
+    ]);
+    const embedder = makeFakeEmbedder(new Map([["q", vec([1, 0, 0, 0])]]));
+
+    const resolved = await createNativeProvider({
+      embedder,
+      store,
+      excerptResolver: async (path) => ({
+        excerpt: "body",
+        line: path === "a.md" ? 7 : 0,
+      }),
+    }).search("q", { limit: 1 });
+    expect(resolved[0]!.line).toBe(7);
+
+    const noResolver = await createNativeProvider({ embedder, store }).search(
+      "q",
+      { limit: 1 },
+    );
+    expect(noResolver[0]!.line).toBeNull();
+
+    const failingResolver = await createNativeProvider({
+      embedder,
+      store,
+      excerptResolver: async () => {
+        throw new Error("read failed");
+      },
+    }).search("q", { limit: 1 });
+    expect(failingResolver[0]!.line).toBeNull();
   });
 
   test("excerpt without resolver falls back to heading + sentinel or sentinel only", async () => {
