@@ -418,6 +418,9 @@ describe("applySettings — UI swap path (T12)", () => {
     // Store not marked ready → pendingProvider set, live provider unchanged.
     expect(result.state.pendingProvider).toBe("embedding-gemma-300m");
     expect(result.state.provider).toBe(initialProvider);
+    // #344: pendingProviderStartedAt set alongside pendingProvider, used by
+    // search_vault_smart to estimate retryAfterSeconds.
+    expect(result.state.pendingProviderStartedAt).toBeTypeOf("number");
   });
 
   test("DLC: embedding-gemma with store ready swaps provider and clears pendingProvider", async () => {
@@ -495,5 +498,7 @@ describe("applySettings — UI swap path (T12)", () => {
 
     expect(result.state.pendingProvider).toBeNull();
     expect(result.state.provider).not.toBe(initialProvider);
+    // #344: cleared alongside pendingProvider in the ready-immediately branch.
+    expect(result.state.pendingProviderStartedAt).toBeNull();
   });
 });

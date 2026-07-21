@@ -226,11 +226,23 @@ export async function wireSemanticSearch(
     state.startIndexerIfNeeded = () => {
       if (indexerStarted) return;
       indexerStarted = true;
-      indexer.start().catch((err) => {
-        logger.error("semantic-search: indexer start failed", {
-          error: err instanceof Error ? err.message : String(err),
+      // #344: mark the build in-flight before kicking it off so a
+      // search_vault_smart call landing in this same tick already sees
+      // the flag. Cleared on both success and failure — a failed build
+      // must not permanently block search with a stale "still building"
+      // signal.
+      state.nativeIndexBuildInProgress = true;
+      state.nativeIndexBuildStartedAt = Date.now();
+      indexer
+        .start()
+        .catch((err) => {
+          logger.error("semantic-search: indexer start failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          state.nativeIndexBuildInProgress = false;
         });
-      });
     };
 
     // Language detection for multilingual provider suggestion (fire-and-forget).
@@ -316,8 +328,10 @@ export async function wireSemanticSearch(
           const dlcStore = registry.storeFor(providerKey, ep.dimensions);
           await dlcStore.flush();
           registry.markReady(providerKey);
-          if (state.pendingProvider === providerKey)
+          if (state.pendingProvider === providerKey) {
             state.pendingProvider = null;
+            state.pendingProviderStartedAt = null;
+          }
           if (state.chooser) {
             state.provider = state.chooser(state.settings);
           }
