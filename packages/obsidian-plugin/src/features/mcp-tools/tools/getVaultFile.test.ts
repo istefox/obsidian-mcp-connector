@@ -7,6 +7,7 @@ import {
 } from "./getVaultFile";
 import {
   mockApp,
+  mockPlugin,
   resetMockVault,
   setMockFile,
   setMockMetadata,
@@ -52,6 +53,51 @@ describe("get_vault_file tool", () => {
       mtime: 0,
       size: "---\ntags: [foo]\n---\n# Body".length,
     });
+    expect(parsed.truncated).toBe(false);
+  });
+
+  test("truncates default-format text output past the default 100 KB cap", async () => {
+    const big = "a".repeat(101 * 1024);
+    setMockFile("big.md", big);
+    const result = await getVaultFileHandler({
+      arguments: { path: "big.md" },
+      app: mockApp(),
+    });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.kind).toBe("text_truncated");
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.maxTextOutputBytes).toBe(100 * 1024);
+    expect(parsed.content.length).toBeLessThanOrEqual(100 * 1024);
+    expect(parsed.hint).toContain("get_vault_file_partial");
+  });
+
+  test("honors a custom mcpTools.maxTextOutputKB from the plugin setting", async () => {
+    setMockFile("note.md", "x".repeat(2000));
+    const plugin = mockPlugin({
+      loadData: async () => ({ mcpTools: { maxTextOutputKB: 1 } }),
+    });
+    const result = await getVaultFileHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+      plugin,
+    });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.kind).toBe("text_truncated");
+    expect(parsed.maxTextOutputBytes).toBe(1024);
+    expect(parsed.content.length).toBeLessThanOrEqual(1024);
+  });
+
+  test("format=json truncates content and sets truncated: true past the cap", async () => {
+    const big = "b".repeat(101 * 1024);
+    setMockFile("big.md", big);
+    const result = await getVaultFileHandler({
+      arguments: { path: "big.md", format: "json" },
+      app: mockApp(),
+    });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.content.length).toBeLessThanOrEqual(100 * 1024);
+    expect(parsed.path).toBe("big.md");
   });
 
   test("polymorphic contract: default format has no structuredContent, format=json does", async () => {

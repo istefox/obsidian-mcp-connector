@@ -149,6 +149,7 @@ describe("SmartConnectionsProvider", () => {
       filePath: "Zettelkasten/idea.md",
       heading: "Zettelkasten > idea",
       excerpt: "Body content of the idea note.",
+      line: null,
       score: 0.95,
     });
 

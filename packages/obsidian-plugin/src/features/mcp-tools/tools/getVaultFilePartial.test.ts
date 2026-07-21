@@ -489,4 +489,79 @@ describe("get_vault_file_partial tool", () => {
       expect(r.content[0].text).toContain("Invalid block target");
     });
   });
+
+  describe("mode: lines (SECONDARY)", () => {
+    test("returns an inclusive 0-indexed line range", async () => {
+      setMockFile("doc.md", "zero\none\ntwo\nthree\nfour");
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "lines",
+          startLine: 1,
+          endLine: 3,
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toBe("one\ntwo\nthree");
+    });
+
+    test("clamps endLine past end-of-file instead of erroring", async () => {
+      setMockFile("doc.md", "zero\none\ntwo");
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "lines",
+          startLine: 1,
+          endLine: 999,
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toBe("one\ntwo");
+    });
+
+    test("returns isError when startLine is missing", async () => {
+      setMockFile("doc.md", "zero\none");
+      const r = await getVaultFilePartialHandler({
+        arguments: { filename: "doc.md", mode: "lines", endLine: 1 },
+        app: mockApp(),
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(
+        "Missing required `startLine`/`endLine`",
+      );
+    });
+
+    test("returns isError when startLine > endLine", async () => {
+      setMockFile("doc.md", "zero\none\ntwo");
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "lines",
+          startLine: 2,
+          endLine: 0,
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain("Invalid range");
+    });
+
+    test("ignores `target` if passed", async () => {
+      setMockFile("doc.md", "zero\none\ntwo");
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "lines",
+          startLine: 0,
+          endLine: 0,
+          target: "irrelevant",
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toBe("zero");
+    });
+  });
 });

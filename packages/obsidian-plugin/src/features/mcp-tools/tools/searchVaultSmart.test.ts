@@ -128,12 +128,14 @@ describe("search_vault_smart tool — dispatch contract (T11)", () => {
         filePath: "Notes/ml.md",
         heading: "ML Notes",
         excerpt: "ML Notes: introduction to gradient descent.",
+        line: 3,
         score: 0.91,
       },
       {
         filePath: "Notes/dl.md",
         heading: null,
         excerpt: "Deep learning summary.",
+        line: null,
         score: 0.84,
       },
     ];
@@ -182,12 +184,14 @@ describe("search_vault_smart — query-time exclusion filter (#238)", () => {
       filePath: "Notes/keep.md",
       heading: null,
       excerpt: "kept",
+      line: null,
       score: 0.91,
     },
     {
       filePath: "Archive/old.md",
       heading: null,
       excerpt: "stale",
+      line: null,
       score: 0.84,
     },
   ];

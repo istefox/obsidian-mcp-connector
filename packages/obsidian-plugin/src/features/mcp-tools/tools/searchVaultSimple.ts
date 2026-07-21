@@ -19,7 +19,7 @@ export const searchVaultSimpleSchema = type({
     ),
   },
 }).describe(
-  "Plain-text substring search across all markdown files in the vault. Returns each matching file with surrounding context for each hit.",
+  "Plain-text substring search across all markdown files in the vault. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at.",
 );
 
 export type SearchVaultSimpleContext = {
@@ -29,7 +29,12 @@ export type SearchVaultSimpleContext = {
 
 type FileResult = {
   filename: string;
-  matches: Array<{ context: string; match: { start: number; end: number } }>;
+  matches: Array<{
+    context: string;
+    match: { start: number; end: number };
+    /** 0-indexed line the match starts at. */
+    line: number;
+  }>;
 };
 
 /** Reads per batch: bounds memory while hiding cachedRead latency. */
@@ -88,6 +93,7 @@ export async function searchVaultSimpleHandler(
           matches.push({
             context: content.slice(start, end),
             match: { start: idx, end: idx + query.length },
+            line: content.slice(0, idx).split("\n").length - 1,
           });
           // Match length equals query length (literal pattern), so this
           // mirrors the previous `idx += query.length` stepping.

@@ -36,7 +36,7 @@ export type ExcerptResolver = (
   filePath: string,
   offset: number,
   maxLen: number,
-) => Promise<string>;
+) => Promise<{ excerpt: string; line: number | null }>;
 
 export type NativeProviderOpts = {
   embedder: Embedder;
@@ -87,29 +87,38 @@ class NativeProviderImpl implements SemanticSearchProvider {
     }
 
     return Promise.all(
-      top.map(async ({ record, score }) => ({
-        filePath: record.filePath,
-        heading: record.heading,
-        excerpt: await this.makeExcerpt(record),
-        score,
-      })),
+      top.map(async ({ record, score }) => {
+        const { excerpt, line } = await this.makeExcerpt(record);
+        return {
+          filePath: record.filePath,
+          heading: record.heading,
+          excerpt,
+          line,
+          score,
+        };
+      }),
     );
   }
 
-  private async makeExcerpt(record: EmbeddingRecord): Promise<string> {
-    let body = "";
+  private async makeExcerpt(
+    record: EmbeddingRecord,
+  ): Promise<{ excerpt: string; line: number | null }> {
     if (this.opts.excerptResolver) {
       try {
-        body = await this.opts.excerptResolver(
+        const resolved = await this.opts.excerptResolver(
           record.filePath,
           record.offset,
           EXCERPT_MAX_LENGTH,
         );
+        return {
+          excerpt: truncateExcerpt(resolved.excerpt),
+          line: resolved.line,
+        };
       } catch {
-        body = "";
+        return { excerpt: truncateExcerpt(""), line: null };
       }
     }
-    return truncateExcerpt(body);
+    return { excerpt: truncateExcerpt(""), line: null };
   }
 }
 

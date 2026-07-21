@@ -13,26 +13,36 @@ export const getVaultFilePartialSchema = type({
   name: '"get_vault_file_partial"',
   arguments: {
     filename: type("string>0").describe("Vault-relative path to the file."),
-    mode: type('"frontmatter" | "heading" | "block" | "document-map"').describe(
-      "`frontmatter` = one field value; `heading` = the markdown section under the heading; `block` = the range of the block reference; `document-map` = outline only (headings, block ids, frontmatter keys), no body.",
+    mode: type(
+      '"frontmatter" | "heading" | "block" | "document-map" | "lines"',
+    ).describe(
+      "`frontmatter` = one field value; `heading` = the markdown section under the heading; `block` = the range of the block reference; `document-map` = outline only (headings, block ids, frontmatter keys), no body; `lines` = a raw 0-indexed inclusive line range via `startLine`/`endLine`.",
     ),
     "target?": type("string>0").describe(
-      "Frontmatter field name, heading text (nested path via `targetDelimiter`), or block id (leading `^` optional). Ignored for `document-map`.",
+      "Frontmatter field name, heading text (nested path via `targetDelimiter`), or block id (leading `^` optional). Ignored for `document-map` and `lines`.",
     ),
     "targetDelimiter?": type("string>0").describe(
       'Delimiter for nested heading paths, e.g. `Parent::Child`. Default `::`. Only for `mode: "heading"`.',
     ),
+    "startLine?": type("number.integer>=0").describe(
+      '0-indexed first line to return, inclusive. Required for `mode: "lines"`.',
+    ),
+    "endLine?": type("number.integer>=0").describe(
+      '0-indexed last line to return, inclusive. Required for `mode: "lines"`; clamped to end-of-file if past it.',
+    ),
   },
 }).describe(
-  "Reads part of a vault file without loading the body: a single frontmatter field, a heading section, a block range, or the file outline. Read-only and cheap on large notes.",
+  "Reads part of a vault file without loading the body: a single frontmatter field, a heading section, a block range, a raw line range, or the file outline. Read-only and cheap on large notes.",
 );
 
 export type GetVaultFilePartialContext = {
   arguments: {
     filename: string;
-    mode: "frontmatter" | "heading" | "block" | "document-map";
+    mode: "frontmatter" | "heading" | "block" | "document-map" | "lines";
     target?: string;
     targetDelimiter?: string;
+    startLine?: number;
+    endLine?: number;
   };
   app: App;
 };
@@ -153,7 +163,8 @@ export async function getVaultFilePartialHandler(
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 }> {
-  const { filename, mode, target, targetDelimiter } = ctx.arguments;
+  const { filename, mode, target, targetDelimiter, startLine, endLine } =
+    ctx.arguments;
 
   const resolved = resolveTFile(ctx.app.vault, filename);
   if (!resolved.ok) {
@@ -164,11 +175,27 @@ export async function getVaultFilePartialHandler(
   const file = resolved.file;
 
   // Schema-level guard: `target` is required for every mode except
-  // `document-map`. We enforce this at the handler level (rather than via
-  // arktype) so the error message can name the mode explicitly.
-  if (mode !== "document-map" && (!target || !target.trim())) {
+  // `document-map` and `lines` (which use `startLine`/`endLine` instead).
+  // We enforce this at the handler level (rather than via arktype) so the
+  // error message can name the mode explicitly.
+  if (
+    mode !== "document-map" &&
+    mode !== "lines" &&
+    (!target || !target.trim())
+  ) {
     return errorResponse(
       `Missing required \`target\` for mode "${mode}". The \`target\` argument is required for "frontmatter", "heading", and "block" modes.`,
+    );
+  }
+
+  if (mode === "lines" && (startLine === undefined || endLine === undefined)) {
+    return errorResponse(
+      `Missing required \`startLine\`/\`endLine\` for mode "lines". Both are required and 0-indexed.`,
+    );
+  }
+  if (mode === "lines" && startLine! > endLine!) {
+    return errorResponse(
+      `Invalid range: \`startLine\` (${startLine}) must be <= \`endLine\` (${endLine}).`,
     );
   }
 
@@ -245,6 +272,17 @@ export async function getVaultFilePartialHandler(
   // Modes below need the file contents.
   const text = await ctx.app.vault.cachedRead(file);
   const lines = text.split("\n");
+
+  // ── lines ─────────────────────────────────────────────────────────────────
+  if (mode === "lines") {
+    // 0-indexed, inclusive on both ends — matches `block` mode's
+    // inclusive-end convention below. `endLine` past EOF clamps rather
+    // than erroring, so callers don't need to know the file's length
+    // up front.
+    const clampedEnd = Math.min(endLine!, lines.length - 1);
+    const section = lines.slice(startLine!, clampedEnd + 1).join("\n");
+    return textResponse(section);
+  }
 
   // ── heading ───────────────────────────────────────────────────────────────
   if (mode === "heading") {

@@ -103,6 +103,10 @@ class SmartConnectionsProviderImpl implements SemanticSearchProvider {
           filePath: r.item.path,
           heading,
           excerpt: makeExcerpt(body),
+          // Smart Connections maintains its own index; it does not
+          // expose a character offset into the source file we could
+          // resolve into a line number.
+          line: null,
           score: r.score,
         };
       }),

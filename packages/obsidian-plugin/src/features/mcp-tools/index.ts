@@ -3,6 +3,8 @@ import type McpToolsPlugin from "$/main";
 import type { ToolRegistry } from "$/features/mcp-transport/services/toolRegistry";
 import { TOOL_ANNOTATIONS } from "./toolAnnotations";
 
+export { default as FeatureSettings } from "./components/McpToolsSettingsSection.svelte";
+
 import {
   getServerInfoHandler,
   getServerInfoSchema,
@@ -238,7 +240,7 @@ export async function registerTools(
     listVaultFilesHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(getVaultFileSchema, async ({ arguments: args }) =>
-    getVaultFileHandler({ arguments: args, app: ctx.app }),
+    getVaultFileHandler({ arguments: args, app: ctx.app, plugin: ctx.plugin }),
   );
   registry.register(getVaultFilesSchema, async ({ arguments: args }) =>
     getVaultFilesHandler({ arguments: args, app: ctx.app }),
