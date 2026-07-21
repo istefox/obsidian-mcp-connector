@@ -398,4 +398,181 @@ describe("search_vault_smart — structured index_building error (#344)", () => 
     expect(parsed.filesIndexed).toBe(1);
     expect(parsed.percent).toBe(50);
   });
+
+  test("pendingProvider with no pendingProviderStartedAt: retryAfterSeconds is null", async () => {
+    setMockFile("a.md", "# A");
+    const spy = fakeProvider({ ready: false });
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        pendingProvider: "embedding-gemma",
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.retryAfterSeconds).toBeNull();
+  });
+
+  test("pendingProvider with pendingProviderStartedAt: retryAfterSeconds is a bounded estimate", async () => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    setMockFile("c.md", "# C");
+    setMockFile("d.md", "# D");
+    const spy = fakeProvider({ ready: false });
+    // 1 of 4 files indexed (25%) after 10s elapsed → est. ~30s remaining.
+    const fakeStore = { hasRecords: (path: string) => path === "a.md" };
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        pendingProvider: "embedding-gemma",
+        pendingProviderStartedAt: Date.now() - 10_000,
+        store: fakeStore,
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.percent).toBe(25);
+    expect(typeof parsed.retryAfterSeconds).toBe("number");
+    expect(parsed.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+    expect(parsed.retryAfterSeconds).toBeLessThanOrEqual(600);
+  });
+
+  test("native build in progress: reports index_building without ever calling provider.search", async () => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    const spy = fakeProvider({ ready: true }); // native isReady() is always true
+    const fakeStore = { hasRecords: (path: string) => path === "a.md" };
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        settings: { provider: "native", indexingMode: "live" },
+        startIndexerIfNeeded: () => {},
+        nativeIndexBuildInProgress: true,
+        nativeIndexBuildStartedAt: Date.now() - 5_000,
+        store: fakeStore,
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.errorCode).toBe("index_building");
+    expect(parsed.filesTotal).toBe(2);
+    expect(parsed.filesIndexed).toBe(1);
+    expect(parsed.percent).toBe(50);
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("native, not building: proceeds to a normal search (regression guard)", async () => {
+    const spy = fakeProvider({ ready: true, results: [] });
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        settings: { provider: "native", indexingMode: "live" },
+        startIndexerIfNeeded: () => {},
+        nativeIndexBuildInProgress: false,
+      },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(spy.calls()).toHaveLength(1);
+  });
+});
+
+describe("search_vault_smart — notifications/progress push (#344)", () => {
+  function buildingPlugin() {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    const spy = fakeProvider({ ready: true });
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        settings: { provider: "native", indexingMode: "live" },
+        startIndexerIfNeeded: () => {},
+        nativeIndexBuildInProgress: true,
+        nativeIndexBuildStartedAt: Date.now() - 1_000,
+      },
+    } as never);
+    return { plugin, calls: () => spy.calls() };
+  }
+
+  test("sends notifications/progress when both progressToken and sendNotification are present", async () => {
+    const { plugin } = buildingPlugin();
+    const sent: Array<{ method: string; params?: Record<string, unknown> }> =
+      [];
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+      progressToken: "tok-1",
+      sendNotification: async (n) => {
+        sent.push(n);
+      },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.method).toBe("notifications/progress");
+    expect(sent[0]?.params?.progressToken).toBe("tok-1");
+    expect(sent[0]?.params?.progress).toBe(0);
+  });
+
+  test("does NOT send a notification when progressToken is absent", async () => {
+    const { plugin } = buildingPlugin();
+    let called = false;
+    await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+      sendNotification: async () => {
+        called = true;
+      },
+    });
+    expect(called).toBe(false);
+  });
+
+  test("does NOT send a notification when sendNotification is absent", async () => {
+    const { plugin } = buildingPlugin();
+    // Absence of sendNotification must not throw even with a progressToken.
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+      progressToken: "tok-1",
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  test("a throwing sendNotification does not fail the tool call", async () => {
+    const { plugin } = buildingPlugin();
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+      progressToken: "tok-1",
+      sendNotification: async () => {
+        throw new Error("transport gone");
+      },
+    });
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    expect(parsed.errorCode).toBe("index_building");
+  });
 });

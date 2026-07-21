@@ -86,6 +86,7 @@ import {
 import {
   searchVaultSmartHandler,
   searchVaultSmartSchema,
+  type SearchVaultSmartContext,
 } from "./tools/searchVaultSmart";
 import {
   listObsidianCommandsHandler,
@@ -348,12 +349,20 @@ export async function registerTools(
   registry.register(searchVaultSimpleSchema, async ({ arguments: args }) =>
     searchVaultSimpleHandler({ arguments: args, app: ctx.app }),
   );
-  registry.register(searchVaultSmartSchema, async ({ arguments: args }) =>
-    searchVaultSmartHandler({
-      arguments: args,
-      app: ctx.app,
-      plugin: ctx.plugin,
-    }),
+  registry.register(
+    searchVaultSmartSchema,
+    async (params, { sendNotification }) =>
+      searchVaultSmartHandler({
+        arguments: (
+          params as { arguments: SearchVaultSmartContext["arguments"] }
+        ).arguments,
+        app: ctx.app,
+        plugin: ctx.plugin,
+        progressToken: (
+          params as { _meta?: { progressToken?: string | number } }
+        )._meta?.progressToken,
+        sendNotification,
+      }),
   );
   registry.register(executeDataviewQuerySchema, async ({ arguments: args }) =>
     executeDataviewQueryHandler({ arguments: args, app: ctx.app }),

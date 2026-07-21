@@ -24,7 +24,7 @@ export const searchVaultSmartSchema = type({
     ),
   },
 }).describe(
-  "Semantic search through the configured semantic search provider — native Transformers.js (default) or Smart Connections, per Settings → MCP Connector → Semantic Search. Returns notes ranked by similarity to the query, each with the 0-indexed line the match starts at (null when unresolvable, e.g. under Smart Connections).",
+  "Semantic search through the configured semantic search provider — native Transformers.js (default) or Smart Connections, per Settings → MCP Connector → Semantic Search. Returns notes ranked by similarity to the query, each with the 0-indexed line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
 );
 
 export type SearchVaultSmartContext = {
@@ -35,6 +35,17 @@ export type SearchVaultSmartContext = {
   };
   app: App;
   plugin: McpToolsPlugin;
+  /** Client-supplied `_meta.progressToken` from the original request, if
+   * any (#344). A `notifications/progress` push is spec-legal only when
+   * this is present. */
+  progressToken?: string | number;
+  /** SDK-provided, request-scoped notification sender (see
+   * mcp-transport/services/toolRegistry.ts's `HandlerContext`). Absent in
+   * partial test fixtures and non-HTTP call sites. */
+  sendNotification?: (notification: {
+    method: string;
+    params?: Record<string, unknown>;
+  }) => Promise<void>;
 };
 
 type ToolResult = {
@@ -47,6 +58,78 @@ function errorResult(text: string): ToolResult {
     content: [{ type: "text", text }],
     isError: true,
   };
+}
+
+/**
+ * Estimate seconds remaining from elapsed build time and files-indexed
+ * percent (#344). Returns `null` rather than a fabricated number when
+ * there's no rate data yet (no start timestamp, or 0% so far — a 0%
+ * elapsed/percent division would blow up, not just be imprecise).
+ * Bounded to [1, 600] so noise at the extremes (a few ms elapsed, or a
+ * near-0% sample) never produces an absurd estimate.
+ */
+function estimateRetryAfterSeconds(
+  startedAt: number | null | undefined,
+  percent: number,
+  now: number,
+): number | null {
+  if (!startedAt || percent <= 0) return null;
+  const elapsedSeconds = (now - startedAt) / 1000;
+  if (elapsedSeconds <= 0) return null;
+  if (percent >= 100) return 0;
+  const estimate = (elapsedSeconds / percent) * (100 - percent);
+  return Math.max(1, Math.min(600, Math.round(estimate)));
+}
+
+/**
+ * Compute the files-indexed/total/percent triple used by both the native
+ * and DLC "still building" branches.
+ */
+function computeIndexProgress(
+  app: App,
+  store: { hasRecords(path: string): boolean } | null | undefined,
+): { filesIndexed: number; filesTotal: number; percent: number } {
+  const files = app.vault.getMarkdownFiles();
+  const filesTotal = files.length;
+  const filesIndexed = store
+    ? files.filter((f) => store.hasRecords(f.path)).length
+    : 0;
+  const percent =
+    filesTotal > 0 ? Math.round((filesIndexed / filesTotal) * 100) : 0;
+  return { filesIndexed, filesTotal, percent };
+}
+
+/**
+ * Send a `notifications/progress` push on the same POST's SSE stream
+ * (#344), mirroring activate_tool's `list_changed` mechanism. Spec-legal
+ * only when the client's original request carried `_meta.progressToken` —
+ * never fabricated. A notification-send failure must never fail the tool
+ * call, so failures are swallowed (same defensive pattern as
+ * activateTool.ts).
+ */
+async function maybeSendProgress(
+  ctx: SearchVaultSmartContext,
+  percent: number,
+  retryAfterSeconds: number | null,
+): Promise<void> {
+  if (!ctx.progressToken || !ctx.sendNotification) return;
+  const message =
+    retryAfterSeconds !== null
+      ? `Indexing… ${percent}% — retry in ~${retryAfterSeconds}s`
+      : `Indexing… ${percent}%`;
+  try {
+    await ctx.sendNotification({
+      method: "notifications/progress",
+      params: {
+        progressToken: ctx.progressToken,
+        progress: percent,
+        total: 100,
+        message,
+      },
+    });
+  } catch {
+    // Swallowed by design — see doc comment above.
+  }
 }
 
 /**
@@ -104,22 +187,50 @@ export async function searchVaultSmartHandler(
     settings?.provider === "multilingual-e5-base";
   if (!usingSmartConnections && !usingDlcProvider) {
     state.startIndexerIfNeeded?.();
+
+    // #344: the native provider's own lazy first-time build (or a
+    // post-reopen catch-up rebuild) — independent of provider.isReady(),
+    // which is hardcoded true for the native provider (see
+    // nativeProvider.ts: "even with an empty store the contract is to
+    // return zero results, not error"). Gated on the build-in-progress
+    // flag, NOT on filesIndexed/filesTotal reaching 100% (unsafe — see
+    // nativeIndexBuildInProgress's doc comment on SemanticSearchState).
+    if (state.nativeIndexBuildInProgress) {
+      const { filesIndexed, filesTotal, percent } = computeIndexProgress(
+        ctx.app,
+        state.store,
+      );
+      const retryAfterSeconds = estimateRetryAfterSeconds(
+        state.nativeIndexBuildStartedAt,
+        percent,
+        Date.now(),
+      );
+      await maybeSendProgress(ctx, percent, retryAfterSeconds);
+      return errorJson(
+        "Semantic search is not ready: the index is still being built. Retry shortly.",
+        "index_building",
+        { filesIndexed, filesTotal, percent, retryAfterSeconds },
+      );
+    }
   }
 
   const provider = state.provider;
   if (!provider.isReady()) {
     if (state.pendingProvider) {
-      const files = ctx.app.vault.getMarkdownFiles();
-      const filesTotal = files.length;
-      const filesIndexed = state.store
-        ? files.filter((f) => state.store!.hasRecords(f.path)).length
-        : 0;
-      const percent =
-        filesTotal > 0 ? Math.round((filesIndexed / filesTotal) * 100) : 0;
+      const { filesIndexed, filesTotal, percent } = computeIndexProgress(
+        ctx.app,
+        state.store,
+      );
+      const retryAfterSeconds = estimateRetryAfterSeconds(
+        state.pendingProviderStartedAt,
+        percent,
+        Date.now(),
+      );
+      await maybeSendProgress(ctx, percent, retryAfterSeconds);
       return errorJson(
         `Semantic search is not ready: the "${state.pendingProvider}" index is still being built. Open Settings → MCP Connector → Semantic Search and click "Rebuild now" if the build has not started yet.`,
         "index_building",
-        { filesIndexed, filesTotal, percent },
+        { filesIndexed, filesTotal, percent, retryAfterSeconds },
       );
     }
     return errorResult(

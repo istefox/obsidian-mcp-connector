@@ -1,26 +1,33 @@
 import type { IncomingMessage } from "node:http";
 
 /**
- * Tools whose handler emits `notifications/tools/list_changed`. A call to
- * one of these must get an SSE response so the notification can ride back
- * on its own POST stream (see mcpServer.ts / activateTool.ts).
+ * Tools whose handler may emit a server-initiated notification
+ * (`notifications/tools/list_changed` for the activation tools;
+ * `notifications/progress` for `search_vault_smart` while the semantic
+ * index is building, #344). A call to one of these must get an SSE
+ * response so the notification can ride back on its own POST stream (see
+ * mcpServer.ts / activateTool.ts / searchVaultSmart.ts).
  */
-const ACTIVATION_TOOLS = new Set(["activate_tool", "activate_tools"]);
+const SSE_NOTIFICATION_TOOLS = new Set([
+  "activate_tool",
+  "activate_tools",
+  "search_vault_smart",
+]);
 
 /**
- * Whether a parsed JSON-RPC request body targets a tool-activation call
- * (`activate_tool` or `activate_tools`).
+ * Whether a parsed JSON-RPC request body targets a tool whose handler may
+ * emit a server-initiated notification (`SSE_NOTIFICATION_TOOLS`).
  *
  * Accepts either a single JSON-RPC request object or a batch array, and
- * returns true if ANY member is a `tools/call` whose `params.name` is an
- * activation tool. Everything else (notifications, responses, other tool
- * calls, malformed shapes) returns false.
+ * returns true if ANY member is a `tools/call` whose `params.name` is in
+ * that set. Everything else (notifications, responses, other tool calls,
+ * malformed shapes) returns false.
  *
  * Used by the transport to decide whether the response must be delivered
- * as SSE (so the `notifications/tools/list_changed` the handler emits can
- * ride back on the same POST stream) instead of the default JSON mode.
+ * as SSE (so a notification the handler emits can ride back on the same
+ * POST stream) instead of the default JSON mode.
  */
-export function bodyTargetsActivateTool(parsed: unknown): boolean {
+export function bodyTargetsSseNotificationTool(parsed: unknown): boolean {
   const messages = Array.isArray(parsed) ? parsed : [parsed];
   return messages.some((m) => {
     if (typeof m !== "object" || m === null) return false;
@@ -29,7 +36,7 @@ export function bodyTargetsActivateTool(parsed: unknown): boolean {
     const params = msg.params;
     if (typeof params !== "object" || params === null) return false;
     const name = (params as { name?: unknown }).name;
-    return typeof name === "string" && ACTIVATION_TOOLS.has(name);
+    return typeof name === "string" && SSE_NOTIFICATION_TOOLS.has(name);
   });
 }
 

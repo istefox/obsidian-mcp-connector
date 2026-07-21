@@ -112,6 +112,28 @@ export type SemanticSearchState = {
    */
   pendingProvider?: string | null;
   /**
+   * `Date.now()` when `pendingProvider` was last set. Cleared (`null`)
+   * alongside every `pendingProvider = null` write. Used by
+   * `search_vault_smart` (#344) to estimate `retryAfterSeconds` from the
+   * elapsed build time and the files-indexed percent.
+   */
+  pendingProviderStartedAt?: number | null;
+  /**
+   * True while the native provider's lazy first-time index build (or a
+   * post-reopen catch-up rebuild) is in flight — set by
+   * `startIndexerIfNeeded`'s production wiring right before
+   * `indexer.start()`, cleared once that promise settles. Unlike
+   * `pendingProvider` (DLC-only), this covers the native MiniLM
+   * provider's own lazy-build window, which is the scenario #344
+   * actually describes ("the first search_vault_smart on a vault kicks
+   * off lazy indexing"). Deliberately NOT derived from
+   * `filesIndexed/filesTotal` reaching 100% — a vault with any
+   * zero-chunk (e.g. empty) note would never hit 100% by that metric.
+   */
+  nativeIndexBuildInProgress?: boolean;
+  /** `Date.now()` when `nativeIndexBuildInProgress` was last set true. */
+  nativeIndexBuildStartedAt?: number | null;
+  /**
    * providerKey suggested by the auto language-detect heuristic.
    * Non-null when the vault non-ASCII ratio exceeds the threshold and
    * the user has not yet chosen a multilingual provider. The settings
@@ -290,10 +312,12 @@ export async function applySettings(
   if (pendingKey && state.registry && !state.registry.isReady(pendingKey)) {
     // Store not yet built — surface the rebuild banner, keep old provider.
     state.pendingProvider = pendingKey;
+    state.pendingProviderStartedAt = Date.now();
     return;
   }
 
   state.pendingProvider = null;
+  state.pendingProviderStartedAt = null;
   if (state.chooser) {
     state.provider = state.chooser(next);
   }

@@ -18,7 +18,10 @@ import {
 } from "$/features/adaptive-tool-loading";
 import { composeToolRegistry } from "$/composeToolRegistry";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
-import { bodyTargetsActivateTool, readBodyWithCap } from "./parseRequestBody";
+import {
+  bodyTargetsSseNotificationTool,
+  readBodyWithCap,
+} from "./parseRequestBody";
 
 export type McpServiceConfig = {
   app: App;
@@ -146,10 +149,12 @@ export async function createMcpService(
     // Inspect the body before choosing the response mode. The GET SSE
     // stream is blocked (POST-only transport), so a server-initiated
     // notification has nowhere to go — EXCEPT the response stream of the
-    // request that triggers it. activate_tool must therefore answer with
-    // SSE so its tools/list_changed is flushed on this call's stream and
-    // the client re-lists without a reconnect. Every other request keeps
-    // the default JSON response (Windows/mcp-remote path unchanged).
+    // request that triggers it. Tools in SSE_NOTIFICATION_TOOLS must
+    // therefore answer with SSE so a notification their handler emits
+    // (activate_tool's tools/list_changed, search_vault_smart's
+    // notifications/progress while indexing, #344) is flushed on this
+    // call's stream. Every other request keeps the default JSON response
+    // (Windows/mcp-remote path unchanged).
     const rawBody = await readBodyWithCap(req, MAX_REQUEST_BODY_BYTES);
     if (rawBody === null) {
       // Chunked body (no Content-Length) exceeded the cap. Falling through
@@ -163,10 +168,10 @@ export async function createMcpService(
       return;
     }
     let parsedBody: unknown;
-    let isActivateTool = false;
+    let needsSseResponse = false;
     try {
       parsedBody = JSON.parse(rawBody);
-      isActivateTool = bodyTargetsActivateTool(parsedBody);
+      needsSseResponse = bodyTargetsSseNotificationTool(parsedBody);
     } catch {
       // Malformed JSON: leave parsedBody undefined and let the SDK emit
       // the standard -32700 parse error over the JSON response path.
@@ -175,10 +180,10 @@ export async function createMcpService(
 
     // Stateless mode (no sessionIdGenerator). Per-request transport — see
     // file header for the SDK constraint. JSON response by default; SSE
-    // only for activate_tool so its notification can be delivered.
+    // only for SSE_NOTIFICATION_TOOLS so their notification can be delivered.
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
-      enableJsonResponse: !isActivateTool,
+      enableJsonResponse: !needsSseResponse,
     });
 
     try {
