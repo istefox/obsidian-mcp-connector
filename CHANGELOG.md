@@ -3,7 +3,14 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.28.1] — 2026-07-22
+
+### Added
+
+- **`get_vault_file` / `get_vault_file_partial`: size guard, line anchors, and a `lines` mode.** Large files returned as text had no ceiling, so a big note could blow past a client's context budget in one call with no way to fetch it in pieces by position. Text output past a configurable ceiling (`mcpTools.maxTextOutputKB`, default 100 KB, adjustable in Settings → MCP Connector) is now truncated with a `text_truncated` JSON hint pointing at `get_vault_file_partial`, applied to both the plain-text branch and `format=json`'s `content` field (so `get_vault_files`' json branch is capped too). `search_vault_smart` and `search_vault_simple` results now carry a 0-indexed `line` field (`null` under Smart Connections, which doesn't expose a character offset into the source file), and `get_vault_file_partial` gained a `lines` mode for a raw, inclusive `[startLine, endLine]` range, clamping instead of erroring when `endLine` runs past EOF. (#342)
+- **`search_vault_smart`: index-build progress signal and a `retryAfterSeconds` hint.** #349 added a structured `index_building` error, but only for the DLC provider-switch path; the native MiniLM provider's `isReady()` was hardcoded `true`, so the first `search_vault_smart` call kicking off lazy indexing on a fresh vault returned an empty result with no signal that a build was in progress. A real build-in-progress flag now gates the native path too (deliberately not derived from `filesIndexed/filesTotal` reaching 100%, since a vault containing any zero-chunk note would never reach 100% by that metric and every later search would wrongly report "still building" forever). Both the native and DLC `index_building` errors now carry a bounded `retryAfterSeconds` estimate from elapsed build time and files-indexed percent (`null` rather than a fabricated number when there's no rate data yet), and an optional `notifications/progress` SSE push mirrors the existing `activate_tool` mechanism when the client's request carries `_meta.progressToken`. (#344)
+
+## [0.28.0] — 2026-07-20
 
 ### Added
 
