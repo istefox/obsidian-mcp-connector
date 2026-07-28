@@ -17,6 +17,12 @@ The plugin hosts the MCP server in-process inside Obsidian and exposes Streamabl
 - **Native semantic search** runs entirely on-device via Transformers.js. No cloud, no Smart Connections requirement.
 - **Everything runs through Obsidian's own APIs.** Vault reads, writes, plain-text search, and Dataview queries all go through `app.vault`, `app.metadataCache`, and the Dataview plugin API in-process. No external HTTP service is required.
 
+### Protocol compatibility
+
+The connector speaks MCP protocol revision `2025-11-25` and earlier, which is what every current client uses. Nothing you have configured needs to change.
+
+MCP published revision `2026-07-28` on 28 July 2026, moving the protocol to a stateless request/response core. Support for it is in progress and tracked in [#407](https://github.com/istefox/obsidian-mcp-connector/issues/407): the connector already runs on the v2 TypeScript SDK, and adopting the new revision is a separate opt-in. Servers can serve both revisions from one endpoint, so this will not be a flag day.
+
 ## Features
 
 > **Tip:** all 51 tools are active by default. You can cut the per-session token cost with [adaptive tool loading](#adaptive-tool-loading), which keeps a small core active and promotes the rest on demand.
