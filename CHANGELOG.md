@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [0.28.2] — 2026-07-28
+
+### Changed
+
+- **Migrated to the MCP TypeScript SDK v2 packages.** The `@modelcontextprotocol/sdk` monolith (1.29.0) is replaced by the scoped v2 packages `@modelcontextprotocol/server` and `@modelcontextprotocol/node`. The protocol on the wire is unchanged: v2 speaks the 2025 era by default, so every existing client configuration keeps working exactly as before, and adopting the new `2026-07-28` protocol revision stays a separate opt-in tracked in #407. Internally `StreamableHTTPServerTransport` becomes `NodeStreamableHTTPServerTransport`, request handlers register by method string instead of schema constant, and `McpError` / `ErrorCode` become `ProtocolError` / `ProtocolErrorCode`. One user-visible consequence: `ProtocolError` no longer prepends `MCP error -<code>: ` to its message, which removes at the source the cosmetic double-prefix (`MCP error -32602: MCP error -32602: …`) that #74 had to work around — tool error text now reaches the client verbatim. (#407, PR #408)
+
 ## [0.28.1] — 2026-07-22
 
 ### Added
