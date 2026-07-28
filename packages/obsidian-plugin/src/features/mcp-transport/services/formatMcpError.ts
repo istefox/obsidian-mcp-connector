@@ -1,22 +1,22 @@
-import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { type } from "arktype";
 
 export function formatMcpError(error: unknown) {
-  if (error instanceof McpError) {
+  if (error instanceof ProtocolError) {
     return error;
   }
 
   if (error instanceof type.errors) {
     const message = error.summary;
-    return new McpError(ErrorCode.InvalidParams, message);
+    return new ProtocolError(ProtocolErrorCode.InvalidParams, message);
   }
 
   if (type({ message: "string" }).allows(error)) {
-    return new McpError(ErrorCode.InternalError, error.message);
+    return new ProtocolError(ProtocolErrorCode.InternalError, error.message);
   }
 
-  return new McpError(
-    ErrorCode.InternalError,
+  return new ProtocolError(
+    ProtocolErrorCode.InternalError,
     "An unexpected error occurred",
     error,
   );

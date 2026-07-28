@@ -37,7 +37,6 @@
     "tmp": "^0.2.7"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "caniuse-lite": "^1.0.30001797",
     "hono": "^4.12.25"
   },

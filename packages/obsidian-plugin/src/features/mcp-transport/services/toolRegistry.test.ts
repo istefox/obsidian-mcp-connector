@@ -1,6 +1,6 @@
 import { describe, expect, test, spyOn } from "bun:test";
 import { type } from "arktype";
-import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { logger } from "$/shared/logger";
 import { normalizeInputSchema, ToolRegistryClass } from "./toolRegistry";
 
@@ -362,8 +362,8 @@ describe("ToolRegistry — issue #74 (registry-level isError envelope)", () => {
     }).describe("Tool that throws an McpError");
 
     tools.register(schema, () => {
-      throw new McpError(
-        ErrorCode.InvalidParams,
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
         "Refusing to overwrite array with scalar",
       );
     });
@@ -374,8 +374,12 @@ describe("ToolRegistry — issue #74 (registry-level isError envelope)", () => {
     )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
     expect(result.isError).toBe(true);
+    // SDK v2's ProtocolError no longer prefixes `MCP error -<code>: ` onto
+    // `.message` the way v1's McpError did, so the envelope now carries the
+    // handler's text verbatim. Issue #74's intent is unchanged and better
+    // served: no prefix at all cannot double-prefix.
     expect(result.content[0]?.text).toBe(
-      "MCP error -32602: Refusing to overwrite array with scalar",
+      "Refusing to overwrite array with scalar",
     );
     // Crucially: NOT the double-prefixed form (`MCP error -32602: MCP error -32602: ...`).
     expect(result.content[0]?.text).not.toMatch(
@@ -401,8 +405,11 @@ describe("ToolRegistry — issue #74 (registry-level isError envelope)", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Templater rendering exploded");
-    // formatMcpError wraps plain Error as InternalError (-32603)
-    expect(result.content[0]?.text).toMatch(/^MCP error -32603:/);
+    // formatMcpError still wraps a plain Error as InternalError (-32603),
+    // but SDK v2's ProtocolError keeps `.message` free of the
+    // `MCP error -<code>: ` prefix v1 added, so the code is no longer
+    // observable in the envelope text — assert its absence instead.
+    expect(result.content[0]?.text).not.toMatch(/^MCP error -\d+:/);
     // No double-prefix
     expect(result.content[0]?.text).not.toMatch(
       /MCP error -\d+:\s+MCP error -\d+:/,
@@ -456,7 +463,7 @@ describe("ToolRegistry — tool-error log redaction", () => {
     }).describe("Tool that throws so the error path logs");
 
     tools.register(schema, () => {
-      throw new McpError(ErrorCode.InternalError, "boom");
+      throw new ProtocolError(ProtocolErrorCode.InternalError, "boom");
     });
 
     const calls: Array<[unknown, unknown]> = [];

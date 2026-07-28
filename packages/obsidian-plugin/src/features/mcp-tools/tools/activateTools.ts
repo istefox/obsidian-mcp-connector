@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
 import type { PluginDataLike } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";

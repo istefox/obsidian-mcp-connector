@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { PromptRegistryClass } from "./promptRegistry";
 
 describe("PromptRegistryClass", () => {
@@ -32,17 +32,20 @@ describe("PromptRegistryClass", () => {
   test("dispatch() throws McpError(InvalidParams) when no handler is registered", async () => {
     const registry = new PromptRegistryClass();
     await expect(registry.dispatch({ name: "unknown" })).rejects.toMatchObject({
-      code: ErrorCode.InvalidParams,
+      code: ProtocolErrorCode.InvalidParams,
     });
   });
 
   test("dispatch() throws McpError when handler throws McpError", async () => {
     const registry = new PromptRegistryClass();
     registry.setHandler("*", async (_name, _args) => {
-      throw new McpError(ErrorCode.InvalidParams, "Prompt not found: unknown");
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
+        "Prompt not found: unknown",
+      );
     });
     await expect(registry.dispatch({ name: "unknown" })).rejects.toBeInstanceOf(
-      McpError,
+      ProtocolError,
     );
   });
 
