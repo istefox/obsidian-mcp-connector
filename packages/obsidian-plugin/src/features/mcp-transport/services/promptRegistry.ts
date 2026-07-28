@@ -1,4 +1,4 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 
 export type PromptListEntry = {
   name: string;
@@ -36,8 +36,8 @@ export class PromptRegistryClass {
     arguments?: Record<string, string>;
   }): Promise<PromptGetResult> => {
     if (!this.handler) {
-      throw new McpError(
-        ErrorCode.InvalidParams,
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidParams,
         `Prompt not found: ${params.name}`,
       );
     }

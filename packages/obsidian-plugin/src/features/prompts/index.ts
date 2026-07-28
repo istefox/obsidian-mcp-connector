@@ -1,5 +1,5 @@
 import { TFile, type App } from "obsidian";
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { PromptFrontmatterSchema } from "shared";
 import type {
   PromptListEntry,
@@ -38,14 +38,14 @@ export async function setup(
       const path = `Prompts/${name}.md`;
       const abstractFile = app.vault.getAbstractFileByPath(path);
       if (abstractFile === null) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Prompt not found: ${name}`,
         );
       }
       if (!(abstractFile instanceof TFile)) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Prompt not found: ${name}`,
         );
       }
@@ -61,8 +61,8 @@ export async function setup(
           : null;
 
       if (!tagsArray) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Prompt not found: ${name}`,
         );
       }
@@ -70,8 +70,8 @@ export async function setup(
       try {
         PromptFrontmatterSchema.assert({ ...fm, tags: tagsArray });
       } catch {
-        throw new McpError(
-          ErrorCode.InvalidParams,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
           `Prompt not found: ${name}`,
         );
       }

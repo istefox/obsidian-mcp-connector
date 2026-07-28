@@ -1,11 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import {
-  CallToolRequestSchema,
-  GetPromptRequestSchema,
-  ListPromptsRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  McpServer,
+  type CallToolResult,
+  type ListToolsResult,
+} from "@modelcontextprotocol/server";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type App } from "obsidian";
 import type McpToolsPlugin from "$/main";
@@ -22,6 +20,27 @@ import {
   bodyTargetsSseNotificationTool,
   readBodyWithCap,
 } from "./parseRequestBody";
+
+/**
+ * Boundary cast for the two registry handlers wired below.
+ *
+ * SDK v2 types `setRequestHandler` against the generated wire schema, which
+ * describes `inputSchema` and the tool-result union structurally, down to the
+ * JSON primitives allowed inside `properties`. Our registries are typed the
+ * looser way that ArkType produces (`Record<string, unknown>` for schemas, a
+ * plain object for results); the runtime shapes are correct — the wire
+ * contract is enforced by `normalizeInputSchema` and `resultSchema` in
+ * toolRegistry.ts — but the two type descriptions do not unify.
+ *
+ * Restating the wire types across the registry propagates the SDK's shape
+ * into every caller and test that touches a tool result, so the coupling is
+ * kept here, at the one place where our types meet the SDK's. Only the
+ * returned value is cast — `request` and `ctx` keep the SDK's own types, so
+ * a future change to the request shape still fails the build. Both handlers
+ * are covered by toolRegistry's own tests plus the transport smoke tests.
+ */
+const asListToolsResult = (value: unknown) => value as ListToolsResult;
+const asCallToolResult = (value: unknown) => value as CallToolResult;
 
 export type McpServiceConfig = {
   app: App;
@@ -96,53 +115,49 @@ export async function createMcpService(
     // Wire the ArkType-based registry against the underlying SDK
     // Server so tools/list and tools/call go through our boolean
     // coercion + error formatting + adaptive/user disable-state support.
-    server.server.setRequestHandler(ListToolsRequestSchema, registry.list);
-    server.server.setRequestHandler(
-      CallToolRequestSchema,
-      async (request, extra) => {
-        // Read the outcome classification synchronously, in the same tick
-        // as dispatch() will read it (dispatch()'s own branch check runs
-        // synchronously before its first await) — no interleaving is
-        // possible between this check and dispatch()'s internal one. See
-        // ADR-0011.
-        const isAdaptiveInactive = registry.isAdaptiveInactive(
-          request.params.name,
-        );
-        // Pass the SDK's request-scoped sendNotification down to the
-        // handler. activate_tool uses it so its tools/list_changed carries
-        // this call's relatedRequestId and is flushed on the POST response
-        // stream (which is SSE for activate_tool — see below).
-        const result = await registry.dispatch(request.params, {
-          server,
-          sendNotification: extra.sendNotification,
-        });
-        // Record the call for frequency-based promotion (meta-tools and
-        // adaptive-inactive calls are excluded — the latter did not
-        // execute, see ADR-0011).
-        if (
-          !isAdaptiveInactive &&
-          !(META_TOOLS as string[]).includes(request.params.name)
-        ) {
-          toolLoadingManager
-            .recordCall(request.params.name, config.plugin)
-            .catch((error: unknown) => {
-              // Fire-and-forget by design, but a persistent settings
-              // write failure (disk full, corrupted data.json) must
-              // leave a diagnostic trail.
-              logger.warn("[mcp] recordCall failed", {
-                tool: request.params.name,
-                error: error instanceof Error ? error.message : String(error),
-              });
+    server.server.setRequestHandler("tools/list", () =>
+      asListToolsResult(registry.list()),
+    );
+    server.server.setRequestHandler("tools/call", async (request, ctx) => {
+      // Read the outcome classification synchronously, in the same tick
+      // as dispatch() will read it (dispatch()'s own branch check runs
+      // synchronously before its first await) — no interleaving is
+      // possible between this check and dispatch()'s internal one. See
+      // ADR-0011.
+      const isAdaptiveInactive = registry.isAdaptiveInactive(
+        request.params.name,
+      );
+      // Pass the SDK's request-scoped sendNotification down to the
+      // handler. activate_tool uses it so its tools/list_changed carries
+      // this call's relatedRequestId and is flushed on the POST response
+      // stream (which is SSE for activate_tool — see below).
+      const result = await registry.dispatch(request.params, {
+        server,
+        sendNotification: ctx.mcpReq.notify,
+      });
+      // Record the call for frequency-based promotion (meta-tools and
+      // adaptive-inactive calls are excluded — the latter did not
+      // execute, see ADR-0011).
+      if (
+        !isAdaptiveInactive &&
+        !(META_TOOLS as string[]).includes(request.params.name)
+      ) {
+        toolLoadingManager
+          .recordCall(request.params.name, config.plugin)
+          .catch((error: unknown) => {
+            // Fire-and-forget by design, but a persistent settings
+            // write failure (disk full, corrupted data.json) must
+            // leave a diagnostic trail.
+            logger.warn("[mcp] recordCall failed", {
+              tool: request.params.name,
+              error: error instanceof Error ? error.message : String(error),
             });
-        }
-        return result;
-      },
-    );
-    server.server.setRequestHandler(
-      ListPromptsRequestSchema,
-      promptRegistry.list,
-    );
-    server.server.setRequestHandler(GetPromptRequestSchema, (req) =>
+          });
+      }
+      return asCallToolResult(result);
+    });
+    server.server.setRequestHandler("prompts/list", promptRegistry.list);
+    server.server.setRequestHandler("prompts/get", (req) =>
       promptRegistry.dispatch(req.params),
     );
 
@@ -181,7 +196,7 @@ export async function createMcpService(
     // Stateless mode (no sessionIdGenerator). Per-request transport — see
     // file header for the SDK constraint. JSON response by default; SSE
     // only for SSE_NOTIFICATION_TOOLS so their notification can be delivered.
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: !needsSseResponse,
     });

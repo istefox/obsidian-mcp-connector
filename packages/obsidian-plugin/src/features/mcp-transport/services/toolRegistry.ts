@@ -1,10 +1,9 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  ErrorCode,
-  McpError,
-  type Result,
-  type ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import type {
+  McpServer,
+  Result,
+  ToolAnnotations,
+} from "@modelcontextprotocol/server";
 import { type, type Type } from "arktype";
 import { formatMcpError } from "./formatMcpError";
 import { logger } from "$/shared";
@@ -499,8 +498,8 @@ export class ToolRegistryClass<
         };
       }
       // (c) unregistered OR user-disabled (or both flags set) — unchanged.
-      throw new McpError(
-        ErrorCode.InvalidRequest,
+      throw new ProtocolError(
+        ProtocolErrorCode.InvalidRequest,
         `Unknown tool: ${params.name}`,
       );
     } catch (error) {

@@ -21,7 +21,8 @@
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",
-		"@modelcontextprotocol/sdk": "1.29.0",
+		"@modelcontextprotocol/node": "2.0.0",
+		"@modelcontextprotocol/server": "2.0.0",
 		"fflate": "^0.8.2",
 		"onnxruntime-web": "1.26.0",
 		"arktype": "^2.0.0-rc.30",
