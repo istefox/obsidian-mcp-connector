@@ -58,3 +58,23 @@ export function resolveToolScope(
 
   return { id: tokenId, active, allowed };
 }
+
+/**
+ * Whether the token's allowlist ceiling permits `name` at all — as
+ * opposed to it merely being inactive right now. The distinction is the
+ * whole point of the ceiling: an inactive tool is one `activate_tool`
+ * call away, a tool outside `allowed` can never be reached, so the
+ * meta-tools must refuse it instead of inviting a retry loop
+ * (ADR-0014 §9).
+ *
+ * Meta-tools bypass it here for the same reason `resolveToolScope` keeps
+ * them in `active`: a token that cannot call `activate_tool` can never
+ * widen its own surface.
+ */
+export function isAllowedInScope(scope: ToolScope, name: string): boolean {
+  return (
+    scope.allowed === null ||
+    scope.allowed.has(name) ||
+    ALWAYS_ACTIVE_TOOLS.includes(name)
+  );
+}

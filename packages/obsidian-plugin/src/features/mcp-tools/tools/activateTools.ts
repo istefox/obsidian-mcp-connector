@@ -2,7 +2,8 @@ import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
-import type { PluginDataLike } from "$/shared/types";
+import { isAllowedInScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import type { PluginDataLike, ToolScope } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const activateToolsSchema = type({
@@ -28,6 +29,8 @@ export async function activateToolsHandler({
   server,
   onActivated,
   enableInRegistry,
+  promoteInSession,
+  scope,
   sendNotification,
 }: {
   arguments: { names: string[]; persist?: boolean };
@@ -36,6 +39,10 @@ export async function activateToolsHandler({
   server: McpServer;
   onActivated?: (toolName: string) => void;
   enableInRegistry?: (name: string) => boolean;
+  /** Per-token session promotion; see activateTool.ts. */
+  promoteInSession?: (tokenId: string, name: string) => void;
+  /** The calling client's resolved surface; absent = global behaviour. */
+  scope?: ToolScope;
   sendNotification?: (notification: {
     method: string;
     params?: Record<string, unknown>;
@@ -54,24 +61,40 @@ export async function activateToolsHandler({
 
   for (const name of requested) {
     const entry = byName.get(name);
+    // Same precedence as activate_tool: the user's kill switch, then the
+    // token's allowlist ceiling (neither is activatable), then whether
+    // this caller already has it.
     if (!entry) {
       outcomes[name] = "not_found";
     } else if (entry.userDisabled) {
       outcomes[name] = "not_allowed";
-    } else if (entry.enabled) {
+    } else if (scope && !isAllowedInScope(scope, name)) {
+      outcomes[name] = "not_allowed";
+    } else if (entry.enabled && (!scope || scope.active.has(name))) {
       outcomes[name] = "already_active";
     } else {
       outcomes[name] = "activated";
       activated.push(name);
       onActivated?.(name);
-      enableInRegistry?.(name);
+      if (scope) {
+        promoteInSession?.(scope.id, name);
+      } else {
+        enableInRegistry?.(name);
+      }
     }
   }
 
-  // Persist only the newly-activated tools, in a single write.
+  // Persist only the newly-activated tools, in a single write — into the
+  // calling token's policy when there is one, so a batch from one client
+  // never widens another's stored surface.
   if (args.persist === true && activated.length > 0) {
     const allNames = allEntries.map((e) => e.name);
-    await new ToolLoadingManager().activateTools(activated, allNames, plugin);
+    await new ToolLoadingManager().activateTools(
+      activated,
+      allNames,
+      plugin,
+      scope?.id,
+    );
   }
 
   // One notification for the whole batch — the whole point of this tool.

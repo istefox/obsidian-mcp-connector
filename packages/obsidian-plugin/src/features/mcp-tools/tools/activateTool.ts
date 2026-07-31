@@ -2,7 +2,8 @@ import { type } from "arktype";
 import { errorText, successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
-import type { PluginDataLike } from "$/shared/types";
+import { isAllowedInScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import type { PluginDataLike, ToolScope } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
 export const activateToolSchema = type({
@@ -24,6 +25,8 @@ export async function activateToolHandler({
   server,
   onActivated,
   enableInRegistry,
+  promoteInSession,
+  scope,
   sendNotification,
 }: {
   arguments: { name: string; persist?: boolean };
@@ -32,6 +35,19 @@ export async function activateToolHandler({
   server: McpServer;
   onActivated?: (toolName: string) => void;
   enableInRegistry?: (name: string) => boolean;
+  /**
+   * Session promotion for ONE token (ADR-0014 §5), used instead of
+   * `enableInRegistry` whenever the call carries a scope: the registry's
+   * adaptive flag is global, so clearing it would hand every other
+   * client the same tool.
+   */
+  promoteInSession?: (tokenId: string, name: string) => void;
+  /**
+   * The calling client's resolved surface. Absent means "no per-client
+   * policy" — the settings-UI and unit-test path, which keeps the exact
+   * 0.28.2 behaviour.
+   */
+  scope?: ToolScope;
   /**
    * Request-scoped notification sender (from the SDK handler's `extra`).
    * When present it tags the notification with the current request's
@@ -61,22 +77,41 @@ export async function activateToolHandler({
     );
   }
 
-  if (found.enabled) {
+  // The token's allowlist is a ceiling activation cannot lift, so this
+  // outranks the "activate it" branch below and reuses the `not_allowed`
+  // shape ADR-0010 introduced for user-disabled tools — with wording that
+  // points at the vault owner rather than inviting a retry.
+  if (scope && !isAllowedInScope(scope, args.name)) {
+    return errorText(
+      `Tool '${args.name}' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.`,
+    );
+  }
+
+  // "Already active" is per caller: a tool served globally can still be
+  // outside this token's set, and saying "already active" for it would
+  // strand the client on a tool it cannot call (the two conditions are
+  // the same conjunction the registry's dispatch branch (a) applies).
+  if (found.enabled && (!scope || scope.active.has(args.name))) {
     return successText("Tool is already active in the current session.");
   }
 
   onActivated?.(args.name);
 
-  // The registry lives for the whole plugin session, so flipping the tool
-  // on here makes it available immediately on either path. `persist` only
-  // controls whether the promotion is ALSO written to data.json so it
-  // survives plugin reloads.
-  enableInRegistry?.(args.name);
+  // Available immediately on either path; `persist` only controls whether
+  // the promotion is ALSO written to data.json so it survives plugin
+  // reloads. Where it lands differs: a scoped call promotes for its own
+  // token only, an unscoped one keeps clearing the registry's global
+  // adaptive flag.
+  if (scope) {
+    promoteInSession?.(scope.id, args.name);
+  } else {
+    enableInRegistry?.(args.name);
+  }
 
   if (args.persist === true) {
     const allNames = allEntries.map((e) => e.name);
     const mgr = new ToolLoadingManager();
-    await mgr.activateTool(args.name, allNames, plugin);
+    await mgr.activateTool(args.name, allNames, plugin, scope?.id);
   }
 
   try {
