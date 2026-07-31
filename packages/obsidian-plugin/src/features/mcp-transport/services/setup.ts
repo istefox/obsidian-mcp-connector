@@ -13,7 +13,7 @@ import {
   type McpService,
 } from "./mcpServer";
 import { resolvePorts } from "./port";
-import { ensureTokenStore } from "./tokenStore";
+import { ensureTokenStore, readTokens } from "./tokenStore";
 
 export type McpTransportState = {
   server: RunningServer;
@@ -86,7 +86,12 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
     let server: RunningServer;
     try {
       server = await startHttpServer({
-        bearerToken,
+        // Re-read on every request rather than closing over `tokens`: a
+        // captured list would keep a revoked token working until the next
+        // Obsidian restart, and it is what lets the settings UI add,
+        // rotate and revoke tokens without restarting the transport
+        // (ADR-0014 §2).
+        resolveTokens: () => readTokens(plugin),
         requestHandler: mcp.handleRequest,
         ports,
       });

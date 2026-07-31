@@ -7,6 +7,7 @@ import type {
 import { type, type Type } from "arktype";
 import { formatMcpError } from "./formatMcpError";
 import { logger } from "$/shared";
+import type { ToolScope } from "$/shared/types";
 
 interface HandlerContext {
   server: McpServer;
@@ -21,7 +22,25 @@ interface HandlerContext {
     method: string;
     params?: Record<string, unknown>;
   }) => Promise<void>;
+  /**
+   * The calling client's already-resolved tool surface (ADR-0014 §3).
+   * Optional: absent means "no per-client filtering", i.e. the global
+   * surface every caller saw before per-token profiles existed. The
+   * registry reads it for its own dispatch gate and forwards the whole
+   * context to handlers, which is how the meta-tools reach their caller's
+   * policy without a second plumbing path.
+   */
+  scope?: ToolScope;
 }
+
+/** One `tools/list` entry, as served on the wire. */
+type ToolListEntry = {
+  name: string;
+  description: string | undefined;
+  inputSchema: Record<string, unknown>;
+  annotations?: ToolAnnotations;
+  outputSchema?: Record<string, unknown>;
+};
 
 /**
  * Ensure an MCP tool's `inputSchema` always carries an explicit
@@ -191,21 +210,28 @@ export class ToolRegistryClass<
     !this.adaptiveDisabled.has(schema) && !this.userDisabled.has(schema);
 
   /**
-   * Memoized `list()` result. ArkType `toJsonSchema()` + the
-   * normalization walk are pure functions of the two disable-state
-   * Sets, which only change via `setFlag()` (routed through by every
-   * mutator below) — recomputing them on every `tools/list` request
-   * (one per client session in stateless transport) is wasted work.
+   * Every registered tool's wire entry, tagged with its schema. This is
+   * the expensive half of listing — ArkType `toJsonSchema()`, the
+   * normalization walk, annotations and output schemas — and it depends
+   * only on what is REGISTERED: not on the disable flags, and not on who
+   * is asking. Invalidated by `register`/`setAnnotations`/
+   * `setOutputSchemas` and by nothing else, so a per-client `tools/list`
+   * costs an array filter rather than a schema re-derivation
+   * (ADR-0014 §3).
    */
-  private listCache: {
-    tools: {
-      name: string;
-      description: string | undefined;
-      inputSchema: Record<string, unknown>;
-      annotations?: ToolAnnotations;
-      outputSchema?: Record<string, unknown>;
-    }[];
-  } | null = null;
+  private entriesCache: { schema: TSchema; entry: ToolListEntry }[] | null =
+    null;
+
+  /**
+   * Memoized result of the UNSCOPED `list()`. Filtering the entries is
+   * cheap, but returning the same object until the disable state actually
+   * changes is a contract callers rely on, so the global view keeps its
+   * own memo, invalidated by `setFlag()` (routed through by every mutator
+   * below) on top of the registration-level invalidation above. A scoped
+   * call is deliberately not memoized: the scope is per request, so a memo
+   * keyed on it would be a cache keyed on the caller.
+   */
+  private listCache: { tools: ToolListEntry[] } | null = null;
 
   /** MCP tool annotations, keyed by public tool name (set via setAnnotations). */
   private annotationsByName = new Map<string, ToolAnnotations>();
@@ -241,7 +267,7 @@ export class ToolRegistryClass<
     for (const [name, annotations] of Object.entries(byName)) {
       this.annotationsByName.set(name, annotations);
     }
-    this.listCache = null;
+    this.invalidateEntries();
     return this;
   };
 
@@ -263,7 +289,7 @@ export class ToolRegistryClass<
     for (const [name, outputSchema] of Object.entries(byName)) {
       this.outputSchemasByName.set(name, outputSchema);
     }
-    this.listCache = null;
+    this.invalidateEntries();
     return this;
   };
 
@@ -283,10 +309,20 @@ export class ToolRegistryClass<
     // default), so no explicit "add to enabled" step is needed — but
     // the memoized list() must still be invalidated explicitly since
     // that no longer happens as a side effect of an enable() call.
-    this.listCache = null;
+    this.invalidateEntries();
     this.handlers.set(schema, handler as unknown as THandler);
     return this;
   }
+
+  /**
+   * Drop the derived entries and, with them, the filtered view built on
+   * top: a changed registration invalidates both layers, while a changed
+   * disable flag (setFlag below) invalidates only the filtered one.
+   */
+  private invalidateEntries = () => {
+    this.entriesCache = null;
+    this.listCache = null;
+  };
 
   /**
    * Mutate one of the two disable-state Sets and invalidate the
@@ -362,41 +398,89 @@ export class ToolRegistryClass<
   };
 
   /**
-   * True iff `name` resolves to a registered tool that dispatch() would
-   * answer with the recoverable "exists but is inactive" error (branch b)
-   * rather than executing it or returning the opaque Unknown-tool error.
-   * Exposed so callers outside the registry — specifically mcpServer.ts's
-   * call-frequency counter — can make the same outcome distinction without
-   * re-deriving it from listAll(), and without dispatch() leaking the
-   * distinction onto the wire. See ADR-0011.
+   * True iff `name` resolves to a registered tool that would NOT execute
+   * for this caller and would be refused recoverably — dispatch()'s
+   * branch b1 (outside the token's allowlist) or b2 (adaptive-inactive,
+   * or outside the token's active set) — rather than run or return the
+   * opaque Unknown-tool error. Exposed so callers outside the registry —
+   * specifically mcpServer.ts's call-frequency counter — can make the same
+   * outcome distinction without re-deriving it from listAll(), and without
+   * dispatch() leaking the distinction onto the wire (ADR-0011).
+   *
+   * With no `scope` the answer is exactly the pre-ADR-0014 one: the
+   * adaptive flag alone, with `userDisabled` winning over it.
+   *
+   * The allowlist is read here as a hard ceiling regardless of the active
+   * set, which is marginally stricter than dispatch()'s branch (a): the
+   * only names that can be in `active` while outside `allowed` are the
+   * meta-tools the resolver adds unconditionally (ADR-0014 §4), and the
+   * one caller of this predicate excludes those by name anyway.
    */
-  isAdaptiveInactive = (name: string): boolean => {
+  isInactive = (name: string, scope?: ToolScope): boolean => {
     const schema = this.byName.get(name);
+    if (!schema || this.userDisabled.has(schema)) return false;
+    if (this.adaptiveDisabled.has(schema)) return true;
+    if (!scope) return false;
     return (
-      !!schema &&
-      this.adaptiveDisabled.has(schema) &&
-      !this.userDisabled.has(schema)
+      !scope.active.has(name) ||
+      (scope.allowed !== null && !scope.allowed.has(name))
     );
   };
 
-  list = () => {
+  /**
+   * Legacy name for the unscoped form, kept so the ADR-0011-era callers
+   * and their tests keep reading the same predicate they were written
+   * against. New code calls `isInactive`.
+   */
+  isAdaptiveInactive = (name: string): boolean => this.isInactive(name);
+
+  /**
+   * Derive (once) the wire entry for every registered tool. Disable state
+   * is NOT applied here — the filters in `list()` own that, so this memo
+   * survives every flag change.
+   */
+  private entries = (): { schema: TSchema; entry: ToolListEntry }[] =>
+    (this.entriesCache ??= Array.from(this.handlers.keys()).map((schema) => {
+      const name = this.toolNameOf(schema);
+      const annotations = this.annotationsByName.get(name);
+      const outputSchema = this.outputSchemasByName.get(name);
+      return {
+        schema,
+        entry: {
+          name,
+          description: schema.description,
+          inputSchema: normalizeInputSchema(
+            schema.get("arguments").toJsonSchema(),
+          ),
+          ...(annotations ? { annotations } : {}),
+          ...(outputSchema ? { outputSchema } : {}),
+        },
+      };
+    }));
+
+  /**
+   * The tools servable to this caller. Without a `scope` this is the
+   * global surface, unchanged from before per-token profiles existed.
+   * With one, it is the intersection with `scope.active` — and the
+   * disable filter still runs first, so a user-disabled tool is
+   * structurally invisible to every scope (R-08) without the scope layer
+   * having to remember to exclude it.
+   */
+  list = (scope?: ToolScope): { tools: ToolListEntry[] } => {
+    if (scope) {
+      return {
+        tools: this.entries()
+          .filter(
+            ({ schema, entry }) =>
+              this.isServed(schema) && scope.active.has(entry.name),
+          )
+          .map(({ entry }) => entry),
+      };
+    }
     this.listCache ??= {
-      tools: Array.from(this.handlers.keys())
-        .filter((schema) => this.isServed(schema))
-        .map((schema) => {
-          const name = this.toolNameOf(schema);
-          const annotations = this.annotationsByName.get(name);
-          const outputSchema = this.outputSchemasByName.get(name);
-          return {
-            name,
-            description: schema.description,
-            inputSchema: normalizeInputSchema(
-              schema.get("arguments").toJsonSchema(),
-            ),
-            ...(annotations ? { annotations } : {}),
-            ...(outputSchema ? { outputSchema } : {}),
-          };
-        }),
+      tools: this.entries()
+        .filter(({ schema }) => this.isServed(schema))
+        .map(({ entry }) => entry),
     };
     return this.listCache;
   };
@@ -470,22 +554,60 @@ export class ToolRegistryClass<
       // clients could invoke tools the user explicitly turned off.
       const schema = this.byName.get(params.name);
       const handler = schema ? this.handlers.get(schema) : undefined;
-      if (schema && handler && this.isServed(schema)) {
+      const scope = context.scope;
+      // (a) served globally AND inside the caller's set — dispatch.
+      if (
+        schema &&
+        handler &&
+        this.isServed(schema) &&
+        (!scope || scope.active.has(params.name))
+      ) {
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),
         );
         // return await to handle runtime errors here
         return await handler(validParams, context);
       }
-      // (b) registered, adaptive-inactive, NOT user-disabled — recoverable.
-      // Returned directly (not thrown), so it bypasses the catch block's
-      // McpError/formatMcpError wrapping and the diagnostic error log: this
-      // is an expected, benign race outcome under normal adaptive-loading
-      // usage, not an operator-actionable failure. See ADR-0011.
+      // Both refusals below are RETURNED, not thrown, so they bypass the
+      // catch block's McpError/formatMcpError wrapping and the diagnostic
+      // error log: neither is an operator-actionable failure, and neither
+      // counts as a call of the target tool. See ADR-0011.
+      //
+      // (b1) registered, NOT user-disabled, forbidden by the caller's
+      // allowlist. Strictly before b2 (ADR-0014 §9): b2 tells the client
+      // to run activate_tools and retry, which for an allowlisted-out tool
+      // is a dead-end loop — the activation is refused too. The allowlist
+      // is the vault owner's ceiling, so the message points at them
+      // instead. A name the resolver put in `active` despite the ceiling
+      // is a meta-tool (ADR-0014 §4) and is exempt; reading that off
+      // `active` keeps the registry from having to know which names are
+      // meta-tools.
       if (
         schema &&
-        this.adaptiveDisabled.has(schema) &&
-        !this.userDisabled.has(schema)
+        !this.userDisabled.has(schema) &&
+        scope?.allowed &&
+        !scope.allowed.has(params.name) &&
+        !scope.active.has(params.name)
+      ) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Tool '${params.name}' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+      // (b2) registered, NOT user-disabled, but not currently active —
+      // globally (the adaptive flag) or just for this caller. Recoverable:
+      // activate_tools widens the caller's own surface and the retry lands
+      // on branch (a).
+      if (
+        schema &&
+        !this.userDisabled.has(schema) &&
+        (this.adaptiveDisabled.has(schema) ||
+          (scope !== undefined && !scope.active.has(params.name)))
       ) {
         return {
           content: [

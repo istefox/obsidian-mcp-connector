@@ -6,16 +6,27 @@ import {
 } from "node:http";
 import { logger } from "$/shared";
 import { runMiddleware } from "./middleware";
+import type { TokenRecord } from "./tokenStore";
 import { bindWithFallback } from "./port";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES, PORT_RANGE } from "../constants";
 
 export type RequestHandler = (
   req: IncomingMessage,
   res: ServerResponse,
+  /** Id of the bearer token this request authenticated with. */
+  tokenId: string,
 ) => Promise<void>;
 
 export type HttpServerConfig = {
-  bearerToken: string;
+  /**
+   * The configured bearer tokens, resolved once per request. There is
+   * deliberately no in-memory cache: a token added, regenerated or
+   * revoked in settings takes effect on the next request with nothing to
+   * invalidate, and a missed invalidation here would be an authentication
+   * bug (a revoked token that keeps working). See ADR-0014 §2 and
+   * Alternative C.
+   */
+  resolveTokens: () => Promise<readonly TokenRecord[]>;
   requestHandler: RequestHandler;
   /** Ports to try, in order. Defaults to PORT_RANGE. */
   ports?: readonly number[];
@@ -41,48 +52,69 @@ export type RunningServer = {
  * Node uncaughtException handler (wired in Task 12's logger setup) can see
  * them.
  *
- * @param config - Bearer token and the request handler to call on valid requests.
+ * @param config - Token provider and the request handler to call on valid requests.
  * @returns A RunningServer with the bound server instance and its port.
  */
 export async function startHttpServer(
   config: HttpServerConfig,
 ): Promise<RunningServer> {
   const server = createServer((req, res) => {
-    const check = runMiddleware(
-      { method: req.method, url: req.url, headers: req.headers },
-      config.bearerToken,
-    );
-
-    if (!check.ok) {
-      // Middleware rejected the request — return the status and close.
-      // No body needed: these are machine-to-machine errors.
-      res.writeHead(check.status);
-      res.end();
-      return;
-    }
-
-    // Reject an oversize body up front via the declared Content-Length so
-    // the SDK never buffers a huge payload (DoS/OOM in the renderer). We
-    // do NOT also attach a streamed req.on('data') byte counter: the SDK
-    // consumes this same stream later (hono's Readable.toWeb(req)), and a
-    // 'data' listener here would flip the stream to flowing mode and steal
-    // bytes from it, breaking every valid request. Content-Length is a
-    // partial but safe mitigation; a chunked request with no length still
-    // reaches the SDK's own parser.
-    const declaredLength = Number(req.headers["content-length"]);
-    if (
-      Number.isFinite(declaredLength) &&
-      declaredLength > MAX_REQUEST_BODY_BYTES
-    ) {
-      res.writeHead(ERROR_CODES.PAYLOAD_TOO_LARGE);
-      res.end();
-      req.destroy();
-      return;
-    }
-
+    // The callback body is async because the token list is read per
+    // request. The await sits between the socket being accepted and the
+    // body being touched, which is safe: no 'data' listener is attached
+    // yet, so the IncomingMessage stays paused and no bytes are lost. The
+    // cost is that a slow loadData() delays every request (ADR-0014,
+    // Consequences).
+    //
     // void prefix: fire-and-forget is intentional. Errors are caught
     // below and logged without rethrowing.
-    void config.requestHandler(req, res).catch((err) => {
+    void (async () => {
+      let tokens: readonly TokenRecord[] = [];
+      try {
+        tokens = await config.resolveTokens();
+      } catch (error) {
+        // Fail closed. A transient read failure must 401 rather than
+        // authenticate anyone, and it must leave a trail: from the
+        // client's side this is indistinguishable from a revoked token.
+        logger.error("[mcp-transport] reading the token list failed", {
+          error,
+        });
+      }
+
+      const check = runMiddleware(
+        { method: req.method, url: req.url, headers: req.headers },
+        tokens,
+      );
+
+      if (!check.ok) {
+        // Middleware rejected the request — return the status and close.
+        // No body needed: these are machine-to-machine errors.
+        res.writeHead(check.status);
+        res.end();
+        return;
+      }
+
+      // Reject an oversize body up front via the declared Content-Length so
+      // the SDK never buffers a huge payload (DoS/OOM in the renderer). We
+      // do NOT also attach a streamed req.on('data') byte counter: the SDK
+      // consumes this same stream later (hono's Readable.toWeb(req)), and a
+      // 'data' listener here would flip the stream to flowing mode and steal
+      // bytes from it, breaking every valid request. Content-Length is a
+      // partial but safe mitigation; a chunked request with no length still
+      // reaches the SDK's own parser.
+      const declaredLength = Number(req.headers["content-length"]);
+      if (
+        Number.isFinite(declaredLength) &&
+        declaredLength > MAX_REQUEST_BODY_BYTES
+      ) {
+        res.writeHead(ERROR_CODES.PAYLOAD_TOO_LARGE);
+        res.end();
+        req.destroy();
+        return;
+      }
+
+      await config.requestHandler(req, res, check.tokenId);
+    })().catch((err: unknown) => {
       if (!res.headersSent) res.writeHead(500);
       res.end();
       // Intentionally NOT rethrowing: inside a .catch() of a void-prefixed

@@ -124,9 +124,7 @@ export async function createMcpService(
       // synchronously before its first await) — no interleaving is
       // possible between this check and dispatch()'s internal one. See
       // ADR-0011.
-      const isAdaptiveInactive = registry.isAdaptiveInactive(
-        request.params.name,
-      );
+      const isInactive = registry.isInactive(request.params.name);
       // Pass the SDK's request-scoped sendNotification down to the
       // handler. activate_tool uses it so its tools/list_changed carries
       // this call's relatedRequestId and is flushed on the POST response
@@ -139,7 +137,7 @@ export async function createMcpService(
       // adaptive-inactive calls are excluded — the latter did not
       // execute, see ADR-0011).
       if (
-        !isAdaptiveInactive &&
+        !isInactive &&
         !(META_TOOLS as string[]).includes(request.params.name)
       ) {
         toolLoadingManager
