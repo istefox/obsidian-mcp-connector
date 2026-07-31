@@ -359,7 +359,10 @@ describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17
     // needs its own module instance built against a mocked source that
     // never gets it).
     mock.module("../assets/connectorShimSource", () => ({
-      CONNECTOR_SHIM_SOURCE,
+      CONNECTOR_SHIM_SOURCE: CONNECTOR_SHIM_SOURCE.replace(
+        '"__OBSIDIAN_MCP_TOKEN_ID__"',
+        "null",
+      ),
     }));
     // The "?…" suffix busts Bun's module cache so this import re-evaluates
     // mcpbGenerator against the mock above instead of returning the
