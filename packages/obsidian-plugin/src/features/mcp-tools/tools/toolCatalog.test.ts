@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { toolCatalogHandler } from "./toolCatalog";
+import type { ToolScope } from "$/shared/types";
 
 function makeRegistry(
   entries: {
@@ -102,6 +103,88 @@ describe("toolCatalogHandler", () => {
     expect(entry?.call_count).toBe(3);
     expect(entry?.description).toBe(
       "Finds broken internal links across the vault.",
+    );
+  });
+});
+
+type ScopedCatalogEntry = CatalogEntry & { status: string };
+
+function parseScoped(result: {
+  content: Array<{ text: string }>;
+}): ScopedCatalogEntry[] {
+  return JSON.parse(result.content[0].text) as ScopedCatalogEntry[];
+}
+
+/** Raw plugin data carrying a per-token `profiles` entry, as
+ * `tokenPolicyStore.ts` stores it (ADR-0014 §1). */
+function makeScopedPlugin(data: {
+  counters?: Record<string, number>;
+  profiles?: Record<string, { promoted?: string[] }>;
+}): Parameters<typeof toolCatalogHandler>[0]["plugin"] {
+  return {
+    loadData: async () => ({
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: data.counters ?? {},
+        profiles: data.profiles ?? {},
+      },
+    }),
+  };
+}
+
+const SCOPED_ENTRIES = [
+  { name: "search_vault", enabled: true },
+  { name: "find_broken_links", enabled: false },
+  { name: "rename_vault_file", enabled: false },
+  { name: "delete_vault_file", enabled: false, userDisabled: true },
+];
+
+describe("toolCatalogHandler — per-token scope (ADR-0014, Task 6)", () => {
+  test("reports active/inactive/promoted from the calling scope, and unavailable for an allowlist-excluded tool; call_count stays global (R-09)", async () => {
+    const plugin = makeScopedPlugin({
+      counters: { search_vault: 5, find_broken_links: 2 },
+      profiles: { claude: { promoted: ["find_broken_links"] } },
+    });
+    const scope: ToolScope = {
+      id: "claude",
+      active: new Set(["search_vault", "find_broken_links", "tool_catalog"]),
+      allowed: new Set(["search_vault"]),
+    };
+
+    const result = await toolCatalogHandler({
+      registry: makeRegistry(SCOPED_ENTRIES),
+      plugin,
+      scope,
+    });
+    const catalog = parseScoped(result);
+    const byName = Object.fromEntries(catalog.map((e) => [e.name, e]));
+
+    // omitted regardless of scope — the ADR-0010 kill switch outranks
+    // every per-token policy.
+    expect(byName.delete_vault_file).toBeUndefined();
+
+    expect(byName.search_vault.status).toBe("active");
+    expect(byName.search_vault.call_count).toBe(5);
+
+    expect(byName.find_broken_links.status).toBe("promoted");
+    expect(byName.find_broken_links.call_count).toBe(2);
+
+    // Not in `active` AND outside `allowed` — the ceiling, not "inactive".
+    expect(byName.rename_vault_file.status).toBe("unavailable");
+  });
+
+  test("no scope passed ⇒ current global behaviour (unit-test ergonomics; the settings UI path)", async () => {
+    // Deliberately omits `scope`: the pre-Task-6 assertions in the
+    // `toolCatalogHandler` describe block above already lock this in.
+    const plugin = makePlugin({ promoted: ["search_vault"] });
+    const result = await toolCatalogHandler({
+      registry: makeRegistry(ENTRIES),
+      plugin,
+    });
+    const catalog = parse(result);
+    expect(catalog.find((e) => e.name === "search_vault")?.status).toBe(
+      "promoted",
     );
   });
 });

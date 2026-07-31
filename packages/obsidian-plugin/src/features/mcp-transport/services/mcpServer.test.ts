@@ -671,6 +671,155 @@ describe("createMcpService — multi-token resolveTokens call-sites (issue #348,
   });
 });
 
+describe("Task 5 — per-token scope threading (ADR-0014 §3)", () => {
+  const TOKEN_ALL = {
+    id: "tok-all",
+    label: "All",
+    token: "a".repeat(32),
+    createdAt: 1,
+  };
+  const TOKEN_CORE = {
+    id: "tok-core",
+    label: "Core",
+    token: "c".repeat(32),
+    createdAt: 2,
+  };
+
+  /** Plugin pre-seeded with two tokens, `all` and `core`, and their policies. */
+  function makeScopedPlugin() {
+    let store: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: TOKEN_ALL.token,
+        tokens: [TOKEN_ALL, TOKEN_CORE],
+      },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          [TOKEN_ALL.id]: { profile: "all", promoted: [], allowed: null },
+          [TOKEN_CORE.id]: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    };
+    return mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+  }
+
+  test("two tokens (all vs core) on one server return different tools/list sets, each containing the three meta-tools (R-01, R-03)", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeScopedPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      resolveTokens: async () => [TOKEN_ALL, TOKEN_CORE],
+      requestHandler: svc.handleRequest,
+    });
+
+    const listFor = async (token: string): Promise<string[]> => {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      return ((body?.result?.tools ?? []) as Array<{ name: string }>).map(
+        (t) => t.name,
+      );
+    };
+
+    try {
+      const allNames = await listFor(TOKEN_ALL.token);
+      const coreNames = await listFor(TOKEN_CORE.token);
+
+      const metaTools = ["tool_catalog", "activate_tool", "activate_tools"];
+      for (const m of metaTools) {
+        expect(allNames).toContain(m);
+        expect(coreNames).toContain(m);
+      }
+
+      // The two tokens' sets genuinely differ, and the core token's is the
+      // narrower one, restricted to CORE_SET (+ meta-tools).
+      expect(coreNames.length).toBeLessThan(allNames.length);
+      expect(coreNames).toContain("get_active_file"); // CORE_SET member
+      expect(coreNames).not.toContain("find_broken_links"); // not core, not promoted
+      expect(allNames).toContain("find_broken_links");
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("tools/call for a tool outside the calling token's active set returns the recoverable error and does not increment its counter (R-04, ADR-0011 gate preserved)", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeScopedPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      resolveTokens: async () => [TOKEN_CORE],
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TOKEN_CORE.token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          // find_broken_links is outside the `core` profile's active set
+          // (not in CORE_SET, not promoted) — a genuinely different
+          // caller than the recordCall-gating describe block above, which
+          // uses the global adaptive flag rather than a token scope.
+          params: { name: "find_broken_links", arguments: {} },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const text = body?.result?.content?.[0]?.text as string;
+      expect(body?.result?.isError).toBe(true);
+      expect(text).toContain("find_broken_links");
+      expect(text.toLowerCase()).not.toContain("unknown tool");
+
+      await svc.flushPendingCalls();
+      const state = await new ToolLoadingManager().loadState(plugin);
+      expect(state.counters.find_broken_links).toBeUndefined();
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+});
+
 describe("resolveServerName", () => {
   test('falls back to "Obsidian - <vault name>" when unset, empty, or whitespace-only', () => {
     const app = mockApp();

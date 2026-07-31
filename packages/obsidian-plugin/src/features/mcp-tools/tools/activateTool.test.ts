@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { activateToolHandler } from "./activateTool";
+import type { ToolScope } from "$/shared/types";
+import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
+import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import type { TokenPolicy } from "$/features/adaptive-tool-loading/tokenPolicyStore";
 
 function makeRegistry(
   entries: { name: string; enabled: boolean; userDisabled?: boolean }[],
@@ -226,5 +230,185 @@ describe("activateToolHandler", () => {
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain("Tool activated");
+  });
+});
+
+/** Plugin pre-seeded with two live tokens, so the mirror (`tokens[0]`,
+ * id "default") is distinguishable from a non-first token ("claude"). */
+function makeTokenedPlugin() {
+  let store: Record<string, unknown> = {
+    mcpTransport: {
+      bearerToken: "d".repeat(32),
+      tokens: [
+        {
+          id: "default",
+          label: "Default",
+          token: "d".repeat(32),
+          createdAt: 1,
+        },
+        {
+          id: "claude",
+          label: "claude.ai",
+          token: "c".repeat(32),
+          createdAt: 2,
+        },
+      ],
+    },
+    toolLoading: {
+      profile: "all",
+      promoted: [],
+      counters: {},
+      profiles: {
+        default: { profile: "all", promoted: [], allowed: null },
+        claude: { profile: "core", promoted: [], allowed: null },
+      },
+    },
+  };
+  return {
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+    _store: () => store,
+  };
+}
+
+describe("activateToolHandler — per-token scope (ADR-0014, Task 6)", () => {
+  test("activate_tool under scope A promotes only in A; a second scope's resolved active set is unchanged (R-05)", async () => {
+    const plugin = makeTokenedPlugin();
+    const { server } = makeServer();
+    const session = new SessionPromotions();
+    const policy: TokenPolicy = {
+      profile: "core",
+      promoted: [],
+      allowed: null,
+    };
+    const allNames = ["search_vault", "find_broken_links", "rename_vault_file"];
+
+    const scopeFor = (tokenId: string): ToolScope =>
+      resolveToolScope(tokenId, policy, allNames, session.get(tokenId));
+
+    const scopeABefore = scopeFor("A");
+    expect(scopeABefore.active.has("find_broken_links")).toBe(false);
+
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links" },
+      registry: makeRegistry([{ name: "find_broken_links", enabled: false }]),
+      plugin,
+      server,
+      scope: scopeABefore,
+      promoteInSession: (tokenId, name) => session.promote(tokenId, name),
+    });
+    expect(result.isError).toBeUndefined();
+
+    const scopeAAfter = scopeFor("A");
+    const scopeBAfter = scopeFor("B");
+    expect(scopeAAfter.active.has("find_broken_links")).toBe(true);
+    expect(scopeBAfter.active.has("find_broken_links")).toBe(false);
+  });
+
+  test("persist: true writes profiles[A].promoted, never toolLoading.promoted except through the mirror when A is tokens[0]", async () => {
+    const plugin = makeTokenedPlugin();
+    const { server } = makeServer();
+    const scope: ToolScope = {
+      id: "claude",
+      active: new Set([
+        "find_broken_links",
+        "tool_catalog",
+        "activate_tool",
+        "activate_tools",
+      ]),
+      allowed: null,
+    };
+
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links", persist: true },
+      registry: makeRegistry([{ name: "find_broken_links", enabled: false }]),
+      plugin,
+      server,
+      scope,
+      promoteInSession: () => {},
+    });
+
+    expect(result.isError).toBeUndefined();
+    const toolLoading = plugin._store().toolLoading as {
+      promoted: string[];
+      profiles: Record<string, { promoted: string[] }>;
+    };
+    // "claude" is not tokens[0] ("default"), so the write must land only
+    // in its own policy entry, never in the legacy mirror.
+    expect(toolLoading.profiles.claude.promoted).toContain("find_broken_links");
+    expect(toolLoading.promoted).not.toContain("find_broken_links");
+  });
+
+  test("with `allowed` set and the tool outside it, the outcome is not_allowed with a message naming the token's limit (R-06)", async () => {
+    const plugin = makeTokenedPlugin();
+    const { server } = makeServer();
+    const scope: ToolScope = {
+      id: "claude",
+      active: new Set(["tool_catalog", "activate_tool", "activate_tools"]),
+      allowed: new Set(["search_vault"]),
+    };
+
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links" },
+      registry: makeRegistry([{ name: "find_broken_links", enabled: false }]),
+      plugin,
+      server,
+      scope,
+      promoteInSession: () => {},
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0].text.toLowerCase();
+    expect(text).toContain("allowed");
+    expect(text).toContain("find_broken_links");
+  });
+
+  test("with `allowed: null`, activation with a scope behaves exactly as the no-scope 0.28.2 path (R-07 regression guard)", async () => {
+    const plugin = makeTokenedPlugin();
+    const { server } = makeServer();
+    const scope: ToolScope = {
+      id: "claude",
+      active: new Set([
+        "find_broken_links",
+        "tool_catalog",
+        "activate_tool",
+        "activate_tools",
+      ]),
+      allowed: null,
+    };
+
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links" },
+      registry: makeRegistry([{ name: "find_broken_links", enabled: false }]),
+      plugin,
+      server,
+      scope,
+      promoteInSession: () => {},
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("until the plugin reloads");
+  });
+
+  test("no scope passed ⇒ current global behaviour (unit-test ergonomics; the settings UI path)", async () => {
+    // Deliberately omits `scope`: the pre-Task-6 assertions in the
+    // `activateToolHandler` describe block above already lock this in
+    // (they call the handler with no scope argument at all and still
+    // pass), so this test only documents the intent explicitly rather
+    // than re-asserting duplicate behaviour.
+    const plugin = makePlugin();
+    const enabled: string[] = [];
+    const { server } = makeServer();
+    const result = await activateToolHandler({
+      arguments: { name: "find_broken_links" },
+      registry: makeRegistry(ENTRIES),
+      plugin,
+      server,
+      enableInRegistry: (n) => (enabled.push(n), true),
+    });
+    expect(result.isError).toBeUndefined();
+    expect(enabled).toEqual(["find_broken_links"]);
   });
 });
