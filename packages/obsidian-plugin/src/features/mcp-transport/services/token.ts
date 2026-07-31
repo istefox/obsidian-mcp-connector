@@ -15,6 +15,25 @@ export function generateToken(): string {
 }
 
 /**
+ * Bytes of entropy behind a token record's id. The id is an opaque join
+ * key (it addresses `toolLoading.profiles[<id>]`), never a credential,
+ * so it only has to be collision-free and never reused — 9 bytes give
+ * 12 padding-free base64url characters, short enough to read in
+ * `data.json` while leaving collisions out of reach at MAX_TOKENS.
+ */
+const TOKEN_ID_BYTE_LENGTH = 9;
+
+/**
+ * Generate an id for a token record.
+ *
+ * Returns:
+ *   A 12-character base64url string.
+ */
+export function generateTokenId(): string {
+  return randomBytes(TOKEN_ID_BYTE_LENGTH).toString("base64url");
+}
+
+/**
  * Compare two bearer tokens using constant-time comparison.
  *
  * Uses crypto.timingSafeEqual to prevent timing attacks. Both inputs are

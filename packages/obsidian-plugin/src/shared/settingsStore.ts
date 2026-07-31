@@ -17,8 +17,14 @@ import { globalSettingsMutex, type Mutex } from "./settingsLock";
 import type { PluginDataLike } from "./types";
 import { logger } from "./logger";
 
-/** Deep structural equality for plain JSON values. */
-function jsonEqual(a: unknown, b: unknown): boolean {
+/**
+ * Deep structural equality for plain JSON values. Exported because a
+ * recipe that rebuilds a whole slice (rather than patching one field)
+ * cannot decide NO_CHANGE by reference and must not decide it by
+ * `JSON.stringify`, which reports a mere key reordering as a change and
+ * would re-persist the slice on every load.
+ */
+export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return a === b;

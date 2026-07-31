@@ -3,6 +3,12 @@ export const BIND_HOST = "127.0.0.1" as const;
 export const MCP_PATH_PREFIX = "/mcp" as const;
 export const TOKEN_BYTE_LENGTH = 32 as const;
 
+// Upper bound on configured bearer tokens. Every request compares the
+// presented credential against ALL of them (no early exit, so position
+// leaks nothing), so the list length is on the auth hot path; ten named
+// clients is well past any realistic single-vault setup.
+export const MAX_TOKENS = 10 as const;
+
 // Cap on the request body to bound memory in the Electron renderer (DoS/OOM).
 export const MAX_REQUEST_BODY_BYTES = 1_048_576 as const;
 
