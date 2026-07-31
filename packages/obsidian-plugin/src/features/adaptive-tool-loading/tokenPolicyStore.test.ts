@@ -172,11 +172,12 @@ describe("flushPendingCalls fans auto-promotion out per adaptive token (R-10)", 
         await plugin.saveData(d);
       },
     };
-    const mgr = new ToolLoadingManager({ flushDelayMs: 0 });
+    const mgr = new ToolLoadingManager({ flushDelayMs: 60_000 });
 
     for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
       await mgr.recordCall("search_and_replace", counting);
     }
+    await mgr.flushPendingCalls(counting);
     expect(saves).toBe(1);
 
     const defaultPolicy = await readPolicy(plugin, "default");
