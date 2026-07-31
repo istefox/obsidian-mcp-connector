@@ -192,6 +192,128 @@ describe("ensureTokenStore — fresh and malformed vaults", () => {
   });
 });
 
+describe("ensureTokenStore — real-vault migration check (R-21)", () => {
+  /**
+   * A faithful, redacted reconstruction of a real pre-upgrade 0.28.2
+   * `data.json` (Task 9 sub-step 1). Built from the pre-branch settings
+   * shapes rather than any live vault: `mcpTransport.{bearerToken,
+   * livePort,serverName}` from `services/setup.ts` (the `mcpTransportSlice`
+   * read at L71-73 plus the `livePort` write at L121-122 on the pre-branch
+   * tree); `toolLoading.{profile,promoted,counters}` from
+   * `adaptive-tool-loading/types.ts`'s `McpToolsPluginSettings`
+   * augmentation on the pre-branch tree; `commandPermissions`,
+   * `semanticSearch` and `mcpTools` from their respective feature
+   * `types.ts` augmentations (all present on `main` at the 0.28.2 tag,
+   * fc81d6f); `version` from the root `types.ts` augmentation. The token
+   * string below is an obviously-fake 43-char base64url-shaped filler
+   * (`"a".repeat(43)`, matching the byte-length convention already used
+   * elsewhere in this file), not a real secret.
+   */
+  const REAL_TOKEN = "a".repeat(43);
+  function makeRealisticFixture() {
+    return {
+      version: "0.28.2",
+      mcpTransport: {
+        bearerToken: REAL_TOKEN,
+        livePort: 27201,
+        serverName: "Obsidian - Research Vault",
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["get_vault_file", "search_vault", "list_directory"],
+        counters: {
+          get_vault_file: 42,
+          search_vault: 17,
+          list_directory: 5,
+          create_vault_file: 1,
+        },
+      },
+      commandPermissions: {
+        enabled: true,
+        allowlist: ["workspace:split-vertical", "editor:save-file"],
+        recentInvocations: [
+          {
+            commandId: "editor:save-file",
+            outcome: "allow",
+            timestamp: 1753900000000,
+          },
+          {
+            commandId: "workspace:split-vertical",
+            outcome: "deny",
+            timestamp: 1753900060000,
+          },
+        ],
+      },
+      semanticSearch: {
+        provider: "native",
+        indexingMode: "low-power",
+        unloadModelWhenIdle: true,
+      },
+      mcpTools: {
+        maxTextOutputKB: 250,
+      },
+    };
+  }
+
+  test("migrates a full, messy 0.28.2 vault: token unchanged, policy carried over and mirrored, every unrelated slice and counters untouched", async () => {
+    const fixture = makeRealisticFixture();
+    const { plugin, getData } = makePlugin(fixture);
+
+    const tokens = await ensureTokenStore(plugin);
+
+    const data = getData();
+    const mcpTransport = data.mcpTransport as {
+      bearerToken: string;
+      tokens: TokenRecord[];
+      livePort: number;
+      serverName: string;
+    };
+    const toolLoading = data.toolLoading as {
+      profile: string;
+      promoted: string[];
+      counters: Record<string, number>;
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+
+    // Bearer token: unchanged byte-for-byte (R-21).
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].token).toBe(REAL_TOKEN);
+    expect(mcpTransport.tokens[0].token).toBe(REAL_TOKEN);
+
+    // Pre-existing profile and promoted list carried into
+    // profiles[tokens[0].id] (R-21).
+    expect(toolLoading.profiles[tokens[0].id]).toEqual({
+      profile: "core",
+      promoted: ["get_vault_file", "search_vault", "list_directory"],
+      allowed: null,
+    });
+
+    // Legacy mirror keys still hold the same values afterwards (R-21).
+    expect(mcpTransport.bearerToken).toBe(REAL_TOKEN);
+    expect(toolLoading.profile).toBe("core");
+    expect(toolLoading.promoted).toEqual([
+      "get_vault_file",
+      "search_vault",
+      "list_directory",
+    ]);
+
+    // Counters preserved exactly (R-21).
+    expect(toolLoading.counters).toEqual(fixture.toolLoading.counters);
+
+    // Every unrelated slice untouched byte-for-byte (R-21): this is the
+    // assertion the minimal-fixture tests above cannot make.
+    expect(data.version).toBe(fixture.version);
+    expect(mcpTransport.livePort).toBe(fixture.mcpTransport.livePort);
+    expect(mcpTransport.serverName).toBe(fixture.mcpTransport.serverName);
+    expect(data.commandPermissions).toEqual(fixture.commandPermissions);
+    expect(data.semanticSearch).toEqual(fixture.semanticSearch);
+    expect(data.mcpTools).toEqual(fixture.mcpTools);
+  });
+});
+
 describe("readTokens", () => {
   test("returns the live token list written by ensureTokenStore", async () => {
     const { plugin } = makePlugin({});
