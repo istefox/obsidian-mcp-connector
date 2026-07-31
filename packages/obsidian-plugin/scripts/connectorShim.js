@@ -109,11 +109,45 @@ function parseJsonRpcLine(line) {
 }
 
 /**
+ * The secret of the token with this id, or undefined when the vault no
+ * longer carries it.
+ * @param {unknown} tokens
+ * @param {string} tokenId
+ * @returns {string|undefined}
+ */
+function findTokenSecret(tokens, tokenId) {
+  if (!Array.isArray(tokens)) return undefined;
+  for (const entry of tokens) {
+    if (
+      entry &&
+      typeof entry === "object" &&
+      entry.id === tokenId &&
+      typeof entry.token === "string"
+    ) {
+      return entry.token;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the port and the secret this bundle presents.
+ *
+ * `tokenId` is baked into the .mcpb at export time. Omitted — which is
+ * every bundle generated before per-token bundles existed, and every
+ * bundle exported for the mirror token — it reads the legacy
+ * `mcpTransport.bearerToken`, so bundles already in the wild resolve
+ * exactly as before. Given, it resolves STRICTLY by id: an id no longer
+ * in `tokens[]` is a hard error and never falls back to `bearerToken`,
+ * because that fallback would turn revoking a client's token into
+ * handing it the default token's surface.
+ *
  * @param {string} jsonText
+ * @param {string} [tokenId]
  * @returns {TransportResult}
  */
-function parseTransportFile(jsonText) {
-  /** @type {{ mcpTransport?: { livePort?: unknown, bearerToken?: unknown } }} */
+function parseTransportFile(jsonText, tokenId) {
+  /** @type {{ mcpTransport?: { livePort?: unknown, bearerToken?: unknown, tokens?: unknown } }} */
   let data;
   try {
     data = JSON.parse(jsonText);
@@ -122,12 +156,21 @@ function parseTransportFile(jsonText) {
   }
   const transport = (data && data.mcpTransport) || {};
   const port = transport.livePort;
+  if (typeof port !== "number") {
+    return { error: "data.json mcpTransport.livePort must be a number" };
+  }
+  if (tokenId) {
+    const secret = findTokenSecret(transport.tokens, tokenId);
+    if (secret === undefined) {
+      return {
+        error: `token '${tokenId}' is no longer configured — re-export the .mcpb from Obsidian settings`,
+      };
+    }
+    return { port, token: secret };
+  }
   const token = transport.bearerToken;
-  if (typeof port !== "number" || typeof token !== "string") {
-    return {
-      error:
-        "data.json mcpTransport.livePort must be a number and mcpTransport.bearerToken must be a string",
-    };
+  if (typeof token !== "string") {
+    return { error: "data.json mcpTransport.bearerToken must be a string" };
   }
   return { port, token };
 }
@@ -285,9 +328,14 @@ function resolveResponseMessages(contentType, rawBody, requestId, status) {
 /**
  * @param {string} dataPath
  * @param {{ readFileSync?: typeof fs.readFileSync }} [options]
+ * @param {string} [tokenId]
  * @returns {TransportResult}
  */
-function readTransport(dataPath, { readFileSync = fs.readFileSync } = {}) {
+function readTransport(
+  dataPath,
+  { readFileSync = fs.readFileSync } = {},
+  tokenId,
+) {
   /** @type {string} */
   let text;
   try {
@@ -295,7 +343,7 @@ function readTransport(dataPath, { readFileSync = fs.readFileSync } = {}) {
   } catch (err) {
     return { error: `could not read ${dataPath}: ${errorMessage(err)}` };
   }
-  return parseTransportFile(text);
+  return parseTransportFile(text, tokenId);
 }
 
 /**
@@ -342,6 +390,7 @@ const PROTOCOL_VERSION_FALLBACK = "2025-06-18";
  *   windowMs?: number,
  *   intervalMs?: number,
  *   onAttempt?: () => void,
+ *   tokenId?: string,
  * }} [options]
  * @returns {Promise<TransportResult>}
  */
@@ -355,12 +404,13 @@ async function resolveTransportWithRetry(
     windowMs = RETRY_WINDOW_MS,
     intervalMs = RETRY_INTERVAL_MS,
     onAttempt = () => {},
+    tokenId,
   } = {},
 ) {
   const deadline = nowImpl() + windowMs;
   let lastError = "timed out waiting for the MCP server";
   while (nowImpl() < deadline) {
-    const resolved = readTransportImpl(dataPath);
+    const resolved = readTransportImpl(dataPath, {}, tokenId);
     if (resolved.error) {
       lastError = resolved.error;
     } else if (await probePortImpl(resolved.port)) {
@@ -462,6 +512,7 @@ async function postJsonRpc(
  *   requestTimeoutMs?: number,
  *   resolveTransportWithRetryImpl?: typeof resolveTransportWithRetry,
  *   readTransportImpl?: typeof readTransport,
+ *   tokenId?: string,
  * }} options
  * @returns {Promise<void>}
  */
@@ -475,6 +526,7 @@ function runMain({
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   resolveTransportWithRetryImpl = resolveTransportWithRetry,
   readTransportImpl = readTransport,
+  tokenId,
 } = {}) {
   /** @type {Promise<void>[]} */
   const pending = [];
@@ -506,9 +558,12 @@ function runMain({
           );
         }
       : undefined;
-    let transport = readTransportImpl(dataPath);
+    let transport = readTransportImpl(dataPath, {}, tokenId);
     if (transport.error) {
-      transport = await resolveTransportWithRetryImpl(dataPath, { onAttempt });
+      transport = await resolveTransportWithRetryImpl(dataPath, {
+        onAttempt,
+        tokenId,
+      });
     }
     if (transport.error) {
       writeChunk(
@@ -543,6 +598,7 @@ function runMain({
       if (debug) log(`request failed, retrying once: ${errorMessage(err)}`);
       const retried = await resolveTransportWithRetryImpl(dataPath, {
         onAttempt,
+        tokenId,
       });
       if (retried.error) {
         writeChunk(
@@ -593,9 +649,9 @@ function runMain({
    * @param {JsonRpcMessage} message
    */
   async function handleNotification(message) {
-    let transport = readTransportImpl(dataPath);
+    let transport = readTransportImpl(dataPath, {}, tokenId);
     if (transport.error)
-      transport = await resolveTransportWithRetryImpl(dataPath);
+      transport = await resolveTransportWithRetryImpl(dataPath, { tokenId });
     if (transport.error) {
       log(`dropped notification: ${transport.error}`);
       return;
@@ -667,13 +723,21 @@ function runMain({
 
 const vaultPath = "__OBSIDIAN_MCP_VAULT_PATH__";
 const configDir = "__OBSIDIAN_MCP_CONFIG_DIR__";
+// Substituted with the id of the token this bundle was exported for, or
+// with null when it was exported for the vault's first token — which is
+// what `mcpTransport.bearerToken` mirrors, so the resolution stays the
+// one every bundle generated before per-token export already uses.
+/** @type {string|null} */
+const shimTokenId = "__OBSIDIAN_MCP_TOKEN_ID__";
 const path = require("path");
 // prettier-ignore
 const shimDataPath = path.join(vaultPath, configDir, "plugins", "mcp-tools-istefox", "data.json");
 
 function main() {
   process.stderr.write(`obsidian-mcp-connector: started, vault=${vaultPath}\n`);
-  runMain({ dataPath: shimDataPath }).then(() => process.exit(0));
+  runMain({ dataPath: shimDataPath, tokenId: shimTokenId ?? undefined }).then(
+    () => process.exit(0),
+  );
 }
 
 module.exports = {

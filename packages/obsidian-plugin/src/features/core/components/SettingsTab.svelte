@@ -26,13 +26,25 @@
   // UI. Until then: hidden, not deleted.
 
   export let plugin: McpServerPlugin;
+
+  // The token list and the tool-loading panel are two views of one
+  // selection: Access Control owns the credentials, Tool Loading owns
+  // the policy, and this tab owns which token both are talking about.
+  let selectedTokenId = "";
+  // Bumped whenever the policy panel writes, so the token rows re-read
+  // the profile and active tool count they display.
+  let policyRevision = 0;
 </script>
 
 <div class="settings-container">
-  <AccessControlSection {plugin} />
+  <AccessControlSection {plugin} bind:selectedTokenId {policyRevision} />
   <ClientConfigSection {plugin} />
   <CommandPermissionsSettings {plugin} />
   <SemanticSearchSettings {plugin} />
-  <AdaptiveToolLoadingSettings {plugin} />
+  <AdaptiveToolLoadingSettings
+    {plugin}
+    tokenId={selectedTokenId}
+    on:policychange={() => (policyRevision += 1)}
+  />
   <McpToolsSettings {plugin} />
 </div>

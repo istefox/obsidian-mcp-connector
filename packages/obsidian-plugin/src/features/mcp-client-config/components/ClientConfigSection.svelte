@@ -1,15 +1,10 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
-  import { FileSystemAdapter, Notice } from "obsidian";
+  import { Notice } from "obsidian";
   import { onMount } from "svelte";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
-  import {
-    claudeCodeConfig,
-    claudeDesktopConfig,
-    streamableHttpConfig,
-    wrapInMcpServers,
-  } from "../services/generators";
-  import { generateMcpb } from "../services/mcpbGenerator";
+  import CopyConfigMenu from "./CopyConfigMenu.svelte";
+  import { downloadMcpb } from "../services/mcpbDownload";
   import {
     getAutoWriteEnabled,
     setAutoWriteEnabled,
@@ -163,53 +158,18 @@
     }
   }
 
+  /**
+   * Export the bundle for the vault's first token — the one
+   * `mcpTransport.bearerToken` mirrors — so it resolves exactly as
+   * every bundle generated before per-token export does. Bundles for
+   * the other tokens are exported from their own row in Access
+   * Control.
+   */
   async function handleDownloadMcpb(): Promise<void> {
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      const adapter = plugin.app.vault.adapter;
-      if (!(adapter instanceof FileSystemAdapter)) {
-        new Notice(
-          "Download .mcpb requires a desktop vault (FileSystemAdapter).",
-        );
-        return;
-      }
-      const bytes = generateMcpb({
-        version: plugin.manifest.version,
-        vaultPath: adapter.getBasePath(),
-        configDir: plugin.app.vault.configDir,
-      });
-      const filename = "obsidian-mcp-connector.mcpb";
-
-      // Detect Electron remote (desktop only). If unavailable, fall back to vault.
-      const electronRemote = (() => {
-        try {
-          const r = (require("electron") as { remote?: { dialog: Electron.Dialog } }).remote;
-          return r?.dialog ? r : null;
-        } catch {
-          return null;
-        }
-      })();
-
-      if (electronRemote) {
-        const { filePath } = await electronRemote.dialog.showSaveDialog({
-          defaultPath: filename,
-          filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
-        });
-        if (!filePath) {
-          new Notice("Save cancelled.");
-          return;
-        }
-        // require() is reliable for Node built-ins in Electron; dynamic import() is not.
-        const { writeFile } = require("fs/promises") as typeof import("fs/promises");
-        await writeFile(filePath, Buffer.from(bytes));
-        new Notice(`${filename} saved.`);
-      } else {
-        // Vault fallback when Electron remote is unavailable (mobile / unusual env).
-        const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        await plugin.app.vault.adapter.writeBinary(filename, ab as ArrayBuffer);
-        new Notice(`Saved to vault root: ${filename}`);
-      }
+      new Notice(await downloadMcpb(plugin));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to generate .mcpb: ${msg}`);
@@ -217,42 +177,6 @@
     } finally {
       mcpbBusy = false;
     }
-  }
-
-  /**
-   * Copy a JSON-serialized object to the clipboard. We pretty-print
-   * with 2-space indent so the user can paste straight into a config
-   * file and review the structure.
-   */
-  async function copyJson(payload: unknown, label: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      new Notice(`${label} config copied to clipboard.`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      new Notice(`Copy failed: ${msg}`);
-    }
-  }
-
-  function copyClaudeDesktop(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(claudeDesktopConfig({ url, token })),
-      "Claude Desktop",
-    );
-  }
-
-  function copyClaudeCode(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(claudeCodeConfig({ url, token })),
-      "Claude Code",
-    );
-  }
-
-  function copyStreamableHttp(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(streamableHttpConfig({ url, token })),
-      "Streamable HTTP",
-    );
   }
 
   /**
@@ -307,31 +231,8 @@
         under <code>mcpServers</code>.
       </div>
     </div>
-    <div class="setting-item-control copy-buttons">
-      <button
-        type="button"
-        on:click={copyClaudeDesktop}
-        disabled={!token || !port}
-        aria-label="Copy Claude Desktop config"
-      >
-        Claude Desktop
-      </button>
-      <button
-        type="button"
-        on:click={copyClaudeCode}
-        disabled={!token || !port}
-        aria-label="Copy Claude Code config"
-      >
-        Claude Code
-      </button>
-      <button
-        type="button"
-        on:click={copyStreamableHttp}
-        disabled={!token || !port}
-        aria-label="Copy streamable-http config (Cursor, Cline, Continue, VS Code)"
-      >
-        Cursor / Cline / Continue
-      </button>
+    <div class="setting-item-control">
+      <CopyConfigMenu {plugin} {url} {token} showMcpb={false} />
     </div>
   </div>
 
@@ -506,12 +407,6 @@
 <style>
   .mcp-client-config {
     margin-bottom: 1.5em;
-  }
-
-  .copy-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4em;
   }
 
   .hint {

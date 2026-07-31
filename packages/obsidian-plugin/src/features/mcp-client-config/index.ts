@@ -66,4 +66,7 @@ export {
   type McpbGeneratorInput,
 } from "./services/mcpbGenerator";
 
+export { downloadMcpb } from "./services/mcpbDownload";
+
 export { default as ClientConfigSection } from "./components/ClientConfigSection.svelte";
+export { default as CopyConfigMenu } from "./components/CopyConfigMenu.svelte";

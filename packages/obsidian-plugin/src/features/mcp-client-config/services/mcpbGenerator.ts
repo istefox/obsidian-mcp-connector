@@ -13,6 +13,15 @@ export type McpbGeneratorInput = {
    * always pass the live value.
    */
   configDir: string;
+  /**
+   * Id of the token the bundle authenticates with. Omitted, the shim
+   * reads `mcpTransport.bearerToken` — the first token's mirror, i.e.
+   * exactly what every bundle generated before per-token export does,
+   * so those keep working. Given, the shim resolves that id in
+   * `tokens[]` and fails closed when it is gone, so revoking a token
+   * really does cut its bundle off (ADR-0014 §11).
+   */
+  tokenId?: string;
 };
 
 /**
@@ -40,25 +49,35 @@ export interface McpbManifest {
 
 const VAULT_PATH_PLACEHOLDER = '"__OBSIDIAN_MCP_VAULT_PATH__"';
 const CONFIG_DIR_PLACEHOLDER = '"__OBSIDIAN_MCP_CONFIG_DIR__"';
+const TOKEN_ID_PLACEHOLDER = '"__OBSIDIAN_MCP_TOKEN_ID__"';
 
 // The shim's real source lives at services/connectorShim.js — a
 // standalone, unit-tested (bun test) CommonJS Node script with zero
 // dependencies. This function only substitutes the things that differ per
-// generated bundle: the vault path and the vault's config folder name. See
+// generated bundle: the vault path, the vault's config folder name and
+// the token id the bundle authenticates with. See
 // docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
 function buildShim(input: McpbGeneratorInput): string {
   if (
     !CONNECTOR_SHIM_SOURCE.includes(VAULT_PATH_PLACEHOLDER) ||
-    !CONNECTOR_SHIM_SOURCE.includes(CONFIG_DIR_PLACEHOLDER)
+    !CONNECTOR_SHIM_SOURCE.includes(CONFIG_DIR_PLACEHOLDER) ||
+    !CONNECTOR_SHIM_SOURCE.includes(TOKEN_ID_PLACEHOLDER)
   ) {
     throw new Error(
       "connectorShim.js is missing a placeholder — regenerate assets/connectorShimSource.ts",
     );
   }
-  return CONNECTOR_SHIM_SOURCE.replace(
-    VAULT_PATH_PLACEHOLDER,
-    JSON.stringify(input.vaultPath),
-  ).replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir));
+  return (
+    CONNECTOR_SHIM_SOURCE.replace(
+      VAULT_PATH_PLACEHOLDER,
+      JSON.stringify(input.vaultPath),
+    )
+      .replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir))
+      // `null` rather than an empty string: the shim treats it as "no id"
+      // and falls back to the legacy mirror field, which is the correct
+      // resolution for a bundle exported against the first token.
+      .replace(TOKEN_ID_PLACEHOLDER, JSON.stringify(input.tokenId ?? null))
+  );
 }
 
 function buildManifest(input: McpbGeneratorInput): McpbManifest {
