@@ -410,29 +410,23 @@ export class ToolRegistryClass<
    * With no `scope` the answer is exactly the pre-ADR-0014 one: the
    * adaptive flag alone, with `userDisabled` winning over it.
    *
-   * The allowlist is read here as a hard ceiling regardless of the active
-   * set, which is marginally stricter than dispatch()'s branch (a): the
-   * only names that can be in `active` while outside `allowed` are the
-   * meta-tools the resolver adds unconditionally (ADR-0014 §4), and the
-   * one caller of this predicate excludes those by name anyway.
+   * With a `scope`, the active set is the whole answer, exactly as in
+   * dispatch()'s branch (a). The allowlist is NOT re-applied here: the
+   * resolver already intersects `allowed` into `active` for every ordinary
+   * tool, so a name the ceiling forbids is absent from `active` and reads
+   * as inactive. The only names left in `active` while outside `allowed`
+   * are the meta-tools the resolver adds unconditionally (ADR-0014 §4) —
+   * dispatch() executes those, so this predicate must call them active
+   * too. dispatch()'s own branch b1 still reads `scope.allowed`; that
+   * read picks the refusal MESSAGE, not the served/refused outcome.
    */
   isInactive = (name: string, scope?: ToolScope): boolean => {
     const schema = this.byName.get(name);
     if (!schema || this.userDisabled.has(schema)) return false;
     if (this.adaptiveDisabled.has(schema)) return true;
     if (!scope) return false;
-    return (
-      !scope.active.has(name) ||
-      (scope.allowed !== null && !scope.allowed.has(name))
-    );
+    return !scope.active.has(name);
   };
-
-  /**
-   * Legacy name for the unscoped form, kept so the ADR-0011-era callers
-   * and their tests keep reading the same predicate they were written
-   * against. New code calls `isInactive`.
-   */
-  isAdaptiveInactive = (name: string): boolean => this.isInactive(name);
 
   /**
    * Derive (once) the wire entry for every registered tool. Disable state
