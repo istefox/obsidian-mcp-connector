@@ -107,7 +107,7 @@ describe("toolCatalogHandler", () => {
   });
 });
 
-type ScopedCatalogEntry = CatalogEntry & { status: string };
+type ScopedCatalogEntry = Omit<CatalogEntry, "status"> & { status: string };
 
 function parseScoped(result: {
   content: Array<{ text: string }>;
