@@ -4,7 +4,7 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
 
-[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Installation](#installation) | [Quick setup for clients](#quick-setup-for-clients) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
+[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Per-client tokens](#per-client-tokens) | [Installation](#installation) | [Quick setup for clients](#quick-setup-for-clients) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
 
 MCP Connector lets AI applications like Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, and VS Code securely access and work with your Obsidian vault through the [Model Context Protocol](https://modelcontextprotocol.io). [^2]
 
@@ -79,6 +79,38 @@ In Adaptive mode the plugin counts tool calls. When a non-core tool reaches 3 ca
 3. It calls `activate_tool` with `{"name": "find_broken_links"}`, the tool is usable immediately and you see a notice in Obsidian.
 4. If you use that tool often, frequency promotion makes it permanent without anyone asking.
 
+## Per-client tokens
+
+The vault holds a list of bearer tokens, not a single one. Each token stands for one client, and each token has its own tool surface: Claude Code can keep all 51 tools while claude.ai sees only the 13-tool Core set, from the same vault, with no second server and no restart. The token presented on a request is what tells the two apart, so the split works even though the transport keeps no session state.
+
+The list lives in **Settings, MCP Connector, Access control**. Each row shows the label, the profile in force, how many tools that token can reach, and per-row controls to show and copy the secret, copy a client config, download a `.mcpb` bundle, regenerate, and revoke. **Add token** asks for a label and is capped at 10 tokens per vault. Labels are cosmetic and may repeat.
+
+Upgrading from 0.28.x needs nothing from you: the token you already have becomes the first row, labelled **Default**, with the same string, and your current profile and promoted tools become that row's policy. Every client you have configured keeps working unchanged.
+
+### Per-token profiles
+
+The profile picker under **Tool Loading** applies to the token selected in the list, not to the vault. All, Core, and Adaptive mean exactly what they mean in [Adaptive tool loading](#adaptive-tool-loading); they are simply chosen per client now.
+
+Promotions follow the same line. When a client calls `activate_tool`, the tool becomes available to that client only, and `persist: true` writes it to that token's promoted list. Call counts stay vault-wide, because how often a tool is used describes your vault rather than the client that happened to call it, so every Adaptive token crosses the promotion threshold at the same time and gets the tool in its own list.
+
+Tools you switch off under **Tools available** stay off for every token. That setting is yours, and no client can reach past it or discover that it exists.
+
+### Limit to specific tools
+
+Off by default, and while it is off a token behaves exactly as in earlier versions. Turn on **Limit to specific tools** for a token and the checklist becomes a hard ceiling: a tool outside the list is never advertised to that client, cannot be called, and `activate_tool` refuses it with a message saying the token's list does not include it. An empty list is legal and means the three meta-tools and nothing else; the settings panel flags it so it does not look like "no limit".
+
+The profile itself is not a ceiling. Core is a starting point that `activate_tool` is meant to widen, which is what makes it usable rather than crippling. Use the allowlist when you want a boundary a client cannot talk its way past. `tool_catalog`, `activate_tool`, and `activate_tools` always stay reachable, so a client is never left without a way to see what exists and ask for it.
+
+### Revoking or regenerating a token
+
+> **Warning.** Both actions invalidate the token's current string, and the string is not recoverable. It is stored nowhere else, there is no undo, and nothing in the plugin can print it again once it is gone.
+
+**Revoke** deletes the token. Every client configured with it, every `.mcpb` bundle exported for it, and any Windows bridge config holding it stop working at the next request: the server answers 401, and the bundle fails with an error telling you to re-export. Other tokens are untouched, which is the point — rotating one client's credential no longer breaks all of them. Revoke asks for a confirmation naming the label and is disabled when only one token is left.
+
+**Regenerate** replaces the secret in place, keeping the token's id, label, profile, promoted list and allowlist. Every client holding the old string starts getting 401 at its next request and needs the new one pasted in. Installed `.mcpb` bundles are the exception: they resolve their token from the vault by id at connect time, so they pick up the new secret on their own.
+
+Neither action restarts the HTTP transport, so the port cannot drift and in-flight requests finish; the next request simply sees the new list.
+
 ## Prerequisites
 
 ### Required
@@ -128,9 +160,9 @@ Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges 
 2. Drag the file onto Claude Desktop.
 3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
-The bundle embeds your current bearer token and port directly, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
+The bundle is tied to the token you exported it from and resolves that token's secret and the live port from the vault at connect time, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
 
-If you rotate your token or change the server port, download a fresh `.mcpb` and drag it onto Claude Desktop to replace the existing extension.
+Regenerating that token's secret or changing the server port needs no action: the bundle picks both up on its next connect. Revoking the token does break it, deliberately — the extension then fails with an error asking for a re-export, instead of quietly falling back to another token's access. Export a fresh `.mcpb` from the row of the token you want it to use and drag it onto Claude Desktop to replace the existing extension.
 
 **Alternative: manual JSON config**
 
@@ -351,7 +383,7 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 
 ### `tool/call` returns HTTP 401
 
-- The bearer token in your client config does not match the plugin's current token. Open the plugin settings, **Bearer token**, click **Show** to reveal the current token and **Copy** to copy it. Update your client config and restart the client.
+- The bearer token in your client config matches none of the vault's tokens, which is also what you see after that token was regenerated or revoked. Open the plugin settings, **Access control**, find the row for that client, click **Show** to reveal its current string and **Copy** to copy it. Update your client config and restart the client. If the row is gone, the token was revoked: add a new one and configure the client with it.
 
 ### Native semantic search downloads slowly on first call
 
@@ -370,13 +402,14 @@ This plugin **does not ship a platform-specific binary**. The MCP server runs in
 
 ### Local-only HTTP
 
-The MCP server listens on `127.0.0.1:27200`. The bind address is hardcoded to loopback; no external network exposure. Bearer-token authentication is required on every request; the token is generated per install and can be rotated from the plugin settings.
+The MCP server listens on `127.0.0.1:27200`. The bind address is hardcoded to loopback; no external network exposure. Bearer-token authentication is required on every request; the tokens are generated per install and can be added, regenerated and revoked from the plugin settings.
 
-### Bearer token
+### Bearer tokens
 
-- Generated locally on first plugin load, stored in the plugin's `data.json` (per-vault).
-- Visible in the plugin settings, **Bearer token**, **Show** (hidden by default).
-- **Rotate** invalidates the in-process transport and restarts it immediately, so the new token takes effect on the next request. Update your client configs after rotating.
+- Generated locally, stored in the plugin's `data.json` (per-vault). One is minted on first plugin load; you can add up to 10, one per client. See [Per-client tokens](#per-client-tokens).
+- Visible in the plugin settings, **Access control**, **Show** on the token's row (hidden by default).
+- A presented token is compared against every configured token, and a miss is a bare 401 that says nothing about which tokens exist.
+- **Regenerate** replaces one token's secret and **Revoke** deletes it; either takes effect on the next request, with no transport restart and no effect on the other tokens. Update the affected client configs afterwards. Neither is recoverable.
 
 ### Plugin runtime
 

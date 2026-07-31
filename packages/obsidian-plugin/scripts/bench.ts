@@ -71,7 +71,43 @@ function makeSettingsFixture(): Record<string, unknown> {
       provider: "native",
       folders: { include: [], exclude: ["Templates/", "Archive/"] },
     },
-    toolLoading: { profile: "all", counters: {}, promoted: [] },
+    // Post-migration shape: credentials in the transport slice, tool
+    // policy in `toolLoading.profiles`, joined by token id. The policy
+    // write path reads this slice for the mirror token and the orphan
+    // prune, so a fixture without it measures the wrong thing.
+    mcpTransport: {
+      bearerToken: "t".repeat(64),
+      tokens: [
+        {
+          id: "default",
+          label: "Default",
+          token: "t".repeat(64),
+          createdAt: 1750000000000,
+        },
+        {
+          id: "cl9tkQ2fB",
+          label: "claude.ai",
+          token: "u".repeat(64),
+          createdAt: 1750600000000,
+        },
+      ],
+    },
+    // Both profiles are non-adaptive on purpose: auto-promotion would
+    // add work the pre-feature baseline never did, and the point of the
+    // run is to isolate the cost of the reads the feature added.
+    toolLoading: {
+      profile: "all",
+      counters: {},
+      promoted: [],
+      profiles: {
+        default: { profile: "all", promoted: [], allowed: null },
+        cl9tkQ2fB: {
+          profile: "core",
+          promoted: ["get_backlinks"],
+          allowed: null,
+        },
+      },
+    },
   };
 }
 
