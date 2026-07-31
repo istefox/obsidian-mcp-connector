@@ -1,8 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { unzipSync, strFromU8 } from "fflate";
-import { generateMcpb, type McpbManifest } from "./mcpbGenerator";
+import {
+  generateMcpb,
+  type McpbGeneratorInput,
+  type McpbManifest,
+} from "./mcpbGenerator";
 import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
 
 const VERSION = "1.2.3";
@@ -308,5 +312,71 @@ describe("generateMcpb", () => {
       );
       expect(shim).toContain("is Obsidian open with the vault loaded?");
     });
+  });
+});
+
+describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17, ADR-0014 §11)", () => {
+  // Widened locally rather than cast to `any`: `tokenId` does not exist on
+  // McpbGeneratorInput yet, so a variable of this type (not a fresh object
+  // literal at the call site) is how the call below stays a type-mismatch
+  // test rather than a compile error unrelated to the behaviour under test.
+  type InputWithTokenId = McpbGeneratorInput & { tokenId: string };
+
+  test("the generated shim carries the substituted token id, not the raw placeholder", () => {
+    const input: InputWithTokenId = {
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-42",
+    };
+    const shim = getShimSource(generateMcpb(input));
+    expect(shim).toContain('"tok-42"');
+    expect(shim).not.toContain("__OBSIDIAN_MCP_TOKEN_ID__");
+  });
+
+  test("different token ids produce different bundles", () => {
+    const a = generateMcpb({
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-a",
+    } as InputWithTokenId);
+    const b = generateMcpb({
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-b",
+    } as InputWithTokenId);
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+  });
+
+  test("a shim source missing the token id placeholder throws, never silently ships a bundle with an unsubstituted marker", async () => {
+    // The guard has to be exercised against a source that genuinely lacks
+    // the marker, independent of whatever the real, on-disk
+    // connectorShimSource.ts carries at test time (once Task 8 sub-step 2
+    // regenerates it, the real asset DOES carry the marker, so this can't
+    // be reproduced by calling the ordinarily-imported generateMcpb — it
+    // needs its own module instance built against a mocked source that
+    // never gets it).
+    mock.module("../assets/connectorShimSource", () => ({
+      CONNECTOR_SHIM_SOURCE,
+    }));
+    // The "?…" suffix busts Bun's module cache so this import re-evaluates
+    // mcpbGenerator against the mock above instead of returning the
+    // already-bound top-of-file instance. Passed as a variable (not a
+    // string literal) so tsc's static module resolution — which does not
+    // understand the query string — never runs against it; Bun resolves
+    // it fine at runtime.
+    const shimSpecifier = "./mcpbGenerator?missing-token-id-placeholder";
+    const fresh = (await import(
+      shimSpecifier
+    )) as typeof import("./mcpbGenerator");
+    const input: InputWithTokenId = {
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-42",
+    };
+    expect(() => fresh.generateMcpb(input)).toThrow(/placeholder/i);
   });
 });
