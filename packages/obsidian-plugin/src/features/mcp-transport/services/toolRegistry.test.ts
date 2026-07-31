@@ -2,6 +2,7 @@ import { describe, expect, test, spyOn } from "bun:test";
 import { type } from "arktype";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { logger } from "$/shared/logger";
+import type { ToolScope } from "$/shared/types";
 import { normalizeInputSchema, ToolRegistryClass } from "./toolRegistry";
 
 /**
@@ -842,5 +843,179 @@ describe("ToolRegistry name-keyed lookups", () => {
     const { tools } = buildRegistryWithTwoTools();
     expect(tools.disableByName("nope")).toBe(false);
     expect(tools.enableByName("nope")).toBe(false);
+  });
+});
+
+/**
+ * Per-client tool profiles (issue #348, ADR-0014 §3, §9). `list()` and
+ * `dispatch()` gain an optional `ToolScope` seam; the registry stays
+ * agnostic of tokens and only intersects/gates against the opaque set it
+ * is handed. `scope` is undefined-safe everywhere so every pre-existing
+ * caller and test above this block keeps compiling and passing unchanged.
+ */
+describe("ToolRegistry — per-client tool profiles (issue #348, ADR-0014)", () => {
+  const RECOVERY_MESSAGE =
+    'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.';
+  const ALLOWLIST_MESSAGE =
+    "Tool 'alpha' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.";
+
+  function scopeOf(
+    active: readonly string[],
+    allowed: readonly string[] | null = null,
+    id = "tok-1",
+  ): ToolScope {
+    return {
+      id,
+      active: new Set(active),
+      allowed: allowed === null ? null : new Set(allowed),
+    };
+  }
+
+  // HandlerContext is not exported, so a scoped context is built as a
+  // structurally-compatible local shape (server: never satisfies any
+  // required McpServer field) instead of reaching for `any` — the point
+  // under test is dispatch()'s runtime branching, not this file's own
+  // typing of a private interface.
+  function withScope(scope: ToolScope): { server: never; scope: ToolScope } {
+    return { ...fakeContext, scope };
+  }
+
+  test("list() with no scope is byte-identical to today's unscoped behavior (regression guard)", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const unscoped = tools.list();
+    expect(unscoped.tools.map((t) => t.name)).toEqual(["alpha", "beta"]);
+
+    // An explicit undefined scope must be indistinguishable from calling
+    // list() with no argument at all.
+    expect(tools.list(undefined)).toEqual(unscoped);
+  });
+
+  test("list(scope) returns only the intersection of scope.active and what is served", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const scope = scopeOf(["alpha"]);
+    const listed = tools.list(scope);
+
+    expect(listed.tools.map((t) => t.name)).toEqual(["alpha"]);
+  });
+
+  test("a userDisabled tool is absent from list(scope) even when scope.active names it (R-08)", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setUserDisabled("alpha", true);
+
+    // scope.active names BOTH tools — userDisabled must still win.
+    const scope = scopeOf(["alpha", "beta"]);
+    const listed = tools.list(scope);
+
+    expect(listed.tools.map((t) => t.name)).toEqual(["beta"]);
+  });
+
+  test("dispatch() with a scope excluding the tool returns the ADR-0011 recoverable error, not Unknown tool (R-04)", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const scope = scopeOf(["beta"]); // alpha excluded, no allowlist involved
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      withScope(scope),
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(RECOVERY_MESSAGE);
+    expect(result.content[0]?.text).not.toMatch(/Unknown tool/);
+  });
+
+  test("when both the allowlist AND the active set exclude the tool, the allowlist refusal wins — checked BEFORE the activation-hint message (R-06)", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    // alpha is outside BOTH scope.active and scope.allowed: this is the
+    // only shape that distinguishes branch order, since either condition
+    // alone would already produce a refusal. If dispatch() checked the
+    // "call activate_tools first" branch first, this assertion fails.
+    const scope = scopeOf(["beta"], ["beta"]);
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      withScope(scope),
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(ALLOWLIST_MESSAGE);
+    expect(result.content[0]?.text).not.toBe(RECOVERY_MESSAGE);
+    expect(result.content[0]?.text).not.toContain("exists but is inactive");
+  });
+
+  test("a meta-tool named in scope.active is dispatched even when scope.allowed is empty", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const metaSchema = type({
+      name: '"activate_tool"',
+      arguments: {},
+    }).describe("Meta tool — always active per ADR-0014 §4");
+    tools.register(metaSchema, () => ({
+      content: [{ type: "text", text: "meta-ok" }],
+    }));
+
+    // Mirrors what resolveToolScope guarantees: meta-tools are always in
+    // `active`, whatever the allowlist says.
+    const scope = scopeOf(["activate_tool"], []);
+    const result = await tools.dispatch(
+      { name: "activate_tool", arguments: {} },
+      withScope(scope),
+    );
+
+    expect(result).toEqual({ content: [{ type: "text", text: "meta-ok" }] });
+  });
+
+  test("userDisabled still produces the opaque Unknown tool even when scope.active names the tool (ADR-0010 invariant)", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setUserDisabled("alpha", true);
+
+    const scope = scopeOf(["alpha", "beta"]);
+    const result = (await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      withScope(scope),
+    )) as { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Unknown tool: alpha/);
+    expect(result.content[0]?.text).not.toContain("exists but is inactive");
+    expect(result.content[0]?.text).not.toContain("allowed-tools list");
+  });
+
+  describe("isInactive(name, scope?) — matches the branch dispatch() would take", () => {
+    test("registered, served, in scope.active → false (branch a)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      const scope = scopeOf(["alpha", "beta"]);
+      expect(tools.isInactive("alpha", scope)).toBe(false);
+    });
+
+    test("registered, served, NOT in scope.active → true (would hit branch b2)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      const scope = scopeOf(["beta"]);
+      expect(tools.isInactive("alpha", scope)).toBe(true);
+    });
+
+    test("registered, served, outside scope.allowed → true (would hit branch b1)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      const scope = scopeOf(["alpha", "beta"], ["beta"]);
+      expect(tools.isInactive("alpha", scope)).toBe(true);
+    });
+
+    test("userDisabled → false regardless of scope (would hit branch c, not b)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      tools.setUserDisabled("alpha", true);
+      const scope = scopeOf(["alpha", "beta"]);
+      expect(tools.isInactive("alpha", scope)).toBe(false);
+    });
+
+    test("no scope passed, adaptiveDisabled only → true (legacy isAdaptiveInactive behavior preserved)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      tools.setAdaptiveDisabled("alpha", true);
+      expect(tools.isInactive("alpha")).toBe(true);
+    });
+
+    test("unregistered name → false", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      expect(tools.isInactive("nonexistent")).toBe(false);
+    });
   });
 });

@@ -6,6 +6,7 @@ import {
   type McpService,
 } from "./mcpServer";
 import { resolveServerName } from "./setup";
+import { staticTokenProvider } from "./tokenStore";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading";
 
 beforeEach(() => resetMockVault());
@@ -40,7 +41,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -81,7 +82,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -145,7 +146,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -259,7 +260,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -304,7 +305,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -355,7 +356,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -397,7 +398,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -455,7 +456,7 @@ describe("recordCall gating — self-healing inactive tool error (issue #354)", 
     svc.registry.setAdaptiveDisabled("get_server_info", true);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -499,7 +500,7 @@ describe("recordCall gating — self-healing inactive tool error (issue #354)", 
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -540,7 +541,7 @@ describe("recordCall gating — self-healing inactive tool error (issue #354)", 
     active.push(svc);
 
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: svc.handleRequest,
     });
 
@@ -564,6 +565,106 @@ describe("recordCall gating — self-healing inactive tool error (issue #354)", 
       await svc.flushPendingCalls();
       const state = await new ToolLoadingManager().loadState(plugin);
       expect(state.counters.tool_catalog).toBeUndefined();
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+});
+
+describe("createMcpService — multi-token resolveTokens call-sites (issue #348, ADR-0014)", () => {
+  test("two tokens on one server route to different handler invocations with different tokenId", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const tokenA = { id: "a", label: "A", token: "a".repeat(32), createdAt: 0 };
+    const tokenB = { id: "b", label: "B", token: "b".repeat(32), createdAt: 0 };
+    const server = await startHttpServer({
+      resolveTokens: async () => [tokenA, tokenB],
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const resA = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tokenA.token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      const resB = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${tokenB.token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      // Both requests must authenticate and be handled — the point under
+      // test is that `resolveTokens` is queried per request and each
+      // request's own bearer resolves to ITS OWN tokenId, not a single
+      // cached one. handleRequest itself does not yet echo tokenId back
+      // on the wire, so success (200, not 401) is the observable proxy
+      // for "each request reached the handler with a distinct tokenId
+      // resolved from resolveTokens" until Task 5 threads scope through.
+      expect(resA.status).toBe(200);
+      expect(resB.status).toBe(200);
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("a failing resolveTokens 401s the request rather than authenticating anyone", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      resolveTokens: async () => {
+        throw new Error("synthetic loadData() failure");
+      },
+      requestHandler: svc.handleRequest,
+    });
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: {},
+        }),
+      });
+      expect(res.status).toBe(401);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
