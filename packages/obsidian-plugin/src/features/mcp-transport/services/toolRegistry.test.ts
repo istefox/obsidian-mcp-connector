@@ -727,34 +727,34 @@ describe("ToolRegistry dispatch() — self-healing inactive tool error (issue #3
     expect((secondResult as { isError?: boolean }).isError).toBeUndefined();
   });
 
-  describe("isAdaptiveInactive(name) — table-driven", () => {
+  describe("isInactive(name) — table-driven", () => {
     test("registered, neither flag set → false", () => {
       const { tools } = buildRegistryWithTwoTools();
-      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+      expect(tools.isInactive("alpha")).toBe(false);
     });
 
     test("registered, adaptiveDisabled only → true", () => {
       const { tools } = buildRegistryWithTwoTools();
       tools.setAdaptiveDisabled("alpha", true);
-      expect(tools.isAdaptiveInactive("alpha")).toBe(true);
+      expect(tools.isInactive("alpha")).toBe(true);
     });
 
     test("registered, userDisabled only → false", () => {
       const { tools } = buildRegistryWithTwoTools();
       tools.setUserDisabled("alpha", true);
-      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+      expect(tools.isInactive("alpha")).toBe(false);
     });
 
     test("registered, both flags set → false", () => {
       const { tools } = buildRegistryWithTwoTools();
       tools.setAdaptiveDisabled("alpha", true);
       tools.setUserDisabled("alpha", true);
-      expect(tools.isAdaptiveInactive("alpha")).toBe(false);
+      expect(tools.isInactive("alpha")).toBe(false);
     });
 
     test("unregistered name → false", () => {
       const { tools } = buildRegistryWithTwoTools();
-      expect(tools.isAdaptiveInactive("nonexistent")).toBe(false);
+      expect(tools.isInactive("nonexistent")).toBe(false);
     });
   });
 });
@@ -994,10 +994,30 @@ describe("ToolRegistry — per-client tool profiles (issue #348, ADR-0014)", () 
       expect(tools.isInactive("alpha", scope)).toBe(true);
     });
 
-    test("registered, served, outside scope.allowed → true (would hit branch b1)", () => {
+    test("ordinary tool excluded by the allowlist, reflected in scope.active as resolveToolScope would build it → true (branch b1 reached via the active-set check)", () => {
       const { tools } = buildRegistryWithTwoTools();
-      const scope = scopeOf(["alpha", "beta"], ["beta"]);
+      // resolveToolScope intersects `allowed` into `active` for ordinary
+      // tools, so "alpha" excluded by the allowlist never sits in `active`
+      // outside it — that combination is unreachable in production. This
+      // is the scope shape the resolver would actually hand back.
+      const scope = scopeOf(["beta"], ["beta"]);
       expect(tools.isInactive("alpha", scope)).toBe(true);
+    });
+
+    test("meta-tool present in scope.active despite an allowlist that excludes it → false, because dispatch() executes it (branch a wins)", () => {
+      const { tools } = buildRegistryWithTwoTools();
+      const metaSchema = type({
+        name: '"activate_tool"',
+        arguments: {},
+      }).describe("Meta tool — always active per ADR-0014 §4");
+      tools.register(metaSchema, () => ({
+        content: [{ type: "text", text: "meta-ok" }],
+      }));
+
+      // Mirrors what resolveToolScope guarantees: the resolver adds
+      // meta-tools to `active` regardless of the allowlist ceiling.
+      const scope = scopeOf(["activate_tool"], []);
+      expect(tools.isInactive("activate_tool", scope)).toBe(false);
     });
 
     test("userDisabled → false regardless of scope (would hit branch c, not b)", () => {
