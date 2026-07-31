@@ -53,6 +53,24 @@ describe("setup — livePort persistence", () => {
     expect(slice.livePort).toBe(result.state.server.port);
   });
 
+  test("preserves the existing bearerToken and mirrors it into tokens[0]", async () => {
+    const TOKEN = "a".repeat(43);
+    const { plugin, getData } = makePlugin({
+      mcpTransport: { bearerToken: TOKEN },
+    });
+    const result = await setup(plugin);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    active.push(result.state);
+
+    const slice = getData()?.mcpTransport as {
+      bearerToken: string;
+      tokens?: Array<{ token: string }>;
+    };
+    expect(slice.bearerToken).toBe(TOKEN);
+    expect(slice.tokens?.[0]?.token).toBe(TOKEN);
+  });
+
   test("livePort reflects a fallback port, not the first PORT_RANGE entry", async () => {
     // Occupy 27200 ourselves so the test is deterministic in CI. If it is
     // already taken (e.g. a real Obsidian instance running on the dev

@@ -415,6 +415,161 @@ describe("activateTools (batch)", () => {
   });
 });
 
+// Per-client tool profiles (issue #348 / ADR-0014): mutators gain a
+// tokenId and route through profiles[tokenId] instead of the global
+// toolLoading.promoted; resetAll splits counters (global) from promoted
+// (per token). These assert the NEW multi-token signatures — the
+// existing tests above stay unchanged as the single-token regression
+// guard.
+describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
+  const TWO_TOKEN_FIXTURE = {
+    mcpTransport: {
+      bearerToken: "a".repeat(43),
+      tokens: [
+        {
+          id: "default",
+          label: "Default",
+          token: "a".repeat(43),
+          createdAt: 1,
+        },
+        {
+          id: "claude",
+          label: "claude.ai",
+          token: "b".repeat(43),
+          createdAt: 2,
+        },
+      ],
+    },
+  };
+
+  test("activateTool writes into the calling token's profiles entry, not the global promoted list", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+          claude: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    await mgr.activateTool("search_and_replace", ALL_NAMES, plugin, "claude");
+
+    const toolLoading = plugin._store().toolLoading as {
+      promoted: string[];
+      profiles: Record<string, { promoted: string[] }>;
+    };
+    expect(toolLoading.profiles.claude.promoted).toContain(
+      "search_and_replace",
+    );
+    expect(toolLoading.profiles.default.promoted ?? []).not.toContain(
+      "search_and_replace",
+    );
+    // Mutating a non-default token must not touch the legacy mirror.
+    expect(toolLoading.promoted).not.toContain("search_and_replace");
+  });
+
+  test("activateTools (batch) writes into the calling token's profiles entry only", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+          claude: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    await mgr.activateTools(
+      ["search_and_replace"],
+      ALL_NAMES,
+      plugin,
+      "claude",
+    );
+
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<string, { promoted: string[] }>;
+    };
+    expect(toolLoading.profiles.claude.promoted).toContain(
+      "search_and_replace",
+    );
+  });
+
+  test("deactivateTool removes from the calling token's profiles entry only", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: {
+            profile: "all",
+            promoted: ["search_and_replace"],
+            allowed: null,
+          },
+          claude: {
+            profile: "core",
+            promoted: ["search_and_replace"],
+            allowed: null,
+          },
+        },
+      },
+    });
+
+    await mgr.deactivateTool("search_and_replace", plugin, "claude");
+
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<string, { promoted: string[] }>;
+    };
+    expect(toolLoading.profiles.claude.promoted).not.toContain(
+      "search_and_replace",
+    );
+    expect(toolLoading.profiles.default.promoted).toContain(
+      "search_and_replace",
+    );
+  });
+
+  test("resetAll splits: counters reset globally, promoted resets only for the given token (R-10)", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "adaptive",
+        promoted: [],
+        counters: { search_vault: 5 },
+        profiles: {
+          default: {
+            profile: "adaptive",
+            promoted: ["search_and_replace"],
+            allowed: null,
+          },
+          claude: {
+            profile: "core",
+            promoted: ["get_active_file"],
+            allowed: null,
+          },
+        },
+      },
+    });
+
+    await mgr.resetAll(plugin, "default");
+
+    const toolLoading = plugin._store().toolLoading as {
+      counters: Record<string, number>;
+      profiles: Record<string, { promoted: string[] }>;
+    };
+    expect(toolLoading.counters).toEqual({}); // global reset
+    expect(toolLoading.profiles.default.promoted).toEqual([]);
+    expect(toolLoading.profiles.claude.promoted).toEqual(["get_active_file"]); // untouched by another token's reset
+  });
+});
+
 // Smoke-test: CORE_SET contains only real tool names
 describe("CORE_SET", () => {
   test("all core tools are known names (sanity check)", () => {
