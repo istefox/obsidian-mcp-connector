@@ -2,7 +2,10 @@ import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
-import { isAllowedInScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import {
+  isActiveFor,
+  isAllowedInScope,
+} from "$/features/adaptive-tool-loading/resolveToolScope";
 import type { PluginDataLike, ToolScope } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
@@ -70,7 +73,7 @@ export async function activateToolsHandler({
       outcomes[name] = "not_allowed";
     } else if (scope && !isAllowedInScope(scope, name)) {
       outcomes[name] = "not_allowed";
-    } else if (entry.enabled && (!scope || scope.active.has(name))) {
+    } else if (isActiveFor(entry.enabled, name, scope)) {
       outcomes[name] = "already_active";
     } else {
       outcomes[name] = "activated";

@@ -58,11 +58,21 @@
 
   async function loadPolicy(id: string): Promise<void> {
     loadedTokenId = id;
-    const policy = await readPolicy(plugin, id);
-    profile = policy.profile;
-    promoted = policy.promoted;
-    allowed = policy.allowed;
-    mounted = true;
+    try {
+      const policy = await readPolicy(plugin, id);
+      profile = policy.profile;
+      promoted = policy.promoted;
+      allowed = policy.allowed;
+      mounted = true;
+    } catch (err) {
+      // Without this the read rejects into a fire-and-forget `void` call
+      // and the panel just stays on its empty state, with nothing said.
+      // `loadedTokenId` deliberately stays set: clearing it here would
+      // re-satisfy the reactive guard above and spin a failing read.
+      // Selecting another token and coming back retries.
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to read tool loading settings: ${message}`);
+    }
   }
 
   /**
@@ -415,6 +425,10 @@
     font-family: var(--font-monospace);
     font-size: 0.9em;
     flex: 1;
+    /* Tool names are single unbreakable words; without min-width:0 the
+       flex item cannot shrink below its content and pushes Remove out. */
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .empty-hint {

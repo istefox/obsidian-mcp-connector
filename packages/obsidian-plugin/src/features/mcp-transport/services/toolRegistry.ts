@@ -7,6 +7,7 @@ import type {
 import { type, type Type } from "arktype";
 import { formatMcpError } from "./formatMcpError";
 import { logger } from "$/shared";
+import { isActiveFor } from "$/features/adaptive-tool-loading/resolveToolScope";
 import type { ToolScope } from "$/shared/types";
 
 interface HandlerContext {
@@ -553,8 +554,7 @@ export class ToolRegistryClass<
       if (
         schema &&
         handler &&
-        this.isServed(schema) &&
-        (!scope || scope.active.has(params.name))
+        isActiveFor(this.isServed(schema), params.name, scope)
       ) {
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),

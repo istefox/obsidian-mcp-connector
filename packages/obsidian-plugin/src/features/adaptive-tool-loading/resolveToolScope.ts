@@ -60,6 +60,30 @@ export function resolveToolScope(
 }
 
 /**
+ * Whether `name` actually runs for this caller: served by the registry
+ * AND inside the caller's active set. This is `dispatch`'s branch (a),
+ * expressed once. `tool_catalog`, `activate_tool` and `activate_tools`
+ * all have to answer the same question, and a copy that drifts reports a
+ * tool as active that the very next call refuses — which is exactly what
+ * happened to `toolCatalog.ts` before this predicate existed.
+ *
+ * `served` is the registry's own view (`entry.enabled` from `listAll()`,
+ * `isServed(schema)` inside the registry). Both off switches are already
+ * false there, so this predicate never has to know the precedence
+ * between `userDisabled` and the adaptive flag.
+ *
+ * No scope means no per-client policy: the pre-ADR-0014 global answer,
+ * which is `served` alone.
+ */
+export function isActiveFor(
+  served: boolean,
+  name: string,
+  scope?: ToolScope,
+): boolean {
+  return served && (!scope || scope.active.has(name));
+}
+
+/**
  * Whether the token's allowlist ceiling permits `name` at all — as
  * opposed to it merely being inactive right now. The distinction is the
  * whole point of the ceiling: an inactive tool is one `activate_tool`

@@ -334,8 +334,16 @@
    *   value: The string to copy.
    */
   async function copyToClipboard(value: string): Promise<void> {
-    await navigator.clipboard.writeText(value);
-    new Notice("Copied to clipboard.");
+    try {
+      await navigator.clipboard.writeText(value);
+      new Notice("Copied to clipboard.");
+    } catch (err) {
+      // Silence here is worse than usual: the user walks away believing
+      // the secret is on the clipboard. Same shape as CopyConfigMenu's
+      // copyJson.
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Copy failed: ${message}`);
+    }
   }
 </script>
 
@@ -581,6 +589,12 @@
     font-weight: 600;
     cursor: text;
     color: var(--text-normal);
+    /* The label is user-typed and can be one long unbroken string. A flex
+       item defaults to min-width:auto, i.e. its content width, so without
+       these it pushes the row past the settings pane instead of wrapping. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
   }
 
   .token-profile,

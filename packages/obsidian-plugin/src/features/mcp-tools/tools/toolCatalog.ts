@@ -1,6 +1,9 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
-import { isAllowedInScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import {
+  isActiveFor,
+  isAllowedInScope,
+} from "$/features/adaptive-tool-loading/resolveToolScope";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 import type { PluginReadLike, ToolScope } from "$/shared/types";
 
@@ -74,13 +77,7 @@ export async function toolCatalogHandler({
     .filter((entry) => !entry.userDisabled)
     .map((entry) => {
       const callCount = counters[entry.name] ?? 0;
-      // The same conjunction dispatch's branch (a) and both activate
-      // handlers apply: a tool the registry is not serving (the adaptive
-      // flag) is inactive for every caller, whatever the token's active
-      // set says — reporting it active would promise a call dispatch
-      // refuses.
-      const isActive =
-        entry.enabled && (!scope || scope.active.has(entry.name));
+      const isActive = isActiveFor(entry.enabled, entry.name, scope);
       if (isActive) {
         return {
           name: entry.name,

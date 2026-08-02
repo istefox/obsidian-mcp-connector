@@ -2,7 +2,10 @@ import { type } from "arktype";
 import { errorText, successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
-import { isAllowedInScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import {
+  isActiveFor,
+  isAllowedInScope,
+} from "$/features/adaptive-tool-loading/resolveToolScope";
 import type { PluginDataLike, ToolScope } from "$/shared/types";
 import type { RegistryLike } from "$/features/adaptive-tool-loading/types";
 
@@ -89,9 +92,8 @@ export async function activateToolHandler({
 
   // "Already active" is per caller: a tool served globally can still be
   // outside this token's set, and saying "already active" for it would
-  // strand the client on a tool it cannot call (the two conditions are
-  // the same conjunction the registry's dispatch branch (a) applies).
-  if (found.enabled && (!scope || scope.active.has(args.name))) {
+  // strand the client on a tool it cannot call.
+  if (isActiveFor(found.enabled, args.name, scope)) {
     return successText("Tool is already active in the current session.");
   }
 

@@ -439,6 +439,9 @@
 
   .status-fail {
     color: var(--text-error);
+    /* Holds a runtime error string, which routinely carries a filesystem
+       path with no break opportunity. */
+    overflow-wrap: anywhere;
   }
 
   .install-buttons {
@@ -455,5 +458,7 @@
     font-family: var(--font-monospace);
     font-size: 0.8em;
     color: var(--text-muted);
+    /* Homebrew's output is monospace and path-heavy: no spaces to wrap on. */
+    overflow-wrap: anywhere;
   }
 </style>
