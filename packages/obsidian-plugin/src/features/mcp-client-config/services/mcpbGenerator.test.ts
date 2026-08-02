@@ -9,6 +9,12 @@ import {
 } from "./mcpbGenerator";
 import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
 
+// `CONNECTOR_SHIM_SOURCE` is a live binding: once the token-id-placeholder
+// test below patches the asset module, the imported name resolves to the
+// PATCHED text, so it cannot be used to undo that patch. This copy is taken
+// at module evaluation, before any mock runs.
+const REAL_SHIM_SOURCE = CONNECTOR_SHIM_SOURCE;
+
 const VERSION = "1.2.3";
 const VAULT_PATH = "/Users/test/Obsidian/MockVault";
 const CONFIG_DIR = ".obsidian";
@@ -396,27 +402,47 @@ describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17
     // needs its own module instance built against a mocked source that
     // never gets it).
     mock.module("../assets/connectorShimSource", () => ({
-      CONNECTOR_SHIM_SOURCE: CONNECTOR_SHIM_SOURCE.replace(
+      CONNECTOR_SHIM_SOURCE: REAL_SHIM_SOURCE.replace(
         '"__OBSIDIAN_MCP_TOKEN_ID__"',
         "null",
       ),
     }));
-    // The "?…" suffix busts Bun's module cache so this import re-evaluates
-    // mcpbGenerator against the mock above instead of returning the
-    // already-bound top-of-file instance. Passed as a variable (not a
-    // string literal) so tsc's static module resolution — which does not
-    // understand the query string — never runs against it; Bun resolves
-    // it fine at runtime.
-    const shimSpecifier = "./mcpbGenerator?missing-token-id-placeholder";
-    const fresh = (await import(
-      shimSpecifier
-    )) as typeof import("./mcpbGenerator");
-    const input: McpbGeneratorInput = {
-      version: VERSION,
-      vaultPath: VAULT_PATH,
-      configDir: CONFIG_DIR,
-      tokenId: "tok-42",
-    };
-    expect(() => fresh.generateMcpb(input)).toThrow(/placeholder/i);
+    try {
+      // The "?…" suffix busts Bun's module cache so this import re-evaluates
+      // mcpbGenerator against the mock above instead of returning the
+      // already-bound top-of-file instance. Passed as a variable (not a
+      // string literal) so tsc's static module resolution — which does not
+      // understand the query string — never runs against it; Bun resolves
+      // it fine at runtime.
+      const shimSpecifier = "./mcpbGenerator?missing-token-id-placeholder";
+      const fresh = (await import(
+        shimSpecifier
+      )) as typeof import("./mcpbGenerator");
+      const input: McpbGeneratorInput = {
+        version: VERSION,
+        vaultPath: VAULT_PATH,
+        configDir: CONFIG_DIR,
+        tokenId: "tok-42",
+      };
+      expect(() => fresh.generateMcpb(input)).toThrow(/placeholder/i);
+    } finally {
+      // `mock.module` patches the module registry for the whole process,
+      // and `bun test` runs every file in one process — leaving it in
+      // place would hand a later test file a shim source whose token-id
+      // placeholder is already gone. Re-registering the copy taken at
+      // module load restores it without depending on whether this Bun
+      // restores module mocks through `mock.restore()`.
+      mock.module("../assets/connectorShimSource", () => ({
+        CONNECTOR_SHIM_SOURCE: REAL_SHIM_SOURCE,
+      }));
+    }
+  });
+
+  test("the module mock above is restored, so later test files still see the real shim source", async () => {
+    // The top-of-file `generateMcpb` was bound before the mock and would
+    // pass either way; only a fresh read of the asset detects the leak.
+    const asset =
+      (await import("../assets/connectorShimSource")) as typeof import("../assets/connectorShimSource");
+    expect(asset.CONNECTOR_SHIM_SOURCE).toContain("__OBSIDIAN_MCP_TOKEN_ID__");
   });
 });

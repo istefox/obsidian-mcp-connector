@@ -135,7 +135,11 @@ function makeScopedPlugin(data: {
 
 const SCOPED_ENTRIES = [
   { name: "search_vault", enabled: true },
-  { name: "find_broken_links", enabled: false },
+  // `enabled` mirrors the registry's global adaptive flag, which nothing
+  // clears per token: a tool inside a token's active set is served
+  // globally too. A promoted-for-this-token tool that the registry is NOT
+  // serving is the separate case covered by its own test below.
+  { name: "find_broken_links", enabled: true },
   { name: "rename_vault_file", enabled: false },
   { name: "delete_vault_file", enabled: false, userDisabled: true },
 ];
@@ -172,6 +176,31 @@ describe("toolCatalogHandler — per-token scope (ADR-0014, Task 6)", () => {
 
     // Not in `active` AND outside `allowed` — the ceiling, not "inactive".
     expect(byName.rename_vault_file.status).toBe("unavailable");
+  });
+
+  test("a globally adaptive-disabled tool reads inactive even when the token's active set holds it", async () => {
+    // The registry's adaptive flag is global, so dispatch's branch (a)
+    // refuses this call whatever the scope says, and branch b2 answers
+    // "exists but is inactive". Reporting it `active` here would promise
+    // a call that cannot run.
+    const plugin = makeScopedPlugin({
+      profiles: { claude: { promoted: ["find_broken_links"] } },
+    });
+    const scope: ToolScope = {
+      id: "claude",
+      // Inside `allowed`, so the `unavailable` branch cannot be what
+      // makes this test pass.
+      active: new Set(["find_broken_links"]),
+      allowed: new Set(["find_broken_links"]),
+    };
+
+    const result = await toolCatalogHandler({
+      registry: makeRegistry([{ name: "find_broken_links", enabled: false }]),
+      plugin,
+      scope,
+    });
+
+    expect(parseScoped(result)[0].status).toBe("inactive");
   });
 
   test("no scope passed ⇒ current global behaviour (unit-test ergonomics; the settings UI path)", async () => {

@@ -74,7 +74,13 @@ export async function toolCatalogHandler({
     .filter((entry) => !entry.userDisabled)
     .map((entry) => {
       const callCount = counters[entry.name] ?? 0;
-      const isActive = scope ? scope.active.has(entry.name) : entry.enabled;
+      // The same conjunction dispatch's branch (a) and both activate
+      // handlers apply: a tool the registry is not serving (the adaptive
+      // flag) is inactive for every caller, whatever the token's active
+      // set says — reporting it active would promise a call dispatch
+      // refuses.
+      const isActive =
+        entry.enabled && (!scope || scope.active.has(entry.name));
       if (isActive) {
         return {
           name: entry.name,
