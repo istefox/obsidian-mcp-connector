@@ -1,6 +1,6 @@
 # ADR-0014: Per-client tool profiles via multiple bearer tokens
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-07-31
 **Deciders:** Stefano Ferri
 
@@ -395,6 +395,13 @@ flush (R-10).
 (b2) registered && !userDisabled && not active                → recoverable error: ADR-0011 text
 (c) unregistered || userDisabled                              → ProtocolError Unknown tool
 ```
+
+Branch (a)'s conjunction is not private to `dispatch()`: `tool_catalog`, `activate_tool` and
+`activate_tools` each have to answer the same "active for this caller" question, and a copy of it
+that drifts reports a tool as active that the very next call refuses — which is exactly what
+happened to `tool_catalog` during this ADR's own review. It is therefore exported once as
+`isActiveFor(served, name, scope?)` in `resolveToolScope.ts`, beside `isAllowedInScope`, and all
+four sites call it.
 
 b1 must precede b2. b2's text instructs the caller to run
 `activate_tools({"names":[…]})` and retry; for a tool the token's allowlist forbids that
