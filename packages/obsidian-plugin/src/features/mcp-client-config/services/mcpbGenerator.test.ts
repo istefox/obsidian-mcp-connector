@@ -1,13 +1,24 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { unzipSync, strFromU8 } from "fflate";
-import { generateMcpb, type McpbManifest } from "./mcpbGenerator";
+import {
+  generateMcpb,
+  type McpbGeneratorInput,
+  type McpbManifest,
+} from "./mcpbGenerator";
 import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
+
+// `CONNECTOR_SHIM_SOURCE` is a live binding: once the token-id-placeholder
+// test below patches the asset module, the imported name resolves to the
+// PATCHED text, so it cannot be used to undo that patch. This copy is taken
+// at module evaluation, before any mock runs.
+const REAL_SHIM_SOURCE = CONNECTOR_SHIM_SOURCE;
 
 const VERSION = "1.2.3";
 const VAULT_PATH = "/Users/test/Obsidian/MockVault";
 const CONFIG_DIR = ".obsidian";
+const TOKEN_ID = "default";
 
 function getManifest(bytes: Uint8Array): McpbManifest {
   const files = unzipSync(bytes);
@@ -41,6 +52,7 @@ describe("generateMcpb", () => {
       version: VERSION,
       vaultPath: VAULT_PATH,
       configDir: CONFIG_DIR,
+      tokenId: TOKEN_ID,
     });
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(0);
@@ -52,6 +64,7 @@ describe("generateMcpb", () => {
         version: VERSION,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
+        tokenId: TOKEN_ID,
       }),
     );
     expect(Object.keys(files)).toContain("manifest.json");
@@ -65,6 +78,7 @@ describe("generateMcpb", () => {
         version: VERSION,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
+        tokenId: TOKEN_ID,
       }),
     );
     expect(files["icon.png"].length).toBeGreaterThan(0);
@@ -77,6 +91,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(m.manifest_version).toBe("0.3");
@@ -88,6 +103,7 @@ describe("generateMcpb", () => {
           version: "9.9.9",
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(m.version).toBe("9.9.9");
@@ -99,6 +115,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(m.name).toBe("obsidian-mcp-connector");
@@ -113,6 +130,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(m.icon).toBe("icon.png");
@@ -124,6 +142,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       const server = m.server;
@@ -141,6 +160,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(m.user_config).toBeUndefined();
@@ -152,6 +172,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       // Reading the concrete fields without casts is the point: a rename like
@@ -174,6 +195,7 @@ describe("generateMcpb", () => {
             version: VERSION,
             vaultPath: VAULT_PATH,
             configDir: CONFIG_DIR,
+            tokenId: TOKEN_ID,
           }),
         )["manifest.json"],
       );
@@ -187,6 +209,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain(VAULT_PATH);
@@ -198,6 +221,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain('const configDir = ".obsidian";');
@@ -212,6 +236,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: ".obsidian-custom",
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain('const configDir = ".obsidian-custom";');
@@ -224,12 +249,33 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain("transport.livePort");
-      expect(shim).toContain("transport.bearerToken");
+      // NOT `toContain("transport.bearerToken")`: that string is the
+      // legacy fallback branch's own source and is present in every
+      // bundle unconditionally, so it discriminates nothing. What must
+      // hold is that this bundle resolves by ID.
+      expect(shim).toContain(`const shimTokenId = "${TOKEN_ID}";`);
+      expect(shim).not.toContain("const shimTokenId = null;");
       expect(shim).not.toMatch(/127\.0\.0\.1:\d+/);
       expect(shim).not.toMatch(/Bearer [A-Za-z0-9_-]{10,}/);
+    });
+
+    test("refuses to build a bundle with no token id, or a blank one", () => {
+      const base = {
+        version: VERSION,
+        vaultPath: VAULT_PATH,
+        configDir: CONFIG_DIR,
+      };
+      // Cast: the type already forbids these, so this pins the RUNTIME
+      // guard for callers that are not type-checked (`.svelte`).
+      for (const tokenId of [undefined, "", "   "]) {
+        expect(() =>
+          generateMcpb({ ...base, tokenId } as unknown as McpbGeneratorInput),
+        ).toThrow(/tokenId/);
+      }
     });
 
     test("shim reports a clear message when data.json is unreadable, without exiting the process", () => {
@@ -238,6 +284,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain("could not read");
@@ -249,11 +296,13 @@ describe("generateMcpb", () => {
         version: VERSION,
         vaultPath: "/vault/a",
         configDir: CONFIG_DIR,
+        tokenId: TOKEN_ID,
       });
       const b = generateMcpb({
         version: VERSION,
         vaultPath: "/vault/b",
         configDir: CONFIG_DIR,
+        tokenId: TOKEN_ID,
       });
       expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
     });
@@ -266,6 +315,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).not.toContain("npx");
@@ -279,6 +329,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain("fetch");
@@ -291,6 +342,7 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain("RETRY_WINDOW_MS");
@@ -304,9 +356,93 @@ describe("generateMcpb", () => {
           version: VERSION,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
         }),
       );
       expect(shim).toContain("is Obsidian open with the vault loaded?");
     });
+  });
+});
+
+describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17, ADR-0014 §11)", () => {
+  test("the generated shim carries the substituted token id, not the raw placeholder", () => {
+    const input: McpbGeneratorInput = {
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-42",
+    };
+    const shim = getShimSource(generateMcpb(input));
+    expect(shim).toContain('"tok-42"');
+    expect(shim).not.toContain("__OBSIDIAN_MCP_TOKEN_ID__");
+  });
+
+  test("different token ids produce different bundles", () => {
+    const a = generateMcpb({
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-a",
+    });
+    const b = generateMcpb({
+      version: VERSION,
+      vaultPath: VAULT_PATH,
+      configDir: CONFIG_DIR,
+      tokenId: "tok-b",
+    });
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+  });
+
+  test("a shim source missing the token id placeholder throws, never silently ships a bundle with an unsubstituted marker", async () => {
+    // The guard has to be exercised against a source that genuinely lacks
+    // the marker, independent of whatever the real, on-disk
+    // connectorShimSource.ts carries at test time (once Task 8 sub-step 2
+    // regenerates it, the real asset DOES carry the marker, so this can't
+    // be reproduced by calling the ordinarily-imported generateMcpb — it
+    // needs its own module instance built against a mocked source that
+    // never gets it).
+    mock.module("../assets/connectorShimSource", () => ({
+      CONNECTOR_SHIM_SOURCE: REAL_SHIM_SOURCE.replace(
+        '"__OBSIDIAN_MCP_TOKEN_ID__"',
+        "null",
+      ),
+    }));
+    try {
+      // The "?…" suffix busts Bun's module cache so this import re-evaluates
+      // mcpbGenerator against the mock above instead of returning the
+      // already-bound top-of-file instance. Passed as a variable (not a
+      // string literal) so tsc's static module resolution — which does not
+      // understand the query string — never runs against it; Bun resolves
+      // it fine at runtime.
+      const shimSpecifier = "./mcpbGenerator?missing-token-id-placeholder";
+      const fresh = (await import(
+        shimSpecifier
+      )) as typeof import("./mcpbGenerator");
+      const input: McpbGeneratorInput = {
+        version: VERSION,
+        vaultPath: VAULT_PATH,
+        configDir: CONFIG_DIR,
+        tokenId: "tok-42",
+      };
+      expect(() => fresh.generateMcpb(input)).toThrow(/placeholder/i);
+    } finally {
+      // `mock.module` patches the module registry for the whole process,
+      // and `bun test` runs every file in one process — leaving it in
+      // place would hand a later test file a shim source whose token-id
+      // placeholder is already gone. Re-registering the copy taken at
+      // module load restores it without depending on whether this Bun
+      // restores module mocks through `mock.restore()`.
+      mock.module("../assets/connectorShimSource", () => ({
+        CONNECTOR_SHIM_SOURCE: REAL_SHIM_SOURCE,
+      }));
+    }
+  });
+
+  test("the module mock above is restored, so later test files still see the real shim source", async () => {
+    // The top-of-file `generateMcpb` was bound before the mock and would
+    // pass either way; only a fresh read of the asset detects the leak.
+    const asset =
+      (await import("../assets/connectorShimSource")) as typeof import("../assets/connectorShimSource");
+    expect(asset.CONNECTOR_SHIM_SOURCE).toContain("__OBSIDIAN_MCP_TOKEN_ID__");
   });
 });

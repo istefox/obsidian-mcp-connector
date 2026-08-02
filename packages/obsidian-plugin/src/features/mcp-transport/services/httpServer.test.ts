@@ -5,6 +5,7 @@ import {
   stopHttpServer,
   type RunningServer,
 } from "./httpServer";
+import { staticTokenProvider } from "./tokenStore";
 import { MAX_REQUEST_BODY_BYTES } from "../constants";
 
 const running: RunningServer[] = [];
@@ -27,7 +28,7 @@ async function freePort(): Promise<number> {
 describe("startHttpServer", () => {
   test("binds to a port in range and exposes it", async () => {
     const server = await startHttpServer({
-      bearerToken: "test-token-12345678901234567890abcd",
+      resolveTokens: staticTokenProvider("test-token-12345678901234567890abcd"),
       requestHandler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/plain" });
         res.end("ok");
@@ -41,7 +42,7 @@ describe("startHttpServer", () => {
   test("honors a custom ports override instead of PORT_RANGE (#337)", async () => {
     const port = await freePort();
     const server = await startHttpServer({
-      bearerToken: "test-token-12345678901234567890abcd",
+      resolveTokens: staticTokenProvider("test-token-12345678901234567890abcd"),
       requestHandler: async (_req, res) => {
         res.writeHead(200, { "content-type": "text/plain" });
         res.end("ok");
@@ -54,7 +55,7 @@ describe("startHttpServer", () => {
 
   test("rejects POST /mcp without auth (401)", async () => {
     const server = await startHttpServer({
-      bearerToken: "test-token-12345678901234567890abcd",
+      resolveTokens: staticTokenProvider("test-token-12345678901234567890abcd"),
       requestHandler: async (_req, res) => {
         res.writeHead(200);
         res.end("should-not-reach");
@@ -70,7 +71,7 @@ describe("startHttpServer", () => {
 
   test("rejects /other with 404", async () => {
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: async (_req, res) => {
         res.end();
       },
@@ -83,7 +84,7 @@ describe("startHttpServer", () => {
 
   test("rejects PUT /mcp with 405", async () => {
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: async (_req, res) => {
         res.end();
       },
@@ -100,7 +101,7 @@ describe("startHttpServer", () => {
     let handlerCalled = false;
     const token = "t".repeat(32);
     const server = await startHttpServer({
-      bearerToken: token,
+      resolveTokens: staticTokenProvider(token),
       requestHandler: async (_req, res) => {
         handlerCalled = true;
         res.writeHead(200, { "content-type": "text/plain" });
@@ -120,7 +121,7 @@ describe("startHttpServer", () => {
   test("returns 500 when the request handler throws", async () => {
     const token = "t".repeat(32);
     const server = await startHttpServer({
-      bearerToken: token,
+      resolveTokens: staticTokenProvider(token),
       requestHandler: async () => {
         throw new Error("synthetic handler failure");
       },
@@ -169,7 +170,7 @@ describe("request body size cap", () => {
     let handlerCalled = false;
     const token = "t".repeat(32);
     const server = await startHttpServer({
-      bearerToken: token,
+      resolveTokens: staticTokenProvider(token),
       requestHandler: async (_req, res) => {
         handlerCalled = true;
         res.writeHead(200);
@@ -198,7 +199,7 @@ describe("request body size cap", () => {
     let received = "";
     const token = "t".repeat(32);
     const server = await startHttpServer({
-      bearerToken: token,
+      resolveTokens: staticTokenProvider(token),
       requestHandler: async (req, res) => {
         for await (const chunk of req) received += chunk;
         res.writeHead(200);
@@ -225,7 +226,7 @@ describe("request body size cap", () => {
 describe("stopHttpServer", () => {
   test("closes the server so the port is free again", async () => {
     const server = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: async (_req, res) => {
         res.end();
       },
@@ -234,12 +235,65 @@ describe("stopHttpServer", () => {
 
     // Bind a new server to the same port — would fail if the first is still listening
     const server2 = await startHttpServer({
-      bearerToken: "t".repeat(32),
+      resolveTokens: staticTokenProvider("t".repeat(32)),
       requestHandler: async (_req, res) => {
         res.end();
       },
     });
     running.push(server2);
     expect(server2.port).toBe(server.port);
+  });
+});
+
+describe("startHttpServer — multi-token resolveTokens (issue #348, ADR-0014)", () => {
+  test("two tokens on one server route to different handler invocations with different tokenId", async () => {
+    const seenTokenIds: string[] = [];
+    const tokenA = { id: "a", label: "A", token: "a".repeat(32), createdAt: 0 };
+    const tokenB = { id: "b", label: "B", token: "b".repeat(32), createdAt: 0 };
+    const server = await startHttpServer({
+      resolveTokens: async () => [tokenA, tokenB],
+      requestHandler: async (_req, res, tokenId) => {
+        seenTokenIds.push(tokenId);
+        res.writeHead(200);
+        res.end("ok");
+      },
+    });
+    running.push(server);
+
+    const resA = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA.token}` },
+    });
+    const resB = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB.token}` },
+    });
+
+    expect(resA.status).toBe(200);
+    expect(resB.status).toBe(200);
+    expect(seenTokenIds).toEqual(["a", "b"]);
+  });
+
+  test("a rejected resolveTokens is logged and treated as an empty list — the request 401s, the handler never runs", async () => {
+    let handlerCalled = false;
+    const server = await startHttpServer({
+      resolveTokens: async () => {
+        throw new Error("synthetic loadData() failure");
+      },
+      requestHandler: async (_req, res) => {
+        handlerCalled = true;
+        res.writeHead(200);
+        res.end("should-not-reach");
+      },
+    });
+    running.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${"t".repeat(32)}` },
+    });
+
+    expect(res.status).toBe(401);
+    expect(handlerCalled).toBe(false);
   });
 });

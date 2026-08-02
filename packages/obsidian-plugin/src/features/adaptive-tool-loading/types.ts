@@ -1,9 +1,23 @@
+import type { ToolProfile } from "./tokenPolicyStore";
+
 declare module "obsidian" {
   interface McpToolsPluginSettings {
     toolLoading?: {
-      profile: "all" | "core" | "adaptive";
+      /** Legacy mirror of `profiles[tokens[0].id].profile` (ADR-0014 §7). */
+      profile: ToolProfile;
+      /** Global: call frequency is a property of the vault, not of a client. */
       counters: Record<string, number>;
+      /** Legacy mirror of `profiles[tokens[0].id].promoted`. */
       promoted: string[];
+      /** Per-token policy, keyed by `mcpTransport.tokens[].id`. */
+      profiles?: Record<
+        string,
+        {
+          profile: ToolProfile;
+          promoted: string[];
+          allowed: string[] | null;
+        }
+      >;
     };
   }
 }

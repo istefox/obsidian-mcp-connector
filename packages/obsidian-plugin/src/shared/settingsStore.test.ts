@@ -33,6 +33,40 @@ describe("SettingsStore.updateSlice", () => {
     expect(snapshot()).toEqual({ other: { keep: 1 }, mine: { v: 2 } });
   });
 
+  test("passes the whole snapshot as the recipe's second argument", async () => {
+    const { plugin } = makePlugin({ other: { keep: 1 }, mine: { v: 1 } });
+    const store = new SettingsStore(plugin);
+    let seen: Record<string, unknown> | undefined;
+    let aliased = false;
+
+    await store.updateSlice("mine", (current, raw) => {
+      seen = raw;
+      aliased = raw.mine === current;
+      return { v: 2 };
+    });
+
+    // Sibling slices must be visible: this is the whole point of the
+    // parameter, since the mutex is non-re-entrant and a recipe cannot
+    // read another slice through the store without deadlocking.
+    expect(seen?.other).toEqual({ keep: 1 });
+    expect(aliased).toBe(true);
+  });
+
+  test("NO_CHANGE still holds when the recipe reads the snapshot", async () => {
+    const { plugin, saves } = makePlugin({
+      other: { keep: 1 },
+      mine: { v: 1 },
+    });
+    const store = new SettingsStore(plugin);
+
+    await store.updateSlice("mine", (current, raw) => {
+      void raw.other;
+      return current;
+    });
+
+    expect(saves()).toBe(0);
+  });
+
   test("returning the same reference skips the write (NO_CHANGE)", async () => {
     const { plugin, saves } = makePlugin({ mine: { v: 1 } });
     const store = new SettingsStore(plugin);

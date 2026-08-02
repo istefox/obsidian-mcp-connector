@@ -17,8 +17,14 @@ import { globalSettingsMutex, type Mutex } from "./settingsLock";
 import type { PluginDataLike } from "./types";
 import { logger } from "./logger";
 
-/** Deep structural equality for plain JSON values. */
-function jsonEqual(a: unknown, b: unknown): boolean {
+/**
+ * Deep structural equality for plain JSON values. Exported because a
+ * recipe that rebuilds a whole slice (rather than patching one field)
+ * cannot decide NO_CHANGE by reference and must not decide it by
+ * `JSON.stringify`, which reports a mere key reordering as a change and
+ * would re-persist the slice on every load.
+ */
+export function jsonEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return a === b;
@@ -55,14 +61,25 @@ export class SettingsStore {
    * "no change" and skips the write — so a conditional writer (e.g.
    * "already active, nothing to do") costs no disk I/O. Returns the
    * recipe's value.
+   *
+   * `recipe`'s second argument is the whole `data.json` snapshot the
+   * mutex is holding, for the case where the next value of one slice
+   * depends on another. Reading a sibling with a separate `loadData()`
+   * before `updateSlice` cannot be made safe: the mutex is
+   * non-re-entrant, so that read necessarily happens outside the lock
+   * and can be stale by the time the recipe runs. Treat `raw` as
+   * read-only — mutating it corrupts the write below.
    */
-  updateSlice<T>(key: string, recipe: (current: unknown) => T): Promise<T> {
+  updateSlice<T>(
+    key: string,
+    recipe: (current: unknown, raw: Record<string, unknown>) => T,
+  ): Promise<T> {
     return this.mutex.run(async () => {
       const raw =
         ((await this.plugin.loadData()) as Record<string, unknown> | null) ??
         {};
       const current = raw[key];
-      const next = recipe(current);
+      const next = recipe(current, raw);
       if ((next as unknown) !== current) {
         await this.plugin.saveData({ ...raw, [key]: next });
       }

@@ -1,15 +1,10 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
-  import { FileSystemAdapter, Notice } from "obsidian";
+  import { Notice } from "obsidian";
   import { onMount } from "svelte";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
-  import {
-    claudeCodeConfig,
-    claudeDesktopConfig,
-    streamableHttpConfig,
-    wrapInMcpServers,
-  } from "../services/generators";
-  import { generateMcpb } from "../services/mcpbGenerator";
+  import CopyConfigMenu from "./CopyConfigMenu.svelte";
+  import { downloadMcpbForFirstToken } from "../services/mcpbDownload";
   import {
     getAutoWriteEnabled,
     setAutoWriteEnabled,
@@ -163,53 +158,22 @@
     }
   }
 
+  /**
+   * Export the bundle for the vault's first token, resolved BY ID at
+   * click time. Not a mirror bundle: revoking that token cuts this
+   * bundle off like any other, which is the whole point of ADR-0014
+   * §11. An id-less export would follow `bearerToken`, which tracks
+   * `tokens[0]` positionally, so a revoke would silently hand it the
+   * next token's access instead.
+   *
+   * Bundles for the other tokens are exported from their own row in
+   * Access control.
+   */
   async function handleDownloadMcpb(): Promise<void> {
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      const adapter = plugin.app.vault.adapter;
-      if (!(adapter instanceof FileSystemAdapter)) {
-        new Notice(
-          "Download .mcpb requires a desktop vault (FileSystemAdapter).",
-        );
-        return;
-      }
-      const bytes = generateMcpb({
-        version: plugin.manifest.version,
-        vaultPath: adapter.getBasePath(),
-        configDir: plugin.app.vault.configDir,
-      });
-      const filename = "obsidian-mcp-connector.mcpb";
-
-      // Detect Electron remote (desktop only). If unavailable, fall back to vault.
-      const electronRemote = (() => {
-        try {
-          const r = (require("electron") as { remote?: { dialog: Electron.Dialog } }).remote;
-          return r?.dialog ? r : null;
-        } catch {
-          return null;
-        }
-      })();
-
-      if (electronRemote) {
-        const { filePath } = await electronRemote.dialog.showSaveDialog({
-          defaultPath: filename,
-          filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
-        });
-        if (!filePath) {
-          new Notice("Save cancelled.");
-          return;
-        }
-        // require() is reliable for Node built-ins in Electron; dynamic import() is not.
-        const { writeFile } = require("fs/promises") as typeof import("fs/promises");
-        await writeFile(filePath, Buffer.from(bytes));
-        new Notice(`${filename} saved.`);
-      } else {
-        // Vault fallback when Electron remote is unavailable (mobile / unusual env).
-        const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        await plugin.app.vault.adapter.writeBinary(filename, ab as ArrayBuffer);
-        new Notice(`Saved to vault root: ${filename}`);
-      }
+      new Notice(await downloadMcpbForFirstToken(plugin));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to generate .mcpb: ${msg}`);
@@ -217,42 +181,6 @@
     } finally {
       mcpbBusy = false;
     }
-  }
-
-  /**
-   * Copy a JSON-serialized object to the clipboard. We pretty-print
-   * with 2-space indent so the user can paste straight into a config
-   * file and review the structure.
-   */
-  async function copyJson(payload: unknown, label: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      new Notice(`${label} config copied to clipboard.`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      new Notice(`Copy failed: ${msg}`);
-    }
-  }
-
-  function copyClaudeDesktop(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(claudeDesktopConfig({ url, token })),
-      "Claude Desktop",
-    );
-  }
-
-  function copyClaudeCode(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(claudeCodeConfig({ url, token })),
-      "Claude Code",
-    );
-  }
-
-  function copyStreamableHttp(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(streamableHttpConfig({ url, token })),
-      "Streamable HTTP",
-    );
   }
 
   /**
@@ -307,31 +235,8 @@
         under <code>mcpServers</code>.
       </div>
     </div>
-    <div class="setting-item-control copy-buttons">
-      <button
-        type="button"
-        on:click={copyClaudeDesktop}
-        disabled={!token || !port}
-        aria-label="Copy Claude Desktop config"
-      >
-        Claude Desktop
-      </button>
-      <button
-        type="button"
-        on:click={copyClaudeCode}
-        disabled={!token || !port}
-        aria-label="Copy Claude Code config"
-      >
-        Claude Code
-      </button>
-      <button
-        type="button"
-        on:click={copyStreamableHttp}
-        disabled={!token || !port}
-        aria-label="Copy streamable-http config (Cursor, Cline, Continue, VS Code)"
-      >
-        Cursor / Cline / Continue
-      </button>
+    <div class="setting-item-control">
+      <CopyConfigMenu {plugin} {url} {token} showMcpb={false} />
     </div>
   </div>
 
@@ -340,9 +245,12 @@
       <div class="setting-item-name">Claude Desktop extension</div>
       <div class="setting-item-description">
         Drag the downloaded file onto Claude Desktop — no paste needed. It
-        resolves the current port and token from this vault at connect time,
-        so it keeps working even after a token rotation or a port change.
-        Node.js must be on your PATH (see below).
+        resolves the current port and the token's secret from this vault at
+        connect time, so it keeps working even after a regenerate or a port
+        change. This button exports the <strong>first token in Access
+        control</strong>; to export for a different client, use the
+        <strong>.mcpb</strong> button on that token's row. Node.js must be on
+        your PATH (see below).
       </div>
     </div>
     <div class="setting-item-control">
@@ -508,12 +416,6 @@
     margin-bottom: 1.5em;
   }
 
-  .copy-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4em;
-  }
-
   .hint {
     color: var(--text-muted);
     font-size: 0.85em;
@@ -537,6 +439,9 @@
 
   .status-fail {
     color: var(--text-error);
+    /* Holds a runtime error string, which routinely carries a filesystem
+       path with no break opportunity. */
+    overflow-wrap: anywhere;
   }
 
   .install-buttons {
@@ -553,5 +458,7 @@
     font-family: var(--font-monospace);
     font-size: 0.8em;
     color: var(--text-muted);
+    /* Homebrew's output is monospace and path-heavy: no spaces to wrap on. */
+    overflow-wrap: anywhere;
   }
 </style>

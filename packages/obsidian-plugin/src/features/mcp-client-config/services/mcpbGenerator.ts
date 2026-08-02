@@ -13,6 +13,19 @@ export type McpbGeneratorInput = {
    * always pass the live value.
    */
   configDir: string;
+  /**
+   * Id of the token the bundle authenticates with. The shim resolves it
+   * in `tokens[]` and fails closed when it is gone, so revoking a token
+   * really does cut its bundle off (ADR-0014 §11).
+   *
+   * Required, and that is the point. The shim still honours an unset id
+   * by reading `mcpTransport.bearerToken`, but that branch exists ONLY
+   * for bundles generated before 1.0.0. `bearerToken` tracks `tokens[0]`
+   * positionally, so an id-less bundle follows the position rather than
+   * the client: revoking its token would silently re-point it at the
+   * next one. No export path may emit that.
+   */
+  tokenId: string;
 };
 
 /**
@@ -40,25 +53,36 @@ export interface McpbManifest {
 
 const VAULT_PATH_PLACEHOLDER = '"__OBSIDIAN_MCP_VAULT_PATH__"';
 const CONFIG_DIR_PLACEHOLDER = '"__OBSIDIAN_MCP_CONFIG_DIR__"';
+const TOKEN_ID_PLACEHOLDER = '"__OBSIDIAN_MCP_TOKEN_ID__"';
 
 // The shim's real source lives at services/connectorShim.js — a
 // standalone, unit-tested (bun test) CommonJS Node script with zero
 // dependencies. This function only substitutes the things that differ per
-// generated bundle: the vault path and the vault's config folder name. See
+// generated bundle: the vault path, the vault's config folder name and
+// the token id the bundle authenticates with. See
 // docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
 function buildShim(input: McpbGeneratorInput): string {
   if (
     !CONNECTOR_SHIM_SOURCE.includes(VAULT_PATH_PLACEHOLDER) ||
-    !CONNECTOR_SHIM_SOURCE.includes(CONFIG_DIR_PLACEHOLDER)
+    !CONNECTOR_SHIM_SOURCE.includes(CONFIG_DIR_PLACEHOLDER) ||
+    !CONNECTOR_SHIM_SOURCE.includes(TOKEN_ID_PLACEHOLDER)
   ) {
     throw new Error(
       "connectorShim.js is missing a placeholder — regenerate assets/connectorShimSource.ts",
     );
   }
+  const tokenId = input.tokenId?.trim();
+  if (!tokenId) {
+    throw new Error(
+      "generateMcpb requires a non-empty tokenId — an id-less bundle silently resolves mcpTransport.bearerToken (ADR-0014 §11)",
+    );
+  }
   return CONNECTOR_SHIM_SOURCE.replace(
     VAULT_PATH_PLACEHOLDER,
     JSON.stringify(input.vaultPath),
-  ).replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir));
+  )
+    .replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir))
+    .replace(TOKEN_ID_PLACEHOLDER, JSON.stringify(tokenId));
 }
 
 function buildManifest(input: McpbGeneratorInput): McpbManifest {

@@ -13,7 +13,7 @@ import {
   type McpService,
 } from "./mcpServer";
 import { resolvePorts } from "./port";
-import { generateToken } from "./token";
+import { ensureTokenStore, readTokens } from "./tokenStore";
 
 export type McpTransportState = {
   server: RunningServer;
@@ -43,12 +43,13 @@ export function resolveServerName(
 /**
  * Initialize the MCP HTTP transport for the plugin.
  *
- * Loads (or generates and persists) a bearer token from plugin data,
- * then starts the in-process MCP server and HTTP listener.
+ * Brings the token store to its current shape (minting the first-run
+ * token if needed), then starts the in-process MCP server and HTTP
+ * listener.
  *
- * The bearer token is generated once on first load and stored in data.json
- * under `mcpTransport.bearerToken`. Subsequent loads reuse the stored value
- * so that clients don't need to re-authenticate on every plugin reload.
+ * A token is generated once, on first load, and stored in data.json under
+ * `mcpTransport.tokens`. Subsequent loads reuse the stored strings so that
+ * clients don't need to re-authenticate on every plugin reload.
  *
  * Args:
  *   plugin: The Obsidian Plugin instance (provides loadData/saveData/manifest).
@@ -58,25 +59,14 @@ export function resolveServerName(
  */
 export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
   try {
-    // SettingsStore.updateSlice serializes the load→(maybe
-    // generate)→save through the shared mutex; returning the slice
-    // unchanged when a valid token exists skips the write.
-    let bearerToken!: string;
-    await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => {
-      const slice = (current as Record<string, unknown> | undefined) ?? {};
-      const token = slice.bearerToken as string | undefined;
-
-      // Byte length, not UTF-16 code units: the 32-byte floor is a
-      // security threshold and must hold regardless of encoding.
-      if (!token || Buffer.byteLength(token, "utf8") < 32) {
-        // No valid token yet — generate a fresh one and persist it.
-        // This only happens on the very first load after plugin install.
-        bearerToken = generateToken();
-        return { ...slice, bearerToken };
-      }
-      bearerToken = token;
-      return current; // NO_CHANGE: keep the existing valid token
-    });
+    // First statement of setup, and before the listener binds: mints
+    // the first-run token, migrates a 0.28.2 vault to the multi-token
+    // shape and self-heals the legacy mirror, all idempotently. A
+    // server accepting requests against an empty token list would 401
+    // every client.
+    const tokens = await ensureTokenStore(plugin);
+    // The mirror, which is `tokens[0]` by position (ADR-0014 §7).
+    const bearerToken = tokens[0].token;
 
     const mcpTransportSlice = (await new SettingsStore(plugin).readSlice(
       "mcpTransport",
@@ -96,7 +86,12 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
     let server: RunningServer;
     try {
       server = await startHttpServer({
-        bearerToken,
+        // Re-read on every request rather than closing over `tokens`: a
+        // captured list would keep a revoked token working until the next
+        // Obsidian restart, and it is what lets the settings UI add,
+        // rotate and revoke tokens without restarting the transport
+        // (ADR-0014 §2).
+        resolveTokens: () => readTokens(plugin),
         requestHandler: mcp.handleRequest,
         ports,
       });

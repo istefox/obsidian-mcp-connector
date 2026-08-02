@@ -8,12 +8,16 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { type App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { logger } from "$/shared";
+import type { ToolScope } from "$/shared/types";
 import type { ToolRegistry } from "./toolRegistry";
 import type { PromptRegistry } from "./promptRegistry";
 import {
   ToolLoadingManager,
   META_TOOLS,
 } from "$/features/adaptive-tool-loading";
+import { readPolicy } from "$/features/adaptive-tool-loading/tokenPolicyStore";
+import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolScope";
+import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
 import { composeToolRegistry } from "$/composeToolRegistry";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
 import {
@@ -53,7 +57,12 @@ export type McpServiceConfig = {
 export type McpService = {
   registry: ToolRegistry;
   promptRegistry: PromptRegistry;
-  handleRequest: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  handleRequest: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    /** Id of the bearer token this request authenticated with. */
+    tokenId: string,
+  ) => Promise<void>;
   /** Persist any in-memory tool-call counters (see ToolLoadingManager). */
   flushPendingCalls: () => Promise<void>;
 };
@@ -84,15 +93,37 @@ export async function createMcpService(
   config: McpServiceConfig,
 ): Promise<McpService> {
   const toolLoadingManager = new ToolLoadingManager();
+  // `activate_tool`'s default (persist: false) promotions, per token.
+  // Owned here because it must outlive the request that created it and
+  // die with the service; composeToolRegistry only wires the meta-tools
+  // to it (ADR-0014 §5).
+  const session = new SessionPromotions();
   // The populated registry is composed outside the transport (policy
   // lives in $/composeToolRegistry); this layer only serves it.
-  const { toolRegistry: registry, promptRegistry } =
-    await composeToolRegistry(config);
+  const { toolRegistry: registry, promptRegistry } = await composeToolRegistry({
+    ...config,
+    session,
+  });
+
+  const resolveScope = async (tokenId: string): Promise<ToolScope> => {
+    const policy = await readPolicy(config.plugin, tokenId);
+    const allNames = registry.listAll().map((entry) => entry.name);
+    return resolveToolScope(tokenId, policy, allNames, session.get(tokenId));
+  };
 
   const handleRequest = async (
     req: IncomingMessage,
     res: ServerResponse,
+    tokenId: string,
   ): Promise<void> => {
+    // Resolving a scope costs a settings read, and only tools/* needs
+    // one: `initialize`, `prompts/*` and malformed requests must pay
+    // nothing. Memoizing the PROMISE (not the value) also collapses the
+    // tools/list + tools/call pair of a batched POST into one read.
+    let scopePromise: Promise<ToolScope> | undefined;
+    const getScope = (): Promise<ToolScope> =>
+      (scopePromise ??= resolveScope(tokenId));
+
     const server = new McpServer(
       {
         name: config.serverName,
@@ -115,18 +146,18 @@ export async function createMcpService(
     // Wire the ArkType-based registry against the underlying SDK
     // Server so tools/list and tools/call go through our boolean
     // coercion + error formatting + adaptive/user disable-state support.
-    server.server.setRequestHandler("tools/list", () =>
-      asListToolsResult(registry.list()),
+    server.server.setRequestHandler("tools/list", async () =>
+      asListToolsResult(registry.list(await getScope())),
     );
     server.server.setRequestHandler("tools/call", async (request, ctx) => {
-      // Read the outcome classification synchronously, in the same tick
-      // as dispatch() will read it (dispatch()'s own branch check runs
-      // synchronously before its first await) — no interleaving is
+      const scope = await getScope();
+      // Read the outcome classification against the same scope dispatch()
+      // will read, and synchronously with it: the await above is the only
+      // suspension point, and dispatch()'s own branch check runs
+      // synchronously before its first await — so no interleaving is
       // possible between this check and dispatch()'s internal one. See
       // ADR-0011.
-      const isAdaptiveInactive = registry.isAdaptiveInactive(
-        request.params.name,
-      );
+      const isInactive = registry.isInactive(request.params.name, scope);
       // Pass the SDK's request-scoped sendNotification down to the
       // handler. activate_tool uses it so its tools/list_changed carries
       // this call's relatedRequestId and is flushed on the POST response
@@ -134,12 +165,13 @@ export async function createMcpService(
       const result = await registry.dispatch(request.params, {
         server,
         sendNotification: ctx.mcpReq.notify,
+        scope,
       });
       // Record the call for frequency-based promotion (meta-tools and
       // adaptive-inactive calls are excluded — the latter did not
       // execute, see ADR-0011).
       if (
-        !isAdaptiveInactive &&
+        !isInactive &&
         !(META_TOOLS as string[]).includes(request.params.name)
       ) {
         toolLoadingManager

@@ -20,7 +20,7 @@ import {
 } from "$/features/mcp-transport/services/promptRegistry";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
-import { applyAdaptiveFilter } from "$/features/adaptive-tool-loading";
+import type { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
 import {
   toolCatalogSchema,
   toolCatalogHandler,
@@ -38,13 +38,25 @@ export type ToolRegistryConfig = {
   app: App;
   plugin: McpToolsPlugin;
   pluginVersion: string;
+  /**
+   * Where `activate_tool`'s in-session (persist: false) promotions go,
+   * keyed by the calling token. Owned by the transport service so it
+   * outlives the request; wired here because the meta-tools are wired
+   * here (ADR-0014 §5).
+   */
+  session: SessionPromotions;
 };
 
 /**
  * Build the populated tool + prompt registries: register every vault
- * tool, add the always-active adaptive meta-tools, then apply the
- * adaptive-profile filter and the user's disabled-tools filter (in that
- * order, so the disable list wins).
+ * tool, add the always-active adaptive meta-tools, then apply the user's
+ * disabled-tools filter.
+ *
+ * There is no profile filter at this level any more: the profile is per
+ * token and the registry is shared, so the surface is narrowed per
+ * request from the caller's `ToolScope` instead of being baked into the
+ * registry's adaptive flags (ADR-0014 §3). The disable list still wins,
+ * because the registry re-applies `userDisabled` under every scope.
  */
 export async function composeToolRegistry(
   config: ToolRegistryConfig,
@@ -61,12 +73,21 @@ export async function composeToolRegistry(
   // Adaptive-loading meta-tools need the registry itself (for
   // listing/status) and are always active regardless of profile, so
   // they are registered here rather than in registerTools.
-  toolRegistry.register(toolCatalogSchema, () =>
-    toolCatalogHandler({ registry: toolRegistry, plugin: config.plugin }),
+  toolRegistry.register(toolCatalogSchema, (_request, { scope }) =>
+    toolCatalogHandler({
+      registry: toolRegistry,
+      plugin: config.plugin,
+      scope,
+    }),
   );
+  // `enableInRegistry` and `promoteInSession` are both wired: the handler
+  // picks the session map when the call carries a scope (a real MCP
+  // client) and the registry's global adaptive flag when it does not (the
+  // settings UI and unit tests), so one client's promotion can no longer
+  // widen another's surface.
   toolRegistry.register(
     activateToolSchema,
-    async (request, { server, sendNotification }) =>
+    async (request, { server, sendNotification, scope }) =>
       activateToolHandler({
         arguments: (
           request as { arguments: { name: string; persist?: boolean } }
@@ -77,12 +98,15 @@ export async function composeToolRegistry(
         onActivated: (name) =>
           new Notice(`MCP Connector: "${name}" promoted to active`),
         enableInRegistry: (name) => toolRegistry.enableByName(name),
+        promoteInSession: (tokenId, name) =>
+          config.session.promote(tokenId, name),
+        scope,
         sendNotification,
       }),
   );
   toolRegistry.register(
     activateToolsSchema,
-    async (request, { server, sendNotification }) =>
+    async (request, { server, sendNotification, scope }) =>
       activateToolsHandler({
         arguments: (
           request as { arguments: { names: string[]; persist?: boolean } }
@@ -93,13 +117,13 @@ export async function composeToolRegistry(
         onActivated: (name) =>
           new Notice(`MCP Connector: "${name}" promoted to active`),
         enableInRegistry: (name) => toolRegistry.enableByName(name),
+        promoteInSession: (tokenId, name) =>
+          config.session.promote(tokenId, name),
+        scope,
         sendNotification,
       }),
   );
 
-  // Adaptive profile filter (All/Core/Adaptive) runs before toolToggle
-  // so the user-controlled disable list still wins.
-  await applyAdaptiveFilter(toolRegistry, config.plugin);
   // Disabled tools stay registered but are flipped off the enabled set,
   // so they no longer appear in tools/list and tools/call returns
   // MethodNotFound. Idempotent.

@@ -84,11 +84,21 @@ void mock.module("obsidian", () => {
    */
   class FileSystemAdapter {
     #basePath: string;
+    /**
+     * Every `writeBinary` call, in order. A test that asserts a write
+     * did NOT happen needs this: "the function returned a refusal" and
+     * "the function wrote nothing" are different claims, and only the
+     * second one rules out shipping a bundle alongside the message.
+     */
+    writes: { path: string; bytes: ArrayBuffer }[] = [];
     constructor(basePath: string = "/fake/vault") {
       this.#basePath = basePath;
     }
     getBasePath(): string {
       return this.#basePath;
+    }
+    async writeBinary(path: string, bytes: ArrayBuffer): Promise<void> {
+      this.writes.push({ path, bytes });
     }
   }
 

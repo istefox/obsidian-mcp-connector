@@ -166,6 +166,104 @@ describe("parseTransportFile", () => {
   });
 });
 
+describe("parseTransportFile(jsonText, tokenId) — per-token .mcpb bundles (R-17, ADR-0014 §11)", () => {
+  function tokensJson() {
+    return JSON.stringify({
+      mcpTransport: {
+        livePort: 27200,
+        bearerToken: "mirror-tok",
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "mirror-tok",
+            createdAt: 1,
+          },
+          { id: "tok-2", label: "Second", token: "second-tok", createdAt: 2 },
+        ],
+      },
+    });
+  }
+
+  test("no tokenId argument, tokens[] present: still returns mcpTransport.bearerToken — old-bundle regression guard", () => {
+    // Every previously generated .mcpb calls parseTransportFile(jsonText)
+    // with one argument. The presence of tokens[] must not change that
+    // call's result, or every bundle in the wild silently breaks.
+    expect(parseTransportFile(tokensJson())).toEqual({
+      port: 27200,
+      token: "mirror-tok",
+    });
+  });
+
+  test("tokenId present in tokens[]: returns that token's secret, not the mirror", () => {
+    const result = parseTransportFile(tokensJson(), "tok-2");
+    expect(result).toEqual({ port: 27200, token: "second-tok" });
+  });
+
+  test("tokenId absent from tokens[]: hard error mentioning re-export, never a fallback to bearerToken", () => {
+    const result = parseTransportFile(tokensJson(), "ghost-id");
+    expect(typeof result.error).toBe("string");
+    expect(result.error).toContain("re-export");
+    // The single most important assertion in this suite: an unknown id
+    // must fail closed, never silently resolve to the mirror token — a
+    // fallback here would turn a revocation into a privilege grant
+    // (ADR-0014 §11).
+    expect(result.token).toBeUndefined();
+    expect(result).not.toEqual({ port: 27200, token: "mirror-tok" });
+  });
+
+  test("tokenId absent from tokens[]: mcpTransport.bearerToken is genuinely never read on this path", () => {
+    // A stronger variant of the guard above: even when the mirror token
+    // would trivially "work" (matches an existing token's secret by
+    // coincidence), an unresolvable id must still error — resolution is
+    // by id, never by falling through to the mirror field at all.
+    const json = JSON.stringify({
+      mcpTransport: {
+        livePort: 27200,
+        bearerToken: "second-tok",
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "mirror-tok",
+            createdAt: 1,
+          },
+          { id: "tok-2", label: "Second", token: "second-tok", createdAt: 2 },
+        ],
+      },
+    });
+    const result = parseTransportFile(json, "ghost-id");
+    expect(typeof result.error).toBe("string");
+    expect(result.token).toBeUndefined();
+  });
+
+  /**
+   * `fatal` is opt-in per error, never a blanket flag. Everything else
+   * this function can return describes a vault that is mid-write or a
+   * server that has not bound yet, and those are exactly what the retry
+   * loop exists for — flagging one of them would turn a recoverable
+   * startup race into a hard failure.
+   */
+  test("only the unknown-token error is marked fatal", () => {
+    expect(parseTransportFile(tokensJson(), "ghost-id").fatal).toBe(true);
+
+    const transient = [
+      ["malformed JSON", "{ not json", undefined],
+      ["missing livePort", JSON.stringify({ mcpTransport: {} }), undefined],
+      [
+        "missing bearerToken",
+        JSON.stringify({ mcpTransport: { livePort: 27200 } }),
+        undefined,
+      ],
+    ] as const;
+    for (const [label, json, tokenId] of transient) {
+      const r = parseTransportFile(json, tokenId);
+      expect(typeof r.error, label).toBe("string");
+      expect(r.fatal, label).toBeFalsy();
+    }
+  });
+});
+
 describe("buildErrorResponse", () => {
   test("without data", () => {
     expect(buildErrorResponse(5, "boom")).toEqual({
@@ -446,6 +544,67 @@ describe("readTransport", () => {
   });
 });
 
+describe("readTransport(dataPath, options, tokenId) — per-token .mcpb bundles (R-17, ADR-0014 §11)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "connector-shim-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeTokensFixture(dataPath: string) {
+    fs.writeFileSync(
+      dataPath,
+      JSON.stringify({
+        mcpTransport: {
+          livePort: 27200,
+          bearerToken: "mirror-tok",
+          tokens: [
+            {
+              id: "default",
+              label: "Default",
+              token: "mirror-tok",
+              createdAt: 1,
+            },
+            { id: "tok-2", label: "Second", token: "second-tok", createdAt: 2 },
+          ],
+        },
+      }),
+    );
+  }
+
+  test("no tokenId argument, tokens[] on disk: still returns mcpTransport.bearerToken — old-bundle regression guard", () => {
+    const dataPath = path.join(dir, "data.json");
+    writeTokensFixture(dataPath);
+    expect(readTransport(dataPath)).toEqual({
+      port: 27200,
+      token: "mirror-tok",
+    });
+  });
+
+  test("tokenId threaded through and present in tokens[]: returns that token's secret, not the mirror", () => {
+    const dataPath = path.join(dir, "data.json");
+    writeTokensFixture(dataPath);
+    expect(readTransport(dataPath, {}, "tok-2")).toEqual({
+      port: 27200,
+      token: "second-tok",
+    });
+  });
+
+  test("tokenId threaded through and absent from tokens[]: hard error mentioning re-export, never a fallback to bearerToken", () => {
+    const dataPath = path.join(dir, "data.json");
+    writeTokensFixture(dataPath);
+    const result = readTransport(dataPath, {}, "ghost-id");
+    expect(typeof result.error).toBe("string");
+    expect(result.error).toContain("re-export");
+    expect(result.token).toBeUndefined();
+    expect(result).not.toEqual({ port: 27200, token: "mirror-tok" });
+  });
+});
+
 describe("probePort", () => {
   let server: net.Server | undefined;
 
@@ -564,6 +723,40 @@ describe("resolveTransportWithRetry", () => {
     });
     expect(readCalls).toBeGreaterThan(1);
     expect(result.error).toBeDefined();
+  });
+
+  /**
+   * A revoked token id is permanent: `tokens[]` is persisted settings and
+   * the id cannot reappear without a user action in Obsidian AND a fresh
+   * export. Polling it for the full window costs ~20s per request and
+   * ends by appending "is Obsidian open with the vault loaded?", which is
+   * false and buries the one instruction that helps.
+   */
+  test("a fatal error returns at once, verbatim, without polling", async () => {
+    const { nowImpl, sleepMsImpl } = fakeClock();
+    const FATAL =
+      "token 'tok-2' is no longer configured — re-export the .mcpb from Obsidian settings";
+    let readCalls = 0;
+    let sleepCalls = 0;
+    const result = await resolveTransportWithRetry("/fake/data.json", {
+      readTransportImpl: () => {
+        readCalls++;
+        return { error: FATAL, fatal: true };
+      },
+      probePortImpl: async () => true,
+      nowImpl,
+      sleepMsImpl: async (ms: number) => {
+        sleepCalls++;
+        await sleepMsImpl(ms);
+      },
+      windowMs: 30000,
+      intervalMs: 1000,
+    });
+    expect(readCalls).toBe(1);
+    expect(sleepCalls).toBe(0);
+    // Byte-identical is the load-bearing assertion: it pins that the
+    // "is Obsidian open…" suffix is NOT appended to a permanent failure.
+    expect(result.error).toBe(FATAL);
   });
 
   test("onAttempt fires once per retry iteration, not on the successful iteration", async () => {
@@ -785,6 +978,140 @@ describe("runMain", () => {
   }
 
   const successTransport = { port: 27200, token: "tok" };
+
+  /**
+   * The bundle's token id has to reach every resolution site, on both
+   * the request and the notification path. Dropping it anywhere makes
+   * that read fall through to `mcpTransport.bearerToken` — a silent
+   * fallback to whichever token is first, which is exactly what
+   * ADR-0014 §11 forbids. Every other `runMain` test stubs
+   * `readTransportImpl` without inspecting its arguments, so this
+   * plumbing was previously unexercised.
+   */
+  test("threads the bundle's token id into every transport read", async () => {
+    const stdin = fakeStdin();
+    const seen: (string | undefined)[] = [];
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      readTransportImpl: (
+        _p: string,
+        _o: Record<string, unknown>,
+        id?: string,
+      ) => {
+        seen.push(id);
+        return successTransport;
+      },
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/ping" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    // toEqual, not toContain: a path that silently passes `undefined`
+    // on the notification branch has to fail too.
+    expect(seen).toEqual(["tok-2", "tok-2"]);
+  });
+
+  /**
+   * The user-visible bug, end to end: a bundle whose token was revoked
+   * used to poll for the full RETRY_WINDOW_MS on EVERY request before
+   * answering, and then answered with the retry path's suffix appended,
+   * which contradicts the re-export instruction it lands next to.
+   *
+   * Deliberately uses the REAL `resolveTransportWithRetry` — stubbing it
+   * would hide the very behaviour under test. Without the fatal
+   * short-circuit this test does not merely fail, it exceeds the test
+   * timeout, because the real loop sleeps for 20 real seconds.
+   */
+  test("a revoked token id is reported at once, with no misleading suffix", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const FATAL =
+      "token 'tok-2' is no longer configured — re-export the .mcpb from Obsidian settings";
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      readTransportImpl: () => ({ error: FATAL, fatal: true }),
+      // resolveTransportWithRetryImpl intentionally NOT stubbed.
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          // A progressToken would make the retry loop emit a progress
+          // notification per poll; none may appear if it never polls.
+          params: { _meta: { progressToken: "p1" } },
+        }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    const written = writeChunk.mock.calls.map((c) => c[0]).join("");
+    expect(writeChunk).toHaveBeenCalledTimes(1);
+    expect(written).toContain("re-export");
+    expect(written).not.toContain("is Obsidian open");
+    expect(written).not.toContain("notifications/progress");
+  });
+
+  test("threads the token id into the retry path too", async () => {
+    const stdin = fakeStdin();
+    let seen: string | undefined = "NOT CALLED";
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      // First read fails, so resolution escalates to the retry path.
+      readTransportImpl: () => ({ error: "not ready yet" }),
+      resolveTransportWithRetryImpl: (
+        _p: string,
+        opts: { tokenId?: string },
+      ) => {
+        seen = opts.tokenId;
+        return successTransport;
+      },
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    // A transient read failure must not become a mirror-token fallback.
+    expect(seen).toBe("tok-2");
+  });
 
   test("notification (no id) never writes to stdout", async () => {
     const stdin = fakeStdin();

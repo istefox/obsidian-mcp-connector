@@ -6,34 +6,57 @@ import {
   META_TOOLS,
   PROMOTION_THRESHOLD,
 } from "./constants";
+import {
+  defaultPolicy,
+  mergeState,
+  updateToolLoading,
+  type MirrorContext,
+  type ToolLoadingState,
+} from "./tokenPolicyStore";
 
-export type ToolLoadingState = {
-  profile: "all" | "core" | "adaptive";
-  counters: Record<string, number>;
-  promoted: string[];
-};
+export type { ToolLoadingState };
 
-const DEFAULTS: ToolLoadingState = {
-  profile: "all",
-  counters: {},
-  promoted: [],
-};
+const SLICE = "toolLoading";
 
-/** Normalize a raw `toolLoading` slice value into a well-formed state. */
-function mergeState(slice: unknown): ToolLoadingState {
-  const s =
-    slice && typeof slice === "object"
-      ? (slice as Partial<ToolLoadingState>)
-      : undefined;
-  return {
-    ...DEFAULTS,
-    ...(s ?? {}),
-    counters: s?.counters && typeof s.counters === "object" ? s.counters : {},
-    promoted: Array.isArray(s?.promoted) ? s.promoted : [],
+/**
+ * Which token's policy a mutation targets: the caller's token if it
+ * named one, else the mirror token. `null` means the vault has no token
+ * list at all — data from before the ADR-0014 migration — where the
+ * legacy global `profile`/`promoted` fields ARE the only policy, so the
+ * mutation applies to them directly.
+ */
+function targetOf(
+  tokenId: string | undefined,
+  ctx: MirrorContext,
+): string | null {
+  return tokenId ?? ctx.mirrorId;
+}
+
+function promotedFor(state: ToolLoadingState, target: string | null): string[] {
+  return target === null
+    ? state.promoted
+    : (state.profiles[target] ?? defaultPolicy()).promoted;
+}
+
+function setPromoted(
+  state: ToolLoadingState,
+  target: string | null,
+  promoted: string[],
+): void {
+  if (target === null) {
+    state.promoted = promoted;
+    return;
+  }
+  state.profiles[target] = {
+    ...(state.profiles[target] ?? defaultPolicy()),
+    promoted,
   };
 }
 
-const SLICE = "toolLoading";
+/** Append `name` unless it is already there, without mutating `promoted`. */
+function union(promoted: string[], name: string): string[] {
+  return promoted.includes(name) ? promoted : [...promoted, name];
+}
 
 /**
  * Trailing debounce for persisting call counters. recordCall fires on
@@ -74,7 +97,12 @@ export class ToolLoadingManager {
     return mergeState(await new SettingsStore(plugin).readSlice(SLICE));
   }
 
-  getActiveToolNames(allNames: string[], state: ToolLoadingState): Set<string> {
+  getActiveToolNames(
+    allNames: string[],
+    // Only the two fields it actually reads, so `resolveToolScope` can
+    // pass a token's policy without inventing counters for it.
+    state: Pick<ToolLoadingState, "profile" | "promoted">,
+  ): Set<string> {
     if (state.profile === "all") {
       return new Set<string>([...META_TOOLS, ...allNames]);
     }
@@ -89,11 +117,17 @@ export class ToolLoadingManager {
     return base;
   }
 
-  // All mutating methods go through SettingsStore.updateSlice, which
+  // All mutating methods go through tokenPolicyStore.updateToolLoading,
+  // never SettingsStore directly: it is the choke point that keeps the
+  // legacy mirror in step with the per-token policies, and it still
   // serializes the load→modify→save cycle through the process-wide
-  // settings mutex: data.json is shared with every other feature, so an
+  // settings mutex — data.json is shared with every other feature, so an
   // unserialized read-modify-write here can clobber another feature's
   // slice (or lose a concurrent counter increment). See settingsStore.ts.
+  //
+  // `tokenId` is optional on every mutator: omitted, it targets the
+  // mirror token, so the settings UI and any single-token vault behave
+  // exactly as they did in 0.28.2.
 
   /**
    * Record a tool call for frequency-based promotion. Increments an
@@ -139,17 +173,29 @@ export class ToolLoadingManager {
     const batch = pending.counts;
     pending.counts = new Map();
     try {
-      await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-        const state = mergeState(current);
+      await updateToolLoading(plugin, (state, ctx) => {
         for (const [toolName, count] of batch) {
-          state.counters[toolName] = (state.counters[toolName] ?? 0) + count;
+          const total = (state.counters[toolName] ?? 0) + count;
+          state.counters[toolName] = total;
           if (
-            state.profile === "adaptive" &&
-            state.counters[toolName] >= PROMOTION_THRESHOLD &&
-            !state.promoted.includes(toolName) &&
-            !(META_TOOLS as string[]).includes(toolName)
+            total < PROMOTION_THRESHOLD ||
+            (META_TOOLS as string[]).includes(toolName)
           ) {
-            state.promoted = [...state.promoted, toolName];
+            continue;
+          }
+          // Counters are global but promotion is per token: every
+          // adaptive token crosses the same shared threshold and gets
+          // the tool in ITS list, in this one write. A token with no
+          // policy entry resolves to `all` and is never promoted into.
+          if (ctx.tokenIds.length === 0) {
+            if (state.profile === "adaptive") {
+              setPromoted(state, null, union(state.promoted, toolName));
+            }
+            continue;
+          }
+          for (const [id, policy] of Object.entries(state.profiles)) {
+            if (policy.profile !== "adaptive") continue;
+            setPromoted(state, id, union(policy.promoted, toolName));
           }
         }
         return state;
@@ -167,20 +213,27 @@ export class ToolLoadingManager {
     }
   }
 
+  /**
+   * Promote a tool for one token. `tokenId` defaults to the mirror
+   * token, which keeps the settings UI and the single-token vault
+   * behaving exactly as in 0.28.2.
+   */
   async activateTool(
     name: string,
     allNames: string[],
     plugin: PluginDataLike,
+    tokenId?: string,
   ): Promise<"activated" | "already_active" | "not_found"> {
     if (!allNames.includes(name)) return "not_found";
     let outcome: "activated" | "already_active" = "activated";
-    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-      const state = mergeState(current);
-      if (state.promoted.includes(name)) {
+    await updateToolLoading(plugin, (state, ctx) => {
+      const target = targetOf(tokenId, ctx);
+      const promoted = promotedFor(state, target);
+      if (promoted.includes(name)) {
         outcome = "already_active";
-        return current; // NO_CHANGE: no write
+        return state; // unchanged ⇒ NO_CHANGE, no write
       }
-      state.promoted = [...state.promoted, name];
+      setPromoted(state, target, [...promoted, name]);
       return state;
     });
     return outcome;
@@ -196,6 +249,7 @@ export class ToolLoadingManager {
     names: string[],
     allNames: string[],
     plugin: PluginDataLike,
+    tokenId?: string,
   ): Promise<Record<string, "activated" | "already_active" | "not_found">> {
     const known = new Set(allNames);
     const outcomes: Record<
@@ -205,9 +259,10 @@ export class ToolLoadingManager {
     // Dedupe input while preserving first-seen order.
     const requested = [...new Set(names)];
 
-    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-      const state = mergeState(current);
-      const promotedSet = new Set(state.promoted);
+    await updateToolLoading(plugin, (state, ctx) => {
+      const target = targetOf(tokenId, ctx);
+      const promoted = promotedFor(state, target);
+      const promotedSet = new Set(promoted);
       const toAdd: string[] = [];
       for (const name of requested) {
         if (!known.has(name)) {
@@ -220,23 +275,35 @@ export class ToolLoadingManager {
           toAdd.push(name);
         }
       }
-      if (toAdd.length === 0) return current; // NO_CHANGE: no write
-      state.promoted = [...state.promoted, ...toAdd];
+      if (toAdd.length > 0) setPromoted(state, target, [...promoted, ...toAdd]);
       return state;
     });
 
     return outcomes;
   }
 
-  async deactivateTool(name: string, plugin: PluginDataLike): Promise<void> {
-    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-      const state = mergeState(current);
-      state.promoted = state.promoted.filter((n) => n !== name);
+  async deactivateTool(
+    name: string,
+    plugin: PluginDataLike,
+    tokenId?: string,
+  ): Promise<void> {
+    await updateToolLoading(plugin, (state, ctx) => {
+      const target = targetOf(tokenId, ctx);
+      setPromoted(
+        state,
+        target,
+        promotedFor(state, target).filter((n) => n !== name),
+      );
       return state;
     });
   }
 
-  async resetAll(plugin: PluginDataLike): Promise<void> {
+  /**
+   * Counters are global, so they reset globally; `promoted` is per
+   * token, so it resets only for the selected one and every other
+   * client's surface is untouched.
+   */
+  async resetAll(plugin: PluginDataLike, tokenId?: string): Promise<void> {
     // Drop the unpersisted batch FIRST (module-level, shared with the
     // transport's manager instance) so a debounced flush scheduled
     // before the reset cannot re-add pre-reset counts afterwards.
@@ -246,10 +313,9 @@ export class ToolLoadingManager {
       pending.timer = null;
     }
     pending.counts.clear();
-    await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
-      const state = mergeState(current);
+    await updateToolLoading(plugin, (state, ctx) => {
       state.counters = {};
-      state.promoted = [];
+      setPromoted(state, targetOf(tokenId, ctx), []);
       return state;
     });
   }
