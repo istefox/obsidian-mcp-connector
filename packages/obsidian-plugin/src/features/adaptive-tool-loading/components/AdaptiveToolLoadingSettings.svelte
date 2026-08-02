@@ -96,22 +96,41 @@
       promoted = [...promoted, name];
       selected = "";
       dispatch("policychange");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to promote "${name}": ${message}`);
     } finally {
       busy = false;
     }
   }
 
   async function removePromoted(name: string): Promise<void> {
-    await mgr.deactivateTool(name, plugin, tokenId);
-    promoted = promoted.filter((n) => n !== name);
-    dispatch("policychange");
+    busy = true;
+    try {
+      await mgr.deactivateTool(name, plugin, tokenId);
+      promoted = promoted.filter((n) => n !== name);
+      dispatch("policychange");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to remove "${name}": ${message}`);
+    } finally {
+      busy = false;
+    }
   }
 
   async function resetAdaptiveData(): Promise<void> {
-    await mgr.resetAll(plugin, tokenId);
-    promoted = [];
-    dispatch("policychange");
-    new Notice("Adaptive tool data reset.");
+    busy = true;
+    try {
+      await mgr.resetAll(plugin, tokenId);
+      promoted = [];
+      dispatch("policychange");
+      new Notice("Adaptive tool data reset.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to reset adaptive tool data: ${message}`);
+    } finally {
+      busy = false;
+    }
   }
 
   /**
@@ -149,7 +168,13 @@
     </p>
   {/if}
 
-  {#if mounted}
+  <!--
+    `mounted` latches on the first successful load and never resets, so it
+    alone would keep the editors up after the selection is cleared — and
+    every write would then target `profiles[""]`, which the store prunes,
+    losing the change silently. Gate on the selection too.
+  -->
+  {#if mounted && tokenId}
     <div class="profile-group">
       <label class="radio-row">
         <input

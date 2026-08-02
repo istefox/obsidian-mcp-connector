@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mockPlugin } from "$/test-setup";
 import type McpToolsPlugin from "$/main";
+import { logger } from "$/shared/logger";
 import {
   ensureTokenStore,
   readTokens,
@@ -351,6 +352,103 @@ describe("regenerateToken", () => {
   });
 });
 
+describe("ensureTokenStore — malformed policy entries", () => {
+  /**
+   * `ensureTokenStore` is the first statement of `setup()`, so anything
+   * that throws here means the MCP server never binds and the user has
+   * no in-app way back. A hand-edited `data.json` must degrade, never
+   * crash.
+   */
+  test("survives a profiles entry whose promoted is not an array", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: [],
+        counters: {},
+        profiles: { default: { profile: "core", promoted: "abc" } },
+      },
+    });
+
+    await ensureTokenStore(plugin);
+
+    const toolLoading = getData().toolLoading as {
+      promoted: string[];
+      profiles: Record<string, unknown>;
+    };
+    // "abc" must not be spread into ["a","b","c"], nor throw.
+    expect(toolLoading.promoted).toEqual([]);
+    expect(toolLoading.profiles.default).toEqual({
+      profile: "core",
+      promoted: [],
+      allowed: null,
+    });
+  });
+});
+
+describe("ensureTokenStore — re-mint over an emptied tokens[]", () => {
+  /**
+   * `MIGRATED_TOKEN_ID` is the literal "default", so a re-mint reuses an
+   * id that a previous token owned — violating `TokenRecord.id`'s
+   * "never reused" contract for this one entry. A surviving
+   * `profiles["default"]` may therefore belong to a token that is gone.
+   * The globals track `tokens[0]`, whose secret the mint reuses, so they
+   * win and the stale per-id entry is overwritten.
+   */
+  test("does not adopt a surviving policy entry for the reused id", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: { bearerToken: "a".repeat(43), tokens: [] },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    });
+
+    await ensureTokenStore(plugin);
+
+    const toolLoading = getData().toolLoading as {
+      profiles: Record<string, unknown>;
+    };
+    expect(toolLoading.profiles.default).toEqual({
+      profile: "all",
+      promoted: [],
+      allowed: null,
+    });
+  });
+
+  test("still seeds a genuine 0.28.2 upgrade from the globals", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: { bearerToken: "a".repeat(43) },
+      toolLoading: { profile: "core", promoted: ["x"], counters: {} },
+    });
+
+    await ensureTokenStore(plugin);
+
+    const toolLoading = getData().toolLoading as {
+      profiles: Record<string, unknown>;
+    };
+    expect(toolLoading.profiles.default).toEqual({
+      profile: "core",
+      promoted: ["x"],
+      allowed: null,
+    });
+  });
+});
+
 describe("revokeToken", () => {
   test("refuses to revoke the last remaining token", async () => {
     const { plugin } = makePlugin({
@@ -402,7 +500,9 @@ describe("revokeToken", () => {
         counters: {},
         profiles: {
           default: { profile: "all", promoted: [], allowed: null },
-          claude: { profile: "core", promoted: [], allowed: null },
+          // Distinct from `default`'s, so the mirror assertions below
+          // can tell "took claude's policy" from "reset to the default".
+          claude: { profile: "core", promoted: ["y"], allowed: null },
         },
       },
     });
@@ -416,5 +516,228 @@ describe("revokeToken", () => {
     };
     expect(mcpTransport.tokens.map((t) => t.id)).toEqual(["claude"]);
     expect(mcpTransport.bearerToken).toBe(SECOND_TOKEN);
+
+    // The name of this test promises the mirror; assert it. Without
+    // these three lines the whole mirror invariant is untested.
+    const toolLoading = data.toolLoading as {
+      profile: string;
+      promoted: string[];
+      profiles: Record<string, unknown>;
+    };
+    expect(toolLoading.profile).toBe("core");
+    expect(toolLoading.promoted).toEqual(["y"]);
+    expect(Object.keys(toolLoading.profiles)).toEqual(["claude"]);
+  });
+
+  /**
+   * The survivor with NO policy entry is the ordinary case: a token
+   * minted by "Add token" has none until someone edits its policy. The
+   * mirror must fall back to the default policy, not keep the revoked
+   * token's — see the round-trip test below for why that matters.
+   */
+  test("re-points the mirror at the default policy when the new tokens[0] has no entry", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    });
+
+    await revokeToken(plugin, "default");
+
+    const toolLoading = getData().toolLoading as {
+      profile: string;
+      promoted: string[];
+      profiles?: Record<string, unknown>;
+    };
+    // Whether an empty map is written as `{}` or dropped is `toSlice`'s
+    // contract and `tokenPolicyStore.test.ts` owns it; here all that
+    // matters is that the orphan is gone.
+    expect(toolLoading.profiles ?? {}).toEqual({});
+    expect(toolLoading.profile).toBe("all");
+    expect(toolLoading.promoted).toEqual([]);
+  });
+
+  test("a failed policy sweep does not report the revoke as failed", async () => {
+    let data: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    };
+    let saves = 0;
+    const plugin = mockPlugin({
+      loadData: async () => data,
+      saveData: async (next: unknown) => {
+        saves += 1;
+        // The credential write lands; the policy sweep behind it does not.
+        if (saves > 1) throw new Error("disk full");
+        data = next as Record<string, unknown>;
+      },
+    } as Partial<McpToolsPlugin>);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      const remaining = await revokeToken(plugin, "default");
+
+      // Assert the sweep was ATTEMPTED and its failure REPORTED, not
+      // just that nothing threw: with the sweep deleted outright this
+      // test still passed on `resolves` + post-state alone.
+      expect(saves).toBe(2);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(remaining.map((t) => t.id)).toEqual(["claude"]);
+
+      const mcpTransport = data.mcpTransport as { tokens: TokenRecord[] };
+      expect(mcpTransport.tokens.map((t) => t.id)).toEqual(["claude"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a lost policy sweep does not let the survivor inherit on the next load", async () => {
+    let data: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    };
+    let saves = 0;
+    const plugin = mockPlugin({
+      loadData: async () => data,
+      saveData: async (next: unknown) => {
+        saves += 1;
+        if (saves === 2) throw new Error("disk full");
+        data = next as Record<string, unknown>;
+      },
+    } as Partial<McpToolsPlugin>);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      await revokeToken(plugin, "default");
+      // The mirror is now stale — the sweep never landed. A crash or a
+      // quit between the two writes produces the same state with no
+      // error at all, which is why the seeding site, not the sweep, has
+      // to be the thing that holds.
+      await ensureTokenStore(plugin);
+    } finally {
+      warn.mockRestore();
+    }
+
+    const toolLoading = data.toolLoading as {
+      profiles: Record<string, unknown>;
+    };
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "all",
+      promoted: [],
+      allowed: null,
+    });
+  });
+
+  test("the survivor does not inherit the revoked token's policy on the next load", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    });
+
+    await revokeToken(plugin, "default");
+    // `withPolicyFor` seeds a missing entry FROM the legacy globals, so
+    // a stale mirror is not transient — this load is what would burn the
+    // revoked token's surface into the survivor permanently.
+    await ensureTokenStore(plugin);
+
+    const toolLoading = getData().toolLoading as {
+      profiles: Record<string, unknown>;
+    };
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "all",
+      promoted: [],
+      allowed: null,
+    });
   });
 });

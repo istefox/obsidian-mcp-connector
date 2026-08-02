@@ -19,12 +19,24 @@
  * `App` in sight.
  */
 
+// Direct path, not the `$/shared` barrel: this module is plain
+// functions over `PluginDataLike` and the barrel reaches `src/main`.
+import { logger } from "$/shared/logger";
 import { jsonEqual, SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
-// Type-only: the policy shape is owned by the adaptive-tool-loading
-// feature. The migration has to seed one entry, but it acquires no
-// runtime dependency on that feature to do it.
-import type { TokenPolicy } from "$/features/adaptive-tool-loading/tokenPolicyStore";
+// The policy shape and its write path are owned by the
+// adaptive-tool-loading feature. The migration needs the type to seed
+// one entry; `revokeToken` needs the value, because ADR-0014 §7 makes
+// revocation two writes and names this module as the choke point that
+// issues the second. The dependency is one-directional — tokenPolicyStore
+// reads the transport slice through SettingsStore and never imports this
+// module — so it introduces no cycle.
+import {
+  defaultPolicy,
+  normalizePolicy,
+  updateToolLoading,
+  type TokenPolicy,
+} from "$/features/adaptive-tool-loading/tokenPolicyStore";
 import { MAX_TOKENS, TOKEN_BYTE_LENGTH } from "../constants";
 import { generateToken, generateTokenId } from "./token";
 
@@ -87,16 +99,6 @@ function parseTokens(value: unknown): TokenRecord[] {
   return tokens;
 }
 
-function readProfile(value: unknown): TokenPolicy["profile"] {
-  return value === "core" || value === "adaptive" ? value : "all";
-}
-
-function readPromoted(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((n): n is string => typeof n === "string")
-    : [];
-}
-
 /**
  * Read the token list without touching it. Deliberately strict: an
  * empty result means "no credential configured" and the middleware
@@ -123,10 +125,23 @@ function withTokens(current: unknown, tokens: readonly TokenRecord[]): unknown {
 }
 
 /**
- * Seed `profiles[mirrorId]` from the legacy global profile when it is
- * missing, then point the legacy mirror at that entry.
+ * Seed `profiles[mirrorId]` when it is missing, then point the legacy
+ * mirror at that entry.
+ *
+ * `seedFromGlobals` decides WHAT a missing entry is seeded with, and it
+ * is the difference between a migration and a corruption. When no
+ * `tokens[]` existed, the legacy globals genuinely are this token's
+ * policy — that is the 0.28.2 upgrade. When tokens already existed, the
+ * globals are only a mirror of some PREVIOUS `tokens[0]`, so inheriting
+ * them hands a live client a dead token's surface; the token's real
+ * policy is the default, exactly as every 0.29 consumer already
+ * resolves a missing entry.
  */
-function withPolicyFor(current: unknown, mirrorId: string): unknown {
+function withPolicyFor(
+  current: unknown,
+  mirrorId: string,
+  seedFromGlobals: boolean,
+): unknown {
   const slice = isRecord(current) ? current : {};
   const profiles: Record<string, TokenPolicy> = {
     ...((isRecord(slice.profiles) ? slice.profiles : {}) as Record<
@@ -134,18 +149,31 @@ function withPolicyFor(current: unknown, mirrorId: string): unknown {
       TokenPolicy
     >),
   };
-  if (!isRecord(profiles[mirrorId])) {
+  if (seedFromGlobals) {
     // The 0.28.2 globals ARE this token's policy: a user upgrading with
     // `core` selected must keep seeing `core`, not silently widen to
     // `all`. A fresh vault has no globals and lands on the default
     // policy, which is the same thing 0.28.2 did with no settings.
-    profiles[mirrorId] = {
-      profile: readProfile(slice.profile),
-      promoted: readPromoted(slice.promoted),
-      allowed: null,
-    };
+    //
+    // Overwrite, never adopt. This branch also covers a re-mint over an
+    // emptied `tokens[]`, and MIGRATED_TOKEN_ID is a literal, so a
+    // surviving `profiles[mirrorId]` may be the policy of a token that
+    // is gone — adopting it would give the new token a dead one's
+    // surface. The globals track `tokens[0]`, whose secret this mint
+    // reuses, so they are the source that is still true.
+    profiles[mirrorId] = normalizePolicy({
+      profile: slice.profile,
+      promoted: slice.promoted,
+    });
+  } else if (!isRecord(profiles[mirrorId])) {
+    profiles[mirrorId] = defaultPolicy();
   }
-  const mirror = profiles[mirrorId];
+  // Normalize even when the entry already existed: this runs during
+  // migration, before anything validates the slice, so a hand-edited
+  // `promoted` reaches the spread below. Throwing here takes `setup()`
+  // down with it and leaves no in-app way back.
+  const mirror = normalizePolicy(profiles[mirrorId]);
+  profiles[mirrorId] = mirror;
   const next = {
     ...slice,
     profile: mirror.profile,
@@ -201,7 +229,7 @@ export async function ensureTokenStore(
         ];
 
   await store.updateSlice(TOOL_LOADING_SLICE, (current) =>
-    withPolicyFor(current, tokens[0].id),
+    withPolicyFor(current, tokens[0].id, existing.length === 0),
   );
   await store.updateSlice(TRANSPORT_SLICE, (current) =>
     withTokens(current, tokens),
@@ -293,15 +321,17 @@ export async function regenerateToken(
  * Delete a token. Refused for the last remaining one: a vault with no
  * token authenticates nobody and there is no in-app path back.
  *
- * Only the `mcpTransport` slice is written. The credential has to die
- * even if a follow-up write is lost, and the orphaned `profiles` entry
- * is inert (ids are never reused) and pruned by the next policy write.
+ * Two writes, `mcpTransport` first (ADR-0014 §7): the credential has to
+ * die even if the second write is lost. The second sweeps the orphaned
+ * `profiles` entry and re-points the legacy `toolLoading` mirror at the
+ * token that is now first — without it, a downgrade to 0.28.x taken
+ * before the next policy write reads the revoked token's profile.
  */
 export async function revokeToken(
   plugin: PluginDataLike,
   id: string,
 ): Promise<TokenRecord[]> {
-  return updateTokens(plugin, (tokens) => {
+  const remaining = await updateTokens(plugin, (tokens) => {
     findIndex(tokens, id);
     if (tokens.length <= 1) {
       throw new Error(
@@ -310,6 +340,26 @@ export async function revokeToken(
     }
     return tokens.filter((t) => t.id !== id);
   });
+  // Identity recipe: the prune and the mirror recompute are what this
+  // call is for, and it resolves to NO_CHANGE when neither moved.
+  //
+  // Best-effort, and deliberately not rethrown. The credential is
+  // already gone and that is the authoritative half; surfacing a failed
+  // sweep would tell the user the revocation failed when it did not,
+  // and send them looking for a token that no longer exists.
+  //
+  // Losing this write is survivable ONLY because `withPolicyFor` no
+  // longer seeds from the globals once tokens exist. It does not
+  // self-heal on the next load — `ensureTokenStore` seeds a missing
+  // entry, it never repairs a stale mirror — so the mirror can stay
+  // wrong until the next policy write. That is a downgrade-only
+  // concern: every 0.29 consumer reads `profiles[tokenId]`.
+  try {
+    await updateToolLoading(plugin, (state) => state);
+  } catch (error) {
+    logger.warn("[mcp] pruning policy after a revoke failed", { error });
+  }
+  return remaining;
 }
 
 /**

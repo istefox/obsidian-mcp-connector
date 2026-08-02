@@ -14,14 +14,18 @@ export type McpbGeneratorInput = {
    */
   configDir: string;
   /**
-   * Id of the token the bundle authenticates with. Omitted, the shim
-   * reads `mcpTransport.bearerToken` — the first token's mirror, i.e.
-   * exactly what every bundle generated before per-token export does,
-   * so those keep working. Given, the shim resolves that id in
-   * `tokens[]` and fails closed when it is gone, so revoking a token
+   * Id of the token the bundle authenticates with. The shim resolves it
+   * in `tokens[]` and fails closed when it is gone, so revoking a token
    * really does cut its bundle off (ADR-0014 §11).
+   *
+   * Required, and that is the point. The shim still honours an unset id
+   * by reading `mcpTransport.bearerToken`, but that branch exists ONLY
+   * for bundles generated before 0.29.0. `bearerToken` tracks `tokens[0]`
+   * positionally, so an id-less bundle follows the position rather than
+   * the client: revoking its token would silently re-point it at the
+   * next one. No export path may emit that.
    */
-  tokenId?: string;
+  tokenId: string;
 };
 
 /**
@@ -67,17 +71,18 @@ function buildShim(input: McpbGeneratorInput): string {
       "connectorShim.js is missing a placeholder — regenerate assets/connectorShimSource.ts",
     );
   }
-  return (
-    CONNECTOR_SHIM_SOURCE.replace(
-      VAULT_PATH_PLACEHOLDER,
-      JSON.stringify(input.vaultPath),
-    )
-      .replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir))
-      // `null` rather than an empty string: the shim treats it as "no id"
-      // and falls back to the legacy mirror field, which is the correct
-      // resolution for a bundle exported against the first token.
-      .replace(TOKEN_ID_PLACEHOLDER, JSON.stringify(input.tokenId ?? null))
-  );
+  const tokenId = input.tokenId?.trim();
+  if (!tokenId) {
+    throw new Error(
+      "generateMcpb requires a non-empty tokenId — an id-less bundle silently resolves mcpTransport.bearerToken (ADR-0014 §11)",
+    );
+  }
+  return CONNECTOR_SHIM_SOURCE.replace(
+    VAULT_PATH_PLACEHOLDER,
+    JSON.stringify(input.vaultPath),
+  )
+    .replace(CONFIG_DIR_PLACEHOLDER, JSON.stringify(input.configDir))
+    .replace(TOKEN_ID_PLACEHOLDER, JSON.stringify(tokenId));
 }
 
 function buildManifest(input: McpbGeneratorInput): McpbManifest {

@@ -301,18 +301,37 @@ inside the same `updateSlice` recipe (atomic per slice):
 - `tokenStore.ts` — `addToken`, `regenerateToken`, `revokeToken`, `renameToken`. Each
   recipe ends with `bearerToken = next.tokens[0].token`.
 - `tokenPolicyStore.ts` (`adaptive-tool-loading`) — `updateToolLoading(plugin, mutate)`,
-  which reads `tokens[0].id` once before entering the mutex, applies `mutate`, prunes
-  `profiles` entries for ids not in the live list, then sets `profile`/`promoted` from
-  `profiles[mirrorId]`. Every `ToolLoadingManager` mutator (`activateTool`,
+  which reads `tokens[0].id` from `updateSlice`'s own in-mutex snapshot, applies `mutate`,
+  prunes `profiles` entries for ids not in the live list, then sets `profile`/`promoted`
+  from `profiles[mirrorId]`. Every `ToolLoadingManager` mutator (`activateTool`,
   `activateTools`, `deactivateTool`, `resetAll`, `flushPendingCalls`) and the settings UI
   route through it; none of them writes the `toolLoading` slice directly any more.
 
-Cross-slice reads cost one extra `loadData()` per policy **write** (never per request),
-which is the trade that keeps the request path at one read per layer.
+Cross-slice reads cost nothing extra: `updateSlice` hands the recipe the whole `data.json`
+snapshot it is already holding, as a second argument, so the request path stays at one
+read per layer and a policy write stays at one read too.
 
 Revocation is likewise two writes, `mcpTransport` first: the credential must die even if
 the second write is lost, and a leftover `profiles` entry is inert and pruned on the next
 policy write.
+
+**Amendment (2026-08-02, during implementation).** Two claims above were wrong as
+originally written and are corrected here, because both were load-bearing enough that
+restoring them reintroduces a defect:
+
+- The token list was originally read with a separate `loadData()` *before* `updateSlice`
+  acquired the mutex, on the reasoning that the mutex is non-re-entrant. That read is
+  necessarily outside the lock, so a revoke landing between it and the recipe makes
+  `mirrorId` name an already-revoked token whose entry the recipe has just pruned — and
+  the mirror is then computed from a missing entry and written over a correct one. The fix
+  is the second recipe argument described above; do not reintroduce the pre-read.
+- "A leftover `profiles` entry is inert" holds for the orphaned entry, **not** for the
+  mirror. `ensureTokenStore`/`withPolicyFor` does not repair a stale mirror: it *seeds* a
+  missing `profiles[tokens[0].id]` **from** it, so a lost sweep would burn the revoked
+  token's surface into the surviving client permanently. `withPolicyFor` therefore seeds
+  from the legacy globals only when no `tokens[]` existed (a genuine 0.28.2 upgrade); once
+  tokens exist the globals are merely a mirror of a previous `tokens[0]` and a missing
+  entry resolves to `{all, [], null}` like everywhere else.
 
 `resetAll` splits along the same seam: counters are global and stay a global reset;
 `promoted` is per token and resets only for the selected one.
@@ -395,8 +414,9 @@ after migration is the mirror — i.e. every generated bundle would silently be 
 a third placeholder (`"__OBSIDIAN_MCP_TOKEN_ID__"`, guarded exactly like the existing
 two), and `parseTransportFile(jsonText, tokenId)` resolves it:
 
-- placeholder unset (old bundle, or the mirror token) → `mcpTransport.bearerToken`, i.e.
-  today's behaviour, so previously generated bundles keep working;
+- placeholder unset (**a bundle generated before 0.29.0, and nothing else**) →
+  `mcpTransport.bearerToken`, i.e. today's behaviour, so previously generated bundles keep
+  working;
 - set and found in `tokens[]` → that token;
 - **set and not found → a hard error** (`token '<id>' is no longer configured — re-export
   the .mcpb from Obsidian settings`), never a fallback to `bearerToken`.
@@ -404,6 +424,31 @@ two), and `parseTransportFile(jsonText, tokenId)` resolves it:
 The fallback is the security-relevant part: silently substituting the mirror token would
 mean revoking a client's token hands that client the default token's surface instead of
 cutting it off, which defeats the second of the two reasons this feature exists.
+
+**Amendment (2026-08-02, during implementation).** The parenthetical above originally read
+"(old bundle, or the mirror token)". That conflated two cases, and the second half
+sanctioned exactly the substitution the paragraph above forbids. Corrected:
+
+- **"Exported for the mirror token" is not a case.** `mcpTransport.bearerToken` is
+  recomputed as `tokens[0].token` on every mutation (§7), so an id-less bundle follows
+  **position**, not identity: revoking the first token silently re-points that bundle at
+  the *new* first token, and a client whose credential was revoked keeps working with
+  someone else's surface. That is the same defect the fallback rationale exists to
+  prevent, reached from the export side instead of the resolution side.
+- **The unset branch exists only for bundles generated before 0.29.0.** No 0.29 export
+  path may emit one. `tokenId` is required on `McpbGeneratorInput` and `generateMcpb`
+  throws on a blank one; `downloadMcpb` validates the id against the live `tokens[]` and
+  refuses to write anything for an empty, unknown or unreadable one; and both `.mcpb`
+  surfaces pass an id — the per-row button passes `token.id`, and **Download .mcpb** under
+  *Quick setup for clients* resolves `tokens[0].id` at click time via
+  `downloadMcpbForFirstToken`. The "Files to create or modify" table below already
+  required this of `ClientConfigSection.svelte` (".mcpb download takes a `tokenId`"); the
+  first implementation dropped it, which is how the defect arrived.
+- **The legacy branch is a bounded compatibility hole, not a supported design.** A pre-0.29
+  bundle still transfers to the next token when the first is revoked. It is kept only
+  because removing it breaks every installed extension at upgrade, and it is acceptable
+  only because the README and CHANGELOG instruct a one-time re-export. A later release may
+  drop it once bundles predating 0.29.0 can be assumed gone.
 
 ---
 

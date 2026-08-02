@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
   import CopyConfigMenu from "./CopyConfigMenu.svelte";
-  import { downloadMcpb } from "../services/mcpbDownload";
+  import { downloadMcpbForFirstToken } from "../services/mcpbDownload";
   import {
     getAutoWriteEnabled,
     setAutoWriteEnabled,
@@ -159,17 +159,21 @@
   }
 
   /**
-   * Export the bundle for the vault's first token — the one
-   * `mcpTransport.bearerToken` mirrors — so it resolves exactly as
-   * every bundle generated before per-token export does. Bundles for
-   * the other tokens are exported from their own row in Access
-   * Control.
+   * Export the bundle for the vault's first token, resolved BY ID at
+   * click time. Not a mirror bundle: revoking that token cuts this
+   * bundle off like any other, which is the whole point of ADR-0014
+   * §11. An id-less export would follow `bearerToken`, which tracks
+   * `tokens[0]` positionally, so a revoke would silently hand it the
+   * next token's access instead.
+   *
+   * Bundles for the other tokens are exported from their own row in
+   * Access control.
    */
   async function handleDownloadMcpb(): Promise<void> {
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      new Notice(await downloadMcpb(plugin));
+      new Notice(await downloadMcpbForFirstToken(plugin));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to generate .mcpb: ${msg}`);
@@ -241,9 +245,12 @@
       <div class="setting-item-name">Claude Desktop extension</div>
       <div class="setting-item-description">
         Drag the downloaded file onto Claude Desktop — no paste needed. It
-        resolves the current port and token from this vault at connect time,
-        so it keeps working even after a token rotation or a port change.
-        Node.js must be on your PATH (see below).
+        resolves the current port and the token's secret from this vault at
+        connect time, so it keeps working even after a regenerate or a port
+        change. This button exports the <strong>first token in Access
+        control</strong>; to export for a different client, use the
+        <strong>.mcpb</strong> button on that token's row. Node.js must be on
+        your PATH (see below).
       </div>
     </div>
     <div class="setting-item-control">

@@ -82,7 +82,13 @@ export function defaultPolicy(): TokenPolicy {
   return { ...DEFAULT_POLICY, promoted: [], allowed: null };
 }
 
-function normalizePolicy(value: unknown): TokenPolicy {
+/**
+ * The canonical way to make a stored policy safe to read. Exported
+ * because `tokenStore.withPolicyFor` reads `profiles[mirrorId]` during
+ * migration, before anything in this feature has run, and a hand-edited
+ * entry there would otherwise reach a spread and crash `setup()`.
+ */
+export function normalizePolicy(value: unknown): TokenPolicy {
   const p = isRecord(value) ? value : {};
   return {
     profile:
@@ -139,8 +145,14 @@ function toSlice(state: ToolLoadingState): Record<string, unknown> {
   return Object.keys(profiles).length > 0 ? { ...rest, profiles } : rest;
 }
 
-async function readTokenIds(plugin: PluginDataLike): Promise<string[]> {
-  const slice = await new SettingsStore(plugin).readSlice(TRANSPORT_SLICE);
+/**
+ * The live token ids, read from a `data.json` snapshot rather than from
+ * disk. Synchronous on purpose: the caller derives the mirror from this
+ * INSIDE `updateSlice`'s mutex, so the list cannot be overtaken by a
+ * revoke between the read and the recipe.
+ */
+function tokenIdsIn(raw: Record<string, unknown>): string[] {
+  const slice = raw[TRANSPORT_SLICE];
   const tokens = isRecord(slice) ? slice.tokens : undefined;
   if (!Array.isArray(tokens)) return [];
   return tokens
@@ -167,19 +179,22 @@ export async function readPolicy(
  * the legacy mirror from the first token's entry — all inside a single
  * recipe, so the slice is atomic per write.
  *
- * The token list is read BEFORE `updateSlice` acquires the settings
- * mutex: it is non-re-entrant, and a nested acquisition would deadlock.
- * That costs one extra `loadData()` per policy write, never per
- * request, which is the trade that keeps the request path cheap.
+ * The token list comes from `updateSlice`'s own in-mutex snapshot, not
+ * from a separate read: the mutex is non-re-entrant, so any read taken
+ * before it is outside the lock and can be overtaken by a revoke. That
+ * used to make `ctx.mirrorId` name an already-revoked token, and the
+ * recipe would then write a mirror computed from a pruned entry over
+ * the correct one. Deriving it here makes the whole recipe a pure
+ * function of one atomic snapshot, and costs one `loadData()` less per
+ * policy write.
  */
 export async function updateToolLoading(
   plugin: PluginDataLike,
   mutate: (state: ToolLoadingState, ctx: MirrorContext) => ToolLoadingState,
 ): Promise<void> {
-  const tokenIds = await readTokenIds(plugin);
-  const ctx: MirrorContext = { mirrorId: tokenIds[0] ?? null, tokenIds };
-
-  await new SettingsStore(plugin).updateSlice(SLICE, (current) => {
+  await new SettingsStore(plugin).updateSlice(SLICE, (current, raw) => {
+    const tokenIds = tokenIdsIn(raw);
+    const ctx: MirrorContext = { mirrorId: tokenIds[0] ?? null, tokenIds };
     const next = mutate(mergeState(current), ctx);
 
     // Orphans are inert (ids are never reused) but they accumulate, so
@@ -192,8 +207,23 @@ export async function updateToolLoading(
       }
     }
 
-    const mirror = ctx.mirrorId ? next.profiles[ctx.mirrorId] : undefined;
-    if (mirror) {
+    // A missing entry resolves to the default policy, it does not leave
+    // the mirror where it was: the mirror token can legitimately have no
+    // entry (one minted by "Add token" has none until its policy is
+    // edited, and a revoke can promote such a token to tokens[0]), and
+    // holding the previous value there is not inert — `withPolicyFor`
+    // seeds a missing entry FROM these globals on the next load, so a
+    // stale mirror burns the old token's surface into the new one.
+    //
+    // Safe to write unconditionally only because `mirrorId` comes from
+    // the same snapshot as `next`: derived from a read taken before the
+    // mutex, it could name a token this recipe has already pruned, and
+    // the fallback would clobber a mirror that was correct.
+    //
+    // `mirrorId === null` means no token list exists yet: a pre-migration
+    // vault, whose 0.28.2 globals must survive untouched.
+    if (ctx.mirrorId) {
+      const mirror = next.profiles[ctx.mirrorId] ?? defaultPolicy();
       next.profile = mirror.profile;
       next.promoted = [...mirror.promoted];
     }

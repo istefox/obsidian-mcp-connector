@@ -54,6 +54,110 @@ describe("readPolicy", () => {
 });
 
 describe("updateToolLoading", () => {
+  /**
+   * The mirror must be derived from the same snapshot the recipe writes
+   * from. A second, earlier read would sit outside the non-re-entrant
+   * settings mutex and could be overtaken by a revoke, making the recipe
+   * compute the mirror from an already-pruned entry and clobber a
+   * correct one. Counting reads is what pins that structurally: one read
+   * means there is no pre-read to go stale.
+   */
+  test("derives the mirror from the write's own snapshot, not a read taken before the mutex", async () => {
+    let loads = 0;
+    let store: Record<string, unknown> = {
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    };
+    const plugin = {
+      loadData: async () => {
+        loads += 1;
+        return { ...store };
+      },
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    };
+
+    await updateToolLoading(plugin, (state) => state);
+
+    expect(loads).toBe(1);
+    const toolLoading = store.toolLoading as {
+      profile: string;
+      promoted: string[];
+    };
+    expect(toolLoading.profile).toBe("core");
+    expect(toolLoading.promoted).toEqual(["x"]);
+  });
+
+  /**
+   * The behavioural half of the test above: `loads === 1` pins how
+   * `updateSlice` is implemented, this pins the invariant. `loadData`
+   * serves a pre-revoke snapshot once and the post-revoke world after,
+   * so a `mirrorId` taken before the mutex names `default` — already
+   * revoked and already pruned — and the mirror comes out wrong.
+   */
+  test("uses the post-revoke snapshot when an earlier read would have seen the pre-revoke one", async () => {
+    const PRE = {
+      mcpTransport: {
+        tokens: [
+          { id: "default", label: "Default", token: "a".repeat(43) },
+          { id: "claude", label: "claude.ai", token: "b".repeat(43) },
+        ],
+      },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+          claude: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    };
+    const POST = {
+      mcpTransport: {
+        tokens: [{ id: "claude", label: "claude.ai", token: "b".repeat(43) }],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          claude: { profile: "core", promoted: ["x"], allowed: null },
+        },
+      },
+    };
+    let loads = 0;
+    let store: Record<string, unknown> = POST;
+    const plugin = {
+      loadData: async () => {
+        loads += 1;
+        return loads === 1 ? { ...PRE } : { ...store };
+      },
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    };
+
+    await updateToolLoading(plugin, (state) => state);
+
+    const toolLoading = store.toolLoading as {
+      profile: string;
+      promoted: string[];
+    };
+    // A stale mirrorId would resolve `default`, find it pruned, and fall
+    // back to the default policy — writing all/[] over claude's core.
+    expect(toolLoading.profile).toBe("core");
+    expect(toolLoading.promoted).toEqual(["x"]);
+  });
+
   test("rewrites profile/promoted from profiles[tokens[0].id] after mutating the first token's policy (R-12)", async () => {
     const plugin = makePlugin({
       ...TWO_TOKEN_FIXTURE,

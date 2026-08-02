@@ -105,7 +105,7 @@ The profile itself is not a ceiling. Core is a starting point that `activate_too
 
 > **Warning.** Both actions invalidate the token's current string, and the string is not recoverable. It is stored nowhere else, there is no undo, and nothing in the plugin can print it again once it is gone.
 
-**Revoke** deletes the token. Every client configured with it, every `.mcpb` bundle exported for it, and any Windows bridge config holding it stop working at the next request: the server answers 401, and the bundle fails with an error telling you to re-export. Other tokens are untouched, which is the point — rotating one client's credential no longer breaks all of them. Revoke asks for a confirmation naming the label and is disabled when only one token is left.
+**Revoke** deletes the token. Every client configured with it, every `.mcpb` bundle exported for it, and any Windows bridge config holding it stop working at the next request: the server answers 401, and the bundle fails with an error telling you to re-export. One exception, for bundles only: a `.mcpb` exported before 0.29.0 carries no token id and resolves whichever token is currently first in the list, so revoking the first token re-points that bundle at the next one instead of cutting it off. Export a fresh bundle once after upgrading and the exception is gone. Other tokens are untouched, which is the point — rotating one client's credential no longer breaks all of them. Revoke asks for a confirmation naming the label and is disabled when only one token is left.
 
 **Regenerate** replaces the secret in place, keeping the token's id, label, profile, promoted list and allowlist. Every client holding the old string starts getting 401 at its next request and needs the new one pasted in. Installed `.mcpb` bundles are the exception: they resolve their token from the vault by id at connect time, so they pick up the new secret on their own.
 
@@ -156,13 +156,13 @@ Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges 
 
 **Recommended: download the `.mcpb` extension**
 
-1. In the plugin settings, under **Quick setup for clients**, click **Download .mcpb**.
+1. In the plugin settings, under **Quick setup for clients**, click **Download .mcpb**. On a fresh vault that is your only token. If you have several, this button exports the first one in **Access control**; every other token has its own **.mcpb** button on its row.
 2. Drag the file onto Claude Desktop.
 3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
 The bundle is tied to the token you exported it from and resolves that token's secret and the live port from the vault at connect time, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
 
-Regenerating that token's secret or changing the server port needs no action: the bundle picks both up on its next connect. Revoking the token does break it, deliberately — the extension then fails with an error asking for a re-export, instead of quietly falling back to another token's access. Export a fresh `.mcpb` from the row of the token you want it to use and drag it onto Claude Desktop to replace the existing extension.
+Regenerating that token's secret or changing the server port needs no action: the bundle picks both up on its next connect. Revoking the token does break it, deliberately — the extension then fails with an error asking for a re-export, instead of quietly falling back to another token's access. (A bundle exported before 0.29.0 predates the token id and does fall back to whichever token is now first; re-export it once to close that gap.) Export a fresh `.mcpb` from the row of the token you want it to use and drag it onto Claude Desktop to replace the existing extension.
 
 **Alternative: manual JSON config**
 

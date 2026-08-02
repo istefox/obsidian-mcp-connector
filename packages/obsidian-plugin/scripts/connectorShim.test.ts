@@ -919,6 +919,89 @@ describe("runMain", () => {
 
   const successTransport = { port: 27200, token: "tok" };
 
+  /**
+   * The bundle's token id has to reach every resolution site, on both
+   * the request and the notification path. Dropping it anywhere makes
+   * that read fall through to `mcpTransport.bearerToken` — a silent
+   * fallback to whichever token is first, which is exactly what
+   * ADR-0014 §11 forbids. Every other `runMain` test stubs
+   * `readTransportImpl` without inspecting its arguments, so this
+   * plumbing was previously unexercised.
+   */
+  test("threads the bundle's token id into every transport read", async () => {
+    const stdin = fakeStdin();
+    const seen: (string | undefined)[] = [];
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      readTransportImpl: (
+        _p: string,
+        _o: Record<string, unknown>,
+        id?: string,
+      ) => {
+        seen.push(id);
+        return successTransport;
+      },
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", method: "notifications/ping" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    // toEqual, not toContain: a path that silently passes `undefined`
+    // on the notification branch has to fail too.
+    expect(seen).toEqual(["tok-2", "tok-2"]);
+  });
+
+  test("threads the token id into the retry path too", async () => {
+    const stdin = fakeStdin();
+    let seen: string | undefined = "NOT CALLED";
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      // First read fails, so resolution escalates to the retry path.
+      readTransportImpl: () => ({ error: "not ready yet" }),
+      resolveTransportWithRetryImpl: (
+        _p: string,
+        opts: { tokenId?: string },
+      ) => {
+        seen = opts.tokenId;
+        return successTransport;
+      },
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    // A transient read failure must not become a mirror-token fallback.
+    expect(seen).toBe("tok-2");
+  });
+
   test("notification (no id) never writes to stdout", async () => {
     const stdin = fakeStdin();
     const writeChunk = mock((_s: string) => {});

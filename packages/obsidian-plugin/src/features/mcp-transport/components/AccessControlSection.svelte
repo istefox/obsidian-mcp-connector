@@ -130,18 +130,24 @@
     new Notice(`MCP Connector: ${action} failed — ${message}`);
   }
 
+  /**
+   * Mint a token under a placeholder label and let the user name it in
+   * place. Electron implements no `window.prompt`, so asking for the
+   * label up front threw before the token was ever created; the inline
+   * rename control below is the only working way to collect it.
+   */
   async function handleAddToken(): Promise<void> {
     if (busy || tokens.length >= MAX_TOKENS) return;
-    const label = prompt(
-      "Name this token after the client that will use it:",
-      "New client",
-    );
-    if (label === null) return;
     busy = true;
     try {
-      const created = await addToken(plugin, label.trim() || "New client");
+      const created = await addToken(plugin, "New client");
       await refreshTokens();
       selectedTokenId = created.id;
+      // Open the new row straight in rename mode: the placeholder is
+      // there to be replaced, and the label is cosmetic, so leaving it
+      // costs nothing.
+      renamingId = created.id;
+      renameValue = created.label;
       new Notice(`Token "${created.label}" added.`);
     } catch (err) {
       noticeFailure("adding a token", err);
@@ -482,7 +488,9 @@
       <div class="setting-item-description">
         Pin this vault to one port so its MCP client config never drifts
         across sessions. Leave blank for the automatic 27200-27205 range.
-        If the port is already in use, the server will not start.
+        If the port is already in use, the server will not start. Saving
+        restarts the server, which clears every client's non-persisted
+        tool promotions.
       </div>
     </div>
     <div class="setting-item-control token-control">

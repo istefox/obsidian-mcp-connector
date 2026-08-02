@@ -23,7 +23,12 @@
   export let plugin: McpToolsPlugin;
   export let url: string;
   export let token: string;
-  /** Baked into the .mcpb. Omitted for the vault's first token. */
+  /**
+   * Baked into the .mcpb, and required whenever `showMcpb` is on — the
+   * button is gated on it below, so "there is a .mcpb button" and
+   * "there is an id to bake" are one condition. Optional only because
+   * the sections that pass `showMcpb={false}` have no token id to give.
+   */
   export let tokenId: string | undefined = undefined;
   /** Off where the surrounding section already carries its own .mcpb row. */
   export let showMcpb = true;
@@ -68,7 +73,10 @@
     if (mcpbBusy) return;
     mcpbBusy = true;
     try {
-      new Notice(await downloadMcpb(plugin, tokenId));
+      // `?? ""` cannot be reached through the gated button; it makes an
+      // unexpected caller get the service's refusal rather than a
+      // TypeError on `.trim()`.
+      new Notice(await downloadMcpb(plugin, tokenId ?? ""));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to generate .mcpb: ${msg}`);
@@ -104,7 +112,7 @@
   >
     Cursor / Cline / Continue
   </button>
-  {#if showMcpb}
+  {#if showMcpb && tokenId}
     <button
       type="button"
       on:click={handleDownloadMcpb}

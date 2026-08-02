@@ -3,7 +3,7 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
-## [0.29.0] — 2026-07-31
+## [0.29.0] — Unreleased
 
 ### Added
 
@@ -13,7 +13,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 ### Changed
 
 - **Adding, renaming, regenerating or revoking a token no longer restarts the in-process HTTP server.** Rotating the token used to tear the transport down and bind it again, which could land it on a different port when no fixed port was set. The token list is read from `data.json` per request instead, so a change takes effect on the next request with nothing to invalidate, in-flight requests finish and the port cannot drift. Revocation is now selective in the way the feature exists for: revoking claude.ai's token leaves every other client connected. Both actions remain unrecoverable — the string is stored nowhere else, and the settings UI asks for confirmation naming the token before either one. (#348)
-- **`.mcpb` bundles are exported per token.** Each row in the token list has its own **.mcpb** button, and the generated bundle carries that token's id. The shim resolves the secret from the vault by id at connect time, so an installed extension survives a regenerate with no re-export; if the token is revoked it fails with an error asking for a fresh export, and never falls back to another token, which would turn a revocation into a grant of someone else's access. Bundles generated before this release carry no id and keep resolving the first token, exactly as they do today. (#348)
+- **`.mcpb` bundles are exported per token.** Each row in the token list has its own **.mcpb** button, and **Download .mcpb** under *Quick setup for clients* exports the first token in that list — either way the generated bundle carries that token's id, and an export is refused outright if the id is blank or unknown rather than shipping a bundle that resolves something else. The shim resolves the secret from the vault by id at connect time, so an installed extension survives a regenerate with no re-export; if the token is revoked it fails with an error asking for a fresh export, and never falls back to another token, which would turn a revocation into a grant of someone else's access. Bundles generated before this release carry no id and keep resolving whichever token is first — which also means revoking the first token re-points them at the next one rather than cutting them off, so re-export any bundle you generated before 0.29.0. (#348)
 
 ## [0.28.2] — 2026-07-28
 
