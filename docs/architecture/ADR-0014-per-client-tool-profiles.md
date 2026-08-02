@@ -207,6 +207,45 @@ let scopePromise: Promise<ToolScope> | undefined;
 const getScope = () => (scopePromise ??= resolveToolScope(plugin, tokenId, registry, session));
 ```
 
+**Cache scope on `tools/list` is a security boundary, not a performance knob (constraint
+for #407, added 2026-08-02).** The `2026-07-28` revision makes `tools/list`,
+`prompts/list`, `resources/list` and `resources/read` cacheable through required `ttlMs`
+and `cacheScope` fields. That interacts directly with the property this whole ADR rests
+on: the returned set *varies by the authorization presented on the request*. A per-token
+tool list published as `cacheScope: "public"`, or with a non-zero `ttlMs` under a cache
+key that does not include the token identity, lets one client's surface be served to
+another — the same outcome §11 refuses for `.mcpb` bundles and §7 refuses for the legacy
+mirror, reached through a third door.
+
+So, when the connector adopts `2026-07-28`:
+
+- a response whose content depends on the bearer MUST NOT be emitted as
+  `cacheScope: "public"`;
+- `ttlMs` stays `0` for those responses unless the cache key provably includes the token
+  identity, which is not something this server can assert about an intermediary;
+- `@modelcontextprotocol/server`'s conservative defaults (`{ ttlMs: 0, cacheScope:
+  "private" }`) are therefore correct as shipped. Raising either is a security decision,
+  not a tuning one, and does not belong in a performance change set.
+
+**The same question applies to `toolsListChanged` (constraint for #407, added 2026-08-02).**
+`2026-07-28` moves unsolicited change notifications off the calling request's own response
+stream and onto `subscriptions/listen`, a long-lived stream the client opts into by type.
+The changelog is explicit that only request-scoped notifications (`notifications/progress`,
+`notifications/message`) stay on the originating request's stream — `toolsListChanged` does
+not. So the mechanism ADR-0011 and ADR-0012 describe, where an activation call switches its
+own response to SSE and emits `notifications/tools/list_changed` with that call's
+`relatedRequestId`, is not where the notification lives under the new revision.
+
+The per-token constraint carries over unchanged: a `toolsListChanged` raised by one token's
+`activate_tool` MUST reach only subscriptions opened with that same token, because
+`activate_tool` widens exactly one token's surface (§5). Whether the SDK's
+`handler.notify.toolsChanged()` scopes by credential is undocumented and must be
+established before adoption, not after.
+
+The recurring shape is worth naming, since it has now produced three separate defects and a
+fourth open question: **state keyed to anything other than the token id eventually gets
+served to the wrong client.**
+
 ### 4. Precedence, and the allowlist — not the profile — as the ceiling
 
 Four layers, strongest first:
@@ -414,7 +453,7 @@ after migration is the mirror — i.e. every generated bundle would silently be 
 a third placeholder (`"__OBSIDIAN_MCP_TOKEN_ID__"`, guarded exactly like the existing
 two), and `parseTransportFile(jsonText, tokenId)` resolves it:
 
-- placeholder unset (**a bundle generated before 0.29.0, and nothing else**) →
+- placeholder unset (**a bundle generated before 1.0.0, and nothing else**) →
   `mcpTransport.bearerToken`, i.e. today's behaviour, so previously generated bundles keep
   working;
 - set and found in `tokens[]` → that token;
@@ -435,7 +474,7 @@ sanctioned exactly the substitution the paragraph above forbids. Corrected:
   the *new* first token, and a client whose credential was revoked keeps working with
   someone else's surface. That is the same defect the fallback rationale exists to
   prevent, reached from the export side instead of the resolution side.
-- **The unset branch exists only for bundles generated before 0.29.0.** No 0.29 export
+- **The unset branch exists only for bundles generated before 1.0.0.** No 1.0 export
   path may emit one. `tokenId` is required on `McpbGeneratorInput` and `generateMcpb`
   throws on a blank one; `downloadMcpb` validates the id against the live `tokens[]` and
   refuses to write anything for an empty, unknown or unreadable one; and both `.mcpb`
@@ -444,11 +483,11 @@ sanctioned exactly the substitution the paragraph above forbids. Corrected:
   `downloadMcpbForFirstToken`. The "Files to create or modify" table below already
   required this of `ClientConfigSection.svelte` (".mcpb download takes a `tokenId`"); the
   first implementation dropped it, which is how the defect arrived.
-- **The legacy branch is a bounded compatibility hole, not a supported design.** A pre-0.29
+- **The legacy branch is a bounded compatibility hole, not a supported design.** A pre-1.0
   bundle still transfers to the next token when the first is revoked. It is kept only
   because removing it breaks every installed extension at upgrade, and it is acceptable
   only because the README and CHANGELOG instruct a one-time re-export. A later release may
-  drop it once bundles predating 0.29.0 can be assumed gone.
+  drop it once bundles predating 1.0.0 can be assumed gone.
 
 ---
 

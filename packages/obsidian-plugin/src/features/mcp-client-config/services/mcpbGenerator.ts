@@ -20,7 +20,7 @@ export type McpbGeneratorInput = {
    *
    * Required, and that is the point. The shim still honours an unset id
    * by reading `mcpTransport.bearerToken`, but that branch exists ONLY
-   * for bundles generated before 0.29.0. `bearerToken` tracks `tokens[0]`
+   * for bundles generated before 1.0.0. `bearerToken` tracks `tokens[0]`
    * positionally, so an id-less bundle follows the position rather than
    * the client: revoking its token would silently re-point it at the
    * next one. No export path may emit that.

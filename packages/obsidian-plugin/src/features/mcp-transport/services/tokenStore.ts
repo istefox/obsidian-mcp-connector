@@ -54,7 +54,7 @@ const TRANSPORT_SLICE = "mcpTransport";
 const TOOL_LOADING_SLICE = "toolLoading";
 
 /**
- * Id and label the 0.28.2 → 0.29.0 migration gives the pre-existing
+ * Id and label the 0.28.2 → 1.0.0 migration gives the pre-existing
  * token. Only the first entry is ever named this way; nothing reads the
  * literal id (see the mirror note in the file header).
  */
@@ -134,7 +134,7 @@ function withTokens(current: unknown, tokens: readonly TokenRecord[]): unknown {
  * policy — that is the 0.28.2 upgrade. When tokens already existed, the
  * globals are only a mirror of some PREVIOUS `tokens[0]`, so inheriting
  * them hands a live client a dead token's surface; the token's real
- * policy is the default, exactly as every 0.29 consumer already
+ * policy is the default, exactly as every 1.0 consumer already
  * resolves a missing entry.
  */
 function withPolicyFor(
@@ -353,7 +353,7 @@ export async function revokeToken(
   // self-heal on the next load — `ensureTokenStore` seeds a missing
   // entry, it never repairs a stale mirror — so the mirror can stay
   // wrong until the next policy write. That is a downgrade-only
-  // concern: every 0.29 consumer reads `profiles[tokenId]`.
+  // concern: every 1.0 consumer reads `profiles[tokenId]`.
   try {
     await updateToolLoading(plugin, (state) => state);
   } catch (error) {
