@@ -236,6 +236,32 @@ describe("parseTransportFile(jsonText, tokenId) — per-token .mcpb bundles (R-1
     expect(typeof result.error).toBe("string");
     expect(result.token).toBeUndefined();
   });
+
+  /**
+   * `fatal` is opt-in per error, never a blanket flag. Everything else
+   * this function can return describes a vault that is mid-write or a
+   * server that has not bound yet, and those are exactly what the retry
+   * loop exists for — flagging one of them would turn a recoverable
+   * startup race into a hard failure.
+   */
+  test("only the unknown-token error is marked fatal", () => {
+    expect(parseTransportFile(tokensJson(), "ghost-id").fatal).toBe(true);
+
+    const transient = [
+      ["malformed JSON", "{ not json", undefined],
+      ["missing livePort", JSON.stringify({ mcpTransport: {} }), undefined],
+      [
+        "missing bearerToken",
+        JSON.stringify({ mcpTransport: { livePort: 27200 } }),
+        undefined,
+      ],
+    ] as const;
+    for (const [label, json, tokenId] of transient) {
+      const r = parseTransportFile(json, tokenId);
+      expect(typeof r.error, label).toBe("string");
+      expect(r.fatal, label).toBeFalsy();
+    }
+  });
 });
 
 describe("buildErrorResponse", () => {
@@ -699,6 +725,40 @@ describe("resolveTransportWithRetry", () => {
     expect(result.error).toBeDefined();
   });
 
+  /**
+   * A revoked token id is permanent: `tokens[]` is persisted settings and
+   * the id cannot reappear without a user action in Obsidian AND a fresh
+   * export. Polling it for the full window costs ~20s per request and
+   * ends by appending "is Obsidian open with the vault loaded?", which is
+   * false and buries the one instruction that helps.
+   */
+  test("a fatal error returns at once, verbatim, without polling", async () => {
+    const { nowImpl, sleepMsImpl } = fakeClock();
+    const FATAL =
+      "token 'tok-2' is no longer configured — re-export the .mcpb from Obsidian settings";
+    let readCalls = 0;
+    let sleepCalls = 0;
+    const result = await resolveTransportWithRetry("/fake/data.json", {
+      readTransportImpl: () => {
+        readCalls++;
+        return { error: FATAL, fatal: true };
+      },
+      probePortImpl: async () => true,
+      nowImpl,
+      sleepMsImpl: async (ms: number) => {
+        sleepCalls++;
+        await sleepMsImpl(ms);
+      },
+      windowMs: 30000,
+      intervalMs: 1000,
+    });
+    expect(readCalls).toBe(1);
+    expect(sleepCalls).toBe(0);
+    // Byte-identical is the load-bearing assertion: it pins that the
+    // "is Obsidian open…" suffix is NOT appended to a permanent failure.
+    expect(result.error).toBe(FATAL);
+  });
+
   test("onAttempt fires once per retry iteration, not on the successful iteration", async () => {
     const { nowImpl, sleepMsImpl } = fakeClock();
     let attempts = 0;
@@ -966,6 +1026,57 @@ describe("runMain", () => {
     // toEqual, not toContain: a path that silently passes `undefined`
     // on the notification branch has to fail too.
     expect(seen).toEqual(["tok-2", "tok-2"]);
+  });
+
+  /**
+   * The user-visible bug, end to end: a bundle whose token was revoked
+   * used to poll for the full RETRY_WINDOW_MS on EVERY request before
+   * answering, and then answered with the retry path's suffix appended,
+   * which contradicts the re-export instruction it lands next to.
+   *
+   * Deliberately uses the REAL `resolveTransportWithRetry` — stubbing it
+   * would hide the very behaviour under test. Without the fatal
+   * short-circuit this test does not merely fail, it exceeds the test
+   * timeout, because the real loop sleeps for 20 real seconds.
+   */
+  test("a revoked token id is reported at once, with no misleading suffix", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const FATAL =
+      "token 'tok-2' is no longer configured — re-export the .mcpb from Obsidian settings";
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log: mock((_msg: string) => {}),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      tokenId: "tok-2",
+      readTransportImpl: () => ({ error: FATAL, fatal: true }),
+      // resolveTransportWithRetryImpl intentionally NOT stubbed.
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          // A progressToken would make the retry loop emit a progress
+          // notification per poll; none may appear if it never polls.
+          params: { _meta: { progressToken: "p1" } },
+        }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    const written = writeChunk.mock.calls.map((c) => c[0]).join("");
+    expect(writeChunk).toHaveBeenCalledTimes(1);
+    expect(written).toContain("re-export");
+    expect(written).not.toContain("is Obsidian open");
+    expect(written).not.toContain("notifications/progress");
   });
 
   test("threads the token id into the retry path too", async () => {

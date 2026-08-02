@@ -32,6 +32,9 @@ const net = require("net");
  * @property {number} port
  * @property {string} token
  * @property {undefined} [error]
+ * @property {undefined} [fatal] Declared so `.fatal` narrows on the
+ *   union, like `error` above. Type-only: nothing ever sets it here, so
+ *   a success result stays a bare `{ port, token }` at runtime.
  */
 
 /**
@@ -39,6 +42,10 @@ const net = require("net");
  * @property {string} error
  * @property {undefined} [port]
  * @property {undefined} [token]
+ * @property {boolean} [fatal] Permanent: retrying cannot change it, so
+ *   callers must report it immediately and verbatim. Opt-in per error —
+ *   absent means "might resolve on the next poll", which is the default
+ *   and covers every startup race.
  */
 
 /** @typedef {TransportOk | TransportErr} TransportResult */
@@ -162,8 +169,14 @@ function parseTransportFile(jsonText, tokenId) {
   if (tokenId) {
     const secret = findTokenSecret(transport.tokens, tokenId);
     if (secret === undefined) {
+      // Fatal: `tokens[]` is persisted settings, so a missing id cannot
+      // reappear without a user action in Obsidian AND a fresh export.
+      // Polling for it would cost the full retry window on every single
+      // request and end with a suffix telling the user to check whether
+      // Obsidian is open, which it demonstrably is.
       return {
         error: `token '${tokenId}' is no longer configured — re-export the .mcpb from Obsidian settings`,
+        fatal: true,
       };
     }
     return { port, token: secret };
@@ -411,6 +424,11 @@ async function resolveTransportWithRetry(
   let lastError = "timed out waiting for the MCP server";
   while (nowImpl() < deadline) {
     const resolved = readTransportImpl(dataPath, {}, tokenId);
+    // Returned verbatim, before onAttempt and before the sleep: the
+    // suffix below is written for a transient timeout and is actively
+    // wrong on a permanent failure, where it would contradict the
+    // instruction it lands next to.
+    if (resolved.fatal) return resolved;
     if (resolved.error) {
       lastError = resolved.error;
     } else if (await probePortImpl(resolved.port)) {
@@ -559,7 +577,8 @@ function runMain({
         }
       : undefined;
     let transport = readTransportImpl(dataPath, {}, tokenId);
-    if (transport.error) {
+    // A permanent failure is never escalated to the retry loop.
+    if (transport.error && !transport.fatal) {
       transport = await resolveTransportWithRetryImpl(dataPath, {
         onAttempt,
         tokenId,
@@ -650,7 +669,9 @@ function runMain({
    */
   async function handleNotification(message) {
     let transport = readTransportImpl(dataPath, {}, tokenId);
-    if (transport.error)
+    // Same rule as the request path: a revoked token must not cost the
+    // full retry window on every notification too.
+    if (transport.error && !transport.fatal)
       transport = await resolveTransportWithRetryImpl(dataPath, { tokenId });
     if (transport.error) {
       log(`dropped notification: ${transport.error}`);
