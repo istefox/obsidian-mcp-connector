@@ -1113,6 +1113,118 @@ describe("runMain", () => {
     expect(seen).toBe("tok-2");
   });
 
+  /**
+   * Reported as #412: `initialize` goes in, the client cancels, the
+   * transport closes, and the Claude Desktop log carries no reason at
+   * all. The reason existed — it just went to stdout, where a client
+   * that has already cancelled discards it — while `handleNotification`
+   * logged the identical class of failure to stderr unconditionally.
+   *
+   * stderr is the only channel that survives a cancelled request, and
+   * for an installed .mcpb it is the ONLY channel a user can read:
+   * `debug` is gated on OBSIDIAN_MCP_DEBUG, and the generated manifest
+   * carries no `env` (`user_config?: never` in mcpbGenerator.ts), so
+   * that flag cannot be set for an installed extension.
+   */
+  test("a resolution failure on the request path is logged to stderr", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      // debug OFF: this must not depend on a flag an installed bundle
+      // has no way to set.
+      debug: false,
+      readTransportImpl: () => ({ error: "could not read /fake/data.json" }),
+      resolveTransportWithRetryImpl: () => ({
+        error:
+          "port 27200 is not accepting connections yet — is Obsidian open with the vault loaded?",
+      }),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 7, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    const logged = log.mock.calls.map((c) => c[0]).join("\n");
+    expect(logged).toContain("port 27200 is not accepting connections");
+    // The method matters: a failing `initialize` and a failing
+    // `tools/call` need different remedies, and the log line is all the
+    // reporter can send us.
+    expect(logged).toContain("initialize");
+  });
+
+  test("the failure is logged AND still answered — a channel added, not moved", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      debug: false,
+      readTransportImpl: () => ({ error: "boom" }),
+      resolveTransportWithRetryImpl: () => ({ error: "boom" }),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/list" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    // A client that has NOT cancelled still owes a response with that id.
+    const written = writeChunk.mock.calls.map((c) => c[0]).join("");
+    expect(written).toContain('"id":8');
+    expect(written).toContain("boom");
+    expect(log.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  test("a fatal resolution failure is logged too, without the retry path", async () => {
+    const stdin = fakeStdin();
+    const log = mock((_msg: string) => {});
+    const FATAL =
+      "token 'tok-2' is no longer configured — re-export the .mcpb from Obsidian settings";
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log,
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(200, "application/json", "{}"),
+      ),
+      dataPath: "/fake/data.json",
+      debug: false,
+      tokenId: "tok-2",
+      readTransportImpl: () => ({ error: FATAL, fatal: true }),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 9, method: "initialize" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    expect(log.mock.calls.map((c) => c[0]).join("\n")).toContain("re-export");
+  });
+
   test("notification (no id) never writes to stdout", async () => {
     const stdin = fakeStdin();
     const writeChunk = mock((_s: string) => {});
