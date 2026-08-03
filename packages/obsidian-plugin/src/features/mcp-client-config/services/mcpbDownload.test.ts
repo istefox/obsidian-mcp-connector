@@ -7,7 +7,7 @@ import { FileSystemAdapter } from "obsidian";
 import { mockPlugin } from "$/test-setup";
 import type McpToolsPlugin from "$/main";
 import { revokeToken } from "$/features/mcp-transport/services/tokenStore";
-import { downloadMcpb, downloadMcpbForFirstToken } from "./mcpbDownload";
+import { downloadMcpb } from "./mcpbDownload";
 
 /**
  * `mcpbDownload` is the layer between the tested generator and the
@@ -65,37 +65,30 @@ function bakedTokenId(bytes: ArrayBuffer): string {
   return match[1];
 }
 
-describe("downloadMcpbForFirstToken", () => {
-  test("bakes the first token's id, never a null that resolves the mirror", async () => {
-    const { plugin, adapter } = makePlugin();
+describe("downloadMcpb", () => {
+  test.each([
+    ["default", '"default"'],
+    ["claude", '"claude"'],
+  ])(
+    "bakes the requested id (%s), never a null that resolves the mirror",
+    async (id, baked) => {
+      const { plugin, adapter } = makePlugin();
 
-    await downloadMcpbForFirstToken(plugin);
+      await downloadMcpb(plugin, id);
 
-    expect(adapter.writes).toHaveLength(1);
-    expect(bakedTokenId(adapter.writes[0].bytes)).toBe('"default"');
-  });
-
-  test("agrees with the per-row export for the same token", async () => {
-    const a = makePlugin();
-    const b = makePlugin();
-
-    await downloadMcpbForFirstToken(a.plugin);
-    await downloadMcpb(b.plugin, "default");
-
-    // Compare the baked id, not the bytes: zipSync stamps an mtime.
-    expect(bakedTokenId(a.adapter.writes[0].bytes)).toBe(
-      bakedTokenId(b.adapter.writes[0].bytes),
-    );
-  });
+      expect(adapter.writes).toHaveLength(1);
+      expect(bakedTokenId(adapter.writes[0].bytes)).toBe(baked);
+    },
+  );
 
   test("refuses when the token list is empty", async () => {
     const { plugin, adapter } = makePlugin({
       mcpTransport: { livePort: 27200, bearerToken: MIRROR },
     });
 
-    const message = await downloadMcpbForFirstToken(plugin);
+    const message = await downloadMcpb(plugin, "default");
 
-    expect(message).toMatch(/no token/i);
+    expect(message).toMatch(/no longer configured/i);
     expect(adapter.writes).toHaveLength(0);
   });
 
@@ -110,14 +103,12 @@ describe("downloadMcpbForFirstToken", () => {
       },
     });
 
-    const message = await downloadMcpbForFirstToken(plugin);
+    const message = await downloadMcpb(plugin, "default");
 
     expect(message).toMatch(/disk on fire/);
     expect(adapter.writes).toHaveLength(0);
   });
-});
 
-describe("downloadMcpb", () => {
   test("refuses an id that is not in the live token list", async () => {
     const { plugin, adapter } = makePlugin();
 
@@ -155,7 +146,7 @@ describe("ADR-0014 §11 end to end", () => {
   test("a bundle exported for tokens[0] dies when tokens[0] is revoked", async () => {
     const { plugin, adapter, getData } = makePlugin();
 
-    await downloadMcpbForFirstToken(plugin);
+    await downloadMcpb(plugin, "default");
     const baked = JSON.parse(bakedTokenId(adapter.writes[0].bytes)) as string;
 
     await revokeToken(plugin, "default");

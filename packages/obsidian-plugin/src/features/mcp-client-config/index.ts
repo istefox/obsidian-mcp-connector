@@ -34,7 +34,9 @@ export {
 export {
   applyAutoWrite,
   getAutoWriteEnabled,
-  setAutoWriteEnabled,
+  releaseAutoWriteOwner,
+  resolveAutoWriteOwner,
+  setAutoWriteOwner,
   type ApplyAutoWriteResult,
 } from "./services/autoWrite";
 
@@ -66,10 +68,7 @@ export {
   type McpbGeneratorInput,
 } from "./services/mcpbGenerator";
 
-export {
-  downloadMcpb,
-  downloadMcpbForFirstToken,
-} from "./services/mcpbDownload";
+export { downloadMcpb } from "./services/mcpbDownload";
 
-export { default as ClientConfigSection } from "./components/ClientConfigSection.svelte";
+export { default as ClaudeDesktopIntegrationSection } from "./components/ClaudeDesktopIntegrationSection.svelte";
 export { default as CopyConfigMenu } from "./components/CopyConfigMenu.svelte";

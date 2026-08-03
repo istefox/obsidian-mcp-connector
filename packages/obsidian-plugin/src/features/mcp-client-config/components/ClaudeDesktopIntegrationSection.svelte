@@ -2,14 +2,6 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { onMount } from "svelte";
-  import { BIND_HOST, MCP_PATH_PREFIX } from "$/features/mcp-transport/constants";
-  import CopyConfigMenu from "./CopyConfigMenu.svelte";
-  import { downloadMcpbForFirstToken } from "../services/mcpbDownload";
-  import {
-    getAutoWriteEnabled,
-    setAutoWriteEnabled,
-    applyAutoWrite,
-  } from "../services/autoWrite";
   import {
     detectBrew,
     detectNode,
@@ -24,27 +16,18 @@
   } from "../services/preWarm";
 
   /**
-   * Settings UI for MCP client configuration.
+   * Machine-level prerequisites for the Claude Desktop bridge: is Node
+   * on PATH, and is `mcp-remote` in the npm cache.
    *
-   * Three "Copy config" buttons emit ready-to-paste JSON for each
-   * supported client family (design D6). An opt-in "Auto-write Claude
-   * Desktop config" toggle, default OFF, lets the plugin keep
-   * `claude_desktop_config.json` in sync on token rotation or port
-   * change without manual paste — see `services/autoWrite.ts`.
-   *
-   * The bearer token + port come from the live `McpTransportState` on
-   * the plugin. If the transport is not running (setup failed earlier
-   * in plugin load) the buttons are disabled with a hint.
+   * Nothing here is per-token, which is why nothing here emits a
+   * credential. The config snippets, the `.mcpb` export and the
+   * `claude_desktop_config.json` sync toggle all used to live in this
+   * component, bound to whichever token happened to be first; they are
+   * now on the token rows in Access control, each carrying an explicit
+   * token id (ADR-0014 §11).
    */
 
   export let plugin: McpToolsPlugin;
-
-  let token = "";
-  let port = 0;
-  let url = "";
-  let autoWrite = false;
-  let busy = false;
-  let mcpbBusy = false;
 
   // Claude Desktop integration (T9 + T10): Node.js presence + mcp-remote
   // pre-warm. Both are read-only/idempotent UX hints driven from the
@@ -61,14 +44,7 @@
 
   const NODEJS_DOWNLOAD_URL = "https://nodejs.org/en/download/";
 
-  $: {
-    token = plugin.mcpTransportState?.bearerToken ?? "";
-    port = plugin.mcpTransportState?.server.port ?? 0;
-    url = port ? `http://${BIND_HOST}:${port}${MCP_PATH_PREFIX}` : "";
-  }
-
   onMount(async () => {
-    autoWrite = await getAutoWriteEnabled(plugin);
     nodeStatus = await detectNode();
     preWarmEntry = await getPreWarmCache(plugin);
     // Detect Homebrew lazily — only after we know Node is missing,
@@ -158,146 +134,9 @@
     }
   }
 
-  /**
-   * Export the bundle for the vault's first token, resolved BY ID at
-   * click time. Not a mirror bundle: revoking that token cuts this
-   * bundle off like any other, which is the whole point of ADR-0014
-   * §11. An id-less export would follow `bearerToken`, which tracks
-   * `tokens[0]` positionally, so a revoke would silently hand it the
-   * next token's access instead.
-   *
-   * Bundles for the other tokens are exported from their own row in
-   * Access control.
-   */
-  async function handleDownloadMcpb(): Promise<void> {
-    if (mcpbBusy) return;
-    mcpbBusy = true;
-    try {
-      new Notice(await downloadMcpbForFirstToken(plugin));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      new Notice(`Failed to generate .mcpb: ${msg}`);
-      console.error("[mcpb] generation failed", err);
-    } finally {
-      mcpbBusy = false;
-    }
-  }
-
-  /**
-   * Persist the toggle and, when flipping to ON, run a one-shot
-   * sync so the user immediately sees their config rewritten —
-   * matching the mental model "I turned it on, it should be in sync now."
-   * Disabling the toggle does not undo prior writes.
-   */
-  async function onToggleAutoWrite(
-    event: Event & { currentTarget: HTMLInputElement },
-  ): Promise<void> {
-    if (busy) return;
-    const desired = event.currentTarget.checked;
-    busy = true;
-    try {
-      await setAutoWriteEnabled(plugin, desired);
-      autoWrite = desired;
-      if (desired) {
-        const r = await applyAutoWrite(plugin);
-        if (r.applied) {
-          new Notice("Claude Desktop config rewritten.");
-        } else if (r.applied === false && r.reason === "transport-offline") {
-          new Notice(
-            "Auto-write enabled, but the MCP transport is not running yet.",
-          );
-        } else if (r.applied === false && r.reason === "error") {
-          new Notice(`Auto-write enabled, but write failed: ${r.error}`);
-        }
-      } else {
-        new Notice("Auto-write disabled.");
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      new Notice(`Toggle failed: ${msg}`);
-      // Revert the visual state to the persisted value.
-      autoWrite = await getAutoWriteEnabled(plugin);
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <div class="mcp-client-config">
-  <h3>Quick setup for clients</h3>
-
-  <div class="setting-item">
-    <div class="setting-item-info">
-      <div class="setting-item-name">Copy config snippets</div>
-      <div class="setting-item-description">
-        Each button copies a ready-to-paste JSON block for the
-        corresponding MCP client. Paste into the client's config file
-        under <code>mcpServers</code>.
-      </div>
-    </div>
-    <div class="setting-item-control">
-      <CopyConfigMenu {plugin} {url} {token} showMcpb={false} />
-    </div>
-  </div>
-
-  <div class="setting-item mcpb-row">
-    <div class="setting-item-info">
-      <div class="setting-item-name">Claude Desktop extension</div>
-      <div class="setting-item-description">
-        Drag the downloaded file onto Claude Desktop — no paste needed. It
-        resolves the current port and the token's secret from this vault at
-        connect time, so it keeps working even after a regenerate or a port
-        change. This button exports the <strong>first token in Access
-        control</strong>; to export for a different client, use the
-        <strong>.mcpb</strong> button on that token's row. Node.js must be on
-        your PATH (see below).
-      </div>
-    </div>
-    <div class="setting-item-control">
-      <button
-        type="button"
-        on:click={handleDownloadMcpb}
-        disabled={!token ||
-          !port ||
-          (nodeStatus !== null && !nodeStatus.found) ||
-          mcpbBusy}
-        aria-label="Download Claude Desktop extension (.mcpb)"
-      >
-        {mcpbBusy ? "Generating…" : "Download .mcpb"}
-      </button>
-    </div>
-  </div>
-
-  <div class="setting-item">
-    <div class="setting-item-info">
-      <div class="setting-item-name">Auto-write Claude Desktop config</div>
-      <div class="setting-item-description">
-        When enabled, the plugin rewrites
-        <code>claude_desktop_config.json</code>
-        whenever the bearer token rotates or the port changes. A
-        backup is saved alongside the file as
-        <code>.backup</code>. Off by default — turning it on touches
-        a user-managed file outside the vault.
-      </div>
-    </div>
-    <div class="setting-item-control">
-      <input
-        type="checkbox"
-        checked={autoWrite}
-        disabled={busy}
-        on:change={onToggleAutoWrite}
-        aria-label="Auto-write Claude Desktop config"
-      />
-    </div>
-  </div>
-
-  {#if !token || !port}
-    <p class="hint">
-      MCP transport is not running. Copy buttons are disabled until the
-      HTTP server is up.
-    </p>
-  {/if}
-
   <h3>Claude Desktop integration</h3>
   <p class="lead">
     Claude Desktop reaches the in-process MCP server through the

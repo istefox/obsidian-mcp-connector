@@ -10,11 +10,14 @@ import { generateMcpb } from "./mcpbGenerator";
 /**
  * Generate a `.mcpb` bundle and put it where the user asks for it.
  *
- * Lives in a service rather than in the component that used to own it
- * because two surfaces now export bundles — the client-config section
- * (for the vault's first token) and every token row in Access Control
- * (for its own) — and a second copy of the Electron/vault write dance
- * is exactly how the two would drift.
+ * Lives in a service rather than in the component because the export is
+ * driven from a token row, and the Electron/vault write dance is worth
+ * keeping in one testable place regardless of how many rows there are.
+ *
+ * There is deliberately no "export the vault's bundle" entry point. A
+ * bundle authenticates as exactly one token, so the caller has to name
+ * which; a helper that picked `tokens[0]` for them is how the download
+ * button ends up bound to a position instead of an identity.
  */
 
 const FILENAME = "obsidian-mcp-connector.mcpb";
@@ -35,33 +38,6 @@ function electronDialog(): SaveDialog | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Export the bundle for the vault's first token, resolved by id at call
- * time. There is no id-less variant: a bundle with no id resolves
- * `mcpTransport.bearerToken`, which tracks `tokens[0]` positionally, so
- * revoking that token would hand the bundle the NEXT token's access
- * instead of cutting it off (ADR-0014 §11).
- *
- * Resolved here rather than cached by the caller because the settings UI
- * has no reactive channel to the token list: an id read at mount goes
- * stale on the next add or revoke.
- */
-export async function downloadMcpbForFirstToken(
-  plugin: McpToolsPlugin,
-): Promise<string> {
-  let tokens;
-  try {
-    tokens = await readTokens(plugin);
-  } catch (err) {
-    return readFailure(err);
-  }
-  const first = tokens[0];
-  if (!first) {
-    return "No token configured — open Access control and add one before exporting a .mcpb.";
-  }
-  return downloadMcpb(plugin, first.id);
 }
 
 function readFailure(err: unknown): string {
