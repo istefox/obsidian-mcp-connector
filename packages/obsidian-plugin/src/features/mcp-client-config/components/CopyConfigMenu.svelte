@@ -11,9 +11,9 @@
 
   /**
    * The client families this vault can be configured for, for ONE
-   * token. Mounted by ClientConfigSection for the vault's first token
-   * and by every token row in Access Control for its own, so adding a
-   * client family here adds it everywhere.
+   * token. Mounted by every token row in Access Control and nowhere
+   * else, so adding a client family here adds it to every row at once
+   * and no surface can emit a snippet without naming its token.
    *
    * The generators are pure and untouched: their output lands in
    * user-managed files outside the vault, so a change of shape would

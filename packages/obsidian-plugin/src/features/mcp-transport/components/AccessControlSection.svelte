@@ -20,7 +20,15 @@
     MAX_TOKENS,
     MCP_PATH_PREFIX,
   } from "$/features/mcp-transport/constants";
-  import { applyAutoWrite, CopyConfigMenu } from "$/features/mcp-client-config";
+  import {
+    applyAutoWrite,
+    CopyConfigMenu,
+    detectNode,
+    releaseAutoWriteOwner,
+    resolveAutoWriteOwner,
+    setAutoWriteOwner,
+    type NodeDetectResult,
+  } from "$/features/mcp-client-config";
   import {
     readPolicy,
     type TokenPolicy,
@@ -44,6 +52,23 @@
   let allToolNames: string[] = [];
   let seenRevision = 0;
   let busy = false;
+
+  /**
+   * The token whose secret this vault keeps in
+   * `claude_desktop_config.json`, or null if nobody's. At most one row
+   * is ticked: the file holds one `mcpServers` entry, so a second owner
+   * could only mean one of them silently losing.
+   */
+  let autoWriteOwner: string | null = null;
+
+  /**
+   * Node presence, detected once for the whole list. A `.mcpb` runs
+   * under `command: "node"`, so exporting one while Node is missing
+   * produces a bundle that cannot start. `detectNode` caches at module
+   * level, so one call covers every row and every re-render.
+   */
+  let nodeStatus: NodeDetectResult | null = null;
+  $: mcpbDisabled = nodeStatus !== null && !nodeStatus.found;
 
   let port: number = plugin.mcpTransportState?.server.port ?? 27200;
 
@@ -78,6 +103,7 @@
     const registry = plugin.mcpTransportState?.mcp.registry;
     allToolNames = registry ? registry.listAll().map((t) => t.name) : [];
     await refreshTokens();
+    nodeStatus = await detectNode();
   });
 
   // The Tool Loading panel writes the policies these rows display.
@@ -94,6 +120,9 @@
       selectedTokenId = tokens[0]?.id ?? "";
     }
     await refreshPolicies();
+    // Read after the token list, never before: resolving the owner
+    // validates it against that list and can rewrite it.
+    autoWriteOwner = await resolveAutoWriteOwner(plugin);
     syncMirror();
   }
 
@@ -194,10 +223,11 @@
     try {
       await regenerateToken(plugin, token.id);
       await refreshTokens();
-      // If the user opted in to auto-write, sync
-      // claude_desktop_config.json so Claude Desktop picks up the new
-      // token without manual paste. Off by default — see autoWrite.ts.
-      const autoWriteResult = await applyAutoWrite(plugin);
+      // Sync claude_desktop_config.json only if THIS token owns it, so
+      // the Notice below can never claim an update that did not happen —
+      // and, more to the point, so rotating one token cannot write
+      // another one's secret into a client's config. See autoWrite.ts.
+      const autoWriteResult = await applyAutoWrite(plugin, token.id);
       new Notice(
         autoWriteResult.applied
           ? "Secret regenerated and Claude Desktop config updated."
@@ -220,9 +250,22 @@
     busy = true;
     try {
       await revokeToken(plugin, token.id);
+      // Before refreshTokens: that call re-resolves the owner, and the
+      // release has to be the thing that clears it rather than a
+      // validation failure that leaves the config entry behind.
+      const released = await releaseAutoWriteOwner(plugin, token.id);
       await refreshTokens();
-      await applyAutoWrite(plugin);
-      new Notice(`Token "${token.label}" revoked.`);
+      if (released.error) {
+        new Notice(
+          `Token "${token.label}" revoked, but its Claude Desktop entry could not be removed: ${released.error}`,
+        );
+      } else {
+        new Notice(
+          released.released
+            ? `Token "${token.label}" revoked and removed from claude_desktop_config.json.`
+            : `Token "${token.label}" revoked.`,
+        );
+      }
     } catch (err) {
       noticeFailure("revoking the token", err);
     } finally {
@@ -324,6 +367,49 @@
       new Notice(`MCP Connector: failed to save server name — ${message}`);
     } finally {
       serverNameBusy = false;
+    }
+  }
+
+  /**
+   * Hand `claude_desktop_config.json` to this token, or release it.
+   *
+   * Ticking a row takes ownership from whichever row held it — the file
+   * has one entry for this vault, so ownership is exclusive by
+   * construction — and immediately writes it, matching "I turned it on,
+   * so it should be in sync now". Unticking stops future syncs but does
+   * not undo the write already on disk; the client keeps working until
+   * the user changes it, which is the conservative half of touching a
+   * file outside the vault.
+   */
+  async function handleToggleAutoWrite(
+    token: TokenRecord,
+    checked: boolean,
+  ): Promise<void> {
+    if (busy) return;
+    busy = true;
+    try {
+      await setAutoWriteOwner(plugin, checked ? token.id : null);
+      autoWriteOwner = checked ? token.id : null;
+      if (!checked) {
+        new Notice("Claude Desktop config sync disabled.");
+        return;
+      }
+      const result = await applyAutoWrite(plugin, token.id);
+      if (result.applied) {
+        new Notice(`claude_desktop_config.json now uses "${token.label}".`);
+      } else if (result.reason === "transport-offline") {
+        new Notice("Sync enabled, but the MCP transport is not running yet.");
+      } else if (result.reason === "error") {
+        new Notice(`Sync enabled, but the write failed: ${result.error}`);
+      } else {
+        new Notice("Sync enabled.");
+      }
+    } catch (err) {
+      noticeFailure("changing the Claude Desktop sync", err);
+      // Re-read rather than assume the flip landed.
+      autoWriteOwner = await resolveAutoWriteOwner(plugin);
+    } finally {
+      busy = false;
     }
   }
 
@@ -450,6 +536,7 @@
               {url}
               token={token.token}
               tokenId={token.id}
+              {mcpbDisabled}
             />
             <button
               type="button"
@@ -471,9 +558,29 @@
               Revoke
             </button>
           </div>
+
+          <label class="token-autowrite">
+            <input
+              type="checkbox"
+              checked={autoWriteOwner === token.id}
+              disabled={busy}
+              on:change={(event) =>
+                void handleToggleAutoWrite(token, event.currentTarget.checked)}
+            />
+            Keep <code>claude_desktop_config.json</code> in sync with this
+            token
+          </label>
         </li>
       {/each}
     </ul>
+
+    {#if mcpbDisabled}
+      <p class="token-hint">
+        Node.js was not found on PATH, so <strong>.mcpb</strong> export is
+        disabled — a bundle runs under <code>node</code>. See
+        <em>Claude Desktop integration</em> below to install it.
+      </p>
+    {/if}
   {/if}
 
   <div class="setting-item">
@@ -619,6 +726,27 @@
     min-width: 180px;
     font-family: var(--font-monospace);
     font-size: 0.9em;
+  }
+
+  .token-autowrite {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+    flex-wrap: wrap;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    cursor: pointer;
+  }
+
+  .token-autowrite input {
+    /* Flex would otherwise stretch the box to the row's height. */
+    flex: none;
+  }
+
+  .token-hint {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin: 0 0 1em;
   }
 
   .token-unavailable {

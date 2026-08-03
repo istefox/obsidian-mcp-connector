@@ -490,6 +490,31 @@ sanctioned exactly the substitution the paragraph above forbids. Corrected:
   `downloadMcpbForFirstToken`. The "Files to create or modify" table below already
   required this of `ClientConfigSection.svelte` (".mcpb download takes a `tokenId`"); the
   first implementation dropped it, which is how the defect arrived.
+
+**Amendment (2026-08-03, post-merge).** The second bullet above is superseded on one point:
+there is no longer a *Quick setup for clients* export at all, and `downloadMcpbForFirstToken`
+is deleted. Keeping a vault-level surface that resolved `tokens[0]` was a compatibility
+reflex carried over from 0.28.2, when the vault had one token and "the vault's config" and
+"this token's config" named the same object. It duplicated the token row, needed three
+sentences of UI copy to explain that the button meant "the first token", and taught the one
+mental model this ADR exists to deny. Every credential now leaves the plugin from a token
+row, always with an explicit id, and `ClientConfigSection.svelte` is renamed
+`ClaudeDesktopIntegrationSection.svelte` for what is left: Node.js and the `mcp-remote`
+cache, neither of which has a token dimension.
+
+The same review found a **fourth instance of the §3 defect shape**, this one live. Auto-write
+always wrote `mcpTransportState.bearerToken`, so regenerating any token rewrote
+`claude_desktop_config.json` with `tokens[0]`'s secret and reported it as a successful sync —
+handing Claude Desktop a credential it was never given whenever it was configured with any
+other token. That is this ADR's own §11 re-pointing reached through a different door, and it
+survived the original design because auto-write was never examined as a per-client surface.
+`mcpClientConfig` now records `autoWriteTokenId`: the config file holds one `mcpServers` entry
+for this vault, so ownership is exclusive, and a sync is a no-op unless the acted-on token is
+the owner. Legacy data (flag ON, no owner) resolves to `tokens[0]` **and persists it**, so the
+answer cannot drift when that token is later revoked; revoking the owner removes the entry
+rather than re-pointing it. The recurring lesson holds: *state keyed to anything other than
+the token id eventually gets served to the wrong client* — including state that never looked
+like tool policy.
 - **The legacy branch is a bounded compatibility hole, not a supported design.** A pre-1.0
   bundle still transfers to the next token when the first is revoked. It is kept only
   because removing it breaks every installed extension at upgrade, and it is acceptable

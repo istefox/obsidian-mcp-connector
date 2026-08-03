@@ -4,7 +4,7 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
 
-[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Per-client tokens](#per-client-tokens) | [Installation](#installation) | [Quick setup for clients](#quick-setup-for-clients) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
+[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Per-client tokens](#per-client-tokens) | [Installation](#installation) | [Connecting a client](#connecting-a-client) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
 
 MCP Connector lets AI applications like Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, and VS Code securely access and work with your Obsidian vault through the [Model Context Protocol](https://modelcontextprotocol.io). [^2]
 
@@ -133,7 +133,7 @@ MCP Connector is available in the Obsidian community plugin store and via BRAT. 
 
 1. **Settings, Community plugins, Browse**, search **"MCP Connector"**.
 2. Install and enable. Obsidian shows a *"This plugin has not been manually reviewed by Obsidian staff"* notice; community plugins pass an automated build and security review, not a hand audit.
-3. Open the plugin settings and use the **Quick setup for clients** section to wire up your MCP client.
+3. Open the plugin settings and use the **Access control** section to wire up your MCP client.
 
 ### Option B, BRAT
 
@@ -142,13 +142,13 @@ Prefer the latest build, or the store entry has not propagated to your client ye
 1. Install and enable the **Obsidian42, BRAT** plugin from the community store.
 2. **Settings, BRAT, Add Beta plugin**, paste `istefox/obsidian-mcp-connector`.
 3. BRAT installs the latest GitHub release; enable **MCP Connector** in Community plugins.
-4. Jump to **Quick setup for clients** in the plugin settings.
+4. Jump to **Access control** in the plugin settings.
 
 That's it. **No binary to install, no separate download.** The MCP server starts as soon as you enable the plugin.
 
-## Quick setup for clients
+## Connecting a client
 
-The plugin settings expose three **Copy config** buttons, one per supported client family. Each button copies a ready-to-paste JSON snippet to the clipboard.
+Every client is wired up from its own row in **Access control**. Each row carries three **Copy config** buttons, one per supported client family, and a **.mcpb** button; whichever you use, the snippet or bundle authenticates as that row's token and no other. There is deliberately no vault-wide export: a credential always leaves the plugin naming the client it belongs to.
 
 ### Claude Desktop
 
@@ -156,7 +156,7 @@ Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges 
 
 **Recommended: download the `.mcpb` extension**
 
-1. In the plugin settings, under **Quick setup for clients**, click **Download .mcpb**. On a fresh vault that is your only token. If you have several, this button exports the first one in **Access control**; every other token has its own **.mcpb** button on its row.
+1. In the plugin settings, under **Access control**, click **.mcpb** on the row of the token this client should use. A fresh vault has one row, labelled *Default*.
 2. Drag the file onto Claude Desktop.
 3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
 
@@ -188,7 +188,7 @@ For advanced users or when the `.mcpb` flow is not available. This path runs `np
 2. Paste it into your `claude_desktop_config.json` (Claude Desktop, Settings, Developer, Edit Config).
 3. Restart Claude Desktop.
 
-Or tick **Auto-write Claude Desktop config** in the plugin settings. The plugin keeps the file in sync on token rotation, with a `.backup` written before each rewrite.
+Or tick **Keep `claude_desktop_config.json` in sync with this token** on that token's row in **Access control**. The plugin then rewrites the file whenever that token's secret is regenerated, with a `.backup` written before each rewrite. Only one token can hold it — the file has a single entry for this vault — and regenerating any other token leaves it alone. Revoking the owning token removes the entry rather than pointing it at a different token.
 
 **Windows note: use the POST-only bridge**
 
@@ -354,7 +354,7 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 ### Claude Desktop can't reach the server
 
 - **Symptom**: Claude Desktop logs show `Failed to connect`, `ENOENT`, or `command not found`.
-- **Check**: open the plugin settings, **Quick setup for clients**, the **Node.js detection** panel reports whether `node` and `npx` are reachable on the path Obsidian inherits when launched from Finder or Spotlight (a common gap on macOS for users who installed Node via Homebrew).
+- **Check**: open the plugin settings, **Claude Desktop integration**, the **Node.js detection** panel reports whether `node` and `npx` are reachable on the path Obsidian inherits when launched from Finder or Spotlight (a common gap on macOS for users who installed Node via Homebrew).
 - **Fix**: if the panel shows "Not found", click **Install via Homebrew** (macOS) or follow the platform-specific link to install Node manually. Restart Obsidian after installing.
 
 ### "Server disconnected" or ECONNREFUSED in Claude Desktop
@@ -367,13 +367,13 @@ You can export the current buffer as CSV via the **Export CSV** button at the to
 
 - **Symptom**: the installed Claude Desktop extension is disconnected, stuck, or "busy" on most connection attempts, with no clear error in Claude.
 - **Cause** (fixed in v0.26.0): before that version, the downloaded `.mcpb` baked the HTTP port and bearer token into `manifest.json` as a literal command, captured once at export. If the plugin later bound to a different port (no Fixed Port set, multiple vaults open) or the token changed, the installed extension kept using the stale values indefinitely.
-- **Fix**: update the plugin to v0.26.0 or later, then re-export the `.mcpb` from Settings, **Quick setup for clients**, **Download .mcpb**, and reinstall it in Claude Desktop once. From that version on, the bundle reads the live port and token from the vault at connect time, so it keeps working across a token rotation or a port change with no further re-export.
+- **Fix**: update the plugin to v0.26.0 or later, then re-export the `.mcpb` from Settings, **Access control**, the **.mcpb** button on that token's row, and reinstall it in Claude Desktop once. From that version on, the bundle reads the live port and token from the vault at connect time, so it keeps working across a token rotation or a port change with no further re-export.
 
 ### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
 
 - **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
 - **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. The plugin answers an identical request in milliseconds over direct HTTP, and Claude Code is unaffected. Tracked upstream at [geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296).
-- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Quick setup for clients](#claude-desktop).
+- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Connecting a client](#claude-desktop).
 
 ### Claude Desktop extension hangs ~60s on macOS with "Use Built-in Node.js for MCP" enabled
 

@@ -4,7 +4,7 @@
   import { FeatureSettings as AdaptiveToolLoadingSettings } from "src/features/adaptive-tool-loading";
   import { FeatureSettings as McpToolsSettings } from "src/features/mcp-tools";
   import { AccessControlSection } from "src/features/mcp-transport";
-  import { ClientConfigSection } from "src/features/mcp-client-config";
+  import { ClaudeDesktopIntegrationSection } from "src/features/mcp-client-config";
   import type McpServerPlugin from "src/main";
 
   // 0.4.0 no longer ships an external `mcp-server` binary — the MCP
@@ -38,7 +38,7 @@
 
 <div class="settings-container">
   <AccessControlSection {plugin} bind:selectedTokenId {policyRevision} />
-  <ClientConfigSection {plugin} />
+  <ClaudeDesktopIntegrationSection {plugin} />
   <CommandPermissionsSettings {plugin} />
   <SemanticSearchSettings {plugin} />
   <AdaptiveToolLoadingSettings
