@@ -6,6 +6,8 @@ repo root. Deliberately NOT part of `.claude/test-cmd` (which stays
 """
 import io
 import json
+import pathlib
+import re
 import threading
 import time
 import unittest
@@ -123,9 +125,29 @@ class RouteSseMessagesTests(unittest.TestCase):
 class BuildErrorTests(unittest.TestCase):
     def test_shape(self):
         self.assertEqual(
-            bridge.build_error(5, -32000, "boom"),
-            {"jsonrpc": "2.0", "id": 5, "error": {"code": -32000, "message": "boom"}},
+            bridge.build_error(5, bridge.LOCAL_ERROR_CODE, "boom"),
+            {"jsonrpc": "2.0", "id": 5, "error": {"code": bridge.LOCAL_ERROR_CODE, "message": "boom"}},
         )
+
+    def test_local_error_code_is_outside_the_jsonrpc_reserved_range(self):
+        # The property, not the literal. Every error this bridge raises is
+        # local to the proxy and none is defined by MCP, so the code has to
+        # sit outside -32768..-32000 entirely: -32000..-32019 is legacy that
+        # new implementations must not use, and -32020..-32099 may only carry
+        # meanings the specification defines. Asserting the range keeps this
+        # true if the value is ever changed for an unrelated reason.
+        self.assertLess(bridge.LOCAL_ERROR_CODE, -32768)
+
+    def test_matches_the_mcpb_shim(self):
+        # The two proxies answer the same client, so an identical failure
+        # must not look like two different classes of problem.
+        shim = (
+            pathlib.Path(__file__).resolve().parents[1]
+            / "packages/obsidian-plugin/scripts/connectorShim.js"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"const LOCAL_ERROR_CODE = (-?\d+);", shim)
+        self.assertIsNotNone(match, "LOCAL_ERROR_CODE not found in connectorShim.js")
+        self.assertEqual(int(match.group(1)), bridge.LOCAL_ERROR_CODE)
 
 
 class ResolveResponseMessagesTests(unittest.TestCase):
@@ -177,7 +199,7 @@ class ResolveResponseMessagesTests(unittest.TestCase):
             bridge.resolve_response_messages(
                 "text/event-stream", body.encode(), 1, 200
             ),
-            [bridge.build_error(1, -32000, "non-JSON response (HTTP 200)")],
+            [bridge.build_error(1, bridge.LOCAL_ERROR_CODE, "non-JSON response (HTTP 200)")],
         )
 
     def test_event_stream_no_message_matches_request_id(self):
@@ -187,7 +209,7 @@ class ResolveResponseMessagesTests(unittest.TestCase):
             bridge.resolve_response_messages(
                 "text/event-stream", body.encode(), 1, 200
             ),
-            [notification, bridge.build_error(1, -32000, "non-JSON response (HTTP 200)")],
+            [notification, bridge.build_error(1, bridge.LOCAL_ERROR_CODE, "non-JSON response (HTTP 200)")],
         )
 
     def test_malformed_application_json_body(self):
@@ -195,13 +217,13 @@ class ResolveResponseMessagesTests(unittest.TestCase):
             bridge.resolve_response_messages(
                 "application/json", b"not json", 1, 200
             ),
-            [bridge.build_error(1, -32000, "non-JSON response (HTTP 200)")],
+            [bridge.build_error(1, bridge.LOCAL_ERROR_CODE, "non-JSON response (HTTP 200)")],
         )
 
     def test_empty_body(self):
         self.assertEqual(
             bridge.resolve_response_messages("application/json", b"", 1, 202),
-            [bridge.build_error(1, -32000, "empty response (HTTP 202)")],
+            [bridge.build_error(1, bridge.LOCAL_ERROR_CODE, "empty response (HTTP 202)")],
         )
 
 

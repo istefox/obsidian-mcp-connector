@@ -92,6 +92,15 @@ existing `-32000 non-JSON response (HTTP <status>)` error — same message
 text and shape as today's catch-all, so no new error vocabulary is
 introduced.
 
+**Amendment (2026-08-03).** The numeric code changed; the message text and
+shape did not. MCP `2026-07-28` reserves `-32020` to `-32099` for
+specification-defined errors and marks `-32000` to `-32019` as a legacy
+sub-range new implementations should not use at all. The bridge's errors
+are all local to the proxy, so the code moved to `LOCAL_ERROR_CODE`
+(`-33000`), outside the JSON-RPC reserved range entirely. The `.mcpb` shim
+uses the same constant and a test asserts the two match. Occurrences of
+`-32000` elsewhere in this ADR describe the pre-amendment design.
+
 ### 2. Concurrency: one `threading.Thread` per incoming request line
 
 The main thread only reads stdin and dispatches; it never blocks on a POST

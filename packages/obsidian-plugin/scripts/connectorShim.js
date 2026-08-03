@@ -189,6 +189,26 @@ function parseTransportFile(jsonText, tokenId) {
 }
 
 /**
+ * Every error this shim raises is local to the proxy — it could not read
+ * data.json, nothing is listening, the body came back unparseable — and
+ * none is defined by the MCP specification.
+ *
+ * MCP `2026-07-28` partitions the JSON-RPC server-error range: `-32000`
+ * to `-32019` is legacy ("new implementations SHOULD NOT use codes from
+ * this sub-range at all", and receivers "MUST NOT assume any specific
+ * meaning" for them), `-32020` to `-32099` belongs to the specification
+ * and may only carry spec-defined meanings. For anything else the rule
+ * is to allocate outside the reserved range entirely, which is what this
+ * does. `-33000` sits below `-32768`, so it can never collide with a
+ * protocol-defined code, present or future.
+ *
+ * The Python bridge uses the same value for the same reason; the two
+ * proxies answer the same client and their failures should not look like
+ * different classes of problem.
+ */
+const LOCAL_ERROR_CODE = -33000;
+
+/**
  * @param {string|number|null|undefined} id
  * @param {string} message
  * @param {unknown} [data]
@@ -196,7 +216,10 @@ function parseTransportFile(jsonText, tokenId) {
  */
 function buildErrorResponse(id, message, data) {
   /** @type {{ code: number, message: string, data?: unknown }} */
-  const error = { code: -32000, message: `obsidian-mcp-connector: ${message}` };
+  const error = {
+    code: LOCAL_ERROR_CODE,
+    message: `obsidian-mcp-connector: ${message}`,
+  };
   if (data !== undefined) error.data = data;
   return { jsonrpc: "2.0", id, error };
 }
@@ -800,6 +823,7 @@ module.exports = {
   DEFAULT_REQUEST_TIMEOUT_MS,
   WATCHDOG_GRACE_MS,
   PROTOCOL_VERSION_FALLBACK,
+  LOCAL_ERROR_CODE,
 };
 
 if (require.main === module) {

@@ -23,6 +23,7 @@ import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   WATCHDOG_GRACE_MS,
   PROTOCOL_VERSION_FALLBACK,
+  LOCAL_ERROR_CODE,
 } from "./connectorShim.js";
 
 // connectorShim.js is plain, untyped CommonJS (SPEC hard constraint: no
@@ -269,7 +270,10 @@ describe("buildErrorResponse", () => {
     expect(buildErrorResponse(5, "boom")).toEqual({
       jsonrpc: "2.0",
       id: 5,
-      error: { code: -32000, message: "obsidian-mcp-connector: boom" },
+      error: {
+        code: LOCAL_ERROR_CODE,
+        message: "obsidian-mcp-connector: boom",
+      },
     });
   });
 
@@ -278,11 +282,26 @@ describe("buildErrorResponse", () => {
       jsonrpc: "2.0",
       id: 5,
       error: expect.objectContaining({
-        code: -32000,
+        code: LOCAL_ERROR_CODE,
         message: "obsidian-mcp-connector: boom",
         data: { port: 27200 },
       }),
     });
+  });
+
+  /**
+   * The property, not the literal. Every error this shim raises is local
+   * to the proxy and none is defined by MCP, so the code must sit outside
+   * the JSON-RPC reserved range entirely — `-32000`..`-32019` is legacy
+   * that new implementations must not use, and `-32020`..`-32099` may
+   * only carry meanings the specification defines. Asserting the range
+   * rather than the number keeps this true if the value is ever changed
+   * for an unrelated reason (MCP 2026-07-28, Base Protocol, Error Codes).
+   */
+  test("the local error code is outside the JSON-RPC reserved range", () => {
+    expect(LOCAL_ERROR_CODE).toBeLessThan(-32768);
+    // Sanity: still a plain integer a client can render.
+    expect(Number.isSafeInteger(LOCAL_ERROR_CODE)).toBe(true);
   });
 });
 
@@ -454,7 +473,7 @@ describe("resolveResponseMessages", () => {
       jsonrpc: "2.0",
       id,
       error: expect.objectContaining({
-        code: -32000,
+        code: LOCAL_ERROR_CODE,
         message: expect.stringContaining(substring),
       }),
     };
@@ -1444,7 +1463,7 @@ describe("runMain", () => {
     expect(writeChunk).toHaveBeenCalledTimes(1);
     const written = JSON.parse(writeChunk.mock.calls[0][0].trimEnd());
     expect(written.id).toBe(1);
-    expect(written.error.code).toBe(-32000);
+    expect(written.error.code).toBe(LOCAL_ERROR_CODE);
   });
 
   test("per-request timeout", async () => {
@@ -1672,7 +1691,7 @@ describe("runMain", () => {
     expect(writeChunk).toHaveBeenCalledTimes(1);
     const written = JSON.parse(writeChunk.mock.calls[0][0].trimEnd());
     expect(written.id).toBe(42);
-    expect(written.error.code).toBe(-32000);
+    expect(written.error.code).toBe(LOCAL_ERROR_CODE);
     expect(written.error.message).toContain("unexpected error");
     expect(log).toHaveBeenCalled();
   });
