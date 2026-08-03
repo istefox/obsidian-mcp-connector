@@ -585,6 +585,15 @@ function runMain({
       });
     }
     if (transport.error) {
+      // stderr as well as stdout, and unconditionally. A client that has
+      // already timed out this request discards the response below, so
+      // stdout alone means the failure leaves no trace anywhere — which
+      // is how #412 arrived with a log containing no reason. It is also
+      // the only channel an installed .mcpb has: `debug` is gated on
+      // OBSIDIAN_MCP_DEBUG and the generated manifest carries no `env`
+      // (`user_config?: never`), so that flag cannot be set there.
+      // Matches handleNotification below, which has always logged this.
+      log(`${message.method} (id=${id}) failed: ${transport.error}`);
       writeChunk(
         JSON.stringify(buildErrorResponse(id, transport.error)) + "\n",
       );
@@ -620,6 +629,12 @@ function runMain({
         tokenId,
       });
       if (retried.error) {
+        // The path a stale `mcpTransport.livePort` takes: the file reads
+        // fine, so the first resolution succeeds, and only the POST
+        // discovers nothing is listening. Same reasoning as above.
+        log(
+          `${message.method} (id=${id}) failed after re-resolving: ${retried.error}`,
+        );
         writeChunk(
           JSON.stringify(buildErrorResponse(id, retried.error)) + "\n",
         );
@@ -755,7 +770,13 @@ const path = require("path");
 const shimDataPath = path.join(vaultPath, configDir, "plugins", "mcp-tools-istefox", "data.json");
 
 function main() {
-  process.stderr.write(`obsidian-mcp-connector: started, vault=${vaultPath}\n`);
+  // The resolved data.json path, not just the vault: "the bundle is
+  // looking somewhere that no longer exists" is a real failure mode, and
+  // without this line a reporter has to reconstruct the path by hand
+  // from the vault root and the config dir before anyone can check it.
+  process.stderr.write(
+    `obsidian-mcp-connector: started, vault=${vaultPath}, data=${shimDataPath}\n`,
+  );
   runMain({ dataPath: shimDataPath, tokenId: shimTokenId ?? undefined }).then(
     () => process.exit(0),
   );
