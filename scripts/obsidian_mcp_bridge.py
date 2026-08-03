@@ -44,6 +44,17 @@ PROTOCOL_VERSION_FALLBACK = "2025-06-18"
 REQUEST_TIMEOUT_SECONDS = 30
 SHUTDOWN_GRACE_SECONDS = 35  # single shared budget across all in-flight threads
 
+# Every error this bridge raises is local to the proxy (the POST failed, the
+# body came back unparseable) and none is defined by the MCP specification.
+# MCP 2026-07-28 partitions the JSON-RPC server-error range: -32000..-32019 is
+# legacy and new implementations SHOULD NOT use it at all, -32020..-32099 is
+# reserved for spec-defined meanings. Anything else belongs outside the
+# reserved range, and -33000 sits below -32768 so it can never collide with a
+# protocol-defined code. The .mcpb shim uses the same value: the two proxies
+# answer the same client and their failures should not look like different
+# classes of problem.
+LOCAL_ERROR_CODE = -33000
+
 # SSE line endings per the spec: CRLF, CR, or LF. Deliberately not
 # str.splitlines(), which also breaks on Unicode line/paragraph separators
 # that could appear unescaped inside a JSON string value.
@@ -154,7 +165,7 @@ def resolve_response_messages(
     whole body as a single JSON-RPC message; `text/event-stream` parses SSE
     and returns any notifications followed by the message matching
     request_id. Malformed or empty bodies, and SSE bodies with no message
-    matching request_id, all fall back to one `-32000` error message so
+    matching request_id, all fall back to one LOCAL_ERROR_CODE message so
     every caller has a single, uniform failure shape.
 
     Args:
@@ -169,7 +180,7 @@ def resolve_response_messages(
         Messages to write to stdout, in order. Always non-empty.
     """
     if not raw:
-        return [build_error(request_id, -32000, f"empty response (HTTP {status})")]
+        return [build_error(request_id, LOCAL_ERROR_CODE, f"empty response (HTTP {status})")]
 
     media_type = content_type.split(";")[0].strip().lower()
 
@@ -177,18 +188,18 @@ def resolve_response_messages(
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
-            return [build_error(request_id, -32000, f"non-JSON response (HTTP {status})")]
+            return [build_error(request_id, LOCAL_ERROR_CODE, f"non-JSON response (HTTP {status})")]
         notifications, response = route_sse_messages(parse_sse(text), request_id)
         if response is None:
             return notifications + [
-                build_error(request_id, -32000, f"non-JSON response (HTTP {status})")
+                build_error(request_id, LOCAL_ERROR_CODE, f"non-JSON response (HTTP {status})")
             ]
         return notifications + [response]
 
     try:
         return [json.loads(raw.decode("utf-8"))]
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return [build_error(request_id, -32000, f"non-JSON response (HTTP {status})")]
+        return [build_error(request_id, LOCAL_ERROR_CODE, f"non-JSON response (HTTP {status})")]
 
 
 _stdout_lock = threading.Lock()
@@ -252,7 +263,7 @@ def handle_request(url: str, token: str, message: dict, get_protocol_version) ->
         status, content_type, raw = post(url, token, message, get_protocol_version())
     except urllib.error.URLError as err:
         log(f"POST failed: {err}")
-        write_line(build_error(request_id, -32000, f"bridge POST failed: {err}"))
+        write_line(build_error(request_id, LOCAL_ERROR_CODE, f"bridge POST failed: {err}"))
         return
     for out_msg in resolve_response_messages(content_type, raw, request_id, status):
         write_line(out_msg)
@@ -273,7 +284,7 @@ def handle_initialize(url: str, token: str, message: dict, set_protocol_version)
         status, content_type, raw = post(url, token, message, None)
     except urllib.error.URLError as err:
         log(f"POST failed: {err}")
-        write_line(build_error(request_id, -32000, f"bridge POST failed: {err}"))
+        write_line(build_error(request_id, LOCAL_ERROR_CODE, f"bridge POST failed: {err}"))
         return
     for out_msg in resolve_response_messages(content_type, raw, request_id, status):
         write_line(out_msg)

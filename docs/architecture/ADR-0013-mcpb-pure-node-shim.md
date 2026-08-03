@@ -154,6 +154,21 @@ tests mock `urllib.request.urlopen` and inject `stdin`/`argv` into `main()`:
 - `buildErrorResponse(id, message, data) -> object`: the `-32000` JSON-RPC
   error envelope, `obsidian-mcp-connector:`-prefixed message.
 
+**Amendment (2026-08-03).** The code is no longer `-32000`. MCP revision
+`2026-07-28` partitions the JSON-RPC server-error range and puts `-32000`
+to `-32019` in a legacy sub-range that new implementations "SHOULD NOT use
+at all" and whose codes receivers "MUST NOT assume any specific meaning"
+for; `-32020` to `-32099` is reserved for the specification. Every error
+this shim raises is local to the proxy and none is defined by MCP, which is
+exactly the case the spec tells you to allocate outside the reserved range.
+`LOCAL_ERROR_CODE` is now `-33000`, below `-32768`, so it cannot collide
+with a protocol-defined code present or future. The Python bridge carries
+the same constant, and a test in `test_obsidian_mcp_bridge.py` reads it out
+of `connectorShim.js` to keep the two from drifting — the two proxies
+answer the same client and an identical failure must not look like two
+different classes of problem. Every occurrence of `-32000` elsewhere in
+this ADR describes the pre-amendment design and is left as written.
+
 **Impure (I/O, each taking its real dependency as a parameter with a
 production default, the same seam Python's tests use via `mock.patch` and
 an injectable `stdin=`):**
