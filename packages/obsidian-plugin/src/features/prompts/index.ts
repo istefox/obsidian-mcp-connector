@@ -7,6 +7,7 @@ import type {
 } from "$/features/mcp-transport/services/promptRegistry";
 import { discoverPrompts } from "./services/promptDiscovery";
 import { renderPrompt } from "./services/promptRenderer";
+import { expandEmbeds } from "./services/promptTransclusion";
 import { createVaultWatcher, type VaultWatcher } from "./services/vaultWatcher";
 
 export type PromptsFeatureState = { watcher: VaultWatcher };
@@ -77,7 +78,11 @@ export async function setup(
       }
 
       const content = await app.vault.cachedRead(file);
-      const text = renderPrompt(content, args);
+      // Transclusion runs after renderPrompt, so `![[{{note}}]]` resolves
+      // through an argument value rather than being expanded before the
+      // placeholder is known.
+      const rendered = renderPrompt(content, args);
+      const text = await expandEmbeds(app, file.path, rendered);
 
       return {
         messages: [{ role: "user", content: { type: "text", text } }],

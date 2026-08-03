@@ -293,6 +293,22 @@ Summarize my notes about **{{topic}}** from the past {{days}} days.
 Focus on how {{topic}} relates to my long-term goals.
 ```
 
+### Embedding notes in a prompt
+
+A prompt body can pull in another note with Obsidian's own embed syntax, and the content is inlined before the prompt reaches the model:
+
+```markdown
+Here is my current project brief:
+
+![[Projects/Q3 brief]]
+
+Using it, draft this week's plan.
+```
+
+`![[note]]`, `![[note|alias]]`, `![[note#Heading]]` and `![[note#^blockid]]` all work. Expansion happens after your parameters are filled in, so `![[{{note}}]]` lets the client choose which note to embed. The prompt arrives complete, instead of costing the model a tool call per note.
+
+An embed that cannot be resolved is never dropped silently: the `![[…]]` stays in place followed by a comment saying why, so you can see what happened instead of wondering where the text went. Embeds inside an embedded note are not followed (one level only), and a render inlines at most 32 KB across at most 20 embeds. An embed that would blow the budget is skipped whole rather than cut off mid-sentence.
+
 ### Other ways to tag a prompt
 
 Instead of frontmatter, you can drop an inline `#mcp-tools-prompt` hashtag anywhere in the body. Both forms are accepted by the server. Use whichever fits your note-taking style.

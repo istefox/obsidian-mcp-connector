@@ -168,10 +168,59 @@ Triggered when the user selects a prompt and clicks "insert" in the client UI:
    2. `stripArgDeclarations` — remove lines containing `<% tp.mcpTools.prompt(…) %>`.
    3. `substituteArgs` — replace every `{{key}}` placeholder with the user-supplied value. Unknown keys are left as-is.
    4. Trim leading blank lines left after stripping declarations.
-5. Wrap the result in an MCP `GetPromptResult`:
+5. `expandEmbeds` — expand `![[note]]` transclusions (see below).
+6. Wrap the result in an MCP `GetPromptResult`:
    ```ts
    { messages: [{ role: "user", content: { type: "text", text: rendered } }] }
    ```
+
+### Transclusion — `![[note]]` in a prompt body
+
+A prompt body may embed another note with Obsidian's own syntax, and the note's content is inlined
+before the prompt reaches the model. A "weekly review" prompt therefore arrives already carrying the
+notes it refers to, instead of costing a tool call per note after the fact.
+
+Supported forms: `![[note]]`, `![[note|alias]]` (the alias is display-only and is discarded),
+`![[note#Heading]]` (the section down to the next heading of the same or a higher level), and
+`![[note#^blockid]]`.
+
+Expansion runs **after** argument substitution, so `![[{{note}}]]` resolves through an argument
+value — the client picks the note, the prompt embeds it. The reverse is deliberately not true:
+`{{placeholder}}` appearing *inside* an embedded note is left literal and never substituted. An
+embedded note is data, not a template, and substituting into it would let any note in the vault
+consume the prompt's arguments.
+
+Embedded content is passed through `stripFrontmatter` and `stripArgDeclarations`, matching how
+Obsidian renders a transclusion and preventing a shared preamble that is itself a prompt file from
+leaking its `<% tp.mcpTools.prompt(…) %>` line.
+
+**Nothing is ever dropped silently.** When an embed cannot be expanded — target not found, not a
+markdown file, heading or block missing, nested one level deep, or over budget — the original
+`![[…]]` token is kept verbatim and followed by an HTML comment naming the reason:
+
+```
+![[Missing note]] <!-- prompt-transclusion: not expanded (not found) -->
+```
+
+The token stays useful (the model can follow it with `get_vault_file`) and the comment is invisible
+if the text is ever rendered.
+
+Limits, all fixed rather than configurable:
+
+| Limit | Value | Why |
+| --- | --- | --- |
+| Depth | 1 | Embeds inside embedded content are not followed. A counter is a stronger guard than cycle detection: a self-embed inlines once and stops, and `A → B → A` cannot close. |
+| Total embedded bytes | 32 KB per render, cumulative, first-fit in document order | A prompt body enters the conversation unconditionally, so it gets a tighter budget than a tool result. Deliberately **not** `mcpTools.maxTextOutputKB`: that is the `get_vault_file` ceiling, and raising it for file reads must not uncap prompt payloads. |
+| Embeds expanded | 20 per render | Bounds the number of vault reads one `prompts/get` can trigger. |
+
+An over-budget embed is **skipped whole, never truncated** — a note cut mid-sentence is worse input
+than a pointer the model can choose to follow. A prompt with no embeds is returned byte for byte
+unchanged.
+
+Two deliberate divergences from Obsidian's own rendering: a nested heading path (`![[note#A#B]]`) is
+not resolved and falls to the "heading not found" marker, and an embed inside a code fence **is**
+expanded, where Obsidian would leave it alone. A fence-aware scanner is disproportionate for this
+surface.
 
 Note: **Templater is not required** for this implementation. `<% tp.mcpTools.prompt(…) %>` lines are stripped from the rendered output; any other Templater expressions (`<% tp.date.now() %>`, `<%* … %>`, etc.) are returned **verbatim** in the text — they are not evaluated by the MCP server. If you need evaluated Templater output, run the template through Obsidian's Templater plugin separately.
 
@@ -180,6 +229,7 @@ Note: **Templater is not required** for this implementation. `<% tp.mcpTools.pro
 - **No "required" argument enforcement.** All parameters are optional from the validator's point of view. If the user omits one, the `{{placeholder}}` is left as-is in the rendered text.
 - **No nested `Prompts/` subfolders.** Only direct children of `Prompts/` are scanned. If you want to organize prompts by category, use tag-based or frontmatter-based filtering inside the folder.
 - **Filenames are the prompt IDs.** There's no separate "name" field in the frontmatter that would let you rename the prompt displayed to the client without renaming the file. If you want a prettier name, rename the file.
+- **Transclusion does not recurse.** An embed inside an embedded note is left as literal text with a marker. One level is intentional, not a placeholder for a deeper implementation.
 - **Prompts cannot emit images, audio, or multiple messages.** The result is always a single user message with `type: "text"`. Multimodal prompts would require a significant refactor.
 - **Templater expressions not evaluated.** Only `{{arg_name}}` placeholders are substituted. All other Templater expressions (`<% tp.date.now() %>`, `<%* … %>`, etc.) are passed through verbatim.
 - **No error when a file almost-satisfies the contract.** If you misspell the tag or put the file in `prompts/` (lowercase), the file is silently skipped — there is no diagnostic in the plugin settings telling you which files were considered and rejected. If you expect a prompt to appear and it doesn't, check the three conditions above in order.

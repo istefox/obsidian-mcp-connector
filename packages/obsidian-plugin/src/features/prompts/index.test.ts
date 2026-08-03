@@ -125,6 +125,66 @@ describe("prompts feature setup", () => {
     if (result.success) teardown(result.state);
   });
 
+  test("registry.dispatch() expands an embed in the returned text", async () => {
+    // Mutation: revert index.ts to `renderPrompt(content, args)` alone —
+    // the literal `![[Notes/ref.md]]` comes back instead of its content.
+    setMockFile("Notes/ref.md", "Referenced body.");
+    setMockFile(
+      "Prompts/withEmbed.md",
+      ["---", "tags: [mcp-tools-prompt]", "---", "", "![[Notes/ref.md]]"].join(
+        "\n",
+      ),
+    );
+    setMockMetadata("Prompts/withEmbed.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"] },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+
+    const dispatchResult = await registry.dispatch({ name: "withEmbed" });
+    expect(dispatchResult.messages[0].content.text).toBe("Referenced body.");
+
+    if (result.success) teardown(result.state);
+  });
+
+  test("registry.dispatch() resolves an embed named by an argument", async () => {
+    // Pins the call-site ordering. Mutation: run expandEmbeds before
+    // renderPrompt — `{{note}}` is still a placeholder at that point, so the
+    // target never resolves and the marker comes back instead.
+    setMockFile("Notes/weekly.md", "Weekly body.");
+    setMockFile(
+      "Prompts/dynamic.md",
+      [
+        "---",
+        "tags: [mcp-tools-prompt]",
+        "---",
+        "",
+        `<% tp.mcpTools.prompt("note", "Note to embed") %>`,
+        "",
+        "![[{{note}}]]",
+      ].join("\n"),
+    );
+    setMockMetadata("Prompts/dynamic.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"] },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+
+    const dispatchResult = await registry.dispatch({
+      name: "dynamic",
+      arguments: { note: "Notes/weekly.md" },
+    });
+    expect(dispatchResult.messages[0].content.text).toBe("Weekly body.");
+
+    if (result.success) teardown(result.state);
+  });
+
   test("registry.dispatch() throws InvalidParams for unknown prompt", async () => {
     const registry = new PromptRegistryClass();
     const app = mockApp();
