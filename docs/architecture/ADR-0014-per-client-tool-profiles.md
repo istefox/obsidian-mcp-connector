@@ -227,6 +227,16 @@ So, when the connector adopts `2026-07-28`:
   "private" }`) are therefore correct as shipped. Raising either is a security decision,
   not a tuning one, and does not belong in a performance change set.
 
+**Amendment (2026-08-03).** Reading the revision's caching page rather than its changelog
+sharpens two points. The fields are **required**, not optional, on `tools/list`,
+`prompts/list`, `resources/list`, `resources/read`, `resources/templates/list` and
+`server/discover`; and `cacheScope` **MUST** be identical across every page of a paginated
+list, so a single `public` page would defeat a `private` one. The spec also names our exact
+case as the example for `private` — *"filtered list results that vary per user"* — and
+warns that a `public` response from an authenticated endpoint may still be shared across
+authorization contexts. The clause this constraint enforces, and why adaptive tool loading
+satisfies it, is now [ADR-0015](ADR-0015-tools-list-invariant-and-adaptive-loading.md).
+
 **The same question applies to `toolsListChanged` (constraint for #407, added 2026-08-02).**
 `2026-07-28` moves unsolicited change notifications off the calling request's own response
 stream and onto `subscriptions/listen`, a long-lived stream the client opts into by type.
