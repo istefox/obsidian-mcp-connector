@@ -125,6 +125,29 @@ describe("prompts feature setup", () => {
     if (result.success) teardown(result.state);
   });
 
+  test("registry.dispatch() renders a prompt whose cached tag is `#`-prefixed", async () => {
+    // Regression: Obsidian rewrites the cached tag to its hashed form once the
+    // note is opened and saved, and dispatch used to answer "Prompt not found"
+    // from then on, with the file unchanged on disk.
+    const content = ["---", "tags: [mcp-tools-prompt]", "---", "", "Hi."].join(
+      "\n",
+    );
+    setMockFile("Prompts/hashed.md", content);
+    setMockMetadata("Prompts/hashed.md", {
+      frontmatter: { tags: ["#mcp-tools-prompt"] },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+
+    const dispatchResult = await registry.dispatch({ name: "hashed" });
+    expect(dispatchResult.messages[0].content.text).toContain("Hi.");
+
+    if (result.success) teardown(result.state);
+  });
+
   test("registry.dispatch() expands an embed in the returned text", async () => {
     // Mutation: revert index.ts to `renderPrompt(content, args)` alone —
     // the literal `![[Notes/ref.md]]` comes back instead of its content.

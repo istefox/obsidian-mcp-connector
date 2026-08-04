@@ -31,9 +31,24 @@ export const PromptMetadataSchema = type({
 export type PromptMetadata = typeof PromptMetadataSchema.infer;
 
 export const PromptTemplateTag = type("'mcp-tools-prompt'");
+
+/**
+ * Strip the `#` Obsidian puts in front of a frontmatter tag.
+ *
+ * `metadataCache` normalises `tags` to their hashed form, so the same note can
+ * read `mcp-tools-prompt` on disk and come back as `#mcp-tools-prompt` from the
+ * cache — the value flips once the note is opened and saved in Obsidian. Both
+ * spellings denote the same tag, and matching only the bare one made a prompt
+ * disappear from `prompts/list` the moment its author edited it.
+ */
+export function normalizePromptTag(tag: string): string {
+  const trimmed = tag.trim();
+  return trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+}
+
 export const PromptFrontmatterSchema = type({
   tags: type("string[]").narrow((arr) =>
-    arr.some((tag) => PromptTemplateTag.allows(tag)),
+    arr.some((tag) => PromptTemplateTag.allows(normalizePromptTag(tag))),
   ),
   "description?": type("string"),
 });

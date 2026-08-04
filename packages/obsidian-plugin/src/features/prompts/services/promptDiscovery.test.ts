@@ -97,6 +97,20 @@ describe("discoverPrompts", () => {
     expect(result[0].name).toBe("foo");
   });
 
+  // metadataCache returns the hashed spelling once the note has been opened
+  // and saved in Obsidian, while the file on disk still reads the bare tag.
+  test("includes file whose cached tag carries the `#` prefix", async () => {
+    setMockFile("Prompts/hashed.md", "Hello");
+    setMockMetadata("Prompts/hashed.md", {
+      frontmatter: { tags: ["#mcp-tools-prompt"], description: "Hashed" },
+    });
+    const app = mockApp();
+    const result = await discoverPrompts(app);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("hashed");
+    expect(result[0].description).toBe("Hashed");
+  });
+
   test("excludes file missing the mcp-tools-prompt tag", async () => {
     setMockFile("Prompts/no-tag.md", "Hello");
     setMockMetadata("Prompts/no-tag.md", {
