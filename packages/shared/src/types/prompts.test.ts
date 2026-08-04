@@ -30,4 +30,19 @@ describe("PromptFrontmatterSchema.tags", () => {
     const r = PromptFrontmatterSchema({ tags: "mcp-tools-prompt" });
     expect(r instanceof type.errors).toBe(true);
   });
+
+  // Obsidian's metadataCache hands back the hashed spelling, so the same note
+  // validates differently before and after it is opened in the editor.
+  test("accepts the tag in its `#`-prefixed form", () => {
+    const r = PromptFrontmatterSchema({
+      tags: ["#mcp-tools-prompt"],
+      description: "ok",
+    });
+    expect(r instanceof type.errors).toBe(false);
+  });
+
+  test("rejects a `#`-prefixed tag that is not the required one", () => {
+    const r = PromptFrontmatterSchema({ tags: ["#mcp-tools", "#prompt"] });
+    expect(r instanceof type.errors).toBe(true);
+  });
 });
