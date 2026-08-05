@@ -589,7 +589,7 @@ firing proves the shim never handled the request, so none of the three defects a
 ever reached. Every one of them was a genuine bug found by looking in a reasonable place —
 none was the reporter's.
 
-## Addendum (post-1.0.0): the shim must start under both loaders — #412's actual cause
+## Addendum (1.0.1): the shim must start under both loaders — #412's actual cause
 
 **The 0.27.3 addendum above attributes the hang to a Claude Desktop `UtilityProcess` bug.
 That attribution is wrong**, and it is left in place because the reasoning that produced it
