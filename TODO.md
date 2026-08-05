@@ -1,10 +1,13 @@
-<!-- project-tasks: prefix=OMC lastId=10 -->
+<!-- project-tasks: prefix=OMC lastId=13 -->
 # PROJECT TASKS
 
-Updated: 2026-08-05 · Open: 6 (P1: 0) · In progress: 0
+Updated: 2026-08-05 · Open: 9 (P1: 0) · In progress: 0
 
 ## Open Issues
 
+- [ ] `OMC-011` **P2** The Claude Desktop extension installed on this machine is a hand-patched copy, not a 1.0.1 bundle: re-export the `.mcpb` from the token row in the Labs vault, reinstall it, then delete `server/index.js.bak-412` — `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.stefano-ferri.obsidian-mcp-connector/server/` <!-- src:session opened:2026-08-05 -->
+- [ ] `OMC-012` **P3** The community-plugin scanner now runs against the published 1.0.1 release; read the verdict at community.obsidian.md/account/plugins <!-- src:session opened:2026-08-05 -->
+- [ ] `OMC-013` **P3** #412 stays open until Piter10k confirms the fix on their machine; close it as completed once they do <!-- src:session opened:2026-08-05 -->
 - [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test <!-- src:session opened:2026-08-05 -->
 - [ ] `OMC-005` **P2** CI has neither a Svelte compile check nor a `.mcpb` bundle check, and `bun run check` skips `.svelte` files entirely, so a UI regression reaches a real vault before anything fails <!-- src:session opened:2026-08-05 -->
 
