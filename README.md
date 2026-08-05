@@ -4,197 +4,239 @@
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
 
-[Features](#features) | [Adaptive tool loading](#adaptive-tool-loading) | [Per-client tokens](#per-client-tokens) | [Installation](#installation) | [Connecting a client](#connecting-a-client) | [Prompts](#using-prompts) | [Command execution](#command-execution) | [Troubleshooting](#troubleshooting) | [Security](#security) | [Development](#development) | [Support](#support)
+Your Obsidian vault, exposed to AI clients over the [Model Context Protocol](https://modelcontextprotocol.io). The MCP server runs **inside Obsidian**, on loopback, with no binary to download and no cloud round-trip. Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf and VS Code all connect to the same endpoint.
 
-MCP Connector lets AI applications like Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf, and VS Code securely access and work with your Obsidian vault through the [Model Context Protocol](https://modelcontextprotocol.io). [^2]
+[What's new](#whats-new-in-10x) · [Quick start](#quick-start) · [Tools](#what-it-can-do) · [Adaptive tool loading](#adaptive-tool-loading) · [Per-client tokens](#per-client-tokens) · [Prompts](#prompts) · [Protocol](#protocol-status) · [Clients](#connecting-a-client) · [Troubleshooting](#troubleshooting) · [Security](#security) · [For developers](#for-developers)
 
-## Architecture
+---
 
-The plugin hosts the MCP server in-process inside Obsidian and exposes Streamable HTTP on `127.0.0.1:27200`. No native binary ships from this repository, so there is no platform-specific executable to download and run from GitHub Releases.
+## How it works
 
-- **HTTP-native MCP clients** (Claude Code, Cursor, Cline, Continue, Windsurf, VS Code) connect directly to the local HTTP endpoint.
-- **Claude Desktop** (which speaks only stdio MCP) connects through the official `npx mcp-remote` bridge, a two-line config the plugin generates for you. On Windows, where `mcp-remote` currently hangs on connect, a bundled POST-only Python bridge replaces it (see [Troubleshooting](#troubleshooting)).
-- **Native semantic search** runs entirely on-device via Transformers.js. No cloud, no Smart Connections requirement.
-- **Everything runs through Obsidian's own APIs.** Vault reads, writes, plain-text search, and Dataview queries all go through `app.vault`, `app.metadataCache`, and the Dataview plugin API in-process. No external HTTP service is required.
+```
+Obsidian (Electron)                          your AI client
+┌──────────────────────────────┐
+│ MCP Connector plugin         │             Claude Code, Cursor, Cline,
+│  ├─ MCP server (in-process)  │◄──HTTP──►   Continue, Windsurf, VS Code
+│  ├─ 52 tools                 │  POST only
+│  ├─ prompt renderer          │
+│  └─ on-device embeddings     │◄──stdio─►   Claude Desktop
+└──────────────────────────────┘  via .mcpb shim
+   127.0.0.1:27200/mcp
+```
 
-### Protocol compatibility
+Four things follow from that shape:
 
-The connector speaks MCP protocol revision `2025-11-25` and earlier, which is what every current client uses. Nothing you have configured needs to change.
+- **Nothing leaves your machine.** The server binds to loopback only. Vault reads and writes go through Obsidian's own `app.vault` and `app.metadataCache` APIs, so Obsidian's permission model still applies.
+- **No binary ships from this repo.** The server is plugin code running in Obsidian's renderer, which removes the supply-chain surface of downloading and executing a prebuilt executable.
+- **Semantic search is on-device.** Transformers.js runs the embedding model locally. No API key, no Smart Connections requirement.
+- **Every request carries its own credentials.** The transport keeps no session state, which is what makes per-client tool surfaces possible.
 
-MCP published revision `2026-07-28` on 28 July 2026, moving the protocol to a stateless request/response core. Support for it is in progress and tracked in [#407](https://github.com/istefox/obsidian-mcp-connector/issues/407): the connector already runs on the v2 TypeScript SDK, and adopting the new revision is a separate opt-in. Servers can serve both revisions from one endpoint, so this will not be a flag day.
+## What's new in 1.0.x
 
-## Features
+| Change | Why it matters |
+|---|---|
+| **Per-client bearer tokens** (1.0.0) | The vault holds up to 10 tokens, one per client. Claude Code can keep all 52 tools while claude.ai sees only the 13-tool Core set, from one vault and one server. |
+| **Per-token tool policy** (1.0.0) | Profile, promoted tools and an optional hard allowlist all live on the token, not on the vault. |
+| **Rotation no longer restarts the transport** (1.0.0) | Adding, renaming, regenerating or revoking a token takes effect on the next request. The port cannot drift and in-flight requests finish. |
+| **`.mcpb` bundles are per token** (1.0.0) | Each bundle carries a token id and resolves that token's secret from the vault at connect time. Revoking the token fails the bundle closed instead of silently granting another client's access. |
+| **Note embeds in prompts** (1.0.0) | `![[note]]` in a prompt body is inlined before the prompt reaches the model, so no tool call per note. |
+| **Built-in-Node fix** (1.0.1) | The Claude Desktop extension now works with **Use Built-in Node.js for MCP** left on. See [#412](https://github.com/istefox/obsidian-mcp-connector/issues/412). |
+| **Whole-request deadline in the shim** (1.0.1) | A failing request answers inside 45 s with the reason instead of being cancelled at 60 s with nothing logged. |
+| **MCP SDK v2, error codes out of the reserved range** (0.28.2, 1.0.1) | See [Protocol status](#protocol-status). |
 
-> **Tip:** all 51 tools are active by default. You can cut the per-session token cost with [adaptive tool loading](#adaptive-tool-loading), which keeps a small core active and promotes the rest on demand.
+Full history: [`CHANGELOG.md`](CHANGELOG.md).
 
-When connected to an MCP-compatible client, this plugin enables:
+## Quick start
 
-- **Vault access**: read, write, and patch notes through typed tools (`get_vault_file`, `create_vault_file`, `patch_vault_file`, `rename_vault_file`, `rename_heading`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory`, and more) with native binary content for images and audio. Missing parent directories on a `create` or `append` path are auto-created. `rename_vault_file` preserves link integrity across the vault via `app.fileManager.renameFile`; `rename_heading` renames a heading in place and rewrites every wikilink, markdown link, and subheading-path reference pointing at it across the vault. `get_vault_files` reads up to 20 text/markdown files in a single call, one result per path, so a multi-note task no longer costs one round-trip per file. `get_vault_file` text output is capped at a configurable ceiling (Settings → MCP Connector, default 100 KB) — an oversized note comes back truncated with a hint to use `get_vault_file_partial` for a specific range instead of blowing the client's context window.
-- **Note properties**: `get_note_property`, `set_note_property`, `delete_note_property`, and `list_property_values` read and edit frontmatter fields directly, including listing every value a property takes across the whole vault.
-- **Semantic search**: `search_vault_smart` over an on-device embedding index, each result anchored to a 0-indexed line (null under Smart Connections, which doesn't expose one). While the index is still building (first use, or right after a provider switch), the tool returns a structured error with `filesIndexed`/`filesTotal`/`percent` and, once a build rate is known, an estimated `retryAfterSeconds` — a client that sends `_meta.progressToken` also gets a `notifications/progress` push on the same call. Four providers are available on demand: native MiniLM-L6-v2 (~25 MB, default), Gemma 300M (768d, recommended for non-Latin vaults), Multilingual-E5-Base (768d), and Smart Connections (if installed). Providers download once and swap live without a restart; the vault is re-indexed in the background while the previous provider keeps serving. A startup banner suggests the best provider based on your vault's character distribution. The index persists as 16 segments sharded by file path, so editing one note only rewrites that note's segment, not the whole index, keeping saves fast in large vaults.
-- **Plain-text and structured search**: `search_vault_simple` (text plus context windows, each hit anchored to a 0-indexed line) and `search_vault` (Dataview DQL or JsonLogic). `execute_dataview_query` runs Dataview DQL in-process via the plugin API and returns typed results (`table`, `list`, `task`, `calendar`). DQL needs the Dataview community plugin; the JsonLogic path needs nothing.
-- **Periodic notes**: `get_or_create_daily_note`, `get_or_create_periodic_note` (daily, weekly, monthly, quarterly, yearly), and `append_to_periodic_note`. Each call auto-creates the note with your configured template if it does not exist yet. Works with both the native Daily Notes plugin and the Periodic Notes community plugin.
-- **Vault graph and navigation**: `get_vault_file_partial` (frontmatter field, heading section, block range, raw line range, or document outline, a context-efficient partial read), `list_tags` (all vault tags with usage counts), `get_files_by_tag` (hierarchical matching), `get_recent_files` (ordered by mtime), `get_outgoing_links`, `get_backlinks`, and `show_file_in_obsidian` (reveal a note in the Obsidian UI). `get_vault_overview` returns a one-call snapshot (active file, note count, top-level folder distribution, top tags, recent files), replacing the 3-5 separate calls a session otherwise needs just to get oriented.
-- **Vault intelligence**: `find_broken_links` (link targets that do not resolve, with source file and line number), `find_orphaned_notes` (notes with zero incoming resolved links), `search_and_replace` (regex find-and-replace across the vault or scoped paths, `dry_run:"true"` by default for a safe preview), `get_note_outline` (heading TOC with level, text, line number, and anchor slug), and `list_bookmarks` (the full native Obsidian bookmark hierarchy: files, folders, searches, headings, blocks, groups).
-- **Canvas**: `get_canvas` reads a `.canvas` file as structured nodes and edges, capping long text-node content with a `textTruncated` flag to bound token cost. `add_canvas_node` appends a text, file, or link node with automatic placement to the right of the existing layout, creating the canvas and parent folders if the path does not exist. `connect_canvas_nodes` draws an edge between two nodes by id. Writes preserve every existing field, including styling, so a canvas edited in Obsidian round-trips through a tool write with clean diffs.
-- **Template execution**: invoke Templater templates as MCP tool calls with dynamic parameters.
-- **Prompt library**: author MCP prompts as plain markdown files in your vault's `Prompts/` folder. No plugins required, the in-process renderer handles everything. See [Using prompts](#using-prompts) below.
-- **Command execution** (opt-in): authorize the agent to run specific Obsidian commands (e.g. `editor:toggle-bold`, `graph:open`) from a per-vault allowlist. Disabled by default; every invocation is audited. See [Command execution](#command-execution) below.
-- **Web fetch**: the `fetch` tool retrieves arbitrary URLs and returns Markdown via Turndown, with pagination for long pages.
+1. **Install the plugin.** Community store: Settings → Community plugins → Browse → *MCP Connector*. Or via [BRAT](https://github.com/TfTHacker/obsidian42-brat) with `istefox/obsidian-mcp-connector`.
+2. **Open Settings → MCP Connector → Access control.** A fresh vault already has one token, labelled *Default*.
+3. **Wire your client from that token's row.** Either **.mcpb** (Claude Desktop, drag and drop) or **Copy config** (everything else). Details in [Connecting a client](#connecting-a-client).
 
-**Typed output on every tool.** Each tool result carries a `structuredContent` object next to the text payload, so clients that support it (Claude Desktop, Claude Code) get a typed object without parsing a JSON string. The text stays byte-identical, so clients that read only text keep working unchanged. Every tool also declares MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so a client can skip the confirmation prompt on read-only calls and gate it on destructive ones. List and scan tools take a `limit` (default 200, clamped to 1000) and flag `truncated: true` with a full `total` when a large vault would otherwise return an unbounded array.
+Ask the agent to call `get_server_info` to confirm the round trip. Requirements: Obsidian 1.7.2+, and Node.js only for the legacy `mcp-remote` path.
 
-48 vault tools in total, plus three always-on meta-tools (`tool_catalog`, `activate_tool`, `activate_tools`) that power [adaptive tool loading](#adaptive-tool-loading), for 51 tools in all. Full list in the plugin's settings, **Tools available** section.
+## What it can do
+
+**52 tools**: 49 vault tools plus 3 always-on meta-tools. All active by default.
+
+| Family | Tools | Notes |
+|---|---|---|
+| **Files** | `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory` | `get_vault_files` reads up to 20 files per call. Text output is capped (default 100 KB) and truncation points at `get_vault_file_partial`. Renames go through `fileManager.renameFile`, so links survive. |
+| **Active file** | `get_active_file`, `update_active_file`, `append_to_active_file`, `patch_active_file`, `delete_active_file`, `show_file_in_obsidian` | What the user is looking at right now. |
+| **Search** | `search_vault_smart`, `search_vault_simple`, `search_vault`, `execute_dataview_query` | Semantic, plain-text with context windows, DQL or JsonLogic. Hits carry a 0-indexed `line`. |
+| **Structure** | `get_vault_overview`, `get_note_outline`, `list_tags`, `get_files_by_tag`, `get_recent_files`, `get_outgoing_links`, `get_backlinks`, `list_bookmarks` | `get_vault_overview` replaces the 3 to 5 calls a session spends getting oriented. |
+| **Frontmatter** | `get_note_property`, `set_note_property`, `delete_note_property`, `list_property_values` | Atomic, through `processFrontMatter`. |
+| **Maintenance** | `find_broken_links`, `find_orphaned_notes`, `search_and_replace`, `rename_heading` | `search_and_replace` defaults to `dry_run`. `rename_heading` rewrites every reference pointing at it. |
+| **Periodic notes** | `get_or_create_daily_note`, `get_or_create_periodic_note`, `append_to_periodic_note` | Daily through yearly. Works with core Daily Notes and with Periodic Notes. |
+| **Canvas** | `get_canvas`, `add_canvas_node`, `connect_canvas_nodes` | Writes preserve every existing field, so canvases round-trip with clean diffs. |
+| **Execution** | `execute_template`, `list_obsidian_commands`, `execute_obsidian_command` | Templater templates as tool calls. Commands are opt-in, see [Command execution](#command-execution). |
+| **Other** | `fetch`, `get_server_info` | `fetch` returns Markdown via Turndown, paginated. |
+| **Meta** | `tool_catalog`, `activate_tool`, `activate_tools` | Always reachable, see below. |
+
+Every result carries `structuredContent` next to the text payload, and every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so a client can skip confirmation on reads and gate it on writes. List and scan tools take a `limit` (default 200, clamped to 1000) and report `truncated` with the real `total`.
+
+**Semantic search providers.** Native MiniLM-L6-v2 (~25 MB, default), Gemma 300M (768d, best for non-Latin vaults), Multilingual-E5-Base (768d), or Smart Connections if you already use it. Providers swap live while the previous one keeps serving. The index is sharded into 16 segments by path, so editing one note rewrites one segment. While a build is running, `search_vault_smart` returns a structured `index_building` error with `filesIndexed`, `filesTotal` and an estimated `retryAfterSeconds`.
 
 ## Adaptive tool loading
 
-Every tool a server advertises costs context-window tokens on each session: the client downloads the full JSON schema of every active tool before the model says a word. With all 51 tools active that is roughly 10K tokens per session. Adaptive tool loading lets you cut that cost without losing access to any tool.
+Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 52 active is roughly 10K tokens per session. Adaptive loading cuts that without putting any tool out of reach.
 
 ### Profiles
 
-Pick a profile in **Settings, MCP Connector, Tool Loading**:
+Set per token in **Settings → MCP Connector → Tool Loading**.
 
-| Profile | Active tools | Best for |
+| Profile | Advertised | Use when |
 |---|---|---|
-| **All** (default) | All 48 tools + all three meta-tools | Maximum capability, no behavior change from earlier versions |
-| **Core** | 13 essential tools + `tool_catalog` | Minimum token cost, static surface that never changes mid-session |
-| **Adaptive** | Core + frequency-promoted tools + all three meta-tools | Token savings that converge on your actual usage |
+| **All** (default) | 49 vault tools + 3 meta-tools | You want maximum capability and do not care about the schema cost. |
+| **Core** | 13 core tools + 3 meta-tools + whatever you promoted | You want the smallest, most predictable surface. |
+| **Adaptive** | The same, and it promotes tools you use often on its own | You want the surface to converge on how you actually work. |
 
-The Core set covers the everyday operations: server info, active-file read/write/append, vault file read/create/list, both search tools, tags, note properties, and the daily note.
+Core is: `get_server_info`, `get_active_file`, `update_active_file`, `append_to_active_file`, `get_vault_file`, `list_vault_files`, `create_vault_file`, `search_vault`, `search_vault_simple`, `list_tags`, `get_note_property`, `set_note_property`, `get_or_create_daily_note`.
+
+Promotions are honoured in **both** Core and Adaptive, so a tool you pinned stays pinned whatever the profile. Automatic promotion by call frequency is the one thing Core does not do.
+
+![Tool Loading settings: profile radios with Adaptive selected, five promoted tools, and the "Limit to specific tools" ceiling](docs/images/tool-loading.png)
+
+*Tool Loading, per token. The promoted list is editable by hand, `activate_tool` writes into it, and frequency promotion fills it in over time. **Reset adaptive data** clears counters and promotions without touching the profile.*
 
 ### The three meta-tools
 
-- **`tool_catalog`** (always active, read-only): returns the full inventory of all tools with their status (`active`, `inactive`, `promoted`), call counts, and descriptions for inactive ones. The model always knows what exists and what is switched off, regardless of profile.
-- **`activate_tool`** (Adaptive and All profiles only): promotes an inactive tool by name. The tool becomes available immediately, no reconnect needed. By default the promotion lasts until the plugin reloads; pass `persist: true` to write it to the plugin data so it survives reloads. Every promotion shows an Obsidian notice (`MCP Connector: "<tool>" promoted to active`) so you always see when the model expands its own tool surface. In the Core profile this meta-tool is not exposed: Core means a fixed surface, and the model cannot grow it.
-- **`activate_tools`** (Adaptive and All profiles only): promotes several inactive tools in one call instead of one `activate_tool` call per tool, refreshing the client's tool list only once. Use it whenever a task needs more than one inactive tool at a time.
+- **`tool_catalog`** (read-only, always active): the full inventory with each tool's status (`active`, `inactive`, `promoted`), call count and description. The model always knows what exists, whatever the profile.
+- **`activate_tool`**: promotes one inactive tool by name, usable immediately, no reconnect. `persist: true` writes it to that token's promoted list. Obsidian shows a notice each time, so a surface never widens silently.
+- **`activate_tools`**: promotes several at once and refreshes the client's tool list only once.
 
-### Frequency promotion
+In Adaptive mode the plugin counts calls per tool. At **3 calls** a non-core tool is promoted and stays. Counters are vault-wide by design, because how often a tool is used describes the vault, not the client that happened to call it. The Tool Loading panel lists promoted tools, removes any of them, and resets counters without touching your profile.
 
-In Adaptive mode the plugin counts tool calls. When a non-core tool reaches 3 calls, it is promoted automatically and stays active on subsequent connects. The **Tool Loading** settings section lists the currently promoted tools, lets you remove any of them, and has a **Reset** button that clears counters and promotions while keeping your profile choice.
+### Two independent off switches
 
-### Typical flow in Adaptive mode
+A tool can be dark for two unrelated reasons, and the difference is deliberate:
 
-1. The model needs a tool that is not active (say `find_broken_links`).
-2. It calls `tool_catalog`, sees the tool exists but is inactive.
-3. It calls `activate_tool` with `{"name": "find_broken_links"}`, the tool is usable immediately and you see a notice in Obsidian.
-4. If you use that tool often, frequency promotion makes it permanent without anyone asking.
+- **`userDisabled`** — you switched it off under **Tools available**. It is invisible to every token and no client can discover it or talk its way past it.
+- **adaptive-inactive** — the profile has not promoted it yet. Calling it returns a recoverable error naming the activation path, never "Unknown tool", so the model can fix its own problem in one step.
+
+### Does this violate the `tools/list` stability rule?
+
+MCP revision `2026-07-28` says the advertised set must not vary per-connection or as a side effect of other requests on the connection, while it may vary by the authorization presented. Adaptive loading satisfies it, and the reasoning is written down in [ADR-0015](docs/architecture/ADR-0015-tools-list-invariant-and-adaptive-loading.md): registry state is process-global and token-scoped, never connection-scoped, so two clients presenting the same token get the same list, and a promotion is a vault state change (like a settings edit), not a property of one connection. `notifications/tools/list_changed` is what the clause points at for exactly this case.
 
 ## Per-client tokens
 
-The vault holds a list of bearer tokens, not a single one. Each token stands for one client, and each token has its own tool surface: Claude Code can keep all 51 tools while claude.ai sees only the 13-tool Core set, from the same vault, with no second server and no restart. The token presented on a request is what tells the two apart, so the split works even though the transport keeps no session state.
+The vault holds a **list** of tokens, not one. The token on the request identifies the client, which is the only client identity a stateless transport carries. Each row in **Access control** shows the label, the profile in force, how many tools that token reaches, and per-row controls: show and copy the secret, copy a client config, export a `.mcpb`, regenerate, revoke. Up to 10 per vault.
 
-The list lives in **Settings, MCP Connector, Access control**. Each row shows the label, the profile in force, how many tools that token can reach, and per-row controls to show and copy the secret, copy a client config, download a `.mcpb` bundle, regenerate, and revoke. **Add token** asks for a label and is capped at 10 tokens per vault. Labels are cosmetic and may repeat.
+There is deliberately **no vault-wide export**. A credential always leaves the plugin naming the client it belongs to.
 
-Upgrading from 0.28.x needs nothing from you: the token you already have becomes the first row, labelled **Default**, with the same string, and your current profile and promoted tools become that row's policy. Every client you have configured keeps working unchanged.
+![Access Control settings: the Default token row with its secret masked, per-client copy buttons, .mcpb export, regenerate and revoke, plus server port, fixed port and server name](docs/images/access-control.png)
 
-### Per-token profiles
+*One row per client. The label, profile and tool count are on the row; the four buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: the live endpoint, **Fixed port** (blank means the automatic 27200-27205 range, and saving a fixed port restarts the server, which clears non-persisted promotions), and **Server name**, which is how this vault identifies itself in a client that lists several servers.*
 
-The profile picker under **Tool Loading** applies to the token selected in the list, not to the vault. All, Core, and Adaptive mean exactly what they mean in [Adaptive tool loading](#adaptive-tool-loading); they are simply chosen per client now.
+| Action | Effect |
+|---|---|
+| **Add token** | New row, own profile, own promoted list, own allowlist. Labels are cosmetic and may repeat. |
+| **Regenerate** | Replaces the secret, keeps id, label and policy. Configured clients get 401 until updated. Installed `.mcpb` bundles resolve by id and pick it up on their own. |
+| **Revoke** | Deletes the token. That client's configs, bundles and bridge configs stop working; every other token is untouched. |
 
-Promotions follow the same line. When a client calls `activate_tool`, the tool becomes available to that client only, and `persist: true` writes it to that token's promoted list. Call counts stay vault-wide, because how often a tool is used describes your vault rather than the client that happened to call it, so every Adaptive token crosses the promotion threshold at the same time and gets the tool in its own list.
+> **Both actions are unrecoverable.** The string is stored nowhere else and nothing in the plugin can print it again.
 
-Tools you switch off under **Tools available** stay off for every token. That setting is yours, and no client can reach past it or discover that it exists.
+**Limit to specific tools** (off by default) turns a token's checklist into a hard ceiling: a tool outside it is never advertised, cannot be called, and activation refuses it by name instead of dead-ending. An empty list is legal and means the three meta-tools only. The profile itself is deliberately *not* a ceiling, since Core exists so `activate_tool` can widen it.
 
-### Limit to specific tools
+Upgrading from 0.28.x needs nothing: your existing token becomes row one, labelled *Default*, byte-for-byte the same string, carrying your current profile and promoted list.
 
-Off by default, and while it is off a token behaves exactly as in earlier versions. Turn on **Limit to specific tools** for a token and the checklist becomes a hard ceiling: a tool outside the list is never advertised to that client, cannot be called, and `activate_tool` refuses it with a message saying the token's list does not include it. An empty list is legal and means the three meta-tools and nothing else; the settings panel flags it so it does not look like "no limit".
+## Prompts
 
-The profile itself is not a ceiling. Core is a starting point that `activate_tool` is meant to widen, which is what makes it usable rather than crippling. Use the allowlist when you want a boundary a client cannot talk its way past. `tool_catalog`, `activate_tool`, and `activate_tools` always stay reachable, so a client is never left without a way to see what exists and ask for it.
+Author MCP prompts as plain markdown in a `Prompts/` folder at the vault root. No extra plugin needed; the renderer runs in-process. Clients surface them as slash commands or attachments.
 
-### Revoking or regenerating a token
+```markdown
+---
+tags:
+  - mcp-tools-prompt
+description: Summarize my recent daily notes on a given topic
+---
 
-> **Warning.** Both actions invalidate the token's current string, and the string is not recoverable. It is stored nowhere else, there is no undo, and nothing in the plugin can print it again once it is gone.
+Summarize my notes from the past **<% tp.mcpTools.prompt("days", "How many days back") %>** days
+about **<% tp.mcpTools.prompt("topic", "The subject") %>**.
 
-**Revoke** deletes the token. Every client configured with it, every `.mcpb` bundle exported for it, and any Windows bridge config holding it stop working at the next request: the server answers 401, and the bundle fails with an error telling you to re-export. One exception, for bundles only: a `.mcpb` exported before 1.0.0 carries no token id and resolves whichever token is currently first in the list, so revoking the first token re-points that bundle at the next one instead of cutting it off. Export a fresh bundle once after upgrading and the exception is gone. Other tokens are untouched, which is the point — rotating one client's credential no longer breaks all of them. Revoke asks for a confirmation naming the label and is disabled when only one token is left.
+Here is the brief they should be read against:
 
-**Regenerate** replaces the secret in place, keeping the token's id, label, profile, promoted list and allowlist. Every client holding the old string starts getting 401 at its next request and needs the new one pasted in. Installed `.mcpb` bundles are the exception: they resolve their token from the vault by id at connect time, so they pick up the new secret on their own.
+![[Projects/Q3 brief]]
 
-Neither action restarts the HTTP transport, so the port cannot drift and in-flight requests finish; the next request simply sees the new list.
+Give me the three recurring themes and one action item.
+```
 
-## Prerequisites
+- The `tp.mcpTools.prompt(...)` line **declares** a parameter and is stripped from the output. Inject the value with `{{days}}`, `{{topic}}`, as many times as you like.
+- An inline `#mcp-tools-prompt` hashtag works instead of frontmatter. Both spellings of the frontmatter tag are accepted.
+- **Embeds** are inlined after parameters are filled, so `![[{{note}}]]` lets the client pick the note. `![[note|alias]]`, `![[note#Heading]]` and `![[note#^blockid]]` all work. Depth 1, at most 32 KB across at most 20 embeds per render. An embed that cannot resolve keeps its token and gains a comment saying why, so nothing disappears quietly.
+- Other Templater expressions pass through verbatim; the server does not evaluate them.
 
-### Required
+Full contract: [`docs/features/prompt-system.md`](docs/features/prompt-system.md).
 
-- [Obsidian](https://obsidian.md/) v1.7.2 or higher.
-- An MCP-compatible client. Examples: [Claude Desktop](https://claude.ai/download), [Claude Code](https://docs.anthropic.com/claude/docs/claude-code), [Cursor](https://cursor.com), [Cline](https://github.com/cline/cline), [Continue](https://continue.dev), [Windsurf](https://codeium.com/windsurf), [VS Code](https://code.visualstudio.com).
-- For **Claude Desktop only**: [Node.js](https://nodejs.org) (any LTS version), required to run the `npx mcp-remote` bridge. The plugin auto-detects your Node install (including Homebrew on macOS) and offers a one-click install if it is missing.
+## Command execution
 
-### Optional
+Off by default. When enabled, the agent can run Obsidian commands from the command palette, and only those you authorize.
 
-- [Templater](https://silentvoid13.github.io/Templater/): needed only for the `execute_template` tool. The prompt library works without it.
-- [Dataview](https://blacksmithgu.github.io/obsidian-dataview/): needed only for DQL queries through `search_vault` and `execute_dataview_query`. The JsonLogic path in `search_vault` works without it.
-- [Smart Connections](https://smartconnections.app/): an alternative semantic-search backend. The native MiniLM provider works just as well; Smart Connections is only useful if you are already invested in its ecosystem.
+- `list_obsidian_commands` is read-only discovery and always safe.
+- `execute_obsidian_command` is gated. On the allowlist it runs. Off the allowlist, Obsidian shows a modal with **Deny / Allow once / Allow always** and the HTTP call waits up to 30 s for your answer. Master toggle off means every call is denied with no modal.
+- **Deny by default, no wildcards, no auto-population, per vault.**
+- A command whose id or name looks destructive (`delete`, `purge`, `reset`, `wipe`, and similar) gets a red warning and **Allow always is disabled**. A nudge, not a gate.
+- Hard limit 100 calls/minute server-side, plus a configurable soft warning at 30/minute.
+- The last 50 decisions are kept in a ring buffer under **Recent invocations**, exportable as RFC 4180 CSV (`timestamp,commandId,decision,reason`).
 
-## Installation
+## Protocol status
 
-MCP Connector is available in the Obsidian community plugin store and via BRAT. Use either.
+**What the connector speaks today:** MCP revision `2025-11-25` and earlier, which is what every shipping client negotiates. Nothing you have configured needs to change.
 
-### Option A, Community plugin store
+**Where it already matches `2026-07-28`,** the revision Anthropic published on 28 July 2026, which moves MCP to a stateless request/response core:
 
-1. **Settings, Community plugins, Browse**, search **"MCP Connector"**.
-2. Install and enable. Obsidian shows a *"This plugin has not been manually reviewed by Obsidian staff"* notice; community plugins pass an automated build and security review, not a hand audit.
-3. Open the plugin settings and use the **Access control** section to wire up your MCP client.
+| `2026-07-28` direction | Status here |
+|---|---|
+| No protocol-level sessions, no `Mcp-Session-Id` | Never had them. Every request carries its own credentials. |
+| `GET`/`DELETE` on the MCP endpoint answer `405` | `GET /mcp` returns 405 by design. There is no server-initiated stream. |
+| No SSE resumability, no `Last-Event-ID` | Not implemented, not needed. `notifications/tools/list_changed` rides the caller's own POST response with that call's `relatedRequestId`. |
+| `-32000`–`-32019` is a legacy range new code should avoid | The `.mcpb` shim and the Windows bridge report local failures as `-33000`, below the reserved range entirely. |
+| Per-request authorization may scope the tool set | Exactly what [per-client tokens](#per-client-tokens) do. |
+| Tool-set stability clause | Analysed and satisfied, see [ADR-0015](docs/architecture/ADR-0015-tools-list-invariant-and-adaptive-loading.md). |
 
-### Option B, BRAT
-
-Prefer the latest build, or the store entry has not propagated to your client yet? Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat):
-
-1. Install and enable the **Obsidian42, BRAT** plugin from the community store.
-2. **Settings, BRAT, Add Beta plugin**, paste `istefox/obsidian-mcp-connector`.
-3. BRAT installs the latest GitHub release; enable **MCP Connector** in Community plugins.
-4. Jump to **Access control** in the plugin settings.
-
-That's it. **No binary to install, no separate download.** The MCP server starts as soon as you enable the plugin.
+**What is still open:** the SDK migration landed in 0.28.2 (`@modelcontextprotocol/server` and `@modelcontextprotocol/node` 2.0.0 replaced the 1.x monolith), and negotiating the `2026-07-28` revision on the wire is a separate opt-in tracked in [#407](https://github.com/istefox/obsidian-mcp-connector/issues/407). Servers may serve both revisions from one endpoint, so this will not be a flag day. `subscriptions/listen`, the piece that would let a promotion reach a client that was not the caller, is tracked in [#419](https://github.com/istefox/obsidian-mcp-connector/issues/419).
 
 ## Connecting a client
 
-Every client is wired up from its own row in **Access control**. Each row carries three **Copy config** buttons, one per supported client family, and a **.mcpb** button; whichever you use, the snippet or bundle authenticates as that row's token and no other. There is deliberately no vault-wide export: a credential always leaves the plugin naming the client it belongs to.
+Every client is wired from its own row in **Access control**. Whichever button you use, the snippet or bundle authenticates as that row's token and no other.
 
 ### Claude Desktop
 
-Claude Desktop only speaks stdio MCP. The recommended `.mcpb` extension bridges to the in-process server directly, with no external runtime dependency. The alternative manual JSON config instead reaches it through the official [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) bridge (Anthropic-maintained, no third-party code in the auth path), which needs Node.js on your PATH.
+Claude Desktop speaks stdio, so it needs a bridge. The `.mcpb` extension is the supported path and needs no Node install of your own.
 
-**Recommended: download the `.mcpb` extension**
-
-1. In the plugin settings, under **Access control**, click **.mcpb** on the row of the token this client should use. A fresh vault has one row, labelled *Default*.
+1. Click **.mcpb** on the token's row.
 2. Drag the file onto Claude Desktop.
-3. The extension installs with no prompt and shows a blue connector icon in Settings → Extensions.
+3. It installs with no prompts and appears under Settings → Extensions.
 
-The bundle is tied to the token you exported it from and resolves that token's secret and the live port from the vault at connect time, so no copy-paste step is required. Do not share the file. The extension runs entirely on Claude Desktop's own bundled Node.js runtime, so no separate Node install or PATH configuration is needed for this flow.
+![Claude Desktop Settings, Extensions: Obsidian MCP Connector installed with a Configure button, and the drop area for .MCPB files](docs/images/claude-desktop-extension.png)
 
-Regenerating that token's secret or changing the server port needs no action: the bundle picks both up on its next connect. Revoking the token does break it, deliberately — the extension then fails with an error asking for a re-export, instead of quietly falling back to another token's access. (A bundle exported before 1.0.0 predates the token id and does fall back to whichever token is now first; re-export it once to close that gap.) Export a fresh `.mcpb` from the row of the token you want it to use and drag it onto Claude Desktop to replace the existing extension.
+*Installed. Claude Desktop's own Extensions pane takes the `.mcpb` by drag and drop, with no config file to edit and no Node install of your own.*
 
-**Alternative: manual JSON config**
+The bundle resolves that token's secret and the live port from the vault at connect time, so regenerating the secret or changing the port needs no re-export. Revoking the token fails it closed with an error asking for a fresh export, which is the point. A bundle exported before 1.0.0 predates the token id and follows whichever token is currently first, so re-export once after upgrading.
 
-For advanced users or when the `.mcpb` flow is not available. This path runs `npx mcp-remote` via your own Node install, so Node.js must be on your PATH; the plugin auto-detects it and offers a one-click Homebrew install if it is missing.
+<details>
+<summary>Alternative: manual <code>mcp-remote</code> config</summary>
 
-1. Click **Claude Desktop** under **Copy config snippets**. The snippet looks like:
-   ```json
-   {
-     "mcpServers": {
-       "obsidian-mcp-connector": {
-         "command": "npx",
-         "args": [
-           "-y",
-           "mcp-remote",
-           "http://127.0.0.1:27200/mcp",
-           "--header",
-           "Authorization: Bearer YOUR_TOKEN"
-         ]
-       }
-     }
-   }
-   ```
-2. Paste it into your `claude_desktop_config.json` (Claude Desktop, Settings, Developer, Edit Config).
-3. Restart Claude Desktop.
+Needs Node.js on the PATH that Obsidian inherits. The plugin detects it and offers a one-click Homebrew install on macOS.
 
-Or tick **Keep `claude_desktop_config.json` in sync with this token** on that token's row in **Access control**. The plugin then rewrites the file whenever that token's secret is regenerated, with a `.backup` written before each rewrite. Only one token can hold it — the file has a single entry for this vault — and regenerating any other token leaves it alone. Revoking the owning token removes the entry rather than pointing it at a different token.
+```json
+{
+  "mcpServers": {
+    "obsidian-mcp-connector": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:27200/mcp",
+               "--header", "Authorization: Bearer YOUR_TOKEN"]
+    }
+  }
+}
+```
 
-**Windows note: use the POST-only bridge**
+Paste into `claude_desktop_config.json` (Settings → Developer → Edit Config) and restart the app fully, Cmd+Q on macOS. Or tick **Keep `claude_desktop_config.json` in sync with this token** on the row: at most one token owns the file, a `.backup` is written before each rewrite, and revoking the owner removes the entry rather than pointing it at someone else.
+</details>
 
-On Windows, `mcp-remote` has a bug that makes Claude Desktop hang for 60 seconds on connect, then fail with "Could not attach to MCP server". This is not a plugin bug: the same hang shows up against unrelated MCP servers, and Claude Code over direct HTTP is fine. Until `mcp-remote` ships a fix ([geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296)), Windows users should skip `mcp-remote` and run the bundled bridge instead.
+<details>
+<summary>Windows: use the POST-only bridge</summary>
 
-`scripts/obsidian_mcp_bridge.py` is a small Python script, standard library only with nothing to install, that talks to the plugin over POST requests, so it never opens the stream that triggers the hang. Point `claude_desktop_config.json` at it:
+`mcp-remote` hangs for 60 s on connect on Windows ([geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296)), against unrelated MCP servers too. Use the bundled `scripts/obsidian_mcp_bridge.py`, standard library only:
 
 ```json
 {
@@ -208,11 +250,12 @@ On Windows, `mcp-remote` has a bug that makes Claude Desktop hang for 60 seconds
 }
 ```
 
-Full setup, including how to grab the script and verify it works, is in [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md). macOS and Linux are not affected; use the standard `mcp-remote` config above.
+Full setup: [`docs/windows-post-only-bridge.md`](docs/windows-post-only-bridge.md).
+</details>
 
 ### Claude Code
 
-Claude Code speaks HTTP transport natively. Click **Copy config for Claude Code** and paste into `~/.claude.json` (project scope) or `~/.claude/settings.json` (global scope):
+Native HTTP transport. **Copy config for Claude Code**, then paste into `~/.claude.json` (project) or `~/.claude/settings.json` (global), or use `claude mcp add` with the same fields.
 
 ```json
 {
@@ -220,287 +263,118 @@ Claude Code speaks HTTP transport natively. Click **Copy config for Claude Code*
     "obsidian-mcp-connector": {
       "type": "http",
       "url": "http://127.0.0.1:27200/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      }
+      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
     }
   }
 }
 ```
 
-Or use `claude mcp add` from the CLI with the same fields.
+### Cursor, Cline, Continue, Windsurf, VS Code
 
-### Cursor / Cline / Continue / Windsurf / VS Code
+**Copy config for streamable-http clients** produces the generic payload these accept. Check each client's docs for the file location and wrapping keys.
 
-Click **Copy config for streamable-http clients**. The snippet uses the generic streamable-http payload shape these clients accept; consult each client's own docs for the exact config-file location and any wrapping keys.
+### Verifying
 
-### Verifying the setup
-
-Once configured, your client should expose **51 MCP tools** from this server (48 vault tools + 3 meta-tools, with the default **All** profile, fewer if you selected the Core or Adaptive [tool loading profile](#adaptive-tool-loading)), plus any prompts you have tagged with `#mcp-tools-prompt` in a `Prompts/` folder at your vault root.
-
-To verify the connection works end-to-end, ask the agent to call `get_server_info`. A successful response confirms the client can reach the in-process server and the bearer token is correct. For deeper inspection (request/response logs, tool schema inspection without an LLM in the loop), use [`@modelcontextprotocol/inspector`](https://github.com/modelcontextprotocol/inspector):
+Your client should list the tools your token's profile allows, plus any prompts tagged `#mcp-tools-prompt`. For request-level inspection without a model in the loop:
 
 ```bash
 npx -y @modelcontextprotocol/inspector
 # point it at http://127.0.0.1:27200/mcp with your bearer token
 ```
 
-## Using prompts
-
-The plugin lets you author **MCP prompts** as plain markdown files in your vault. Your prompt library lives alongside your notes, in a folder called `Prompts/` at the root of the vault. Every MCP-compatible client (Claude Desktop, Claude Code, Cursor, Cline, Continue) will surface these prompts in its own UI, typically as slash commands or attachments.
-
-### Requirements
-
-- A folder named exactly `Prompts` (capital `P`) at the root of your vault. That is it, **no additional plugins required**. The prompt renderer runs in-process inside the plugin.
-
-If you use other Templater expressions in the prompt body (e.g. `<% tp.date.now() %>`), they are passed through verbatim; the MCP server does not evaluate them. Only `<% tp.mcpTools.prompt(...) %>` declarations and `{{arg}}` placeholders are processed.
-
-### Creating a prompt in 60 seconds
-
-1. Create a new folder called `Prompts` at the root of your vault (if it does not exist already).
-2. Create a new markdown note inside it, e.g. `Prompts/weekly-review.md`.
-3. Add frontmatter with the `mcp-tools-prompt` tag and a short description:
-
-   ```markdown
-   ---
-   tags:
-     - mcp-tools-prompt
-   description: Summarize my recent daily notes on a given topic
-   ---
-
-   Summarize my notes from the past **<% tp.mcpTools.prompt("days", "How many days back to look, e.g. 7") %>** days
-   about **<% tp.mcpTools.prompt("topic", "The subject, e.g. 'writing habits'") %>**.
-
-   Give me the three most recurring themes and one action item I should act on this week.
-   ```
-
-4. Save the file.
-5. In your MCP client, refresh or reconnect to the server. The new prompt will appear, named after the filename (`weekly-review.md`), with two parameters: `days` and `topic`.
-6. Invoke it from your client's UI (e.g. the attachment or slash-command menu in Claude Desktop), fill in the parameters, and the rendered text becomes the first message of a new conversation.
-
-### How parameters work
-
-Parameters are declared anywhere in the prompt body using this syntax:
-
-```
-<% tp.mcpTools.prompt("parameter_name", "Description shown to the user") %>
-```
-
-This line is stripped from the rendered output, it is a declaration only. The actual value is injected wherever you write `{{parameter_name}}` in the body. You can use the same name multiple times; the client asks for it once and injects the value everywhere.
-
-```markdown
-Summarize my notes about **{{topic}}** from the past {{days}} days.
-Focus on how {{topic}} relates to my long-term goals.
-```
-
-### Embedding notes in a prompt
-
-A prompt body can pull in another note with Obsidian's own embed syntax, and the content is inlined before the prompt reaches the model:
-
-```markdown
-Here is my current project brief:
-
-![[Projects/Q3 brief]]
-
-Using it, draft this week's plan.
-```
-
-`![[note]]`, `![[note|alias]]`, `![[note#Heading]]` and `![[note#^blockid]]` all work. Expansion happens after your parameters are filled in, so `![[{{note}}]]` lets the client choose which note to embed. The prompt arrives complete, instead of costing the model a tool call per note.
-
-An embed that cannot be resolved is never dropped silently: the `![[…]]` stays in place followed by a comment saying why, so you can see what happened instead of wondering where the text went. Embeds inside an embedded note are not followed (one level only), and a render inlines at most 32 KB across at most 20 embeds. An embed that would blow the budget is skipped whole rather than cut off mid-sentence.
-
-### Other ways to tag a prompt
-
-Instead of frontmatter, you can drop an inline `#mcp-tools-prompt` hashtag anywhere in the body. Both forms are accepted by the server. Use whichever fits your note-taking style.
-
-### Where is the full reference?
-
-This section covers the 90% case. For the complete contract (folder naming, frontmatter schema, parameter parsing rules, execution flow, known limitations), see **[`docs/features/prompt-system.md`](docs/features/prompt-system.md)**.
-
-## Command execution
-
-The agent can run Obsidian commands on your behalf, the same entries you see in the command palette, but **only if you explicitly authorize them**. This feature is disabled by default and has no effect until you turn it on.
-
-### How it works
-
-Two MCP tools are always advertised to the client:
-
-- `list_obsidian_commands`: read-only discovery, always safe. Returns every command registered in the vault (core plus plugins), optionally filtered by a substring. Use this first to find the `id` of a command you want to allow.
-- `execute_obsidian_command`: gated. Every call is checked against your allowlist.
-  - **If the command is on your allowlist**, it runs immediately.
-  - **If it is not on your allowlist** (and the master toggle is ON), a confirmation modal pops up in Obsidian with three buttons: **Deny**, **Allow once**, **Allow always**. The HTTP call long-polls for up to 30 seconds waiting for your decision. "Allow always" adds the command to your allowlist so future calls skip the modal.
-  - **If the master toggle is OFF**, every call is denied immediately. No modal, no prompt.
-
-On top of the allowlist and confirmation flow, `execute_obsidian_command` is rate-limited to **100 calls per minute** (hard limit, server-side tumbling window) to protect the vault from runaway loops. The confirmation modal also surfaces a secondary **soft warning at 30 calls/minute**, visible to you as a red-bordered notice so you can abort a suspicious burst manually.
-
-### Destructive-command heuristic
-
-If the command id or its human name contains a word commonly associated with data loss (`delete`, `remove`, `uninstall`, `trash`, `clean`/`cleanup`, `purge`, `drop`, `reset`, `clear`, `wipe`), the confirmation modal shows a red warning and **disables the "Allow always" button**. You can still run the command via "Allow once", but the heuristic nudges you to think twice before adding it to your persistent allowlist. This is intentionally a nudge, not a gate: plugin authors use words creatively, so the filter catches the obvious cases and lets everything else through.
-
-### Enabling it
-
-1. Open **Settings, Community plugins, MCP Connector, Command execution**.
-2. Tick **Enable MCP command execution**. Save.
-3. From this point forward, whenever the agent invokes a command that is not on your allowlist, a modal will pop up asking for confirmation.
-4. If you prefer to pre-authorize commands up front (rather than hit a modal on first call), you have three ways:
-   - **Quick-add presets** (fastest): expand **Quick-add presets** and click **Add all** next to **Editing**, **Navigation**, or **Search**. Each preset is a curated list of common, non-destructive built-ins; only commands that actually exist in your vault are added, and duplicates are skipped.
-   - **Browse available commands**: expand the browser, filter by id or name, and click **Add** next to each command you trust.
-   - **Paste directly** into the allowlist textarea, comma- or newline-separated.
-   Either way, click **Save** to persist.
-
-### Advanced settings
-
-Under the **Advanced** disclosure you can override the **soft rate-limit warning threshold** (default: 30 calls/minute). When the agent exceeds this rate, the confirmation modal surfaces a red banner so you can spot a runaway loop. The threshold is informational only; the in-process MCP server's hard limit of 100/minute is enforced server-side and is not configurable from the UI.
-
-### What gets logged
-
-Every allow/deny decision is appended to a ring buffer of the last 50 invocations, visible under **Recent invocations** in the same settings section. The audit log includes the command id, the decision, the timestamp, and (for denied calls) the reason. The buffer is pruned automatically so `data.json` stays bounded.
-
-You can export the current buffer as CSV via the **Export CSV** button at the top of the Recent invocations list. The download uses the fixed schema `timestamp,commandId,decision,reason` and is RFC 4180 quoted, so it opens cleanly in Excel, Numbers, LibreOffice, or any standard CSV reader.
-
-### Security model
-
-- **Deny by default.** The master toggle is off out of the box. An empty allowlist with the toggle on is still deny-all.
-- **No wildcards.** Allowlist entries must be exact command ids, there is no `editor:*` pattern.
-- **No auto-discovery dumps.** The agent must call `list_obsidian_commands` or the user must paste ids; the allowlist is never populated automatically.
-- **Per-vault.** The allowlist lives in each vault's plugin `data.json`. A different vault starts from zero.
-
 ## Troubleshooting
 
-### Claude Desktop can't reach the server
+| Symptom | Cause and fix |
+|---|---|
+| `401` on every call | The token matches no row, usually after a regenerate or revoke. Copy the current string from that row, or add a new token if the row is gone. |
+| `ECONNREFUSED 127.0.0.1:<port>` | Claude Desktop reads its config only at launch. Quit fully (Cmd+Q) and reopen. Check the port matches the one the plugin logs, and that only one vault has the plugin enabled. |
+| Claude Desktop: `Failed to connect`, `command not found` | Only affects the `mcp-remote` path. Settings → **Claude Desktop integration** reports whether `node` and `npx` are on the PATH Obsidian inherits, and installs Node for you on macOS. |
+| 60 s hang on Windows, then "Could not attach" | `mcp-remote` bug. Switch to the [POST-only bridge](#claude-desktop). |
+| 60 s hang on macOS with **Use Built-in Node.js for MCP** on | Fixed in **v1.0.1**. Update, re-export the `.mcpb`, reinstall once; the setting can stay on. On 1.0.0 and earlier, turn the setting off and restart fully. ([#412](https://github.com/istefox/obsidian-mcp-connector/issues/412)) |
+| `.mcpb` disconnected most of the time | Fixed in v0.26.0, which stopped baking the port and token into the manifest. Update and re-export once. |
+| First `search_vault_smart` is slow | Expected: ~25 MB model download, cached afterwards. A `content-length` warning in DevTools is harmless. |
 
-- **Symptom**: Claude Desktop logs show `Failed to connect`, `ENOENT`, or `command not found`.
-- **Check**: open the plugin settings, **Claude Desktop integration**, the **Node.js detection** panel reports whether `node` and `npx` are reachable on the path Obsidian inherits when launched from Finder or Spotlight (a common gap on macOS for users who installed Node via Homebrew).
-- **Fix**: if the panel shows "Not found", click **Install via Homebrew** (macOS) or follow the platform-specific link to install Node manually. Restart Obsidian after installing.
-
-### "Server disconnected" or ECONNREFUSED in Claude Desktop
-
-- **Symptom**: Claude Desktop shows `Server disconnected`; its logs show `ECONNREFUSED 127.0.0.1:<port>`.
-- **Fix**: fully quit Claude Desktop (Cmd+Q on macOS) and reopen it. Claude Desktop only re-reads `claude_desktop_config.json` at launch, so closing the window or an in-app restart is not enough. With auto-write on (the default) the plugin keeps the config in sync afterward.
-- Still failing? Confirm the port in `claude_desktop_config.json` (`http://127.0.0.1:<port>/mcp`) matches the port the plugin logs on start (Settings, **Open Logs**), and make sure only one Obsidian vault has the plugin enabled (two instances contend for the port). Then fully restart Claude Desktop again.
-
-### Claude Desktop extension (.mcpb) shows disconnected most of the time
-
-- **Symptom**: the installed Claude Desktop extension is disconnected, stuck, or "busy" on most connection attempts, with no clear error in Claude.
-- **Cause** (fixed in v0.26.0): before that version, the downloaded `.mcpb` baked the HTTP port and bearer token into `manifest.json` as a literal command, captured once at export. If the plugin later bound to a different port (no Fixed Port set, multiple vaults open) or the token changed, the installed extension kept using the stale values indefinitely.
-- **Fix**: update the plugin to v0.26.0 or later, then re-export the `.mcpb` from Settings, **Access control**, the **.mcpb** button on that token's row, and reinstall it in Claude Desktop once. From that version on, the bundle reads the live port and token from the vault at connect time, so it keeps working across a token rotation or a port change with no further re-export.
-
-### Claude Desktop hangs ~60s on Windows, then "Could not attach to MCP server"
-
-- **Symptom**: on Windows, the connection starts, the logs show the `initialize` request sent, then 60 seconds of silence and a timeout. Reproducible across restarts and across different MCP servers on the same machine.
-- **Cause**: a bug in the `mcp-remote` bridge on Windows, not in the plugin. The plugin answers an identical request in milliseconds over direct HTTP, and Claude Code is unaffected. Tracked upstream at [geelen/mcp-remote#296](https://github.com/geelen/mcp-remote/issues/296).
-- **Fix**: replace `mcp-remote` with the POST-only bridge in [`scripts/obsidian_mcp_bridge.py`](scripts/obsidian_mcp_bridge.py), confirmed working on Windows. See [docs/windows-post-only-bridge.md](docs/windows-post-only-bridge.md) for setup, and the Windows note in [Connecting a client](#claude-desktop).
-
-### Claude Desktop extension hangs ~60s on macOS with "Use Built-in Node.js for MCP" enabled
-
-- **Symptom**: the extension installs and shows as enabled, but every connection attempt sits silent for exactly 60 seconds, then Claude Desktop's logs show `MCP error -32001: Request timed out`. No response, not even the connector's own internal timeout error, ever reaches Claude Desktop first.
-- **Cause**: a bug in the connector, fixed in v1.0.1. The bundled shim started itself only when it was the process entry point, the usual `require.main === module` check. With **Use Built-in Node.js for MCP** on, Claude Desktop does not run `node server/index.js`: it loads the bundle through its own host script with `import()`, and under that loader the check is false. The process started and then sat idle, reading no request at all, which is why not even the connector's own timeout could answer. [korotovsky/slack-mcp-server#152](https://github.com/korotovsky/slack-mcp-server/issues/152) reports the same signature for an unrelated `.mcpb` extension, most likely the same guard. Reported as [#412](https://github.com/istefox/obsidian-mcp-connector/issues/412).
-- **Fix**: update the plugin to v1.0.1 or later, then re-export the `.mcpb` from Settings, **Access control**, the **.mcpb** button on that token's row, and reinstall it in Claude Desktop once. The setting can stay on.
-- **On 1.0.0 and earlier**: Claude Desktop, Settings, Extensions, disable **Use Built-in Node.js for MCP**, then fully quit (Cmd+Q) and reopen Claude Desktop. That spawns the connector as a normal child process on system Node.js, where the old check holds. The connector needs no `npx` or shell PATH resolution (fixed in v0.27.0), so any system Node.js install works.
-- **Note on diagnostics**: on the built-in-Node path Claude Desktop does not write the connector's own `stderr` to `mcp-server-Obsidian MCP Connector.log`, so its startup banner and per-request lines are missing there even when everything works. To collect them, run the shim directly (`node "$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.stefano-ferri.obsidian-mcp-connector/server/index.js"`) or turn the setting off for the duration of the test.
-
-### `tool/call` returns HTTP 401
-
-- The bearer token in your client config matches none of the vault's tokens, which is also what you see after that token was regenerated or revoked. Open the plugin settings, **Access control**, find the row for that client, click **Show** to reveal its current string and **Copy** to copy it. Update your client config and restart the client. If the row is gone, the token was revoked: add a new one and configure the client with it.
-
-### Native semantic search downloads slowly on first call
-
-- Expected. The first `search_vault_smart` call (when `provider="native"`, or `"auto"` without Smart Connections) downloads ~25 MB from HuggingFace. The model is cached in the browser Cache API; subsequent reloads are instant.
-- A non-fatal warning `Unable to determine content-length from response headers` may appear in DevTools console during the first download; `onnxruntime-web` recovers via an expandable buffer and search results are unaffected.
-
-### General logs
-
-Open the plugin settings, **Open Logs** under Resources, or look at Obsidian's developer console (`Cmd+Opt+I` / `Ctrl+Shift+I`).
+On the built-in-Node path Claude Desktop does not write the connector's own stderr to `mcp-server-Obsidian MCP Connector.log`, so the startup banner and per-request lines are missing there even when everything works. To collect them, run the extension's `server/index.js` directly, or turn the setting off for the test. General logs: Settings → **Open Logs**, or Obsidian's console (`Cmd+Opt+I` / `Ctrl+Shift+I`).
 
 ## Security
 
-### No binary shipped
+- **Loopback only.** The bind address is hardcoded to `127.0.0.1`, on the first free port in 27200-27205 unless you pin one. Bearer auth is required on every request, and a miss is a bare 401 that reveals nothing about which tokens exist.
+- **No binary.** Nothing prebuilt is downloaded or executed.
+- **Tokens are local.** Generated per install, stored in the vault's `data.json`, revealed only on demand in settings, up to 10 per vault.
+- **Vault access is Obsidian's.** Every read and write goes through `app.vault`, under Obsidian's own permission model. Concurrent writes go through `Vault.process()` plus a process-wide write mutex, so two MCP writes to one file cannot lose an update.
+- **Command execution is opt-in** and per vault.
 
-This plugin **does not ship a platform-specific binary**. The MCP server runs in-process inside Obsidian's Electron renderer. Removing the binary closes the supply-chain attack surface that comes with auto-downloading and executing a signed-but-pre-built executable from GitHub Releases.
+Report vulnerabilities through [SECURITY.md](SECURITY.md), never in a public issue.
 
-### Local-only HTTP
+## For developers
 
-The MCP server listens on `127.0.0.1:27200`. The bind address is hardcoded to loopback; no external network exposure. Bearer-token authentication is required on every request; the tokens are generated per install and can be added, regenerated and revoked from the plugin settings.
-
-### Bearer tokens
-
-- Generated locally, stored in the plugin's `data.json` (per-vault). One is minted on first plugin load; you can add up to 10, one per client. See [Per-client tokens](#per-client-tokens).
-- Visible in the plugin settings, **Access control**, **Show** on the token's row (hidden by default).
-- A presented token is compared against every configured token, and a miss is a bare 401 that says nothing about which tokens exist.
-- **Regenerate** replaces one token's secret and **Revoke** deletes it; either takes effect on the next request, with no transport restart and no effect on the other tokens. Update the affected client configs afterwards. Neither is recoverable.
-
-### Plugin runtime
-
-- All vault access goes through Obsidian's `app.vault` and `app.workspace` APIs, so Obsidian's permission model applies.
-- Command execution is opt-in with a per-vault allowlist; see [Command execution](#command-execution).
-
-### Reporting Security Issues
-
-Please report security vulnerabilities via our [security policy](SECURITY.md). Do not report security vulnerabilities in public issues.
-
-## Development
-
-This project uses a Bun monorepo with a feature-based architecture. For the full architecture contract see [`docs/project-architecture.md`](docs/project-architecture.md).
-
-### Workspace
+Bun monorepo, feature-based. Full contract in [`docs/project-architecture.md`](docs/project-architecture.md).
 
 ```
 packages/
-├── obsidian-plugin/   # The plugin: in-process MCP server, registered tools, settings UI, transport
-├── shared/            # Shared ArkType schemas and types
-└── test-site/         # SvelteKit harness (dev-only, not shipped)
+├── obsidian-plugin/   # plugin: MCP server, tools, transport, settings UI (Svelte)
+│   ├── src/features/  # each feature owns services/, components/, colocated *.test.ts
+│   └── scripts/       # connectorShim.js (the .mcpb shim), generators, bench
+├── shared/            # ArkType schemas and types shared with the shim
+└── test-site/         # SvelteKit harness, dev only, never shipped
 ```
-
-### Building
 
 ```bash
-bun install                    # Install workspace dependencies
-bun run check                  # Type-check every package
-bun run dev                    # Watch all packages
-bun run build                  # Production build
+bun install
+bun run check         # tsc --noEmit across packages (does NOT type-check .svelte)
+bun test              # 1700+ unit tests, colocated
+bun run format:check  # CI enforces this; the other gates pass without it
+bun run build         # production bundle
+bun run release       # build + zip + .mcpb
 ```
 
-The plugin's `main.js` is written at the package root (`packages/obsidian-plugin/main.js`); Obsidian expects that path. Do not move it.
+Full gate before calling anything done: `bun run check && bun test && bun run format:check`.
 
-### Requirements
+### Design invariants
 
-- [Bun](https://bun.sh/) latest (pinned via `mise.toml`)
-- TypeScript 5+
+These are the ones worth knowing before you change anything:
+
+- **The transport is stateless and POST-only.** `GET /mcp` returns 405 on purpose. No server-initiated stream exists, so `initialize` state is never available to a later request.
+- **`notifications/tools/list_changed` rides the caller's own POST response** with that call's `relatedRequestId`. Activation calls switch their response to SSE for it. There is no fan-out and no broadcast path.
+- **The registry is global truth; the token supplies a resolved `ToolScope`.** Credentials live in the `mcpTransport` slice, policy in `toolLoading.profiles[tokenId]`, joined by id. The registry never dereferences a token id. A missing policy entry resolves to today's behaviour rather than locking a client out.
+- **Precedence:** `userDisabled` > per-token allowlist > profile + promoted > always-active meta-tools.
+- **Settings are sliced,** and every write goes through `SettingsStore.updateSlice` under a process-wide mutex. `data.json` is shared by every feature, so an unserialized read-modify-write clobbers a neighbour. Returning the input unchanged means NO_CHANGE and skips the write.
+- **A polymorphic tool must not declare an `outputSchema`.** SDK clients reject every response lacking `structuredContent` once one is declared. This cost `get_vault_file` five releases.
+- **The `.mcpb` shim is a separate process against an already-distributed bundle.** Its `data.json` read contract stays backward-compatible, and it fails closed on an unknown token id. Falling back to a default credential would turn a revocation into a grant.
+
+### Adding a tool
+
+1. Write `src/features/mcp-tools/tools/myTool.ts` exporting a schema and a handler, plus `myTool.test.ts` beside it.
+2. Register it in `src/features/mcp-tools/index.ts` with `registry.register(myToolSchema, handler)`.
+3. Declare annotations in `toolAnnotations.ts`. Read-only tools that lie about it cost users a confirmation prompt they should not see.
+4. Decide whether it belongs in `CORE_SET` (`src/features/adaptive-tool-loading/constants.ts`). Most tools do not.
+
+### Working on the shim
+
+`packages/obsidian-plugin/scripts/connectorShim.js` is the real source. `src/features/mcp-client-config/assets/connectorShimSource.ts` is **generated** from it:
+
+```bash
+bun packages/obsidian-plugin/scripts/gen-shim-source.ts
+```
+
+Editing the shim without regenerating ships the old one, silently. The shim is zero-dependency CommonJS and must start under both loaders: `node server/index.js` and the host `import()` that Claude Desktop uses with built-in Node. That is [ADR-0013](docs/architecture/ADR-0013-mcpb-pure-node-shim.md), and getting it wrong was [#412](https://github.com/istefox/obsidian-mcp-connector/issues/412).
+
+### Where decisions live
+
+[`docs/architecture/`](docs/architecture/) holds the ADRs and is authoritative. The load-bearing ones: [0013](docs/architecture/ADR-0013-mcpb-pure-node-shim.md) the pure-Node `.mcpb` shim, [0014](docs/architecture/ADR-0014-per-client-tool-profiles.md) per-client tool profiles, [0015](docs/architecture/ADR-0015-tools-list-invariant-and-adaptive-loading.md) the `tools/list` invariant, [0010](docs/architecture/ADR-0010-split-registry-disable-states.md) split registry disable states, [0009](docs/architecture/ADR-0009-structured-tool-output.md) structured output. Per-issue specs are in [`docs/specs/`](docs/specs/).
+
+Svelte components sit outside `tsc --noEmit`, so UI changes need a real vault to verify. Community-plugin review lints `src/**` only and forbids `eslint-disable` on `obsidianmd/*` rules, which is why non-plugin code lives outside `src/`.
 
 ### Contributing
 
-**Before contributing, please read our [Contributing Guidelines](CONTRIBUTING.md) including our community standards and behavioral expectations.**
-
-1. Fork the repository.
-2. Create a feature branch from `main`.
-3. Make your changes; keep PRs scoped.
-4. Run tests:
-   ```bash
-   bun test
-   ```
-5. Submit a pull request.
-
-We welcome genuine contributions but maintain strict community standards. Be respectful and constructive in all interactions.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Fork, branch from `main`, keep PRs scoped, run the full gate, open the PR. Conventional Commits.
 
 ## Support
 
-- [Open an issue](https://github.com/istefox/obsidian-mcp-connector/issues) for bug reports and feature requests.
-- GitHub issues are the right channel for help with **MCP Connector**.
+[Open an issue](https://github.com/istefox/obsidian-mcp-connector/issues) for bugs and feature requests. Changelog: [`CHANGELOG.md`](CHANGELOG.md) and [Releases](https://github.com/istefox/obsidian-mcp-connector/releases).
 
-**Please read our [Contributing Guidelines](CONTRIBUTING.md) before posting.** We maintain high community standards and have zero tolerance for toxic behavior.
-
-## Changelog
-
-See [GitHub Releases](https://github.com/istefox/obsidian-mcp-connector/releases) and [`CHANGELOG.md`](CHANGELOG.md) for the detailed changelog.
-
-## Other MCP servers by istefox
-
-- **[istefox-dt-mcp](https://github.com/istefox/istefox-dt-mcp)**: MCP server for [DEVONthink 4](https://www.devontechnologies.com/apps/devonthink) (macOS). Six outcome-oriented tools, preview-then-apply with audit log and selective undo, optional local RAG (ChromaDB plus sentence-transformers), `.mcpb` bundle for Claude Desktop. Privacy-first, local-only. Listed on [Glama](https://glama.ai/mcp/servers/istefox/istefox-dt-mcp). MIT.
+**Also by istefox:** [istefox-dt-mcp](https://github.com/istefox/istefox-dt-mcp), an MCP server for [DEVONthink 4](https://www.devontechnologies.com/apps/devonthink) on macOS. Preview-then-apply with audit log and selective undo, optional local RAG, `.mcpb` bundle. Local-only, MIT.
 
 ## License
 
-[MIT License](LICENSE).
-
-## Footnotes
-
-[^2]: For more information about the Model Context Protocol, see [MCP Introduction](https://modelcontextprotocol.io/introduction).
+[MIT](LICENSE). For background on the protocol itself, see the [MCP introduction](https://modelcontextprotocol.io/introduction).
