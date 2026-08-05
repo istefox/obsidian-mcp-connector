@@ -588,3 +588,57 @@ banner is a synchronous `stderr` write and the deadline is a plain `setTimeout`;
 firing proves the shim never handled the request, so none of the three defects above was
 ever reached. Every one of them was a genuine bug found by looking in a reasonable place —
 none was the reporter's.
+
+## Addendum (post-1.0.0): the shim must start under both loaders — #412's actual cause
+
+**The 0.27.3 addendum above attributes the hang to a Claude Desktop `UtilityProcess` bug.
+That attribution is wrong**, and it is left in place because the reasoning that produced it
+is worth keeping visible: every step of it was sound and it still reached the wrong party.
+The sandbox works. The shim never started.
+
+**The mechanism, read out of Claude Desktop 1.24012.11 rather than inferred.** With
+"Use Built-in Node.js for MCP" on and no `compatibility.runtimes.node` in the manifest, the
+app takes the `built-in-node` branch (its own log line: *"appConfig.isUsingBuiltInNodeForMcp
+is true and compatibility matrix is not specified"*) and forks
+`.vite/build/mcp-runtime/nodeHost.js` into an Electron `utilityProcess` running Node 24.18.0.
+That host does two things that matter here:
+
+- it loads the bundle with `import(pathToFileURL(entryPoint))`, having first set
+  `process.argv = ["node", entryPoint, ...args]`;
+- it bridges the transport by copying a `Readable`'s methods onto `process.stdin` and
+  feeding it from a `MessagePort`, and by replacing `process.stdout.write` with a post back
+  to the parent.
+
+The shim ended with `if (require.main === module) main()`. Through the ESM loader
+`require.main` is `nodeHost.js`'s module, never ours, so `main()` was never called: the file
+was imported, nothing subscribed to stdin, and the client cancelled 60 s later. Under
+`node server/index.js` the same check is true, which is exactly why running the shim by hand
+always worked and made every earlier theory look plausible.
+
+**Verified in both directions before the fix was written**, with a harness replicating
+`nodeHost.js`'s stdin patching against the *installed* bundle: as shipped, the entry
+imported and then produced nothing; calling the exported `runMain()` by hand under the same
+patched stdin answered `initialize` correctly. So neither the stdin bridge nor the transport
+was ever implicated. End to end afterwards, setting left on: `initialize` answered in 153 ms
+where the same path had cancelled at 60 s four minutes earlier.
+
+**Decision.** `isEntryPoint(require.main, module, process.argv[1], __filename)` replaces the
+bare check: true when `require.main === module`, or when `argv[1]` resolves to `__filename`.
+Both arms stay — argv alone breaks a wrapper launch, `require.main` alone is this bug. The
+invariant it encodes: **the shim is a distributed artefact and must start under every loader
+a host may use, not only the one we test with.** Unit tests pin all four cases, including the
+built-in-Node one written as the regression it is.
+
+**Rejected: declaring `compatibility.runtimes.node` in the generated manifest.** It looks
+like the fix because it is what the app's log line names, but the decision tree shows it
+changes nothing: built-in Node 24.18.0 satisfies any honest range we could declare, so the
+launcher still picks `utilityProcess`. Routing to system Node would require a range that
+deliberately excludes the built-in version — a false statement about our requirements that
+breaks on the next Electron bump. `mcpbGenerator.ts` is unchanged.
+
+**Known limit, and it blunts the 0.27.3 logging work on this path.** Claude Desktop does not
+write the utility process's `stderr` to `mcp-server-<name>.log`. The banner and the
+per-request lines are therefore absent there even on a healthy connection, so asking a
+reporter on built-in Node for those lines returns nothing. The unconditional logging still
+earns its place on the system-Node path, and the README's troubleshooting entry now says
+where the lines do and do not appear.

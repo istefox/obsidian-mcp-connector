@@ -20,6 +20,7 @@ import {
   httpFetch,
   postJsonRpc,
   runMain,
+  isEntryPoint,
   retryWindowFor,
   postTimeoutFor,
   RETRY_WINDOW_MS,
@@ -2348,5 +2349,61 @@ describe("httpFetch", () => {
       }),
     ).rejects.toMatchObject({ name: "AbortError" });
     expect(hits).toBe(0);
+  });
+});
+
+describe("isEntryPoint — the shim must start under both loaders (#412)", () => {
+  // Same double-cast seam as the rest of this file: the shim is untyped
+  // CommonJS, so tsc infers `NodeJS.Module` here and a plain object literal
+  // cannot satisfy it structurally.
+  type ThisModule = Parameters<typeof isEntryPoint>[1];
+  const fakeModule = (id: string) => ({ id }) as unknown as ThisModule;
+
+  const SHIM = "/Applications/ext/server/index.js";
+
+  test("plain `node server/index.js`: require.main is this module", () => {
+    const self = fakeModule("shim");
+    expect(isEntryPoint(self, self, SHIM, SHIM)).toBe(true);
+  });
+
+  test("Claude Desktop's built-in Node: require.main is the host, argv still points here", () => {
+    // The regression. nodeHost.js imports the bundle through the ESM loader
+    // and sets process.argv = ["node", entryPoint, ...] just before, so
+    // require.main is the host's module and only argv identifies us.
+    expect(
+      isEntryPoint(fakeModule("nodeHost"), fakeModule("shim"), SHIM, SHIM),
+    ).toBe(true);
+  });
+
+  test("argv1 given relatively still resolves to the same file", () => {
+    const cwd = process.cwd();
+    expect(
+      isEntryPoint(
+        fakeModule("nodeHost"),
+        fakeModule("shim"),
+        "./index.js",
+        `${cwd}/index.js`,
+      ),
+    ).toBe(true);
+  });
+
+  test("required from a test: neither arm matches, so main() stays put", () => {
+    // What keeps importing this file from starting a real server — argv1 is
+    // the test runner's entry, not the shim.
+    expect(
+      isEntryPoint(
+        fakeModule("bun-test"),
+        fakeModule("shim"),
+        "/repo/scripts/connectorShim.test.ts",
+        SHIM,
+      ),
+    ).toBe(false);
+  });
+
+  test("no require.main and no argv1: no evidence, so no", () => {
+    expect(isEntryPoint(undefined, fakeModule("shim"), undefined, SHIM)).toBe(
+      false,
+    );
+    expect(isEntryPoint(undefined, fakeModule("shim"), "", SHIM)).toBe(false);
   });
 });

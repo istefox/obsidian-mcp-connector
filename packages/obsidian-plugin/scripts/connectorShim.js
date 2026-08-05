@@ -1070,6 +1070,42 @@ function main() {
   );
 }
 
+/**
+ * Is this file the process's entry point?
+ *
+ * `require.main === module` alone is not enough, and that gap is #412.
+ * With "Use Built-in Node.js for MCP" on, Claude Desktop does not run
+ * `node server/index.js`: it forks its own host script into an Electron
+ * utilityProcess and loads the bundle with
+ * `import(pathToFileURL(entryPoint))`. Through the ESM loader `require.main`
+ * is the *host's* module, never this one, so the guard was false and
+ * `main()` never ran — no banner, no stdin reader, no response, and the
+ * client cancelled sixty seconds later with nothing in its log to explain
+ * why. The host sets `process.argv = ["node", entryPoint, ...]` right
+ * before that import, so argv is the one signal that survives both loaders.
+ *
+ * Both arms stay: argv alone would break anyone launching the shim through
+ * a wrapper, and require.main alone is the bug above.
+ *
+ * @param {NodeJS.Module|undefined} mainModule `require.main`
+ * @param {NodeJS.Module} thisModule `module`
+ * @param {string|undefined} argv1 `process.argv[1]`
+ * @param {string} filename `__filename`
+ * @returns {boolean}
+ */
+function isEntryPoint(mainModule, thisModule, argv1, filename) {
+  if (mainModule !== undefined && mainModule === thisModule) {
+    return true;
+  }
+  if (typeof argv1 !== "string" || argv1 === "") {
+    return false;
+  }
+  if (typeof filename !== "string" || filename === "") {
+    return false;
+  }
+  return path.resolve(argv1) === path.resolve(filename);
+}
+
 module.exports = {
   splitLines,
   parseJsonRpcLine,
@@ -1085,6 +1121,7 @@ module.exports = {
   httpFetch,
   postJsonRpc,
   runMain,
+  isEntryPoint,
   remainingMs,
   retryWindowFor,
   postTimeoutFor,
@@ -1099,6 +1136,6 @@ module.exports = {
   LOCAL_ERROR_CODE,
 };
 
-if (require.main === module) {
+if (isEntryPoint(require.main, module, process.argv[1], __filename)) {
   main();
 }
