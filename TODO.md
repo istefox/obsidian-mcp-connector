@@ -1,11 +1,10 @@
 <!-- project-tasks: prefix=OMC lastId=10 -->
 # PROJECT TASKS
 
-Updated: 2026-08-05 · Open: 7 (P1: 0) · In progress: 0
+Updated: 2026-08-05 · Open: 6 (P1: 0) · In progress: 0
 
 ## Open Issues
 
-- [ ] `OMC-002` **P2** #412 has been waiting on a reply since 2026-08-04; the fix is now written and verified end to end, so the reply can carry the mechanism instead of a theory. Say that the shim's own log lines never reach `mcp-server-*.log` on the built-in-Node path <!-- src:session opened:2026-08-05 -->
 - [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test <!-- src:session opened:2026-08-05 -->
 - [ ] `OMC-005` **P2** CI has neither a Svelte compile check nor a `.mcpb` bundle check, and `bun run check` skips `.svelte` files entirely, so a UI regression reaches a real vault before anything fails <!-- src:session opened:2026-08-05 -->
 
@@ -34,6 +33,7 @@ _none_
 
 ## Done
 
+- [x] `OMC-002` #412 answered with the verified mechanism, the 153 ms end-to-end result and the missing-stderr caveat (2026-08-05)
 - [x] `OMC-001` `.mcpb` never started under "Use Built-in Node.js for MCP" — the cause was the shim's `require.main === module` guard, false under the host's `import()`, not the missing `compatibility` field this entry first blamed; `isEntryPoint()` replaces it (2026-08-05)
 - [x] `OMC-003` README and ADR-0013 rewritten off the verified mechanism; the 0.27.3 addendum's wrong attribution is now marked as wrong rather than deleted (2026-08-05)
 - [x] `OMC-006` Shim request deadline committed as `331f1e0`, gate green (2026-08-05)
