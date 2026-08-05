@@ -7,15 +7,24 @@
  * assets/connectorShimSource.ts and shipped inside the .mcpb package),
  * launched as its own separate process by Claude Desktop and executed by a
  * plain `node`, never loaded inside Obsidian's sandboxed window. require()
- * of Node built-ins, the global fetch(), and bare setTimeout/clearTimeout
- * are the correct APIs for that runtime — `window` and `requestUrl` do not
- * exist there. That is also why it lives under scripts/, not src/: it must
- * not be linted against Obsidian plugin (renderer) rules. See
+ * of Node built-ins and bare setTimeout/clearTimeout are the correct APIs
+ * for that runtime — `window` and `requestUrl` do not exist there. That is
+ * also why it lives under scripts/, not src/: it must not be linted against
+ * Obsidian plugin (renderer) rules. See
  * docs/architecture/ADR-0013-mcpb-pure-node-shim.md.
+ *
+ * The HTTP call goes through `node:http` rather than the global fetch():
+ * under Claude Desktop's UtilityProcess sandbox an AbortSignal does not
+ * reliably cancel an in-flight fetch(), so a stalled request stayed alive
+ * behind a watchdog that could only make the *promise* settle. Destroying
+ * an http.ClientRequest closes the socket for real. It also matches
+ * scripts/obsidian_mcp_bridge.py, which has always used urllib with a
+ * timeout, so the two proxies fail the same way. See issue #412.
  */
 
 const fs = require("fs");
 const net = require("net");
+const http = require("http");
 
 /**
  * @typedef {Object} JsonRpcMessage
@@ -49,6 +58,19 @@ const net = require("net");
  */
 
 /** @typedef {TransportOk | TransportErr} TransportResult */
+
+/**
+ * The seam callers inject a transport reader through. Deliberately wider
+ * than `typeof readTransport`: that one became async for #412, while every
+ * call site only ever `await`s the result, so a synchronous reader stays
+ * just as valid and the suite's plain `() => transport` fakes keep working.
+ *
+ * @typedef {(
+ *   dataPath: string,
+ *   options?: { readFile?: typeof fs.promises.readFile },
+ *   tokenId?: string,
+ * ) => TransportResult | Promise<TransportResult>} ReadTransportLike
+ */
 
 /**
  * @typedef {Object} PostJsonRpcResult
@@ -362,20 +384,27 @@ function resolveResponseMessages(contentType, rawBody, requestId, status) {
 }
 
 /**
+ * Asynchronous on purpose. `readFileSync` blocks the event loop, and a
+ * vault on iCloud Drive or any network mount can make a single read take
+ * seconds — during which no timer fires, so neither the per-request
+ * deadline nor the watchdog below can save the request and the shim goes
+ * completely silent until the client gives up (issue #412). Reading on the
+ * threadpool keeps the timers alive.
+ *
  * @param {string} dataPath
- * @param {{ readFileSync?: typeof fs.readFileSync }} [options]
+ * @param {{ readFile?: typeof fs.promises.readFile }} [options]
  * @param {string} [tokenId]
- * @returns {TransportResult}
+ * @returns {Promise<TransportResult>}
  */
-function readTransport(
+async function readTransport(
   dataPath,
-  { readFileSync = fs.readFileSync } = {},
+  { readFile = fs.promises.readFile } = {},
   tokenId,
 ) {
   /** @type {string} */
   let text;
   try {
-    text = /** @type {string} */ (readFileSync(dataPath, "utf8"));
+    text = /** @type {string} */ (await readFile(dataPath, "utf8"));
   } catch (err) {
     return { error: `could not read ${dataPath}: ${errorMessage(err)}` };
   }
@@ -404,22 +433,68 @@ function probePort(port, { createConnection = net.createConnection } = {}) {
 
 const RETRY_WINDOW_MS = 20000;
 const RETRY_INTERVAL_MS = 1000;
-// Sum with RETRY_WINDOW_MS must stay under the MCP client's 60000ms default request timeout.
 const DEFAULT_REQUEST_TIMEOUT_MS = 25000;
 // Grace period added on top of the AbortController-based timeout. Guards against
 // environments (observed: Claude Desktop's UtilityProcess sandbox on macOS) where
-// AbortController.abort() does not reliably cancel an in-flight fetch(). Sum of
-// RETRY_WINDOW_MS + DEFAULT_REQUEST_TIMEOUT_MS + WATCHDOG_GRACE_MS must stay under
-// the MCP client's 60000ms default request timeout.
+// AbortController.abort() does not reliably cancel an in-flight fetch().
 const WATCHDOG_GRACE_MS = 2000;
+
+/**
+ * Hard ceiling on one request, start to answer, whichever internal path it
+ * takes. Bounding the phases individually was not enough: the retry path
+ * runs the retry window and the POST twice, which sums to ~94s — past the
+ * MCP client's 60000ms default request timeout, so the client cancelled
+ * while the shim was still working and the failure left no trace anywhere
+ * (issue #412). Every phase below is clamped to what is left of this, and
+ * a guard timer answers if something outside those phases still stalls.
+ */
+const REQUEST_DEADLINE_MS = 45000;
+// Never let the retry window eat the budget the POST after it needs.
+const MIN_POST_BUDGET_MS = 3000;
+// A POST is always given at least this much, even at the very end of the
+// budget: a timeout of ~0ms would report a timeout it never really tried.
+const MIN_POST_TIMEOUT_MS = 1000;
+// Below this, re-resolving and posting a second time cannot finish, so the
+// error already in hand is reported instead of being replaced by a deadline.
+const MIN_RETRY_PASS_MS = 5000;
+// Above this, a phase is slow enough to be worth a line in the client log.
+const SLOW_PHASE_LOG_MS = 1000;
 // Echoed back in the MCP-Protocol-Version header when the initialize response
 // omits protocolVersion. Mirrors the Python bridge's PROTOCOL_VERSION_FALLBACK.
 const PROTOCOL_VERSION_FALLBACK = "2025-06-18";
 
 /**
+ * Milliseconds left before `deadline`, never negative.
+ * @param {number} deadline
+ * @returns {number}
+ */
+function remainingMs(deadline) {
+  return Math.max(0, deadline - Date.now());
+}
+
+/**
+ * @param {number} remaining
+ * @returns {number}
+ */
+function retryWindowFor(remaining) {
+  return Math.max(0, Math.min(RETRY_WINDOW_MS, remaining - MIN_POST_BUDGET_MS));
+}
+
+/**
+ * @param {number} remaining
+ * @returns {number}
+ */
+function postTimeoutFor(remaining) {
+  return Math.max(
+    MIN_POST_TIMEOUT_MS,
+    Math.min(DEFAULT_REQUEST_TIMEOUT_MS, remaining - WATCHDOG_GRACE_MS),
+  );
+}
+
+/**
  * @param {string} dataPath
  * @param {{
- *   readTransportImpl?: typeof readTransport,
+ *   readTransportImpl?: ReadTransportLike,
  *   probePortImpl?: typeof probePort,
  *   nowImpl?: () => number,
  *   sleepMsImpl?: (ms: number) => Promise<void>,
@@ -446,7 +521,7 @@ async function resolveTransportWithRetry(
   const deadline = nowImpl() + windowMs;
   let lastError = "timed out waiting for the MCP server";
   while (nowImpl() < deadline) {
-    const resolved = readTransportImpl(dataPath, {}, tokenId);
+    const resolved = await readTransportImpl(dataPath, {}, tokenId);
     // Returned verbatim, before onAttempt and before the sleep: the
     // suffix below is written for a transient timeout and is actively
     // wrong on a permanent failure, where it would contradict the
@@ -466,12 +541,121 @@ async function resolveTransportWithRetry(
 }
 
 /**
+ * An Error whose `name` makes {@link isAbortError} recognise it, so a
+ * cancelled request reports as a timeout rather than as a socket error.
+ * @param {string} message
+ * @returns {Error}
+ */
+function abortError(message) {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+/**
+ * The slice of the fetch() surface {@link postJsonRpc} actually consumes:
+ * `status`, `headers.get()` and `text()`. Nothing else is implemented,
+ * because nothing else is used — this is a transport, not a polyfill.
+ *
+ * @typedef {Object} MinimalResponse
+ * @property {number} status
+ * @property {{ get: (name: string) => string | null }} headers
+ * @property {() => Promise<string>} text
+ */
+
+/**
+ * @typedef {(url: string, init?: {
+ *   method?: string,
+ *   headers?: Record<string, string>,
+ *   body?: string,
+ *   signal?: AbortSignal,
+ * }) => Promise<MinimalResponse>} FetchLike
+ */
+
+/**
+ * `fetch`-shaped POST over `node:http`. Kept signature-compatible with the
+ * global fetch() so it can stay the default of the `fetchImpl` seam every
+ * test already injects through.
+ *
+ * Unlike fetch() under Claude Desktop's UtilityProcess sandbox, aborting
+ * here destroys the socket, so a stalled request stops consuming the
+ * request's remaining budget instead of merely losing its promise race.
+ *
+ * @param {string} url
+ * @param {{ method?: string, headers?: Record<string, string>, body?: string, signal?: AbortSignal }} [init]
+ * @returns {Promise<MinimalResponse>}
+ */
+function httpFetch(url, init = {}) {
+  return new Promise((resolve, reject) => {
+    /** @type {URL} */
+    let target;
+    try {
+      target = new URL(url);
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    const req = http.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: init.method || "GET",
+        headers: init.headers,
+      },
+      (res) => {
+        res.setEncoding("utf8");
+        let body = "";
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("error", reject);
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            headers: {
+              get: (name) => {
+                const value = res.headers[String(name).toLowerCase()];
+                if (value === undefined) return null;
+                return Array.isArray(value) ? value.join(", ") : value;
+              },
+            },
+            text: async () => body,
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    const { signal } = init;
+    if (signal) {
+      // Reject here rather than leaving it to the `error` event that
+      // destroy() may or may not emit. Node and Bun disagree on that —
+      // under Bun an aborted in-flight request emitted nothing at all and
+      // the promise stayed pending forever, which is the very failure mode
+      // this transport exists to remove. Cancelling is our decision, so we
+      // report it ourselves and destroy the socket to make it real.
+      const cancel = () => {
+        req.destroy();
+        reject(abortError("request aborted"));
+      };
+      if (signal.aborted) {
+        cancel();
+        return;
+      }
+      signal.addEventListener("abort", cancel, { once: true });
+    }
+    req.end(init.body);
+  });
+}
+
+/**
  * @param {string} url
  * @param {string} token
  * @param {JsonRpcMessage} message
  * @param {number} timeoutMs
  * @param {{
- *   fetchImpl?: typeof fetch,
+ *   fetchImpl?: FetchLike,
  *   protocolVersion?: string | null,
  *   watchdogGraceMs?: number,
  * }} [options]
@@ -483,7 +667,7 @@ async function postJsonRpc(
   message,
   timeoutMs,
   {
-    fetchImpl = fetch,
+    fetchImpl = httpFetch,
     protocolVersion,
     watchdogGraceMs = WATCHDOG_GRACE_MS,
   } = {},
@@ -523,18 +707,20 @@ async function postJsonRpc(
   // unhandled rejection.
   attempt.catch(() => {});
 
-  // Independent of controller.abort() actually cancelling the fetch: some
-  // environments (Claude Desktop's UtilityProcess sandbox, observed on macOS)
-  // do not honor AbortSignal on an in-flight fetch, leaving `attempt` pending
-  // forever. This plain timer guarantees postJsonRpc always settles.
+  // Redundant now that the default transport is node:http, where destroying
+  // the request really does cancel it — but `fetchImpl` is an injection seam
+  // and this is a distributed artefact, so the last line of defence stays.
+  // Guarantees postJsonRpc settles even if a fetchImpl ignores the signal.
   const watchdog = new Promise((_resolve, reject) => {
-    setTimeout(() => {
-      const err = new Error(
-        `watchdog: no response within ${timeoutMs + watchdogGraceMs}ms (AbortController may not be honored in this environment)`,
-      );
-      err.name = "AbortError";
-      reject(err);
-    }, timeoutMs + watchdogGraceMs);
+    setTimeout(
+      () =>
+        reject(
+          abortError(
+            `watchdog: no response within ${timeoutMs + watchdogGraceMs}ms (AbortController may not be honored in this environment)`,
+          ),
+        ),
+      timeoutMs + watchdogGraceMs,
+    );
   });
 
   return /** @type {Promise<PostJsonRpcResult>} */ (
@@ -546,13 +732,13 @@ async function postJsonRpc(
  * @param {{
  *   stdin?: NodeJS.ReadStream,
  *   writeChunk?: (s: string) => void,
- *   fetchImpl?: typeof fetch,
+ *   fetchImpl?: FetchLike,
  *   dataPath: string,
  *   log?: (msg: string) => void,
- *   debug?: boolean,
  *   requestTimeoutMs?: number,
+ *   requestDeadlineMs?: number,
  *   resolveTransportWithRetryImpl?: typeof resolveTransportWithRetry,
- *   readTransportImpl?: typeof readTransport,
+ *   readTransportImpl?: ReadTransportLike,
  *   tokenId?: string,
  * }} options
  * @returns {Promise<void>}
@@ -560,11 +746,17 @@ async function postJsonRpc(
 function runMain({
   stdin = process.stdin,
   writeChunk = (s) => process.stdout.write(s),
-  fetchImpl = fetch,
+  fetchImpl = httpFetch,
   dataPath,
+  // No `debug` flag any more. Everything worth logging is logged
+  // unconditionally: an installed .mcpb cannot set OBSIDIAN_MCP_DEBUG,
+  // because the generated manifest carries no `env` (`user_config?: never`
+  // in mcpbGenerator.ts), so a gated line is a line the only people who
+  // hit the bug can never produce. What is left is one line per request
+  // plus failures — never payloads, which the suite pins.
   log = (msg) => process.stderr.write(`obsidian-mcp-connector: ${msg}\n`),
-  debug = process.env.OBSIDIAN_MCP_DEBUG === "1",
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  requestDeadlineMs = REQUEST_DEADLINE_MS,
   resolveTransportWithRetryImpl = resolveTransportWithRetry,
   readTransportImpl = readTransport,
   tokenId,
@@ -580,137 +772,205 @@ function runMain({
    */
   async function handleRequest(message) {
     const id = message.id;
-    if (debug) log(`-> ${message.method} (id=${id})`);
-    // A client requesting progress sets params._meta.progressToken; while the
-    // transport is being re-resolved (server still booting), emit a
-    // notifications/progress per poll iteration so the client sees liveness.
-    const progressToken =
-      message.params && message.params._meta
-        ? message.params._meta.progressToken
-        : undefined;
-    let progressCount = 0;
-    const onAttempt = progressToken
-      ? () => {
-          progressCount += 1;
-          writeChunk(
-            JSON.stringify(
-              buildProgressNotification(progressToken, progressCount),
-            ) + "\n",
-          );
-        }
-      : undefined;
-    let transport = readTransportImpl(dataPath, {}, tokenId);
-    // A permanent failure is never escalated to the retry loop.
-    if (transport.error && !transport.fatal) {
-      transport = await resolveTransportWithRetryImpl(dataPath, {
-        onAttempt,
-        tokenId,
-      });
-    }
-    if (transport.error) {
-      // stderr as well as stdout, and unconditionally. A client that has
-      // already timed out this request discards the response below, so
-      // stdout alone means the failure leaves no trace anywhere — which
-      // is how #412 arrived with a log containing no reason. It is also
-      // the only channel an installed .mcpb has: `debug` is gated on
-      // OBSIDIAN_MCP_DEBUG and the generated manifest carries no `env`
-      // (`user_config?: never`), so that flag cannot be set there.
-      // Matches handleNotification below, which has always logged this.
-      log(`${message.method} (id=${id}) failed: ${transport.error}`);
-      writeChunk(
-        JSON.stringify(buildErrorResponse(id, transport.error)) + "\n",
+    const startedAt = Date.now();
+    const deadline = startedAt + requestDeadlineMs;
+    // Unconditional: this is the only proof the shim received anything at
+    // all, which is exactly what #412's log could not show.
+    log(`-> ${message.method} (id=${id})`);
+
+    // Write-once channel. Every exit below goes through it, so the guard
+    // timer can answer a stalled request without any risk of a second
+    // response for the same id arriving later if the slow path completes.
+    let answered = false;
+    /** @param {JsonRpcMessage[]} messages */
+    const answer = (messages) => {
+      if (answered) return;
+      answered = true;
+      writeChunk(messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
+    };
+    const guard = setTimeout(() => {
+      log(
+        `${message.method} (id=${id}) hit the ${requestDeadlineMs}ms deadline with no response`,
       );
-      return;
-    }
-    const url = `http://127.0.0.1:${transport.port}/mcp`;
-    /** @type {PostJsonRpcResult} */
-    let result;
+      answer([
+        buildErrorResponse(
+          id,
+          `no response within ${requestDeadlineMs}ms — is Obsidian open with the vault loaded?`,
+        ),
+      ]);
+    }, requestDeadlineMs);
+
+    // The caller's own timeout is a ceiling the budget may lower but never
+    // raise, so a test injecting a small requestTimeoutMs still gets it.
+    const postBudget = () =>
+      Math.min(requestTimeoutMs, postTimeoutFor(remainingMs(deadline)));
+
     try {
-      result = await postJsonRpc(
-        url,
-        transport.token,
-        message,
-        requestTimeoutMs,
-        { fetchImpl, protocolVersion: negotiatedProtocolVersion },
-      );
-    } catch (err) {
-      if (isAbortError(err)) {
-        writeChunk(
-          JSON.stringify(
-            buildErrorResponse(
-              id,
-              `request timed out after ${requestTimeoutMs}ms`,
-            ),
-          ) + "\n",
-        );
+      // A client requesting progress sets params._meta.progressToken; while the
+      // transport is being re-resolved (server still booting), emit a
+      // notifications/progress per poll iteration so the client sees liveness.
+      const progressToken =
+        message.params && message.params._meta
+          ? message.params._meta.progressToken
+          : undefined;
+      let progressCount = 0;
+      const onAttempt = progressToken
+        ? () => {
+            progressCount += 1;
+            writeChunk(
+              JSON.stringify(
+                buildProgressNotification(progressToken, progressCount),
+              ) + "\n",
+            );
+          }
+        : undefined;
+      const readStartedAt = Date.now();
+      let transport = await readTransportImpl(dataPath, {}, tokenId);
+      const readMs = Date.now() - readStartedAt;
+      // A vault on iCloud Drive or a network mount can make this read the
+      // whole story. Naming its cost turns that from a theory into a fact
+      // the next report carries by itself.
+      if (readMs > SLOW_PHASE_LOG_MS)
+        log(`reading ${dataPath} took ${readMs}ms`);
+      // A permanent failure is never escalated to the retry loop.
+      if (transport.error && !transport.fatal) {
+        transport = await resolveTransportWithRetryImpl(dataPath, {
+          onAttempt,
+          tokenId,
+          windowMs: retryWindowFor(remainingMs(deadline)),
+        });
+      }
+      if (transport.error) {
+        // stderr as well as stdout. A client that has already timed out
+        // this request discards the response below, so stdout alone means
+        // the failure leaves no trace anywhere — which is how #412 arrived
+        // with a log containing no reason. stderr is also the only channel
+        // an installed .mcpb has at all. Matches handleNotification below,
+        // which has always logged this.
+        log(`${message.method} (id=${id}) failed: ${transport.error}`);
+        answer([buildErrorResponse(id, transport.error)]);
         return;
       }
-      // Connection error: re-resolve once and retry once.
-      if (debug) log(`request failed, retrying once: ${errorMessage(err)}`);
-      const retried = await resolveTransportWithRetryImpl(dataPath, {
-        onAttempt,
-        tokenId,
-      });
-      if (retried.error) {
-        // The path a stale `mcpTransport.livePort` takes: the file reads
-        // fine, so the first resolution succeeds, and only the POST
-        // discovers nothing is listening. Same reasoning as above.
-        log(
-          `${message.method} (id=${id}) failed after re-resolving: ${retried.error}`,
-        );
-        writeChunk(
-          JSON.stringify(buildErrorResponse(id, retried.error)) + "\n",
-        );
-        return;
-      }
+      const url = `http://127.0.0.1:${transport.port}/mcp`;
+      /** @type {PostJsonRpcResult} */
+      let result;
+      let attemptTimeoutMs = postBudget();
       try {
         result = await postJsonRpc(
-          `http://127.0.0.1:${retried.port}/mcp`,
-          retried.token,
+          url,
+          transport.token,
           message,
-          requestTimeoutMs,
+          attemptTimeoutMs,
           { fetchImpl, protocolVersion: negotiatedProtocolVersion },
         );
-      } catch (err2) {
-        const message2 = isAbortError(err2)
-          ? `request timed out after ${requestTimeoutMs}ms`
-          : `request failed: ${errorMessage(err2)}`;
-        writeChunk(JSON.stringify(buildErrorResponse(id, message2)) + "\n");
-        return;
+      } catch (err) {
+        if (isAbortError(err)) {
+          answer([
+            buildErrorResponse(
+              id,
+              `request timed out after ${attemptTimeoutMs}ms`,
+            ),
+          ]);
+          return;
+        }
+        // Not enough of the budget left to re-resolve and post again: report
+        // the error already in hand rather than start a phase that can only
+        // end in the deadline, which would replace a named cause with a
+        // generic timeout.
+        if (remainingMs(deadline) < MIN_RETRY_PASS_MS) {
+          log(
+            `${message.method} (id=${id}) failed with too little time left to retry: ${errorMessage(err)}`,
+          );
+          answer([
+            buildErrorResponse(id, `request failed: ${errorMessage(err)}`),
+          ]);
+          return;
+        }
+        // Connection error: re-resolve once and retry once.
+        log(`request failed, retrying once: ${errorMessage(err)}`);
+        const retried = await resolveTransportWithRetryImpl(dataPath, {
+          onAttempt,
+          tokenId,
+          windowMs: retryWindowFor(remainingMs(deadline)),
+        });
+        if (retried.error) {
+          // The path a stale `mcpTransport.livePort` takes: the file reads
+          // fine, so the first resolution succeeds, and only the POST
+          // discovers nothing is listening. Same reasoning as above.
+          log(
+            `${message.method} (id=${id}) failed after re-resolving: ${retried.error}`,
+          );
+          answer([buildErrorResponse(id, retried.error)]);
+          return;
+        }
+        attemptTimeoutMs = postBudget();
+        try {
+          result = await postJsonRpc(
+            `http://127.0.0.1:${retried.port}/mcp`,
+            retried.token,
+            message,
+            attemptTimeoutMs,
+            { fetchImpl, protocolVersion: negotiatedProtocolVersion },
+          );
+        } catch (err2) {
+          const message2 = isAbortError(err2)
+            ? `request timed out after ${attemptTimeoutMs}ms`
+            : `request failed: ${errorMessage(err2)}`;
+          log(`${message.method} (id=${id}) failed: ${message2}`);
+          answer([buildErrorResponse(id, message2)]);
+          return;
+        }
       }
-    }
-    const messages = resolveResponseMessages(
-      result.contentType,
-      result.rawBody,
-      id,
-      result.status,
-    );
-    // Record the negotiated protocol version from a successful initialize so
-    // every later request can echo it in the MCP-Protocol-Version header. Set
-    // before writeChunk so the variable is ready before any later request runs.
-    if (message.method === "initialize") {
-      const responseMessage = messages.find(
-        (m) =>
-          m && Object.prototype.hasOwnProperty.call(m, "result") && m.id === id,
+      const messages = resolveResponseMessages(
+        result.contentType,
+        result.rawBody,
+        id,
+        result.status,
       );
-      if (responseMessage) {
-        negotiatedProtocolVersion =
-          (responseMessage.result && responseMessage.result.protocolVersion) ||
-          PROTOCOL_VERSION_FALLBACK;
+      // Record the negotiated protocol version from a successful initialize so
+      // every later request can echo it in the MCP-Protocol-Version header. Set
+      // before the write so the variable is ready before any later request runs.
+      if (message.method === "initialize") {
+        const responseMessage = messages.find(
+          (m) =>
+            m &&
+            Object.prototype.hasOwnProperty.call(m, "result") &&
+            m.id === id,
+        );
+        if (responseMessage) {
+          negotiatedProtocolVersion =
+            (responseMessage.result &&
+              responseMessage.result.protocolVersion) ||
+            PROTOCOL_VERSION_FALLBACK;
+        }
       }
+      answer(messages);
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > SLOW_PHASE_LOG_MS) {
+        log(`<- ${message.method} (id=${id}) answered in ${elapsed}ms`);
+      }
+    } finally {
+      clearTimeout(guard);
     }
-    writeChunk(messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
   }
 
   /**
    * @param {JsonRpcMessage} message
    */
   async function handleNotification(message) {
-    let transport = readTransportImpl(dataPath, {}, tokenId);
+    // No guard timer and no deadline error: a notification owes no
+    // response, so there is nothing to answer with. It gets the same budget
+    // only so a stuck one cannot outlive its usefulness holding a slot in
+    // `pending`.
+    const deadline = Date.now() + requestDeadlineMs;
+    let transport = await readTransportImpl(dataPath, {}, tokenId);
     // Same rule as the request path: a revoked token must not cost the
     // full retry window on every notification too.
     if (transport.error && !transport.fatal)
-      transport = await resolveTransportWithRetryImpl(dataPath, { tokenId });
+      transport = await resolveTransportWithRetryImpl(dataPath, {
+        tokenId,
+        windowMs: retryWindowFor(remainingMs(deadline)),
+      });
     if (transport.error) {
       log(`dropped notification: ${transport.error}`);
       return;
@@ -720,7 +980,7 @@ function runMain({
         `http://127.0.0.1:${transport.port}/mcp`,
         transport.token,
         message,
-        requestTimeoutMs,
+        Math.min(requestTimeoutMs, postTimeoutFor(remainingMs(deadline))),
         {
           fetchImpl,
           protocolVersion: negotiatedProtocolVersion,
@@ -797,8 +1057,13 @@ function main() {
   // looking somewhere that no longer exists" is a real failure mode, and
   // without this line a reporter has to reconstruct the path by hand
   // from the vault root and the config dir before anyone can check it.
+  //
+  // `node` too: Claude Desktop logs "Using built-in Node.js", which names
+  // neither the version nor the binary, and #412 turned on whether the
+  // shim behaved differently there than under the system node a reporter
+  // can run by hand. This settles that question in the client's own log.
   process.stderr.write(
-    `obsidian-mcp-connector: started, vault=${vaultPath}, data=${shimDataPath}\n`,
+    `obsidian-mcp-connector: started, vault=${vaultPath}, data=${shimDataPath}, node=${process.version}, exec=${process.execPath}, pid=${process.pid}\n`,
   );
   runMain({ dataPath: shimDataPath, tokenId: shimTokenId ?? undefined }).then(
     () => process.exit(0),
@@ -817,11 +1082,19 @@ module.exports = {
   readTransport,
   probePort,
   resolveTransportWithRetry,
+  httpFetch,
   postJsonRpc,
   runMain,
+  remainingMs,
+  retryWindowFor,
+  postTimeoutFor,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   WATCHDOG_GRACE_MS,
+  REQUEST_DEADLINE_MS,
+  MIN_POST_BUDGET_MS,
+  MIN_POST_TIMEOUT_MS,
+  MIN_RETRY_PASS_MS,
   PROTOCOL_VERSION_FALLBACK,
   LOCAL_ERROR_CODE,
 };

@@ -17,11 +17,16 @@ import {
   readTransport,
   probePort,
   resolveTransportWithRetry,
+  httpFetch,
   postJsonRpc,
   runMain,
+  retryWindowFor,
+  postTimeoutFor,
   RETRY_WINDOW_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   WATCHDOG_GRACE_MS,
+  MIN_POST_BUDGET_MS,
+  MIN_POST_TIMEOUT_MS,
   PROTOCOL_VERSION_FALLBACK,
   LOCAL_ERROR_CODE,
 } from "./connectorShim.js";
@@ -539,26 +544,29 @@ describe("readTransport", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test("valid file", () => {
+  test("valid file", async () => {
     const dataPath = path.join(dir, "data.json");
     fs.writeFileSync(
       dataPath,
       JSON.stringify({ mcpTransport: { livePort: 27200, bearerToken: "tok" } }),
     );
-    expect(readTransport(dataPath)).toEqual({ port: 27200, token: "tok" });
+    expect(await readTransport(dataPath)).toEqual({
+      port: 27200,
+      token: "tok",
+    });
   });
 
-  test("missing file", () => {
+  test("missing file", async () => {
     const dataPath = path.join(dir, "nonexistent", "data.json");
-    const result = readTransport(dataPath);
+    const result = await readTransport(dataPath);
     expect(typeof result.error).toBe("string");
     expect(result.error).toContain(dataPath);
   });
 
-  test("malformed JSON on disk", () => {
+  test("malformed JSON on disk", async () => {
     const dataPath = path.join(dir, "data.json");
     fs.writeFileSync(dataPath, "not json");
-    const result = readTransport(dataPath);
+    const result = await readTransport(dataPath);
     expect(typeof result.error).toBe("string");
   });
 });
@@ -595,28 +603,28 @@ describe("readTransport(dataPath, options, tokenId) — per-token .mcpb bundles 
     );
   }
 
-  test("no tokenId argument, tokens[] on disk: still returns mcpTransport.bearerToken — old-bundle regression guard", () => {
+  test("no tokenId argument, tokens[] on disk: still returns mcpTransport.bearerToken — old-bundle regression guard", async () => {
     const dataPath = path.join(dir, "data.json");
     writeTokensFixture(dataPath);
-    expect(readTransport(dataPath)).toEqual({
+    expect(await readTransport(dataPath)).toEqual({
       port: 27200,
       token: "mirror-tok",
     });
   });
 
-  test("tokenId threaded through and present in tokens[]: returns that token's secret, not the mirror", () => {
+  test("tokenId threaded through and present in tokens[]: returns that token's secret, not the mirror", async () => {
     const dataPath = path.join(dir, "data.json");
     writeTokensFixture(dataPath);
-    expect(readTransport(dataPath, {}, "tok-2")).toEqual({
+    expect(await readTransport(dataPath, {}, "tok-2")).toEqual({
       port: 27200,
       token: "second-tok",
     });
   });
 
-  test("tokenId threaded through and absent from tokens[]: hard error mentioning re-export, never a fallback to bearerToken", () => {
+  test("tokenId threaded through and absent from tokens[]: hard error mentioning re-export, never a fallback to bearerToken", async () => {
     const dataPath = path.join(dir, "data.json");
     writeTokensFixture(dataPath);
-    const result = readTransport(dataPath, {}, "ghost-id");
+    const result = await readTransport(dataPath, {}, "ghost-id");
     expect(typeof result.error).toBe("string");
     expect(result.error).toContain("re-export");
     expect(result.token).toBeUndefined();
@@ -1140,10 +1148,11 @@ describe("runMain", () => {
    * logged the identical class of failure to stderr unconditionally.
    *
    * stderr is the only channel that survives a cancelled request, and
-   * for an installed .mcpb it is the ONLY channel a user can read:
-   * `debug` is gated on OBSIDIAN_MCP_DEBUG, and the generated manifest
-   * carries no `env` (`user_config?: never` in mcpbGenerator.ts), so
-   * that flag cannot be set for an installed extension.
+   * for an installed .mcpb it is the ONLY channel a user can read at all.
+   * #412 removed the `debug` flag that used to gate part of this: the
+   * generated manifest carries no `env` (`user_config?: never` in
+   * mcpbGenerator.ts), so it could never be set for an installed
+   * extension anyway.
    */
   test("a resolution failure on the request path is logged to stderr", async () => {
     const stdin = fakeStdin();
@@ -1157,9 +1166,6 @@ describe("runMain", () => {
         makeResponse(200, "application/json", "{}"),
       ),
       dataPath: "/fake/data.json",
-      // debug OFF: this must not depend on a flag an installed bundle
-      // has no way to set.
-      debug: false,
       readTransportImpl: () => ({ error: "could not read /fake/data.json" }),
       resolveTransportWithRetryImpl: () => ({
         error:
@@ -1195,7 +1201,6 @@ describe("runMain", () => {
         makeResponse(200, "application/json", "{}"),
       ),
       dataPath: "/fake/data.json",
-      debug: false,
       readTransportImpl: () => ({ error: "boom" }),
       resolveTransportWithRetryImpl: () => ({ error: "boom" }),
     });
@@ -1228,7 +1233,6 @@ describe("runMain", () => {
         makeResponse(200, "application/json", "{}"),
       ),
       dataPath: "/fake/data.json",
-      debug: false,
       tokenId: "tok-2",
       readTransportImpl: () => ({ error: FATAL, fatal: true }),
     });
@@ -1580,52 +1584,53 @@ describe("runMain", () => {
     expect(writeChunk.mock.calls.length).toBe(1);
   });
 
-  test("OBSIDIAN_MCP_DEBUG / debug option gates per-request tracing, never logs payloads", async () => {
+  /**
+   * Was "OBSIDIAN_MCP_DEBUG / debug option gates per-request tracing" until
+   * #412 removed the flag: an installed .mcpb has no way to set it, so
+   * gating the one line that proves the shim received a request made that
+   * proof unobtainable for the only people who needed it. Tracing is now
+   * unconditional. The payload half of the guarantee is unchanged and is
+   * the half that actually protects the user.
+   */
+  test("per-request tracing is unconditional and never logs payloads", async () => {
     const marker = "PAYLOAD_MARKER_XYZ";
-    async function runWithDebug(debug: boolean) {
-      const stdin = fakeStdin();
-      const writeChunk = mock((_s: string) => {});
-      const log = mock((_msg: string) => {});
-      const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
-        makeResponse(
-          200,
-          "application/json",
-          JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
-        ),
-      );
-      const promise = invokeRunMain({
-        stdin,
-        writeChunk,
-        log,
-        fetchImpl,
-        dataPath: "/fake/data.json",
-        readTransportImpl: () => successTransport,
-        debug,
-      });
-      stdin.emit(
-        "data",
-        Buffer.from(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: { marker },
-          }) + "\n",
-        ),
-      );
-      stdin.emit("end");
-      await promise;
-      return { writeChunk, log };
-    }
-
-    const withoutDebug = await runWithDebug(false);
-    const withDebug = await runWithDebug(true);
-
-    expect(withDebug.log.mock.calls.length).toBeGreaterThan(
-      withoutDebug.log.mock.calls.length,
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) =>
+      makeResponse(
+        200,
+        "application/json",
+        JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
+      ),
     );
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl,
+      dataPath: "/fake/data.json",
+      readTransportImpl: () => successTransport,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { marker },
+        }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
 
-    for (const { writeChunk, log } of [withoutDebug, withDebug]) {
+    expect(
+      log.mock.calls.filter((c) => String(c[0]).includes("-> tools/call")),
+    ).toHaveLength(1);
+
+    {
       for (const call of [...writeChunk.mock.calls, ...log.mock.calls]) {
         expect(String(call[0])).not.toContain(marker);
       }
@@ -1725,49 +1730,48 @@ describe("runMain", () => {
     expect(log).toHaveBeenCalled();
   });
 
-  test("debug logs the first-attempt failure before retrying; quiet mode does not", async () => {
-    async function run(debug: boolean) {
-      const stdin = fakeStdin();
-      const writeChunk = mock((_s: string) => {});
-      const log = mock((_msg: string) => {});
-      let callCount = 0;
-      const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) => {
-        callCount++;
-        if (callCount === 1) throw connectionRefusedError();
-        return makeResponse(
-          200,
-          "application/json",
-          JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
-        );
-      });
-      const resolveTransportWithRetryImpl = mock(async () => successTransport);
-      const promise = invokeRunMain({
-        stdin,
-        writeChunk,
-        log,
-        fetchImpl,
-        dataPath: "/fake/data.json",
-        readTransportImpl: () => successTransport,
-        resolveTransportWithRetryImpl,
-        debug,
-      });
-      stdin.emit(
-        "data",
-        Buffer.from(
-          JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) +
-            "\n",
-        ),
+  /**
+   * Was "debug logs the first-attempt failure before retrying; quiet mode
+   * does not" until #412. The flag it gated on could not be set from an
+   * installed .mcpb (no `env` in the generated manifest), so the line was
+   * unreachable for exactly the people hitting the bug. It is now
+   * unconditional, and this pins that it stays so.
+   */
+  test("the first-attempt failure is logged before retrying, with no flag to set", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    let callCount = 0;
+    const fetchImpl = mock(async (_url: string, _init: FakeFetchInit) => {
+      callCount++;
+      if (callCount === 1) throw connectionRefusedError();
+      return makeResponse(
+        200,
+        "application/json",
+        JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
       );
-      stdin.emit("end");
-      await promise;
-      return log;
-    }
-    const debugLog = await run(true);
-    const quietLog = await run(false);
-    const retries = (l: typeof debugLog) =>
-      l.mock.calls.filter((c) => String(c[0]).includes("retrying once"));
-    expect(retries(debugLog)).toHaveLength(1);
-    expect(retries(quietLog)).toHaveLength(0);
+    });
+    const resolveTransportWithRetryImpl = mock(async () => successTransport);
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      fetchImpl,
+      dataPath: "/fake/data.json",
+      readTransportImpl: () => successTransport,
+      resolveTransportWithRetryImpl,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+    expect(
+      log.mock.calls.filter((c) => String(c[0]).includes("retrying once")),
+    ).toHaveLength(1);
   });
 
   // ── MCP-Protocol-Version echo (items 1 & 4) ────────────────────────────────
@@ -1954,5 +1958,395 @@ describe("runMain", () => {
     );
     // The real response is still delivered.
     expect(written.some((s) => s.includes('"result"'))).toBe(true);
+  });
+});
+
+// ── Per-request deadline (issue #412) ────────────────────────────────────────
+
+/**
+ * Bounding each phase separately was not enough. On the retry path
+ * `handleRequest` ran the retry window and the POST twice — 20s + 27s +
+ * 20s + 27s ≈ 94s — while the file asserted in a comment that the sum
+ * stayed under the MCP client's 60000ms default request timeout. It did
+ * not, so the client cancelled while the shim was still working and the
+ * failure left no trace on any channel. That is #412's log exactly:
+ * initialize, sixty seconds of nothing, notifications/cancelled.
+ */
+describe("phase budgets", () => {
+  test("retryWindowFor never spends what the POST after it needs", () => {
+    // Plenty of budget: the normal window, unchanged.
+    expect(retryWindowFor(60_000)).toBe(RETRY_WINDOW_MS);
+    // Tight budget: reserves MIN_POST_BUDGET_MS for the POST.
+    expect(retryWindowFor(5_000)).toBe(5_000 - MIN_POST_BUDGET_MS);
+    // Nothing left over: no window at all rather than a negative one.
+    expect(retryWindowFor(MIN_POST_BUDGET_MS)).toBe(0);
+    expect(retryWindowFor(0)).toBe(0);
+  });
+
+  test("postTimeoutFor clamps down but never below a usable floor", () => {
+    expect(postTimeoutFor(60_000)).toBe(DEFAULT_REQUEST_TIMEOUT_MS);
+    expect(postTimeoutFor(10_000)).toBe(10_000 - WATCHDOG_GRACE_MS);
+    // A ~0ms timeout would report a timeout on a request it never tried.
+    expect(postTimeoutFor(0)).toBe(MIN_POST_TIMEOUT_MS);
+    expect(postTimeoutFor(500)).toBe(MIN_POST_TIMEOUT_MS);
+  });
+});
+
+describe("runMain — per-request deadline", () => {
+  function fakeStdin() {
+    const emitter = new EventEmitter();
+    const rawEmit = emitter.emit.bind(emitter);
+    let decoder: StringDecoder | null = null;
+    (
+      emitter as EventEmitter & { setEncoding(enc: BufferEncoding): unknown }
+    ).setEncoding = (enc: BufferEncoding) => {
+      decoder = new StringDecoder(enc);
+      return emitter;
+    };
+    emitter.emit = ((event: string | symbol, ...args: unknown[]) => {
+      if (event === "data" && decoder && Buffer.isBuffer(args[0])) {
+        return rawEmit("data", decoder.write(args[0]));
+      }
+      return rawEmit(event as string, ...args);
+    }) as typeof emitter.emit;
+    return emitter;
+  }
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * The whole point of the guard: an answer arrives even when the work
+   * behind it does not. Here the transport read alone outlives the
+   * deadline, which is the shape a vault on iCloud Drive produces.
+   */
+  test("answers within the deadline even when every phase overruns it", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const log = mock((_msg: string) => {});
+    const startedAt = Date.now();
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log,
+      dataPath: "/fake/data.json",
+      requestDeadlineMs: 120,
+      // Outlives the deadline by a wide margin, and resolves rather than
+      // hanging so the run can still finish and be asserted on.
+      readTransportImpl: async () => {
+        await sleep(400);
+        return { port: 27200, token: "tok" };
+      },
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(
+          200,
+          "application/json",
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } }),
+        ),
+      ),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n",
+      ),
+    );
+
+    // Long enough for the guard to fire, far short of the slow read.
+    await sleep(200);
+    expect(writeChunk).toHaveBeenCalledTimes(1);
+    expect(Date.now() - startedAt).toBeLessThan(400);
+    const answer = JSON.parse(writeChunk.mock.calls[0][0] as string);
+    expect(answer.id).toBe(1);
+    expect(answer.error.code).toBe(LOCAL_ERROR_CODE);
+    expect(answer.error.message).toContain("120ms");
+    // stderr too: a client that already gave up discards the response, so
+    // stdout alone would leave the failure with no trace anywhere.
+    expect(
+      log.mock.calls.filter((c) => String(c[0]).includes("deadline")),
+    ).toHaveLength(1);
+
+    stdin.emit("end");
+    await promise;
+  });
+
+  /**
+   * Write-once, and this is what makes the guard safe to have at all: the
+   * slow path below completes normally after the deadline has already been
+   * answered, and must not put a second response for the same id on stdout.
+   */
+  test("a late-completing request never answers twice", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log: mock((_msg: string) => {}),
+      dataPath: "/fake/data.json",
+      requestDeadlineMs: 60,
+      readTransportImpl: async () => {
+        await sleep(150);
+        return { port: 27200, token: "tok" };
+      },
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(
+          200,
+          "application/json",
+          JSON.stringify({ jsonrpc: "2.0", id: 7, result: { ok: true } }),
+        ),
+      ),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    expect(writeChunk).toHaveBeenCalledTimes(1);
+    const answer = JSON.parse(writeChunk.mock.calls[0][0] as string);
+    expect(answer.error).toBeDefined();
+    expect(answer.result).toBeUndefined();
+  });
+
+  /**
+   * A retry window is a promise to keep polling for that long. Entered near
+   * the end of the budget it cannot keep that promise, so it must be told
+   * how long it really has instead of starting its full 20s.
+   */
+  test("the retry window is clamped to what is left of the budget", async () => {
+    const stdin = fakeStdin();
+    const seenWindows: unknown[] = [];
+    const resolveTransportWithRetryImpl = mock(
+      async (_p: string, options: { windowMs?: number }) => {
+        seenWindows.push(options.windowMs);
+        return { port: 27200, token: "tok" };
+      },
+    );
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk: mock((_s: string) => {}),
+      log: mock((_msg: string) => {}),
+      dataPath: "/fake/data.json",
+      requestDeadlineMs: 5_000,
+      readTransportImpl: () => ({ error: "not ready yet" }),
+      resolveTransportWithRetryImpl,
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) =>
+        makeResponse(
+          200,
+          "application/json",
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+        ),
+      ),
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    expect(seenWindows).toHaveLength(1);
+    const windowMs = seenWindows[0] as number;
+    expect(windowMs).toBeLessThanOrEqual(5_000 - MIN_POST_BUDGET_MS);
+    expect(windowMs).toBeGreaterThan(0);
+    expect(windowMs).toBeLessThan(RETRY_WINDOW_MS);
+  });
+
+  /**
+   * With almost none of the budget left, re-resolving and posting a second
+   * time can only end in the deadline — which would replace a named cause
+   * ("connection refused") with a generic timeout. Report what is known.
+   */
+  test("skips the second pass when the budget cannot cover it", async () => {
+    const stdin = fakeStdin();
+    const writeChunk = mock((_s: string) => {});
+    const resolveTransportWithRetryImpl = mock(async () => ({
+      port: 27200,
+      token: "tok",
+    }));
+    const promise = invokeRunMain({
+      stdin,
+      writeChunk,
+      log: mock((_msg: string) => {}),
+      dataPath: "/fake/data.json",
+      // Below MIN_RETRY_PASS_MS from the very first millisecond.
+      requestDeadlineMs: 1_000,
+      readTransportImpl: () => ({ port: 27200, token: "tok" }),
+      fetchImpl: mock(async (_url: string, _init: FakeFetchInit) => {
+        throw connectionRefusedError();
+      }),
+      resolveTransportWithRetryImpl,
+    });
+    stdin.emit(
+      "data",
+      Buffer.from(
+        JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n",
+      ),
+    );
+    stdin.emit("end");
+    await promise;
+
+    expect(resolveTransportWithRetryImpl).toHaveBeenCalledTimes(0);
+    const answer = JSON.parse(writeChunk.mock.calls[0][0] as string);
+    expect(answer.error.message).toContain("fetch failed");
+  });
+});
+
+// ── httpFetch: the node:http transport (issue #412) ──────────────────────────
+
+/**
+ * Exercised against a real server on a real socket. The reason this
+ * replaced the global fetch() is environmental — under Claude Desktop's
+ * UtilityProcess sandbox an AbortSignal did not cancel an in-flight
+ * fetch() — and a fake would assert nothing about that.
+ */
+describe("httpFetch", () => {
+  let server: import("http").Server;
+  let port: number;
+  /** Set per test to decide how the next request is answered. */
+  let respond: (
+    req: import("http").IncomingMessage,
+    res: import("http").ServerResponse,
+  ) => void;
+
+  beforeEach(async () => {
+    const http = await import("http");
+    respond = (_req, res) => res.end();
+    server = http.createServer((req, res) => respond(req, res));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", () => resolve()),
+    );
+    const address = server.address();
+    port = typeof address === "object" && address ? address.port : 0;
+  });
+
+  afterEach(async () => {
+    // The abort test deliberately leaves a request the server never
+    // answered, and close() alone waits for it. Cast because the @types
+    // in use predate the method; the optional call keeps it safe if the
+    // runtime predates it too.
+    (server as { closeAllConnections?: () => void }).closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test("posts a body and reads back status, content-type and text", async () => {
+    let seenBody = "";
+    let seenAuth: string | undefined;
+    respond = (req, res) => {
+      req.setEncoding("utf8");
+      req.on("data", (c: string) => {
+        seenBody += c;
+      });
+      req.on("end", () => {
+        seenAuth = req.headers.authorization;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end('{"jsonrpc":"2.0","id":1,"result":{}}');
+      });
+    };
+
+    const res = await httpFetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer tok",
+      },
+      body: '{"id":1}',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.text()).toBe('{"jsonrpc":"2.0","id":1,"result":{}}');
+    expect(seenBody).toBe('{"id":1}');
+    expect(seenAuth).toBe("Bearer tok");
+  });
+
+  /**
+   * An activation call answers with SSE so a tools/list_changed can ride
+   * the same response. The body must arrive whole; parseSse handles it
+   * afterwards.
+   */
+  test("reads a text/event-stream body to completion", async () => {
+    respond = (_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write('event: message\ndata: {"jsonrpc":"2.0","id":1}\n\n');
+      res.end();
+    };
+
+    const res = await httpFetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      body: "{}",
+    });
+
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(parseSse(await res.text())).toEqual([{ jsonrpc: "2.0", id: 1 }]);
+  });
+
+  test("reports a non-2xx status rather than throwing", async () => {
+    respond = (_req, res) => {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end('{"error":"nope"}');
+    };
+
+    const res = await httpFetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test("a header the response does not carry reads as null", async () => {
+    respond = (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    };
+    const res = await httpFetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(res.headers.get("x-not-sent")).toBeNull();
+  });
+
+  /**
+   * The defect this whole transport swap exists for: aborting must really
+   * end the request, not merely stop waiting on it. Rejecting as an
+   * AbortError is what makes the caller report a timeout instead of a
+   * socket error.
+   */
+  test("aborting a stalled request rejects as an AbortError", async () => {
+    respond = () => {
+      /* never answers */
+    };
+    const controller = new AbortController();
+    const pending = httpFetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      body: "{}",
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 30);
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("an already-aborted signal never reaches the network", async () => {
+    let hits = 0;
+    respond = (_req, res) => {
+      hits += 1;
+      res.end("ok");
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      httpFetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        body: "{}",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(hits).toBe(0);
   });
 });

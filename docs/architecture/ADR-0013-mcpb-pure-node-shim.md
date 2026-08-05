@@ -48,10 +48,10 @@ Python bridge already has, translated to JavaScript.
 
 ### Hard constraints (from SPEC.md, non-negotiable)
 
-- Node stdlib only in the shipped shim (`node:fs`, `node:net`, global
-  `fetch`). No dependencies, no build step for the shim's own execution.
-  It runs verbatim under Claude Desktop's bundled Node (≥18; Claude Desktop
-  ships v22).
+- Node stdlib only in the shipped shim (`node:fs`, `node:net`, `node:http`;
+  the global `fetch` until the #412 addendum below). No dependencies,
+  no build step for the shim's own execution. It runs verbatim under Claude
+  Desktop's bundled Node (≥18; Claude Desktop ships v22).
 - No TypeScript syntax in the shipped shim. It is executed directly by
   `node`, not transpiled at spawn time.
 - `.mcpb` manifest structure (`mcp_config: node ${__dirname}/server/index.js`,
@@ -61,6 +61,11 @@ Python bridge already has, translated to JavaScript.
   stay-alive semantics, stderr lifecycle/error logging
   (`obsidian-mcp-connector:` prefix, `OBSIDIAN_MCP_DEBUG=1` for verbose,
   never log payloads).
+  **Superseded numbers**: the window and the timeout became 20 s / 25 s in
+  the 0.27.1 addendum and gained a 45 s whole-request deadline in the #412
+  one; `-32000` became `-33000` in 1.0.0 (#417); `OBSIDIAN_MCP_DEBUG` is
+  gone (#412). "Never log payloads" is the only part of that last clause
+  still standing, and the suite pins it.
 
 ## Decision
 
@@ -512,3 +517,74 @@ relies on its own timer (`socket.setTimeout`) that could theoretically be equall
 unreliable in the same sandbox, but this was never exercised in the reproduced failure
 (transport was already resolved, so `probePort` was never reached). Worth the same
 watchdog treatment if it's ever confirmed to hang in practice.
+
+## Addendum: whole-request deadline, async transport read, `node:http`
+
+**Found while investigating #412; not the fix for it.** See the addendum after this one for
+what #412 actually was. The three defects below are real, were verified, and each produces
+a 60 s client cancellation on its own — they were simply not what the reporter hit.
+
+The investigation started from a `.mcpb` install on 0.28.2: `initialize` at 11:01:21.799,
+`notifications/cancelled` at 11:02:21.803, `Client transport closed` — 60.004 s of nothing
+on any channel. Running the same shim by hand under system Node against the same live
+server answered in under a second with the right `livePort`, so neither a stale port nor
+the server was at fault. That correctly ruled out the obvious causes, and incorrectly
+suggested the remaining suspect was the shim's own timing.
+
+**The per-phase invariant the two addenda above pin was never the whole request.** Both
+compute a worst case as one retry window plus one POST. `handleRequest` can run both
+twice: the first `readTransport` fails, so the retry window opens (20 s); the POST then
+fails with a non-abort error (27 s with the watchdog); the catch branch re-resolves
+(another 20 s) and posts again (another 27 s). 94 s, against a 60 s client ceiling, with
+the unit test still green because it only ever asserted the three-constant sum. Adding a
+fourth constant would have repeated the mistake, so the fix is structural rather than
+arithmetic: `REQUEST_DEADLINE_MS` (45 s) bounds the request as a whole, every phase is
+clamped to what is left of it (`retryWindowFor`, `postTimeoutFor`), and a guard timer
+answers if anything outside those phases still stalls. Because the guard can fire while
+the real work is still running, every exit routes through one write-once channel, so a
+late completion can never put a second response for the same id on stdout. The clamps
+also refuse to start a second resolve-and-post pass below `MIN_RETRY_PASS_MS`, which
+keeps a named cause ("connection refused") from being overwritten by a generic timeout.
+
+**A synchronous read can stop every timer in the process.** `readTransport` used
+`readFileSync`. The reporter's vault is on iCloud Drive, and reading a dataless file
+there blocks the event loop; while it is blocked neither the `AbortController` timer nor
+the 0.27.3 watchdog can fire. That is the only mechanism found that explains total
+silence rather than a late error — a watchdog is worth exactly nothing if the loop it
+runs on is stopped. `readTransport` is now `async` over `fs.promises.readFile`, and a
+read over 1000 ms logs its own duration, so the next report answers this question by
+itself instead of leaving it a hypothesis.
+
+**The 0.27.3 watchdog treated the symptom; the transport is now the one that cannot
+hang.** That addendum documented `AbortSignal` failing to cancel an in-flight `fetch()`
+in the UtilityProcess sandbox and raced a timer against it — which settles the promise
+but leaves the request alive. `postJsonRpc`'s default `fetchImpl` is now `httpFetch`, a
+`fetch`-shaped POST over `node:http` that destroys the socket on abort. Keeping the
+signature meant none of the suite's existing injection sites changed. Writing it also
+surfaced a real trap: Node and Bun disagree on whether `req.destroy(err)` emits `error`,
+and under Bun an aborted in-flight request emitted nothing at all, leaving the promise
+pending forever — the exact failure being removed. `httpFetch` therefore rejects
+explicitly and destroys the socket, rather than waiting to be told the cancellation
+happened. The watchdog stays: redundant is the right posture for the last line of defence
+in a distributed artefact, and `fetchImpl` remains an injection seam. This also realigns
+the two proxies — `obsidian_mcp_bridge.py` has always used `urllib` with a real timeout.
+
+**`OBSIDIAN_MCP_DEBUG` is gone.** It gated the one line proving the shim had received a
+request, and an installed `.mcpb` can never set it: the generated manifest carries no
+`env` (`user_config?: never` in `mcpbGenerator.ts`). A flag only reachable by people not
+hitting the bug is not a diagnostic. Request tracing and every failure now log
+unconditionally; "never log payloads" is unchanged and pinned by the suite. The startup
+banner also reports `node`, `exec` and `pid`, because Claude Desktop's own log says only
+"Using built-in Node.js", which names neither.
+
+Worst case is now the deadline itself, whatever path a request takes, and the suite pins
+that directly — an answer arrives while a phase is still overrunning, rather than a sum
+of constants that stops being the real worst case the moment control flow changes.
+
+**What this did not fix, recorded because the reasoning above reads convincing without
+it.** Reproduced on the corrected build with "Use Built-in Node.js for MCP" on: same
+60.004 s cancellation, and no banner, no request-received line and no deadline error. The
+banner is a synchronous `stderr` write and the deadline is a plain `setTimeout`; neither
+firing proves the shim never handled the request, so none of the three defects above was
+ever reached. Every one of them was a genuine bug found by looking in a reasonable place —
+none was the reporter's.
