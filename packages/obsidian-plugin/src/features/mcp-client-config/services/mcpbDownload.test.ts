@@ -161,9 +161,9 @@ describe("ADR-0014 §11 end to end", () => {
           p: string,
           o: Record<string, unknown>,
           id?: string,
-        ) => { port?: number; token?: string; error?: string };
+        ) => Promise<{ port?: number; token?: string; error?: string }>;
       };
-    const result = readTransport(dataPath, {}, baked);
+    const result = await readTransport(dataPath, {}, baked);
 
     expect(result.error).toMatch(/re-export/);
     expect(result.token).toBeUndefined();
