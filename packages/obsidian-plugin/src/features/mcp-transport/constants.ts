@@ -16,9 +16,10 @@ export const ALLOWED_ORIGINS_PATTERN =
   /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/;
 
 // MCP protocol versions this server speaks. Project-owned copy of the
-// @modelcontextprotocol/sdk's internal SUPPORTED_PROTOCOL_VERSIONS list
-// (node_modules/@modelcontextprotocol/sdk/dist/esm/types.js), kept here so
-// it is visible and testable in this project's own suite. Newest first.
+// @modelcontextprotocol/core's internal SUPPORTED_PROTOCOL_VERSIONS list
+// (node_modules/@modelcontextprotocol/core/dist/internal.mjs, the package's
+// "./internal" subpath export), kept here so it is visible and testable in
+// this project's own suite. Newest first.
 export const SUPPORTED_PROTOCOL_VERSIONS = [
   "2025-11-25",
   "2025-06-18",
