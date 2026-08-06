@@ -48,6 +48,9 @@ jobs:
       - name: Typecheck (workspace-wide)
         run: bun run check
 
+      - name: Typecheck (Svelte)
+        run: cd packages/obsidian-plugin && bun run check:svelte
+
       - name: Build (bundle smoke)
         run: bun run build
 
@@ -56,3 +59,6 @@ jobs:
 
       - name: Tests — obsidian-plugin
         run: cd packages/obsidian-plugin && bun test
+
+      - name: .mcpb bundle smoke (both loaders, #412 regression guard)
+        run: cd packages/obsidian-plugin && bun run test:mcpb

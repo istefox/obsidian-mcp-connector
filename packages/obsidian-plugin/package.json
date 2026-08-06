@@ -13,11 +13,13 @@
 	"scripts": {
 		"build": "bun run check && bun bun.config.ts --prod",
 		"check": "tsc --noEmit",
+		"check:svelte": "svelte-check --tsconfig ./tsconfig.json",
 		"dev": "bun --watch run bun.config.ts --watch",
 		"link": "bun scripts/link.ts",
 		"build:mcpb": "bun scripts/build-mcpb.ts",
 		"release": "bun run build && bun run zip && bun run build:mcpb",
-		"zip": "bun scripts/zip.ts"
+		"zip": "bun scripts/zip.ts",
+		"test:mcpb": "bun scripts/mcpb-smoke.ts"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",
@@ -45,6 +47,7 @@
 		"fs-extra": "^11.2.0",
 		"moment": "^2.30.1",
 		"obsidian": "latest",
+		"svelte-check": "^4.7.4",
 		"tslib": "2.4.0",
 		"typescript": "^5.7.2"
 	}
