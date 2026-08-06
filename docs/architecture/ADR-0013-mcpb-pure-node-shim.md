@@ -403,6 +403,8 @@ doubles the states to test and document.
 - SPEC.md (topic slug `mcpb-pure-node-shim`)
 - `packages/obsidian-plugin/src/features/mcp-client-config/services/mcpbGenerator.ts`
 - `packages/obsidian-plugin/src/features/mcp-client-config/services/mcpbGenerator.test.ts`
+- `packages/obsidian-plugin/scripts/mcpb-smoke.ts` (`test:mcpb`, CI): builds a real bundle and
+  exercises both loaders end to end — the both-loaders invariant addendum above
 - `packages/obsidian-plugin/src/features/mcp-client-config/assets/iconPng.ts` (precedent: checked-in generated string-constant module)
 - `packages/obsidian-plugin/bun.config.ts` (build pipeline constraints and existing workaround density, informing Alternative B's rejection)
 - `scripts/obsidian_mcp_bridge.py`, `scripts/test_obsidian_mcp_bridge.py` (pure-function pipeline and DI-seam test precedent)
@@ -642,3 +644,25 @@ per-request lines are therefore absent there even on a healthy connection, so as
 reporter on built-in Node for those lines returns nothing. The unconditional logging still
 earns its place on the system-Node path, and the README's troubleshooting entry now says
 where the lines do and do not appear.
+
+## Addendum: the both-loaders invariant now has CI coverage
+
+The 1.0.1 fix above was verified once, by hand, against an installed bundle. Nothing kept it
+verified: the `.mcpb` had no CI coverage at all, so a future edit to `isEntryPoint` (or to the
+freshness pipeline that feeds `server/index.js`) could reintroduce #412 and ship silently.
+
+`scripts/mcpb-smoke.ts` (wired as `test:mcpb`, run in CI on every push and PR) builds a real
+bundle through `generateMcpb()` — the exact production path, not a stand-in — and, with no
+Obsidian and no vault, asserts in order: the archive unzips and `manifest.json` parses;
+`server/index.js`, after undoing its per-bundle placeholder substitution, matches
+`connectorShim.js` on disk byte-for-byte (an artefact-level version of the freshness guard in
+`mcpbGenerator.test.ts` — catches shipping a stale shim after an edit that skipped
+`gen-shim-source.ts`); the shim answers `initialize` under plain `node server/index.js`; and the
+shim answers `initialize` loaded the way Claude Desktop's built-in Node loads it —
+`import(pathToFileURL(entry))`, `process.argv[1]` pointed at the entry, `process.stdin` replaced
+by a plain Readable rather than the process's own stdin — reproducing the #412 mechanism
+directly instead of only pinning `isEntryPoint`'s pure-function truth table. Both loader checks
+talk to a throwaway HTTP server bound to `127.0.0.1` standing in for the plugin's own MCP
+server; nothing leaves the loopback interface. Confirmed to fail when `isEntryPoint`'s body is
+reverted to the pre-1.0.1 `require.main === module` check: the built-in-Node step reports no
+response, the same silence a real user saw in #412, instead of green.
