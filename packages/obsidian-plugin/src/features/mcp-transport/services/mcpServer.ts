@@ -71,14 +71,11 @@ export type McpService = {
  * Create an MCP service whose handler builds a fresh McpServer +
  * StreamableHTTPServerTransport per HTTP request.
  *
- * Why per-request instead of singleton: the SDK's
- * StreamableHTTPServerTransport in stateless mode
- * (`sessionIdGenerator: undefined`) explicitly forbids reuse —
- * see node_modules/@modelcontextprotocol/sdk webStandardStreamableHttp.js
- * line ~140: "Stateless transport cannot be reused across requests.
- * Create a new transport per request." Reusing one means the second
- * call throws and the HTTP server returns 500. We hit this in the
- * 0.4.0-alpha.2 vault TEST smoke (issue surfaced 2026-04-26).
+ * Why per-request instead of singleton: the SDK's stateless streamable-HTTP
+ * transport (`sessionIdGenerator: undefined`) is built to serve a single
+ * exchange, not to be shared across independent requests. Reusing one means
+ * the second call throws and the HTTP server returns 500. We hit this in
+ * the 0.4.0-alpha.2 vault TEST smoke (issue surfaced 2026-04-26).
  *
  * The cost of creating a fresh server+transport per request is on
  * the order of milliseconds and is dominated by the JSON parse;
