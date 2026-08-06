@@ -48,6 +48,9 @@ jobs:
       - name: Typecheck (workspace-wide)
         run: bun run check
 
+      - name: Typecheck (Svelte)
+        run: cd packages/obsidian-plugin && bun run check:svelte
+
       - name: Build (bundle smoke)
         run: bun run build
 
