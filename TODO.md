@@ -1,26 +1,31 @@
-<!-- project-tasks: prefix=OMC lastId=13 -->
+<!-- project-tasks: prefix=OMC lastId=16 -->
 # PROJECT TASKS
 
-Updated: 2026-08-05 · Open: 9 (P1: 0) · In progress: 0
+Updated: 2026-08-07 · Open: 7 (P1: 1) · In progress: 0
 
-## Open Issues
+## Now — close the 1.0.x release loop
 
-- [ ] `OMC-011` **P2** The Claude Desktop extension installed on this machine is a hand-patched copy, not a 1.0.1 bundle: re-export the `.mcpb` from the token row in the Labs vault, reinstall it, then delete `server/index.js.bak-412` — `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.stefano-ferri.obsidian-mcp-connector/server/` <!-- src:session opened:2026-08-05 -->
+- [ ] `OMC-011` **P1** The Claude Desktop extension installed on this machine is a hand-patched copy, not a bundle from the release pipeline, so the `.mcpb` users actually install has never been run end to end for 1.0.1: re-export it from the token row in the Labs vault, reinstall, smoke it with "Use Built-in Node.js for MCP" left on, then delete `server/index.js.bak-412` — `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.stefano-ferri.obsidian-mcp-connector/server/` <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
+- [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test. Run them in the same vault session as OMC-011 <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
 - [ ] `OMC-012` **P3** The community-plugin scanner now runs against the published 1.0.1 release; read the verdict at community.obsidian.md/account/plugins <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-013` **P3** #412 stays open until Piter10k confirms the fix on their machine; close it as completed once they do <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-005` **P2** CI has neither a Svelte compile check nor a `.mcpb` bundle check, and `bun run check` skips `.svelte` files entirely, so a UI regression reaches a real vault before anything fails <!-- src:session opened:2026-08-05 -->
+
+## Then — the one unblocked bet
+
+- [ ] `OMC-016` **P3** #427 MCP Apps (`io.modelcontextprotocol/ui`): `search_vault_smart` results as a ranked clickable list. Split out of #416 because the UI extension is widely declared by clients while Tasks is not. First deliverable is an answer, not code: whether a stateless transport can serve a UI-enhanced result at all, given that `initialize` negotiation is not available to a later `tools/call` <!-- src:session opened:2026-08-06 -->
+
+## Parked — external trigger, nothing to do until it fires
+
+**Trigger: the MCP SDK's supported-versions list gains `2026-07-28`.** Until then neither entry
+below is actionable, and #419 says so in its own body. They are here so the analysis is not
+rediscovered, not because they are waiting on a decision of ours.
+
+- [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`: SDK v2 landed in 0.28.2 and `subscriptions/listen` is what actually closes OMC-007, but Phase 2 is blocked upstream — SDK 2.0.0 is npm's latest and its supported list stops at `2025-11-25`, so `2026-07-28` cannot be negotiated yet <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
+- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness: a promotion never reaches a client that is not the caller, because `notifications/tools/list_changed` rides the caller's own POST response and there is no fan-out. Closed by #407 Phase 2's `subscriptions/listen`, with the acceptance criterion already written in the issue <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
+- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when OMC-008 unparks <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
 
 ## In Progress
 
 _none_
-
-## Backlog / To Add
-
-- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness: a promotion never reaches a client that is not the caller, because `notifications/tools/list_changed` rides the caller's own POST response and there is no fan-out <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`: SDK v2 landed in 0.28.2, the protocol opt-in remains, and `subscriptions/listen` is what actually closes OMC-007 <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-009` **P3** #347 `completion/complete` argument completions; the transclusion half shipped in #420 <!-- src:session opened:2026-08-05 -->
-- [ ] `OMC-010` **P3** #416 evaluate the MCP Apps and Tasks extensions from the `2026-07-28` revision <!-- src:session opened:2026-08-05 -->
 
 ## Blocked / Decisions Needed
 
@@ -36,6 +41,11 @@ _none_
 
 ## Done
 
+- [x] `OMC-005` CI now type-checks Svelte (`check:svelte`, clean against all 11 components) and smokes the `.mcpb` bundle on both loaders (`test:mcpb`), built through the real `generateMcpb()`. The smoke also compares the shipped `server/index.js` against `connectorShim.js` byte-for-byte, so a stale generated asset fails loud. Proven to catch #412 by reverting `isEntryPoint()`: check 4 went red while check 3 stayed green. PR #429 (2026-08-06)
+- [x] `OMC-014` The `constants.ts` comment now cites `@modelcontextprotocol/core/dist/internal.mjs`, verified present. The `mcpServer.ts` one dropped its citation instead of pointing at `PerRequestHTTPServerTransport`, which carries a near-identical message but is a transport we never import; the constraint now rests on the 0.4.0-alpha.2 smoke incident. PR #428 (2026-08-06)
+- [x] `OMC-015` Labs vault plugin dir cleaned: 6 stale build backups and the pre-1.0.0 settings backup deleted, 12 MB, plus the probe fixture `Prompts/completion-probe.md`. The deleted builds for 0.28.1, 0.28.2 and 1.0.0 remain recoverable from the published releases (2026-08-06)
+- [x] `OMC-013` #412 closed: Piter10k confirmed the fix on 2026-08-05 and the 1.0.1 release notice, with the re-export step, is posted on the issue (2026-08-06)
+- [x] `OMC-009` #347 closed as not planned: the transclusion half shipped in #420, and the `completion/complete` half closes on expected value since the stub measurement was never run (2026-08-06)
 - [x] `OMC-002` #412 answered with the verified mechanism, the 153 ms end-to-end result and the missing-stderr caveat (2026-08-05)
 - [x] `OMC-001` `.mcpb` never started under "Use Built-in Node.js for MCP" — the cause was the shim's `require.main === module` guard, false under the host's `import()`, not the missing `compatibility` field this entry first blamed; `isEntryPoint()` replaces it (2026-08-05)
 - [x] `OMC-003` README and ADR-0013 rewritten off the verified mechanism; the 0.27.3 addendum's wrong attribution is now marked as wrong rather than deleted (2026-08-05)
