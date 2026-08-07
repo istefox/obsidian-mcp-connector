@@ -1,4 +1,4 @@
-<!-- project-tasks: prefix=OMC lastId=17 -->
+<!-- project-tasks: prefix=OMC lastId=18 -->
 # PROJECT TASKS
 
 Updated: 2026-08-07 · Open: 8 (P1: 1) · In progress: 0
@@ -9,19 +9,14 @@ Updated: 2026-08-07 · Open: 8 (P1: 1) · In progress: 0
 - [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test. Run them in the same vault session as OMC-011 <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
 - [ ] `OMC-012` **P3** The community-plugin scanner now runs against the published 1.0.1 release; read the verdict at community.obsidian.md/account/plugins <!-- src:session opened:2026-08-05 -->
 
-## Then — the one unblocked bet
+## Next — measured gaps, actionable now
 
-- [ ] `OMC-016` **P3** #427 MCP Apps (`io.modelcontextprotocol/ui`): `search_vault_smart` results as a ranked clickable list. The stateless question is answered and is NOT a blocker — the UI is static tool metadata (`_meta.ui.resourceUri`) plus a separately served `ui://` resource, and the tool result stays plain text, so nothing in the request path is conditional. The real cost, unpriced in the issue, is that this connector declares `tools` and `prompts` only and MCP Apps needs a `resources` implementation. Next step is a spike: a `ui://` handler and the smallest HTML that renders in Claude Desktop, not the search UI <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
+- [ ] `OMC-018` **P2** Conformance `server-stateless` passes our HTTP status codes but not our JSON-RPC bodies: a malformed `_meta` and an unsupported protocol version both answer 400 with no error code, where the spec wants `-32602` and `-32020`. Self-contained, independent of any lifecycle decision, and it lands in `mcp-transport/services/middleware.ts` <!-- src:session opened:2026-08-07 -->
+- [ ] `OMC-016` **P3** #427 MCP Apps: **answered, it works.** The spike on `spike/427-mcp-apps-ui-resource` proved Claude Desktop reads and renders a `ui://` resource from this connector. What mattered was declaring `capabilities.extensions` with `io.modelcontextprotocol/ui`; the generic `resources` capability alone did nothing. Two hard requirements: mime type exactly `text/html;profile=mcp-app`, and the view must complete the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe blank. Real implementation is the remaining work: a proper resources capability, the handshake via `@modelcontextprotocol/ext-apps` (1.7.5 on npm) rather than hand-rolled `postMessage`, then the ranked search list <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
 
 ## Parked — external trigger, nothing to do until it fires
 
-**Trigger: the MCP SDK's supported-versions list gains `2026-07-28`.** Until then neither entry
-below is actionable, and #419 says so in its own body. They are here so the analysis is not
-rediscovered, not because they are waiting on a decision of ours.
-
-- [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`: SDK v2 landed in 0.28.2 and `subscriptions/listen` is what actually closes OMC-007, but Phase 2 is blocked upstream — SDK 2.0.0 is npm's latest and its supported list stops at `2025-11-25`, so `2026-07-28` cannot be negotiated yet <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
-- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness: a promotion never reaches a client that is not the caller, because `notifications/tools/list_changed` rides the caller's own POST response and there is no fan-out. Closed by #407 Phase 2's `subscriptions/listen`, with the acceptance criterion already written in the issue <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
-- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when OMC-008 unparks <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
+- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
 
 ## Opportunistic — do when the file is open anyway
 
@@ -33,7 +28,25 @@ _none_
 
 ## Blocked / Decisions Needed
 
-_none_
+**The `2026-07-28` lifecycle break.** Running conformance's `server-stateless` (SEP-2575) from
+source showed that six of its thirty checks require `initialize`, `ping`, `logging/setLevel`,
+`resources/subscribe` and `resources/unsubscribe` to **stop existing**, answering HTTP 404 with
+`-32601`. A conformant 2026 server has no `initialize` handshake: the lifecycle moves to
+per-request `_meta`. So adopting the revision is a migration that breaks every configured client,
+not a capability we add, and it cannot be half-done. That is an ADR-sized decision and it gates
+both entries below. What is NOT blocked: the 2026 mechanisms that ride per-request `_meta` already
+work — #427 proved extensions do, under a 2025 negotiated version.
+
+- [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`. The SDK is not the blocker it looked like: `@modelcontextprotocol/{core,server}@2.0.0` shipped 2026-07-27 with every 2026 schema (`SubscriptionsListenRequestSchema`, `DiscoverRequestSchema`, tasks, `extensions`), though `LATEST_PROTOCOL_VERSION` is still `2025-11-25` even on `main`. Measured gaps beyond the lifecycle question: per-request `_meta` validation (4 checks), `server/discover` (3 + a warning for the missing `serverInfo` in result `_meta`) <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
+- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness. Closed by `subscriptions/listen`, whose acceptance criteria now come from conformance rather than from us: the ack notification must be the stream's first message, later notifications must carry a matching `subscriptionId`, and notification types outside the client's filter must not be sent. The SDK already exports every schema needed. Gated on the lifecycle decision above; the untested narrow question is whether a listen stream can coexist with today's `initialize` rather than replace it <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
+
+**Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
+`draft` suite, no `server-stateless`. Those live only on the repo's `main` (`0.2.0-alpha.10`) and
+must be run from source. Against the published suite we pass every scenario that applies to our
+surface; the failures are fixture-dependent (it expects the reference server's `test_*` tools and
+`test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
+`completion/complete` (that is #347, closed as not planned — this is the first visible cost of
+that call) and resource subscriptions.
 
 ## Project Map
 
