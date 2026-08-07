@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=16 -->
+<!-- project-tasks: prefix=OMC lastId=17 -->
 # PROJECT TASKS
 
-Updated: 2026-08-07 · Open: 7 (P1: 1) · In progress: 0
+Updated: 2026-08-07 · Open: 8 (P1: 1) · In progress: 0
 
 ## Now — close the 1.0.x release loop
 
@@ -11,7 +11,7 @@ Updated: 2026-08-07 · Open: 7 (P1: 1) · In progress: 0
 
 ## Then — the one unblocked bet
 
-- [ ] `OMC-016` **P3** #427 MCP Apps (`io.modelcontextprotocol/ui`): `search_vault_smart` results as a ranked clickable list. Split out of #416 because the UI extension is widely declared by clients while Tasks is not. First deliverable is an answer, not code: whether a stateless transport can serve a UI-enhanced result at all, given that `initialize` negotiation is not available to a later `tools/call` <!-- src:session opened:2026-08-06 -->
+- [ ] `OMC-016` **P3** #427 MCP Apps (`io.modelcontextprotocol/ui`): `search_vault_smart` results as a ranked clickable list. The stateless question is answered and is NOT a blocker — the UI is static tool metadata (`_meta.ui.resourceUri`) plus a separately served `ui://` resource, and the tool result stays plain text, so nothing in the request path is conditional. The real cost, unpriced in the issue, is that this connector declares `tools` and `prompts` only and MCP Apps needs a `resources` implementation. Next step is a spike: a `ui://` handler and the smallest HTML that renders in Claude Desktop, not the search UI <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
 
 ## Parked — external trigger, nothing to do until it fires
 
@@ -22,6 +22,10 @@ rediscovered, not because they are waiting on a decision of ours.
 - [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`: SDK v2 landed in 0.28.2 and `subscriptions/listen` is what actually closes OMC-007, but Phase 2 is blocked upstream — SDK 2.0.0 is npm's latest and its supported list stops at `2025-11-25`, so `2026-07-28` cannot be negotiated yet <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
 - [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness: a promotion never reaches a client that is not the caller, because `notifications/tools/list_changed` rides the caller's own POST response and there is no fan-out. Closed by #407 Phase 2's `subscriptions/listen`, with the acceptance criterion already written in the issue <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
 - [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when OMC-008 unparks <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
+
+## Opportunistic — do when the file is open anyway
+
+- [ ] `OMC-017` **P3** `CLAUDE.md` predates #429: the full gate on line 17 omits `check:svelte` and `test:mcpb`, and line 72 still says Svelte components sit outside type checking, which stopped being true when the CI step landed. Line 8's note about `bun run check` itself is still accurate and should stay <!-- src:session opened:2026-08-07 -->
 
 ## In Progress
 
