@@ -1,13 +1,13 @@
-<!-- project-tasks: prefix=OMC lastId=18 -->
+<!-- project-tasks: prefix=OMC lastId=21 -->
 # PROJECT TASKS
 
-Updated: 2026-08-07 · Open: 8 (P1: 1) · In progress: 0
+Updated: 2026-08-08 · Open: 9 (P1: 0) · In progress: 0
 
-## Now — close the 1.0.x release loop
+## Now — findings from the 1.0.1 review
 
-- [ ] `OMC-011` **P1** The Claude Desktop extension installed on this machine is a hand-patched copy, not a bundle from the release pipeline, so the `.mcpb` users actually install has never been run end to end for 1.0.1: re-export it from the token row in the Labs vault, reinstall, smoke it with "Use Built-in Node.js for MCP" left on, then delete `server/index.js.bak-412` — `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.stefano-ferri.obsidian-mcp-connector/server/` <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
-- [ ] `OMC-004` **P2** Three manual checks for 1.0.0 never ran and no CI job covers them: the empty-allowlist warning, the Tool Loading panel following the selection with two tokens, and the R-22 two-client smoke test. Run them in the same vault session as OMC-011 <!-- src:session opened:2026-08-05 updated:2026-08-06 -->
-- [ ] `OMC-012` **P3** The community-plugin scanner now runs against the published 1.0.1 release; read the verdict at community.obsidian.md/account/plugins <!-- src:session opened:2026-08-05 -->
+- [ ] `OMC-019` **P2** The community reviewer forbids `require()` style imports and flags two in `mcp-client-config/services/mcpbDownload.ts:35` (`require("electron")` for the save dialog) and `:104` (`require("fs/promises")`). Both are deliberate — the comment at :103 records that `require()` is reliable for Node built-ins under Electron while dynamic `import()` is not — so this is a rule/design conflict, not an oversight. Note ADR precedent: an `eslint-disable` on an `obsidianmd/*` rule escalates to an Error, and the scanner only lints `src/**` <!-- src:session opened:2026-08-08 -->
+- [ ] `OMC-020` **P3** Reviewer warning: unnecessary type assertion at `mcp-tools/tools/getVaultFilePartial.ts:283`, the receiver already accepts the expression's type <!-- src:session opened:2026-08-08 -->
+- [ ] `OMC-021` **P3** Reviewer dependency warning on `@hono/node-server`, `adm-zip`, `brace-expansion`, `hono` and `sharp`, advising a version outside the vulnerable range (`<0.6.0`). We depend on none of them directly — `hono` in particular arrives transitively, most likely through the SDK's middleware packages — so the first step is establishing which tree each comes from before touching anything <!-- src:session opened:2026-08-08 -->
 
 ## Next — measured gaps, actionable now
 
@@ -58,6 +58,9 @@ that call) and resource subscriptions.
 
 ## Done
 
+- [x] `OMC-012` Reviewer verdict for 1.0.1 (`e2ebb20`) read: **Completed**. Two Pass results that matter — the `main.js` GitHub artifact attestation verifies, closing out July's false positive, and the build reproduced the release `main.js` byte-for-byte. Behaviour flags (filesystem, shell, vault enumeration, clipboard, dynamic code) are the usual by-design ones. New findings became OMC-019/020/021 (2026-08-08)
+- [x] `OMC-004` All three manual checks pass. The empty-allowlist warning renders and says explicitly that no ticks means meta-tools only, "not the same as no limit". The Tool loading panel follows the selected token row. R-22 verified over HTTP with both tokens: after promoting `show_file_in_obsidian` on `default` only, that token listed 17 tools and the second listed 16, the symmetric difference being exactly that tool — a promotion does not widen another client's surface. Caveat: R-22 was driven over raw HTTP rather than through a second GUI client (2026-08-08)
+- [x] `OMC-011` Verified on the real artifact. The Labs vault was still on 1.0.0, which is why the installed extension was a hand-patched 1.0.0 — updated it through Obsidian's own community-plugin update, re-exported the `.mcpb` from the token row (1.0.1, `isEntryPoint` present, token id embedded), installed it in Claude Desktop, and with **Use Built-in Node.js for MCP left on** the connector reports "Server attivo, versione 1.0.1". The reinstall also removed `server/index.js.bak-412` on its own (2026-08-08)
 - [x] `OMC-005` CI now type-checks Svelte (`check:svelte`, clean against all 11 components) and smokes the `.mcpb` bundle on both loaders (`test:mcpb`), built through the real `generateMcpb()`. The smoke also compares the shipped `server/index.js` against `connectorShim.js` byte-for-byte, so a stale generated asset fails loud. Proven to catch #412 by reverting `isEntryPoint()`: check 4 went red while check 3 stayed green. PR #429 (2026-08-06)
 - [x] `OMC-014` The `constants.ts` comment now cites `@modelcontextprotocol/core/dist/internal.mjs`, verified present. The `mcpServer.ts` one dropped its citation instead of pointing at `PerRequestHTTPServerTransport`, which carries a near-identical message but is a transport we never import; the constraint now rests on the 0.4.0-alpha.2 smoke incident. PR #428 (2026-08-06)
 - [x] `OMC-015` Labs vault plugin dir cleaned: 6 stale build backups and the pre-1.0.0 settings backup deleted, 12 MB, plus the probe fixture `Prompts/completion-probe.md`. The deleted builds for 0.28.1, 0.28.2 and 1.0.0 remain recoverable from the published releases (2026-08-06)
