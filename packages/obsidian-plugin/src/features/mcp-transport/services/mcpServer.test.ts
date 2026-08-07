@@ -70,6 +70,74 @@ describe("end-to-end: HTTP → McpServer", () => {
     }
   });
 
+  // SPIKE (#427), throwaway — remove with the spike. Proves the whole
+  // MCP Apps path over real HTTP rather than at the registry: the `_meta`
+  // pointer survives tools/list, and the ui:// URI it names is readable
+  // under the mime type the extension mandates.
+  test("resources/read serves the spike page and tools/list carries its pointer", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    const { SPIKE_TOOL_NAME, SPIKE_UI_URI, MCP_APP_MIME_TYPE } =
+      await import("./mcpAppSpike");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: mockPlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider("t".repeat(32)),
+      requestHandler: svc.handleRequest,
+    });
+
+    const post = async (method: string, params: unknown) => {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${"t".repeat(32)}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+      expect(res.status).toBe(200);
+      return res.json();
+    };
+
+    try {
+      // The extension is negotiated through `capabilities.extensions`, so
+      // a host only learns we speak MCP Apps if initialize says so. The
+      // generic `resources` capability alone is not that signal.
+      const init = await post("initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "spike", version: "0" },
+      });
+      expect(init?.result?.capabilities?.extensions).toEqual({
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app"],
+        },
+      });
+
+      const listed = await post("tools/list", {});
+      const tools: { name: string; _meta?: Record<string, unknown> }[] =
+        listed?.result?.tools ?? [];
+      const carrying = tools.filter((t) => t._meta);
+      expect(carrying.map((t) => t.name)).toEqual([SPIKE_TOOL_NAME]);
+      expect(carrying[0]._meta).toEqual({ ui: { resourceUri: SPIKE_UI_URI } });
+
+      const read = await post("resources/read", { uri: SPIKE_UI_URI });
+      const contents = read?.result?.contents ?? [];
+      expect(contents).toHaveLength(1);
+      expect(contents[0].uri).toBe(SPIKE_UI_URI);
+      expect(contents[0].mimeType).toBe(MCP_APP_MIME_TYPE);
+      expect(contents[0].text).toContain("UI resource rendered");
+    } finally {
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
   test("chunked body over the cap answers 413, not a JSON parse error", async () => {
     const { startHttpServer } = await import("./httpServer");
     const { request } = await import("node:http");

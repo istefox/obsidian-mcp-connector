@@ -11,6 +11,7 @@ import { logger } from "$/shared";
 import type { ToolScope } from "$/shared/types";
 import type { ToolRegistry } from "./toolRegistry";
 import type { PromptRegistry } from "./promptRegistry";
+import type { ResourceRegistry } from "./resourceRegistry";
 import {
   ToolLoadingManager,
   META_TOOLS,
@@ -57,6 +58,7 @@ export type McpServiceConfig = {
 export type McpService = {
   registry: ToolRegistry;
   promptRegistry: PromptRegistry;
+  resourceRegistry: ResourceRegistry;
   handleRequest: (
     req: IncomingMessage,
     res: ServerResponse,
@@ -97,7 +99,11 @@ export async function createMcpService(
   const session = new SessionPromotions();
   // The populated registry is composed outside the transport (policy
   // lives in $/composeToolRegistry); this layer only serves it.
-  const { toolRegistry: registry, promptRegistry } = await composeToolRegistry({
+  const {
+    toolRegistry: registry,
+    promptRegistry,
+    resourceRegistry,
+  } = await composeToolRegistry({
     ...config,
     session,
   });
@@ -136,6 +142,21 @@ export async function createMcpService(
           // (MCP spec 2025-06-18), emitted by activate_tool.
           tools: { listChanged: true },
           prompts: {},
+          // Declared for MCP Apps (#427): a tool points at its UI with
+          // `_meta.ui.resourceUri` and the host fetches that `ui://` URI
+          // over resources/read. No subscriptions and no listChanged —
+          // the surface is static and the transport cannot push anyway.
+          resources: {},
+          // SPIKE (#427), throwaway. An extension is negotiated through
+          // the `extensions` field on BOTH sides' capabilities, not by
+          // the generic `resources` capability above. Round one declared
+          // only the latter and nothing rendered, which is consistent
+          // with a host that never learns we speak the extension at all.
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
         },
       },
     );
@@ -189,6 +210,27 @@ export async function createMcpService(
     server.server.setRequestHandler("prompts/get", (req) =>
       promptRegistry.dispatch(req.params),
     );
+    // The SDK asserts the resources capability per method, so registering
+    // list and read without resources/templates/list is legal — and the
+    // high-level McpServer.registerResource() is deliberately avoided
+    // because it asserts all three at once and registers capabilities
+    // behind our back.
+    server.server.setRequestHandler("resources/list", async () => {
+      // SPIKE (#427), throwaway.
+      logger.warn("[mcp][spike-427] resources/list", { tokenId });
+      return resourceRegistry.list();
+    });
+    server.server.setRequestHandler("resources/read", (req) => {
+      // SPIKE (#427), throwaway. Whether this line ever appears is the
+      // whole answer: if the host asks for the ui:// URI, rendering was
+      // attempted and only the page is at fault; if it never does, the
+      // host never learned the tool has a UI.
+      logger.warn("[mcp][spike-427] resources/read", {
+        tokenId,
+        uri: req.params.uri,
+      });
+      return resourceRegistry.read(req.params);
+    });
 
     // Inspect the body before choosing the response mode. The GET SSE
     // stream is blocked (POST-only transport), so a server-initiated
@@ -216,6 +258,20 @@ export async function createMcpService(
     try {
       parsedBody = JSON.parse(rawBody);
       needsSseResponse = bodyTargetsSseNotificationTool(parsedBody);
+      // SPIKE (#427), throwaway. The SDK's getClientCapabilities() reads
+      // what THIS server object saw at initialize, and a per-request
+      // server never sees one — it returned undefined by construction in
+      // round one, measuring our own architecture rather than the client.
+      // The raw envelope is the only honest source: it shows the
+      // negotiated protocolVersion and whether the client's capabilities
+      // carry an `extensions` entry for io.modelcontextprotocol/ui.
+      const envelope = parsedBody as { method?: string; params?: unknown };
+      if (envelope?.method === "initialize") {
+        logger.warn("[mcp][spike-427] initialize", {
+          tokenId,
+          params: envelope.params,
+        });
+      }
     } catch {
       // Malformed JSON: leave parsedBody undefined and let the SDK emit
       // the standard -32700 parse error over the JSON response path.
@@ -255,6 +311,7 @@ export async function createMcpService(
   return {
     registry,
     promptRegistry,
+    resourceRegistry,
     handleRequest,
     flushPendingCalls: () =>
       toolLoadingManager.flushPendingCalls(config.plugin),

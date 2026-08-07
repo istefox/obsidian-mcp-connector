@@ -18,6 +18,11 @@ import {
   PromptRegistryClass,
   type PromptRegistry,
 } from "$/features/mcp-transport/services/promptRegistry";
+import {
+  ResourceRegistryClass,
+  type ResourceRegistry,
+} from "$/features/mcp-transport/services/resourceRegistry";
+import { wireMcpAppSpike } from "$/features/mcp-transport/services/mcpAppSpike";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
 import type { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
@@ -58,11 +63,14 @@ export type ToolRegistryConfig = {
  * registry's adaptive flags (ADR-0014 §3). The disable list still wins,
  * because the registry re-applies `userDisabled` under every scope.
  */
-export async function composeToolRegistry(
-  config: ToolRegistryConfig,
-): Promise<{ toolRegistry: ToolRegistry; promptRegistry: PromptRegistry }> {
+export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
+  toolRegistry: ToolRegistry;
+  promptRegistry: PromptRegistry;
+  resourceRegistry: ResourceRegistry;
+}> {
   const toolRegistry = new ToolRegistryClass();
   const promptRegistry = new PromptRegistryClass();
+  const resourceRegistry = new ResourceRegistryClass();
 
   await registerTools(toolRegistry, {
     app: config.app,
@@ -129,5 +137,8 @@ export async function composeToolRegistry(
   // MethodNotFound. Idempotent.
   await applyDisabledToolsFilter(toolRegistry, config.plugin);
 
-  return { toolRegistry, promptRegistry };
+  // SPIKE (#427), throwaway — remove before this merges.
+  wireMcpAppSpike(toolRegistry, resourceRegistry);
+
+  return { toolRegistry, promptRegistry, resourceRegistry };
 }

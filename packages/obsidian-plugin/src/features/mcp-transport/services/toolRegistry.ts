@@ -41,6 +41,12 @@ type ToolListEntry = {
   inputSchema: Record<string, unknown>;
   annotations?: ToolAnnotations;
   outputSchema?: Record<string, unknown>;
+  /**
+   * Free-form per-tool metadata, a first-class optional field of the
+   * MCP `Tool` schema. Carries the MCP Apps pointer
+   * (`_meta.ui.resourceUri`); a client that does not read it ignores it.
+   */
+  _meta?: Record<string, unknown>;
 };
 
 /**
@@ -240,6 +246,9 @@ export class ToolRegistryClass<
   /** MCP tool outputSchema, keyed by public tool name (set via setOutputSchemas). */
   private outputSchemasByName = new Map<string, Record<string, unknown>>();
 
+  /** MCP tool `_meta`, keyed by public tool name (set via setMeta). */
+  private metaByName = new Map<string, Record<string, unknown>>();
+
   /** Public tool name → schema, built at register() time for O(1) lookups. */
   private byName = new Map<string, TSchema>();
 
@@ -289,6 +298,24 @@ export class ToolRegistryClass<
   setOutputSchemas = (byName: Record<string, Record<string, unknown>>) => {
     for (const [name, outputSchema] of Object.entries(byName)) {
       this.outputSchemasByName.set(name, outputSchema);
+    }
+    this.invalidateEntries();
+    return this;
+  };
+
+  /**
+   * Attach free-form `_meta` to a tools/list entry by public tool name.
+   * Same lazy-lookup and cache-invalidation contract as setAnnotations.
+   *
+   * Unlike outputSchema, this is inert to a client that does not read the
+   * key it carries: MCP Apps' `_meta.ui.resourceUri` points at a `ui://`
+   * resource, and a host without the extension ignores the field and
+   * renders the tool's ordinary text result, which the extension spec
+   * requires every UI-enabled tool to keep returning.
+   */
+  setMeta = (byName: Record<string, Record<string, unknown>>) => {
+    for (const [name, meta] of Object.entries(byName)) {
+      this.metaByName.set(name, meta);
     }
     this.invalidateEntries();
     return this;
@@ -439,6 +466,7 @@ export class ToolRegistryClass<
       const name = this.toolNameOf(schema);
       const annotations = this.annotationsByName.get(name);
       const outputSchema = this.outputSchemasByName.get(name);
+      const meta = this.metaByName.get(name);
       return {
         schema,
         entry: {
@@ -449,6 +477,7 @@ export class ToolRegistryClass<
           ),
           ...(annotations ? { annotations } : {}),
           ...(outputSchema ? { outputSchema } : {}),
+          ...(meta ? { _meta: meta } : {}),
         },
       };
     }));
