@@ -280,7 +280,7 @@ export async function getVaultFilePartialHandler(
     // than erroring, so callers don't need to know the file's length
     // up front.
     const clampedEnd = Math.min(endLine!, lines.length - 1);
-    const section = lines.slice(startLine!, clampedEnd + 1).join("\n");
+    const section = lines.slice(startLine, clampedEnd + 1).join("\n");
     return textResponse(section);
   }
 
