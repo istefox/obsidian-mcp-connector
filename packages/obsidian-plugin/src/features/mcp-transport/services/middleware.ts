@@ -1,5 +1,6 @@
 import {
   ERROR_CODES,
+  JSONRPC_ERROR_CODES,
   MCP_PATH_PREFIX,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "../constants";
@@ -126,6 +127,86 @@ function checkProtocolVersion(headers: RequestHeaders): CheckResult {
   return (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version)
     ? { ok: true }
     : { ok: false, status: ERROR_CODES.PROTOCOL_VERSION_UNSUPPORTED };
+}
+
+export type JsonRpcErrorBody = {
+  jsonrpc: "2.0";
+  error: { code: number; message: string };
+  id: string | number | null;
+};
+
+/**
+ * A value shaped enough like a JSON-RPC request to read `id`/`params` off
+ * of. Guards against echoing a response's `id` (responses have no
+ * `method`) — same convention the SDK's own `echoableRequestId` uses.
+ */
+function isJsonRpcRequestShape(
+  value: unknown,
+): value is { method: string; id?: unknown; params?: unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { method?: unknown }).method === "string"
+  );
+}
+
+/**
+ * `_meta` is present but not an object (a string, number, array, ...).
+ * `_meta` is always optional and, per the wire schema every MCP request
+ * shares, must be an object when present — this is ordinary JSON-RPC
+ * shape validation, not the 2026 stateless lifecycle. An ABSENT `_meta`,
+ * or one present as an object missing `protocolVersion`/`clientCapabilities`,
+ * is never malformed by this check: requiring those subfields is the 2026
+ * per-request envelope and is out of scope here (see checkProtocolVersion's
+ * own docs and OMC-008).
+ */
+function hasMalformedMeta(parsedBody: unknown): boolean {
+  if (!isJsonRpcRequestShape(parsedBody)) return false;
+  const { params } = parsedBody;
+  if (typeof params !== "object" || params === null) return false;
+  if (!("_meta" in params)) return false;
+  const meta = (params as { _meta?: unknown })._meta;
+  return typeof meta !== "object" || meta === null || Array.isArray(meta);
+}
+
+/**
+ * Build the JSON-RPC error body for the transport's HTTP 400 rejection
+ * when `checkProtocolVersion` fails (SEP-2575 `server-stateless`
+ * conformance, OMC-018). This server has no per-request `_meta` lifecycle
+ * (gated on OMC-008), so there is no separate envelope-validation rung —
+ * both spec-defined codes are read off the one already-rejected request:
+ *
+ * - `_meta` present but not an object → `-32602` (Invalid Params).
+ * - Everything else, including an unparseable body → `-32020`, the code
+ *   for the version mismatch that made `checkProtocolVersion` reject the
+ *   request in the first place.
+ *
+ * `id` is echoed when the body parsed as a JSON-RPC request with a
+ * string/number `id`, `null` otherwise (the suite has a separate check
+ * that error responses preserve the request's id). Pure and synchronous:
+ * the caller is responsible for reading and JSON-parsing the body
+ * (`undefined` when reading/parsing failed).
+ */
+export function buildProtocolVersionErrorBody(
+  parsedBody: unknown,
+): JsonRpcErrorBody {
+  const malformedMeta = hasMalformedMeta(parsedBody);
+  return {
+    jsonrpc: "2.0",
+    error: {
+      code: malformedMeta
+        ? JSONRPC_ERROR_CODES.INVALID_PARAMS
+        : JSONRPC_ERROR_CODES.PROTOCOL_VERSION_UNSUPPORTED,
+      message: malformedMeta
+        ? "Invalid params: `_meta` must be an object"
+        : "Unsupported MCP-Protocol-Version",
+    },
+    id:
+      isJsonRpcRequestShape(parsedBody) &&
+      (typeof parsedBody.id === "string" || typeof parsedBody.id === "number")
+        ? parsedBody.id
+        : null,
+  };
 }
 
 /**

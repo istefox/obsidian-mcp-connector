@@ -144,6 +144,126 @@ describe("startHttpServer", () => {
   });
 });
 
+describe("MCP-Protocol-Version 400 carries a JSON-RPC body (SEP-2575 server-stateless, OMC-018)", () => {
+  const token = "t".repeat(32);
+
+  test("an unsupported version answers 400 with a -32020 JSON-RPC error, echoing the request id", async () => {
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(token),
+      requestHandler: async () => {
+        throw new Error("should not reach the handler");
+      },
+    });
+    running.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "mcp-protocol-version": "1.0.0",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 42,
+        method: "initialize",
+        params: {},
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -32020, message: "Unsupported MCP-Protocol-Version" },
+      id: 42,
+    });
+  });
+
+  test("a malformed `_meta` (present but not an object) answers 400 with -32602 Invalid Params", async () => {
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(token),
+      requestHandler: async () => {
+        throw new Error("should not reach the handler");
+      },
+    });
+    running.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "mcp-protocol-version": "2026-07-28",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "req-1",
+        method: "initialize",
+        params: { _meta: "not-an-object" },
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      jsonrpc: "2.0",
+      error: {
+        code: -32602,
+        message: "Invalid params: `_meta` must be an object",
+      },
+      id: "req-1",
+    });
+  });
+
+  test("an unparseable body still 400s with -32020 and a null id, not a crash", async () => {
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(token),
+      requestHandler: async () => {
+        throw new Error("should not reach the handler");
+      },
+    });
+    running.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "mcp-protocol-version": "1.0.0",
+      },
+      body: "{not valid json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -32020, message: "Unsupported MCP-Protocol-Version" },
+      id: null,
+    });
+  });
+
+  test("an absent MCP-Protocol-Version header is still legal and reaches the handler unchanged", async () => {
+    let handlerCalled = false;
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(token),
+      requestHandler: async (_req, res) => {
+        handlerCalled = true;
+        res.writeHead(200);
+        res.end("ok");
+      },
+    });
+    running.push(server);
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(handlerCalled).toBe(true);
+  });
+});
+
 describe("stopHttpServer — connection draining", () => {
   test("force-drops keep-alive/SSE sockets before close()", async () => {
     const order: string[] = [];
