@@ -36,3 +36,18 @@ export const ERROR_CODES = {
   UNAUTHORIZED: 401,
   PAYLOAD_TOO_LARGE: 413,
 } as const;
+
+// JSON-RPC `error.code` values that accompany the transport's 400 rejection
+// for an unsupported/malformed MCP-Protocol-Version request (SEP-2575
+// `server-stateless` conformance, OMC-018). Distinct from ERROR_CODES
+// (HTTP statuses, all positive): these sit in the JSON-RPC body alongside
+// the same HTTP 400. -32020 is the spec's HeaderMismatch /
+// unsupported-protocol-version code; -32602 is the standard JSON-RPC
+// Invalid Params code, reused here when the request's own `_meta` is
+// present but not an object. Neither is the local-error convention
+// (`-33000`, see ADR-0012/ADR-0013) — those are proxy-local failures with
+// no protocol meaning, these two are spec-defined wire codes.
+export const JSONRPC_ERROR_CODES = {
+  INVALID_PARAMS: -32602,
+  PROTOCOL_VERSION_UNSUPPORTED: -32020,
+} as const;

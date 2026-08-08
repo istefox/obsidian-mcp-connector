@@ -386,3 +386,107 @@ describe("runMiddleware — N-token bearer matching (issue #348, ADR-0014 §2)",
     }
   });
 });
+
+import { buildProtocolVersionErrorBody } from "./middleware";
+
+describe("buildProtocolVersionErrorBody (SEP-2575 server-stateless, OMC-018)", () => {
+  test("an unparseable body (undefined) answers -32020 with a null id", () => {
+    expect(buildProtocolVersionErrorBody(undefined)).toEqual({
+      jsonrpc: "2.0",
+      error: { code: -32020, message: "Unsupported MCP-Protocol-Version" },
+      id: null,
+    });
+  });
+
+  test("a well-formed request with no _meta at all answers -32020 (absent _meta is legal)", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "initialize",
+      params: {},
+    });
+    expect(body.error.code).toBe(-32020);
+    expect(body.id).toBe(7);
+  });
+
+  test("_meta present as an object, missing protocolVersion/clientCapabilities, still answers -32020 — those subfields are never required (out of scope, OMC-008)", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: "abc",
+      method: "initialize",
+      params: { _meta: {} },
+    });
+    expect(body.error.code).toBe(-32020);
+    expect(body.id).toBe("abc");
+  });
+
+  test("_meta present but a string answers -32602 (Invalid Params)", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: { _meta: "not-an-object" },
+    });
+    expect(body).toEqual({
+      jsonrpc: "2.0",
+      error: {
+        code: -32602,
+        message: "Invalid params: `_meta` must be an object",
+      },
+      id: 1,
+    });
+  });
+
+  test("_meta present but an array answers -32602 (arrays are typeof object but not a valid _meta)", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "initialize",
+      params: { _meta: [] },
+    });
+    expect(body.error.code).toBe(-32602);
+  });
+
+  test("_meta present but null answers -32602", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "initialize",
+      params: { _meta: null },
+    });
+    expect(body.error.code).toBe(-32602);
+  });
+
+  test("echoes a string id", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: "request-42",
+      method: "tools/list",
+      params: {},
+    });
+    expect(body.id).toBe("request-42");
+  });
+
+  test("a response (has id, no method) never echoes its id — id stays null", () => {
+    const body = buildProtocolVersionErrorBody({ jsonrpc: "2.0", id: 9 });
+    expect(body.id).toBeNull();
+  });
+
+  test("a non-string/number id (e.g. an object) is not echoed", () => {
+    const body = buildProtocolVersionErrorBody({
+      jsonrpc: "2.0",
+      id: { nested: true },
+      method: "initialize",
+      params: {},
+    });
+    expect(body.id).toBeNull();
+  });
+
+  test("a batch array body is not treated as malformed _meta — falls back to -32020", () => {
+    const body = buildProtocolVersionErrorBody([
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { _meta: "x" } },
+    ]);
+    expect(body.error.code).toBe(-32020);
+    expect(body.id).toBeNull();
+  });
+});

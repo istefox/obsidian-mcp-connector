@@ -5,7 +5,8 @@ import {
   type ServerResponse,
 } from "node:http";
 import { logger } from "$/shared";
-import { runMiddleware } from "./middleware";
+import { buildProtocolVersionErrorBody, runMiddleware } from "./middleware";
+import { readBodyWithCap } from "./parseRequestBody";
 import type { TokenRecord } from "./tokenStore";
 import { bindWithFallback } from "./port";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES, PORT_RANGE } from "../constants";
@@ -87,8 +88,29 @@ export async function startHttpServer(
       );
 
       if (!check.ok) {
-        // Middleware rejected the request — return the status and close.
-        // No body needed: these are machine-to-machine errors.
+        // Most rejections (401/403/404/405) are machine-to-machine errors
+        // with no body. The protocol-version 400 is the one the spec wants
+        // to carry a JSON-RPC error body (SEP-2575 `server-stateless`
+        // conformance, OMC-018): read the body (capped, best-effort — an
+        // unparseable or over-cap body just falls back to a null id and
+        // the version-mismatch code) so the error can echo the request's
+        // id and, when `_meta` is malformed, name that instead.
+        if (check.status === ERROR_CODES.PROTOCOL_VERSION_UNSUPPORTED) {
+          const rawBody = await readBodyWithCap(
+            req,
+            MAX_REQUEST_BODY_BYTES,
+          ).catch(() => null);
+          let parsedBody: unknown;
+          try {
+            parsedBody = rawBody === null ? undefined : JSON.parse(rawBody);
+          } catch {
+            parsedBody = undefined;
+          }
+          res.writeHead(check.status, { "content-type": "application/json" });
+          res.end(JSON.stringify(buildProtocolVersionErrorBody(parsedBody)));
+          if (rawBody === null) req.destroy();
+          return;
+        }
         res.writeHead(check.status);
         res.end();
         return;
