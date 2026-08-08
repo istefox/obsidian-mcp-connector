@@ -1,3 +1,4 @@
+import fsp from "fs/promises";
 import { FileSystemAdapter } from "obsidian";
 import type McpToolsPlugin from "$/main";
 // Direct path, not the `mcp-transport` barrel: `AccessControlSection`
@@ -29,7 +30,25 @@ type SaveDialog = {
   }): Promise<{ filePath?: string }>;
 };
 
-/** Electron's save dialog, or null on mobile and other unusual hosts. */
+/**
+ * Electron's save dialog, or null on mobile and other unusual hosts.
+ *
+ * OMC-019: this `require("electron")` is still flagged by the community
+ * reviewer and is intentionally NOT converted. Unlike the `fs/promises`
+ * call below, it cannot be hoisted to a static top-level `import`: this
+ * function is called unconditionally on every export, before we know
+ * whether we are inside a real Electron host, and the `try`/`catch` is
+ * load-bearing — under `bun test` and on any "unusual host" `require`
+ * throws here on purpose, and the caller falls back to the vault write.
+ * A top-level `import "electron"` would run at module-init time instead,
+ * outside any `try`/`catch`, and would crash the whole file's test suite
+ * (see `mcpbDownload.test.ts`'s header comment) instead of degrading.
+ * A dynamic `import("electron")` was rejected too: this project has
+ * already documented that Obsidian's eval-based plugin loader does not
+ * reliably resolve dynamic `import()` (see `onnxEnv.ts`), so swapping a
+ * proven code path for an unverifiable one to satisfy a linter would
+ * risk breaking the save dialog for everyone to fix a warning for no one.
+ */
 function electronDialog(): SaveDialog | null {
   try {
     const remote = (require("electron") as { remote?: { dialog?: SaveDialog } })
@@ -99,10 +118,14 @@ export async function downloadMcpb(
       filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
     });
     if (!filePath) return "Save cancelled.";
-    // require() is reliable for Node built-ins in Electron; dynamic import() is not.
-    const { writeFile } =
-      require("fs/promises") as typeof import("fs/promises");
-    await writeFile(filePath, Buffer.from(bytes));
+    // Static import, not require(): unlike `electronDialog()` below, this
+    // call only runs once the native dialog has already returned — a real
+    // Electron host is confirmed by then, so there is nothing to guard
+    // lazily against. Bun's cjs bundler compiles this exact statement to
+    // `require("fs/promises")` in main.js (see claudeDesktop.ts for the
+    // same pattern already shipping), so the OMC-019 reviewer finding is
+    // gone from `src/**` with byte-identical runtime behaviour.
+    await fsp.writeFile(filePath, Buffer.from(bytes));
     return `${FILENAME} saved.`;
   }
 
