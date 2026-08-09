@@ -1,5 +1,6 @@
 import {
   ERROR_CODES,
+  FIRST_MODERN_PROTOCOL_VERSION,
   JSONRPC_ERROR_CODES,
   MCP_PATH_PREFIX,
   SUPPORTED_PROTOCOL_VERSIONS,
@@ -75,7 +76,17 @@ type CheckResult = { ok: true } | { ok: false; status: 400 | 401 | 403 };
 
 type AuthResult = { ok: true; tokenId: string } | { ok: false; status: 401 };
 
-function getHeader(headers: RequestHeaders, name: string): string | undefined {
+/**
+ * Read a single header value, lowercasing the name and taking the first
+ * occurrence of a multi-valued header. Exported because the deferred half of
+ * the protocol-version rung lives in eraRouter.ts and must read the
+ * `MCP-Protocol-Version` header exactly the way this rung does — a second
+ * copy of the normalization is a place for the two halves to disagree.
+ */
+export function getHeader(
+  headers: RequestHeaders,
+  name: string,
+): string | undefined {
   const v = headers[name.toLowerCase()];
   return Array.isArray(v) ? v[0] : v;
 }
@@ -119,12 +130,51 @@ function checkOrigin(headers: RequestHeaders): CheckResult {
     : { ok: false, status: ERROR_CODES.ORIGIN_FORBIDDEN };
 }
 
-function checkProtocolVersion(headers: RequestHeaders): CheckResult {
+/**
+ * Whether a protocol revision belongs to the modern (2026-07-28+) era.
+ *
+ * Project-owned copy of the SDK's own `isModernProtocolVersion`
+ * (`@modelcontextprotocol/server`, `dist/src-CX2iR2pK.mjs:553`), which is
+ * package-internal and exported from no public entry point. Revision
+ * identifiers are ISO dates, so the SDK orders eras with a lexicographic
+ * `>=` against FIRST_MODERN_PROTOCOL_VERSION and so does this copy. If the
+ * SDK ever changes the era boundary away from that comparison, this copy
+ * goes stale silently (ADR-0016, Consequences).
+ *
+ * Exported for the era router, which needs the same era test this rung uses.
+ */
+export function isModernProtocolVersion(version: string): boolean {
+  return version >= FIRST_MODERN_PROTOCOL_VERSION;
+}
+
+/**
+ * The legacy half of the protocol-version rung (ADR-0016 §3).
+ *
+ * The rung splits by era, and only this half runs inside `runMiddleware`:
+ *
+ * - Header absent → pass. Absent is legal per spec: the server assumes a
+ *   default version. Do not require the header — that would break clients
+ *   that never send it.
+ * - A revision this server serves → pass.
+ * - A PRE-2026 revision it does not serve → 400, from here, in this position
+ *   in the chain (before auth), byte-identically to before OMC-008.
+ * - A 2026-era revision it does not serve → pass, DEFERRED. Only
+ *   classification can tell whether the SDK's validation ladder owns the
+ *   answer, and that answer carries `{ supported, requested }` where this
+ *   server's `buildProtocolVersionErrorBody` carries neither. Rejecting here
+ *   would preempt it.
+ *
+ * The other half is `applyDeferredVersionRung` in eraRouter.ts: it answers a
+ * deferred header that then classifies legacy, so no unsupported-version 400
+ * is lost. Exported alongside `isModernProtocolVersion` so both halves of
+ * the split rung are reachable from the era router's side.
+ */
+export function checkProtocolVersion(headers: RequestHeaders): CheckResult {
   const version = getHeader(headers, "mcp-protocol-version");
-  // Absent is legal per spec: the server assumes a default version. Do not
-  // require the header — that would break clients that never send it.
   if (version === undefined) return { ok: true };
-  return (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version)
+  if ((SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version))
+    return { ok: true };
+  return isModernProtocolVersion(version)
     ? { ok: true }
     : { ok: false, status: ERROR_CODES.PROTOCOL_VERSION_UNSUPPORTED };
 }
@@ -215,8 +265,9 @@ export function buildProtocolVersionErrorBody(
  * Check order — load-bearing for security and observability:
  *   1. Method/path (404 path unknown → 405 method not allowed)
  *   2. Origin (403) — anti-DNS-rebinding, independent of auth
- *   3. MCP-Protocol-Version (400) — absent is legal (assume default);
- *      an unsupported value is rejected
+ *   3. MCP-Protocol-Version (400) — absent is legal (assume default); an
+ *      unsupported PRE-2026 value is rejected here, an unsupported 2026-era
+ *      one is deferred to the era router (see checkProtocolVersion)
  *   4. Bearer token (401) — constant-time compare via compareTokens
  *
  * Returning 405 before 401 intentionally tells unauthenticated

@@ -16,6 +16,10 @@
   } from "$/features/mcp-transport/services/tokenStore";
   import { parsePortInput } from "$/features/mcp-transport/services/portInput";
   import {
+    readEraCounters,
+    type EraCounters,
+  } from "$/features/mcp-transport/services/eraCounters";
+  import {
     BIND_HOST,
     MAX_TOKENS,
     MCP_PATH_PREFIX,
@@ -94,12 +98,19 @@
   let serverNameInput = "";
   let serverNameBusy = false;
 
+  // How many requests each protocol era has served, as persisted at the
+  // moment this pane opened. Diagnostic and read-only: the value exists so
+  // the `legacy: 'reject'` trigger (ADR-0016 §8) can be observed rather
+  // than guessed at, and nothing here writes it back.
+  let eraCounters: EraCounters = { legacy: 0, modern: 0 };
+
   onMount(async () => {
     const raw = (await new SettingsStore(plugin).readSlice("mcpTransport")) as
-      | { port?: number; serverName?: string }
+      | { port?: number; serverName?: string; eraCounters?: unknown }
       | undefined;
     portInput = raw?.port ?? null;
     serverNameInput = raw?.serverName ?? "";
+    eraCounters = readEraCounters(raw?.eraCounters);
     const registry = plugin.mcpTransportState?.mcp.registry;
     allToolNames = registry ? registry.listAll().map((t) => t.name) : [];
     await refreshTokens();
@@ -593,6 +604,23 @@
         {:else}
           HTTP transport not running — port unavailable.
         {/if}
+      </div>
+    </div>
+  </div>
+
+  <div class="setting-item">
+    <div class="setting-item-info">
+      <div class="setting-item-name">Requests served</div>
+      <!-- The non-breaking spaces keep each era's label glued to its own
+           number, and the separator glued to the count before it, so a
+           narrow pane or a five-digit count cannot wrap a bare number or a
+           lone `·` onto a line of its own. The single ordinary space
+           between the two groups is the one break point left, which is
+           also the only one that reads correctly. -->
+      <div class="setting-item-description">
+        2025&nbsp;era&nbsp;{eraCounters.legacy}&nbsp;· 2026-07-28&nbsp;era&nbsp;{eraCounters.modern}.
+        Read when this pane opened, so requests still batched in memory are
+        not counted yet.
       </div>
     </div>
   </div>

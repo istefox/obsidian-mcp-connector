@@ -19,7 +19,8 @@
 		"build:mcpb": "bun scripts/build-mcpb.ts",
 		"release": "bun run build && bun run zip && bun run build:mcpb",
 		"zip": "bun scripts/zip.ts",
-		"test:mcpb": "bun scripts/mcpb-smoke.ts"
+		"test:mcpb": "bun scripts/mcpb-smoke.ts",
+		"test:conformance": "bash scripts/conformance/run.sh"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",

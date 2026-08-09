@@ -1,0 +1,47 @@
+# Conformance baseline for the `server-stateless` scenario.
+#
+# Every entry names one check that is red on purpose, with the reason it
+# is red. The suite fails the run on anything red that is NOT listed here,
+# and also on a listed check that has started passing.
+#
+# This file is maintained by hand and is never regenerated from a failing
+# run: pasting the current failures back in would turn the one artifact
+# that carries intent into a snapshot of whatever happens to be broken.
+# A check that starts passing gets its entry removed. A check that starts
+# failing gets investigated, then either fixed or added with a reason.
+#
+# Entry grammar is `<scenario>:<check-id>`, no space after the colon.
+# Checks that report SKIPPED or are absent need no entry: the suite
+# already tolerates both.
+
+server:
+  # --- The two capability checks, unreachable -----------------------------
+  # Both drive a diagnostic tool named `test_missing_capability` that the
+  # suite expects a server to expose. The SDK's
+  # REQUIRED_CLIENT_CAPABILITIES_BY_METHOD is `{}`
+  # (@modelcontextprotocol/server@2.0.0, dist/src-CX2iR2pK.mjs:452), so no
+  # spec method carries a static client-capability requirement and only a
+  # shipped fixture tool could satisfy these. That tool would appear in
+  # tools/list in every user's vault, in every client's tool picker,
+  # forever — a worse outcome than two honestly explained red checks
+  # (ADR-0016, Alternative F).
+
+  # Needs a shipped `test_missing_capability` fixture tool to reject; refusing to ship one.
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+  # Same fixture tool, so the -32021 response's HTTP 400 can never be exercised.
+  - server-stateless:sep-2575-missing-capability-http-400
+
+  # --- List-changed on a subscription stream, deferred to OMC-007 ---------
+  # The SDK's modern entry owns `subscriptions/listen`, so the stream opens
+  # and the acknowledgement and subscriptionId checks pass without this
+  # project implementing anything. What does not exist is the fan-out that
+  # would push a list-changed notification onto an already-open stream:
+  # this server delivers `notifications/tools/list_changed` on the calling
+  # request's own response stream and has no broadcast path (ADR-0016 §5,
+  # ADR-0011). Both checks are SHOULD-level. Adopting 2026-07-28 unblocks
+  # OMC-007; it does not perform it.
+
+  # No fan-out to open listen streams; tools/list_changed rides the caller's own response.
+  - server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription
+  # Same missing fan-out on the prompts side.
+  - server-stateless:sep-2575-server-sends-prompts-list-changed-on-subscription

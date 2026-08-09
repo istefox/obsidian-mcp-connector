@@ -194,7 +194,15 @@ describe("MCP-Protocol-Version 400 carries a JSON-RPC body (SEP-2575 server-stat
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        "mcp-protocol-version": "2026-07-28",
+        // Must stay a PRE-2026 unsupported value (OMC-008 Task 1). This
+        // body's -32602 comes from buildProtocolVersionErrorBody, which
+        // httpServer.ts only calls after checkProtocolVersion has already
+        // rejected the request with 400. A 2026-era value (e.g.
+        // "2026-07-28" or "2027-05-01") is deferred by the version rung
+        // instead of rejected, so it would reach requestHandler here and
+        // this test's throwing stub would 500 instead of asserting
+        // -32602. Do not "modernise" this back to a 2026-era date.
+        "mcp-protocol-version": "2023-01-01",
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
