@@ -1,0 +1,677 @@
+import { describe, expect, test, afterEach, beforeEach } from "bun:test";
+import { mockApp, mockPlugin, resetMockVault } from "$/test-setup";
+import {
+  createMcpService,
+  destroyMcpService,
+  type McpService,
+} from "./mcpServer";
+import { staticTokenProvider } from "./tokenStore";
+import type { RunningServer } from "./httpServer";
+
+/**
+ * TDD RED phase for OMC-008 Task 4 (`docs/architecture/ADR-0016-...md`,
+ * `docs/superpowers/plans/2026-08-08-omc-008-adopt-mcp-spec-2026-07-28.md`).
+ *
+ * `mcpServer.ts`'s modern branch today only `logger.warn`s and falls through
+ * to the legacy transport (Task 2's own acceptance criterion) — the strict
+ * modern handler (`createMcpHandler(factory, { legacy: 'reject' })` wrapped by
+ * `toNodeHandler`) is not wired yet. Every assertion below states the WIRED
+ * behaviour Task 4 must produce, verified against the installed SDK
+ * (`node_modules/@modelcontextprotocol/server@2.0.0`), not summarised from
+ * the plan.
+ *
+ * Measured (not assumed) RED reason for every test below that carries an
+ * `MCP-Protocol-Version: 2026-07-28` (or `2027-05-01`) header: the fallback's
+ * `NodeStreamableHTTPServerTransport` runs its OWN header-vs-supported-list
+ * check against the hand-built `McpServer`'s `_supportedProtocolVersions`
+ * (the SDK's default legacy list, topping at `2025-11-25` —
+ * `installModernOnlyHandlers` is never called on this instance because it is
+ * only invoked inside `createMcpHandler`'s `serveModern`, not on the
+ * fallback). That check fires before dispatch and answers
+ * `{"error":{"code":-32000,"message":"Bad Request: Unsupported protocol
+ * version: ..."}}` at HTTP 400 for EVERY request in this file that names a
+ * 2026-era header — this is the exact `-32000` the task briefing already
+ * named in `eraRouter.test.ts`'s own untouched RED ("still answers 400 with
+ * the -32020 unsupported-version code"), reached here from request bodies
+ * that carry a full `_meta` envelope instead of a claim-less one. It is not
+ * the `-32602`/`-32022` ladder this file asserts, and not the `server/discover`
+ * Method Not Found a bare read of the plan might suggest either — both are
+ * still true statements about what the WIRED handler must answer, and both
+ * are still unmet today, just via this one shared proximate cause rather
+ * than two different ones. Once Task 4 routes a modern-classified request to
+ * the real `createMcpHandler` handler instead of this fallback, none of
+ * these requests reach `NodeStreamableHTTPServerTransport` at all — the
+ * SDK's own body-classification ladder (`server/dist/src-CX2iR2pK.mjs:5101`)
+ * owns the answer instead, which is what every assertion below states.
+ *
+ * Only ONE thing in this file is a true regression pin, already true with no
+ * change: an `initialize` POST carries no `MCP-Protocol-Version` header here,
+ * so it never reaches the check above and answers exactly as it does today
+ * (R-01). Every other test, including both R-09 tests, is genuinely red
+ * today for the shared reason above — the tools/list-set equivalence test is
+ * NOT a coincidental pin here, because a modern-envelope `tools/list` in
+ * this file always carries the header too. The R-09 describe block also
+ * separately asserts the one thing only the real 2026-era encode seam
+ * produces, once Task 4 does land and the header check above no longer
+ * applies: `_meta['io.modelcontextprotocol/serverInfo']` stamped onto the
+ * result (`rev2026Codec.encodeResult` calls `stampServerInfoMeta`;
+ * `rev2025Codec.encodeResult` never does, `server/dist/src-CX2iR2pK.mjs:4115`
+ * vs `:2390`) — that is the assertion that would catch a future regression
+ * where the equivalence holds again by coincidence (e.g. a modern route that
+ * silently re-delegates to the legacy encode path) rather than through the
+ * real per-token `ToolScope` resolution shared by both eras (ADR-0016 §4).
+ */
+
+const TOKEN = "t".repeat(32);
+const MODERN_HEADER = { "mcp-protocol-version": "2026-07-28" } as const;
+
+/**
+ * SEP-2243 makes `Mcp-Method` mandatory on every modern-era request; the
+ * installed SDK's `validateStandardRequestHeaders` (run by `serveModern`
+ * ahead of dispatch) rejects with -32020 when it is absent, naming the
+ * value it read from the header as "(missing)" regardless of what the body
+ * says. `Mcp-Name` is only required for `tools/call`, `prompts/get` and
+ * `resources/read` (`MCP_NAME_HEADER_SOURCE`); none of those methods appear
+ * in this file, so no request here needs it.
+ *
+ * The R-04 cases send a deliberately malformed or absent `_meta` envelope
+ * and must keep failing for that reason alone, so they still build their
+ * headers from the bare `MODERN_HEADER` above rather than this helper.
+ */
+function modernHeaders(method: string): Record<string, string> {
+  return { ...MODERN_HEADER, "mcp-method": method };
+}
+const VALID_ENVELOPE = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+beforeEach(() => resetMockVault());
+
+const active: McpService[] = [];
+const runningServers: RunningServer[] = [];
+afterEach(async () => {
+  for (const s of active.splice(0)) await destroyMcpService(s);
+  for (const s of runningServers.splice(0)) {
+    await new Promise<void>((r) => s.server.close(() => r()));
+  }
+});
+
+/** Boot a service + HTTP server behind a single static token, the same
+ * idiom `mcpServer.test.ts` and `eraRouter.test.ts` use. */
+async function startService(): Promise<RunningServer> {
+  const { startHttpServer } = await import("./httpServer");
+  const svc = await createMcpService({
+    app: mockApp(),
+    plugin: mockPlugin(),
+    pluginVersion: "0.4.0-alpha.1",
+    serverName: "mcp-connector",
+  });
+  active.push(svc);
+  const server = await startHttpServer({
+    resolveTokens: staticTokenProvider(TOKEN),
+    requestHandler: svc.handleRequest,
+  });
+  runningServers.push(server);
+  return server;
+}
+
+async function postMcp(
+  port: number,
+  token: string,
+  body: unknown,
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  return fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Split an SSE response body into its `data:` JSON payloads, in arrival
+ * order. Every server-sent frame this process can produce — the modern
+ * `PerRequestHTTPServerTransport` (`@modelcontextprotocol/server`'s
+ * `index.mjs`, `writeMessageFrame`) and the legacy
+ * `NodeStreamableHTTPServerTransport` it wraps — writes the same
+ * `event: message\ndata: <json>\n\n` shape, so one parser covers both
+ * eras without pulling in an SSE client for a stream this server writes
+ * itself. Reads the whole body rather than incrementally, which is fine
+ * here: every exchange below closes its stream after the terminal result,
+ * so there is nothing left open to await.
+ */
+async function readSseFrames(res: Response): Promise<unknown[]> {
+  const text = await res.text();
+  return text
+    .split("\n\n")
+    .map((frame) => frame.trim())
+    .filter((frame) => frame.length > 0)
+    .map((frame) => {
+      const dataLine = frame
+        .split("\n")
+        .find((line) => line.startsWith("data:"));
+      if (dataLine === undefined) {
+        throw new Error(`SSE frame carried no data line: ${frame}`);
+      }
+      return JSON.parse(dataLine.slice("data:".length).trim());
+    });
+}
+
+describe("modern path — server/discover (R-02, R-03)", () => {
+  test("a valid envelope reaches server/discover: supportedVersions, capabilities including tools and prompts, and this server's identity under _meta", async () => {
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "server/discover",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("server/discover"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.result?.supportedVersions).toEqual(["2026-07-28"]);
+    // `mcpServer.ts:163` declares `prompts: {}`, but `McpServer`'s
+    // constructor upgrades any declared `prompts` capability to
+    // `{ listChanged: true }` before advertising it (it calls
+    // `setPromptRequestHandlers()`, which calls `registerCapabilities`
+    // with that default) — the discovered set reflects the upgrade, not
+    // the bare declaration. This isn't new to the 2026 era: the legacy
+    // `initialize` reply already reports `prompts: { listChanged: true }`
+    // for the same reason (see `eraRouter.test.ts`'s pinned assertion).
+    // The server does not currently emit
+    // `notifications/prompts/list_changed`, so this advertised capability
+    // isn't honoured yet; that's a pre-existing gap tracked as a
+    // follow-up, not something this test fixes. This assertion pins what
+    // the server actually answers, not what it ought to.
+    expect(body.result?.capabilities).toEqual({
+      tools: { listChanged: true },
+      prompts: { listChanged: true },
+    });
+    expect(body.result?._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual({
+      name: "mcp-connector",
+      version: "0.4.0-alpha.1",
+    });
+  });
+
+  test("every capability server/discover advertises is honoured: tools/list and prompts/list both answer over the modern path", async () => {
+    const server = await startService();
+
+    const toolsRes = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("tools/list"),
+    );
+    expect(toolsRes.status).toBe(200);
+    const toolsBody = await toolsRes.json();
+    expect(toolsBody.error).toBeUndefined();
+    expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
+
+    const promptsRes = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "prompts/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("prompts/list"),
+    );
+    expect(promptsRes.status).toBe(200);
+    const promptsBody = await promptsRes.json();
+    expect(promptsBody.error).toBeUndefined();
+    expect(Array.isArray(promptsBody.result?.prompts)).toBe(true);
+  });
+});
+
+describe("modern path — a missing or incomplete _meta envelope is rejected (R-04)", () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["_meta absent entirely", {}],
+    [
+      "_meta present but missing protocolVersion",
+      {
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    ],
+    [
+      "_meta present but missing clientCapabilities",
+      {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        },
+      },
+    ],
+  ];
+
+  for (const [label, params] of cases) {
+    test(`${label} ⇒ -32602 and HTTP 400`, async () => {
+      const server = await startService();
+      const res = await postMcp(
+        server.port,
+        TOKEN,
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params },
+        MODERN_HEADER,
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.jsonrpc).toBe("2.0");
+      expect(body.error?.code).toBe(-32602);
+    });
+  }
+});
+
+describe("modern path — _meta without clientInfo is served normally; clientInfo is never required (R-05)", () => {
+  test("a valid envelope missing clientInfo still answers tools/list", async () => {
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("tools/list"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toBeUndefined();
+    expect(Array.isArray(body.result?.tools)).toBe(true);
+  });
+});
+
+describe("modern path — an unsupported 2026-era revision answers the SDK's own error (R-06, modern-branch verification)", () => {
+  test("MCP-Protocol-Version: 2027-05-01 with a valid, matching envelope ⇒ unsupported-version error naming this server's supported versions", async () => {
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2027-05-01",
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        },
+      },
+      { "mcp-protocol-version": "2027-05-01", "mcp-method": "tools/list" },
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error?.data?.supported ?? []).toContain("2026-07-28");
+    expect(body.error?.data?.requested).toBe("2027-05-01");
+  });
+});
+
+describe("the legacy handshake is untouched by the modern path (R-01)", () => {
+  test("an initialize POST still reaches the legacy path and answers 2025-11-25", async () => {
+    const server = await startService();
+    const res = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "test-client", version: "0.0.0" },
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.result?.protocolVersion).toBe("2025-11-25");
+  });
+});
+
+describe("modern path — per-token tool surfaces match the legacy path (R-09)", () => {
+  const TOKEN_ALL = {
+    id: "tok-all",
+    label: "All",
+    token: "a".repeat(32),
+    createdAt: 1,
+  };
+  const TOKEN_CORE = {
+    id: "tok-core",
+    label: "Core",
+    token: "c".repeat(32),
+    createdAt: 2,
+  };
+
+  function makeScopedPlugin() {
+    let store: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: TOKEN_ALL.token,
+        tokens: [TOKEN_ALL, TOKEN_CORE],
+      },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          [TOKEN_ALL.id]: { profile: "all", promoted: [], allowed: null },
+          [TOKEN_CORE.id]: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    };
+    return mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+  }
+
+  async function bootScopedServer(): Promise<RunningServer> {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeScopedPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: async () => [TOKEN_ALL, TOKEN_CORE],
+      requestHandler: svc.handleRequest,
+    });
+    runningServers.push(server);
+    return server;
+  }
+
+  test("token A's tools/list set is identical across both eras, and token core's is narrower", async () => {
+    const server = await bootScopedServer();
+
+    const namesOf = async (
+      token: string,
+      params: Record<string, unknown>,
+      headers: Record<string, string> = {},
+    ): Promise<string[]> => {
+      const res = await postMcp(
+        server.port,
+        token,
+        { jsonrpc: "2.0", id: 1, method: "tools/list", params },
+        headers,
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      return ((body?.result?.tools ?? []) as Array<{ name: string }>).map(
+        (t) => t.name,
+      );
+    };
+
+    const legacyA = await namesOf(TOKEN_ALL.token, {});
+    const modernA = await namesOf(
+      TOKEN_ALL.token,
+      { _meta: VALID_ENVELOPE },
+      modernHeaders("tools/list"),
+    );
+    const modernCore = await namesOf(
+      TOKEN_CORE.token,
+      { _meta: VALID_ENVELOPE },
+      modernHeaders("tools/list"),
+    );
+
+    expect([...modernA].sort()).toEqual([...legacyA].sort());
+    expect(modernCore).not.toEqual(modernA);
+    expect(modernCore).toContain("get_active_file");
+    expect(modernCore).not.toContain("find_broken_links");
+  });
+
+  test("the modern-path tools/list result carries this server's identity in _meta, proving it went through the real 2026 encode seam and not the legacy fallback", async () => {
+    const server = await bootScopedServer();
+    const res = await postMcp(
+      server.port,
+      TOKEN_ALL.token,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("tools/list"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.result?._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual({
+      name: "mcp-connector",
+      version: "0.4.0-alpha.1",
+    });
+  });
+});
+
+describe("activate_tool's notifications/tools/list_changed rides the calling request's own stream on both eras (R-10)", () => {
+  // A token scoped to the "core" profile, the same shape as R-09's
+  // TOKEN_CORE, so `find_broken_links` starts inactive for it and
+  // activating it is a real state change — not the "already active"
+  // early return, which never calls sendNotification.
+  const CORE_TOKEN = {
+    id: "tok-core-r10",
+    label: "Core",
+    token: "d".repeat(32),
+    createdAt: 3,
+  };
+
+  function makeCoreScopedPlugin() {
+    let store: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: CORE_TOKEN.token,
+        tokens: [CORE_TOKEN],
+      },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          [CORE_TOKEN.id]: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    };
+    return mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+  }
+
+  async function bootCoreServer(): Promise<RunningServer> {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = makeCoreScopedPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: async () => [CORE_TOKEN],
+      requestHandler: svc.handleRequest,
+    });
+    runningServers.push(server);
+    return server;
+  }
+
+  test("modern path: the response upgrades to text/event-stream and the notification frame precedes the terminal result", async () => {
+    const server = await bootCoreServer();
+    const res = await postMcp(
+      server.port,
+      CORE_TOKEN.token,
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "activate_tool",
+          arguments: { name: "find_broken_links" },
+          _meta: VALID_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "activate_tool" },
+    );
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const frames = (await readSseFrames(res)) as Array<{
+      method?: string;
+      id?: number;
+      result?: { _meta?: Record<string, unknown> };
+    }>;
+    const notificationIndex = frames.findIndex(
+      (f) => f.method === "notifications/tools/list_changed",
+    );
+    const resultIndex = frames.findIndex(
+      (f) => f.id === 7 && f.result !== undefined,
+    );
+    expect(notificationIndex).toBeGreaterThanOrEqual(0);
+    expect(resultIndex).toBeGreaterThan(notificationIndex);
+    // Rules out the reading where this "upgraded to SSE" is actually the
+    // LEGACY transport's own SSE path (bodyTargetsSseNotificationTool
+    // also flags activate_tool) misclassified as modern: only the 2026
+    // encode seam stamps serverInfo onto a result's _meta (R-09's own
+    // discriminator, reused here for tools/call).
+    expect(
+      frames[resultIndex]?.result?._meta?.[
+        "io.modelcontextprotocol/serverInfo"
+      ],
+    ).toEqual({ name: "mcp-connector", version: "0.4.0-alpha.1" });
+  });
+
+  test("legacy path (regression pin): the same activation still answers over SSE with the notification ahead of the result", async () => {
+    const server = await bootCoreServer();
+    const res = await postMcp(server.port, CORE_TOKEN.token, {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: {
+        name: "activate_tool",
+        arguments: { name: "find_broken_links" },
+      },
+    });
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const frames = (await readSseFrames(res)) as Array<{
+      method?: string;
+      id?: number;
+      result?: { _meta?: Record<string, unknown> };
+    }>;
+    const notificationIndex = frames.findIndex(
+      (f) => f.method === "notifications/tools/list_changed",
+    );
+    const resultIndex = frames.findIndex(
+      (f) => f.id === 8 && f.result !== undefined,
+    );
+    expect(notificationIndex).toBeGreaterThanOrEqual(0);
+    expect(resultIndex).toBeGreaterThan(notificationIndex);
+    // The mirror image of the modern test's discriminator above: the
+    // handshake-era codec never stamps serverInfo onto a result, so its
+    // absence here confirms this pin is genuinely exercising the legacy
+    // encode path rather than coincidentally matching the modern one.
+    expect(
+      frames[resultIndex]?.result?._meta?.[
+        "io.modelcontextprotocol/serverInfo"
+      ],
+    ).toBeUndefined();
+  });
+});
+
+describe("search_vault_smart's notifications/progress rides the modern path's own stream while the index builds (R-11)", () => {
+  // Mirrors searchVaultSmart.test.ts's own `buildingPlugin()` fixture
+  // (#344): `nativeIndexBuildInProgress: true` is the sole gate the
+  // handler checks before it computes a progress percentage and pushes
+  // it, independent of provider.isReady().
+  function buildingSemanticPlugin() {
+    return mockPlugin({
+      semanticSearchState: {
+        provider: { isReady: () => true, search: async () => [] },
+        settings: { provider: "native", indexingMode: "live" },
+        startIndexerIfNeeded: () => {},
+        nativeIndexBuildInProgress: true,
+        nativeIndexBuildStartedAt: Date.now() - 1_000,
+      },
+    } as never);
+  }
+
+  async function bootBuildingServer(): Promise<RunningServer> {
+    const { startHttpServer } = await import("./httpServer");
+    const plugin = buildingSemanticPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(TOKEN),
+      requestHandler: svc.handleRequest,
+    });
+    runningServers.push(server);
+    return server;
+  }
+
+  test("at least one notifications/progress frame carrying the caller's progressToken arrives before the terminal (error) result", async () => {
+    const server = await bootBuildingServer();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: {
+          name: "search_vault_smart",
+          arguments: { query: "test" },
+          _meta: { ...VALID_ENVELOPE, progressToken: "tok-r11" },
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_smart" },
+    );
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const frames = (await readSseFrames(res)) as Array<{
+      method?: string;
+      id?: number;
+      result?: { _meta?: Record<string, unknown> };
+      params?: { progressToken?: string };
+    }>;
+    const progressFrames = frames.filter(
+      (f) => f.method === "notifications/progress",
+    );
+    const resultIndex = frames.findIndex(
+      (f) => f.id === 9 && f.result !== undefined,
+    );
+    expect(progressFrames.length).toBeGreaterThanOrEqual(1);
+    expect(progressFrames[0]?.params?.progressToken).toBe("tok-r11");
+    const firstProgressIndex = frames.indexOf(progressFrames[0]!);
+    expect(resultIndex).toBeGreaterThan(firstProgressIndex);
+    // Same discriminator as R-10: only the modern encode seam stamps
+    // serverInfo onto a result, so its presence here proves this ran
+    // through the real 2026 codec rather than the legacy SSE path
+    // (search_vault_smart is also in SSE_NOTIFICATION_TOOLS, so a
+    // routing bug here would silently "pass" over legacy transport too).
+    expect(
+      frames[resultIndex]?.result?._meta?.[
+        "io.modelcontextprotocol/serverInfo"
+      ],
+    ).toEqual({ name: "mcp-connector", version: "0.4.0-alpha.1" });
+  });
+});

@@ -1,10 +1,12 @@
-<!-- project-tasks: prefix=OMC lastId=22 -->
+<!-- project-tasks: prefix=OMC lastId=24 -->
 # PROJECT TASKS
 
-Updated: 2026-08-08 · Open: 5 (P1: 0) · In progress: 0
+Updated: 2026-08-09 · Open: 6 (P1: 0) · In progress: 0
 
 ## Next — measured gaps, actionable now
 
+- [ ] `OMC-024` **P2** The transport settings report per-era request counts as a single global pair, so they cannot answer the question a user actually asks: *which protocol is this client speaking?* The transport is stateless and the era is decided per request, so there is no one answer for the server — on 2026-08-09 the Labs vault was genuinely serving both at once (Claude Desktop on 2025, hand-built probes on 2026). The answer is only well-defined per client, and the identity to key it on already exists: ADR-0014 gives every client a token id, and `eraCounters` is the last thing in the slice that stayed global. Make it a map keyed by token id and render one settings row per token. This also turns ADR-0016 §8's `legacy: 'reject'` trigger from a number into a decision: you would know *which* client is holding the legacy era open. Needs a migration from the flat `{legacy, modern}` shape already persisted in real vaults — absent must read as zero, existing values must not be lost. Deferred out of OMC-008 deliberately: that work was green, reviewed and conformance-verified, and this is a data-model change, not a wording fix <!-- src:session opened:2026-08-09 -->
+- [ ] `OMC-023` **P3** The server advertises a prompts capability it does not honour, on both protocol eras. `mcpServer.ts` declares `prompts: {}`, but `McpServer`'s constructor calls `setPromptRequestHandlers()` for any declared prompts capability (`mcp-DXXb3Vv3.mjs:1351`), which registers `listChanged: … ?? true` (`:1550`) — so the declared set is upgraded before anything reads it. The legacy `initialize` reply and the 2026 `server/discover` result both report `prompts: { listChanged: true }`, and nothing in the codebase ever sends `notifications/prompts/list_changed` (`tools/list_changed` is sent from `activateTool.ts:127`; there is no prompts equivalent). Found during OMC-008 and deliberately not fixed there: declaring `listChanged: false` would change the legacy `initialize` bytes, which that work's Invariant 1 forbids. Either honour it by sending the notification when the prompt set changes, or declare it false in a release that is allowed to move the legacy reply <!-- src:session opened:2026-08-08 -->
 - [ ] `OMC-022` **P3** The conformance CI job is no longer blocked. It was excluded from the Fase 1 run because there was no way to boot the MCP service headless, and that is now solved: `createMcpService` + `startHttpServer` + the `test-setup` mocks serve the real surface on a fixed port with no Obsidian and no vault (proven against `server-stateless` during the OMC-018 verification). Two pieces are still missing before it can be a CI step — the harness lives in a scratchpad rather than in `scripts/`, and the suite has to be run from the conformance repo's `main` since the published CLI has no 2026 scenarios. An expected-failures baseline (`--expected-failures`) is what would make it a gate rather than a report <!-- src:session opened:2026-08-08 -->
 - [ ] `OMC-016` **P3** #427 MCP Apps: **answered, it works.** The spike on `spike/427-mcp-apps-ui-resource` proved Claude Desktop reads and renders a `ui://` resource from this connector. What mattered was declaring `capabilities.extensions` with `io.modelcontextprotocol/ui`; the generic `resources` capability alone did nothing. Two hard requirements: mime type exactly `text/html;profile=mcp-app`, and the view must complete the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe blank. Real implementation is the remaining work: a proper resources capability, the handshake via `@modelcontextprotocol/ext-apps` (1.7.5 on npm) rather than hand-rolled `postMessage`, then the ranked search list <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
 
@@ -18,14 +20,17 @@ _none_
 
 ## Blocked / Decisions Needed
 
-**The `2026-07-28` lifecycle break.** Running conformance's `server-stateless` (SEP-2575) from
-source showed that six of its thirty checks require `initialize`, `ping`, `logging/setLevel`,
-`resources/subscribe` and `resources/unsubscribe` to **stop existing**, answering HTTP 404 with
-`-32601`. A conformant 2026 server has no `initialize` handshake: the lifecycle moves to
-per-request `_meta`. So adopting the revision is a migration that breaks every configured client,
-not a capability we add, and it cannot be half-done. That is an ADR-sized decision and it gates
-both entries below. What is NOT blocked: the 2026 mechanisms that ride per-request `_meta` already
-work — #427 proved extensions do, under a 2025 negotiated version.
+**The `2026-07-28` lifecycle break — resolved by OMC-008, and its central premise was wrong.**
+This entry read: *"adopting the revision is a migration that breaks every configured client, not a
+capability we add, and it cannot be half-done."* Measured against the shipped implementation, all
+three clauses are false. The two eras coexist on one endpoint, chosen per request by whether the
+body carries a `_meta` envelope claim, so a claim-less client is served exactly as before. The five
+removed-method checks pass **without** retiring `initialize`: the suite only ever probes the modern
+era, where the SDK's 2026 wire registry answers `404`/`-32601`, while a legacy client keeps its
+handshake. `server-stateless` went 7/27 → 26/28 with no client reconfigured and no `.mcpb`
+re-exported. Verified end-to-end against the Labs vault on 2026-08-09, where both eras served
+traffic in the same session. See ADR-0016 §8, which records the falsified prediction rather than
+deleting it. What this leaves open is only OMC-007 below.
 
 **Correction to how OMC-018 was scoped.** That entry described the suite as wanting `-32602` for a
 "malformed `_meta`", as if it were the same size of job as the `-32020`. Reading the checks
@@ -35,7 +40,6 @@ or missing `protocolVersion`/`clientCapabilities`. Requiring those is the 2026 l
 those three checks belong to OMC-008 and cannot move before it. The `-32602` branch OMC-018 did
 ship — `_meta` present but not an object — is ordinary shape validation the suite never exercises.
 
-- [ ] `OMC-008` **P2** #407 adopt MCP spec `2026-07-28`. The SDK is not the blocker it looked like: `@modelcontextprotocol/{core,server}@2.0.0` shipped 2026-07-27 with every 2026 schema (`SubscriptionsListenRequestSchema`, `DiscoverRequestSchema`, tasks, `extensions`), though `LATEST_PROTOCOL_VERSION` is still `2025-11-25` even on `main`. Measured gaps beyond the lifecycle question: per-request `_meta` validation (4 checks), `server/discover` (3 + a warning for the missing `serverInfo` in result `_meta`). Baseline is now 7/27 rather than 4/27 after OMC-018, measured in the headless harness <!-- src:session opened:2026-08-05 updated:2026-08-08 -->
 - [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness. Closed by `subscriptions/listen`, whose acceptance criteria now come from conformance rather than from us: the ack notification must be the stream's first message, later notifications must carry a matching `subscriptionId`, and notification types outside the client's filter must not be sent. The SDK already exports every schema needed. Gated on the lifecycle decision above; the untested narrow question is whether a listen stream can coexist with today's `initialize` rather than replace it. Careful with the scoreboard here: `sep-2575-server-honors-notification-filter` reads green today only because we have no listen stream and therefore nothing that can leak — it is a vacuous pass and will become a real check the moment this lands <!-- src:session opened:2026-08-05 updated:2026-08-08 -->
 
 **Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
@@ -56,6 +60,7 @@ that call) and resource subscriptions.
 
 ## Done
 
+- [x] `OMC-008` #407 adopt MCP spec `2026-07-28` as an additive second era (ADR-0016). Two eras on one endpoint, classified per request off a single body read; the legacy path is unchanged and no configured client or distributed `.mcpb` needed touching. `server-stateless` 7/27 → 26/28, baseline down to four entries. Conformance harness now in-repo under `scripts/conformance/`, run nightly by `.github/workflows/conformance.yml`, never per PR. Per-era request counters ship in the transport settings; `legacy: 'reject'` stays a future decision with a trigger. Follow-ups: OMC-023, OMC-024 (2026-08-09)
 - [x] `OMC-018` PR #437. Verified against `server-stateless` with a controlled baseline: the pre-fix commit and the fix were each served by the same headless harness, so the delta is attributable. 4/27 → 7/27. Two passes are real — `http-server-header-mismatch-400` (a version mismatch now answers 400 with `-32020`) and `http-server-error-jsonrpc-id` (every error response echoes the request id). The third, `server-honors-notification-filter`, is vacuous: it failed before only because the empty 400 body left the suite no frame to inspect, and we still do not implement `subscriptions/listen` (see OMC-007). The `-32602` checks did not move, by design — see the correction under Blocked (2026-08-08)
 - [x] `OMC-019` PR #436. Split rather than resolved wholesale, which was the right call. `require("fs/promises")` became a static import: it only runs after the native dialog returns, so there is nothing left to guard lazily, and Bun's cjs output is byte-identical. `require("electron")` stays, now with the reasoning in the code — it runs unconditionally before we know the host, its `try`/`catch` is load-bearing (a top-level import would crash the file's whole suite instead of degrading), and dynamic `import()` is already documented as unreliable under Obsidian's loader. The reviewer finding is gone from `src/**` for the one that could move (2026-08-08)
 - [x] `OMC-020` PR #435, the redundant non-null assertion on `startLine` dropped (2026-08-08)

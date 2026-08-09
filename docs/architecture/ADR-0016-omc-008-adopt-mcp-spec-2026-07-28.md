@@ -173,12 +173,25 @@ the first time a capability is added.
 
 ### 7. Per-era counters are diagnostic and batched
 
-`mcpTransport.eraCounters = { legacy: number, modern: number }`, incremented in memory and
-flushed through `SettingsStore.updateSlice` under the process-wide mutex — the same
-batching discipline `ToolLoadingManager` already uses, because a settings write per request
-is a disk write per request. Nothing reads the counter to make a runtime decision. It is
-surfaced read-only in the transport settings section so the trigger below can be observed
-rather than guessed at.
+`mcpTransport.eraCounters = { legacy: number, modern: number }`, incremented in memory by
+`record(era)` and flushed by `flush(plugin)` through `SettingsStore.updateSlice` under the
+process-wide mutex — the same batching discipline `ToolLoadingManager` already uses, because
+a settings write per request is a disk write per request. Nothing reads the counter to make a
+runtime decision. It is surfaced read-only in the transport settings section so the trigger
+below can be observed rather than guessed at.
+
+**The counting rule**, written down because the `legacy: 'reject'` trigger is only as
+meaningful as it is: a request is counted **at the point of classification**, for whatever era
+it classified as, however it is later answered. The deferred version rung's 400 is counted as
+legacy, because that request classified legacy; a modern request the SDK's ladder rejects is
+counted as modern, for the same reason. A request short-circuited **before** classification —
+the 413 over-cap path, and anything `runMiddleware` turns down — counts as neither. The
+counter answers one question and only one: is anyone still reaching this server on the legacy
+era. A request whose era was never determined has no era to attribute, and inventing one would
+corrupt exactly the signal the decision rests on.
+
+The settings row has been type-checked (`check:svelte`) and never rendered in a real vault. A
+type check is not a look at the UI; that row needs a vault before release.
 
 ### 8. `legacy: 'reject'` on the endpoint is a recorded future decision, not this one
 
@@ -186,10 +199,37 @@ It breaks every client that does not probe `server/discover`, and no measured ne
 
 **Trigger:** the legacy-era counter stays at zero across a stated observation period — two
 consecutive minor releases, or 60 days of use, whichever is longer — on a vault with the
-user's real client set configured. Until then the five removed-method conformance checks
-(`initialize`, `ping`, `logging/setLevel`, `resources/subscribe`, `resources/unsubscribe`
-must be absent) stay red **by choice, not by defect**: they measure the removal this ADR
-declines to perform.
+user's real client set configured. The counter is the one this work ships: `record(era)` and
+`flush(plugin)` in `mcp-transport/services/eraCounters.ts`, persisted as
+`mcpTransport.eraCounters = { legacy, modern }` (§7).
+
+**The five removed-method conformance checks do not wait for that trigger. This ADR
+predicted they would, and the prediction was falsified by measurement.**
+
+The prediction, written before the handler was wired, was that the five checks asserting
+`initialize`, `ping`, `logging/setLevel`, `resources/subscribe` and `resources/unsubscribe`
+are absent would stay red until `legacy: 'reject'` was taken, and were therefore red **by
+choice, not by defect**. Against the running endpoint all five pass, with the legacy path
+untouched:
+
+- `initialize` carrying a modern `_meta` envelope → `HTTP/1.1 404`, JSON-RPC `-32601`.
+- `initialize` carrying no envelope → `HTTP/1.1 200` and the legacy handshake, with
+  `protocolVersion: "2025-06-18"` and
+  `serverInfo: { name: "mcp-connector", version: "1.0.1" }`.
+
+The reason is the era split itself, and it is worth stating plainly rather than letting the
+old claim disappear. The suite only ever probes the modern era: every request it sends
+carries an envelope, so every one of them classifies modern, and on that era the SDK's 2026
+wire registry does not admit those five methods — it answers `404`/`-32601` before anything
+this project wrote runs. A legacy client carries no envelope, classifies legacy, and keeps
+being served by the transport that has always served it. **The endpoint reaches conformance
+on the modern era without breaking a single configured client.** That is a better outcome
+than this ADR predicted, not a loophole in the measurement.
+
+What it changes: `legacy: 'reject'` stays a future decision with the trigger above, but it is
+now a decision about the product alone — which clients this server refuses to serve — with no
+conformance score attached to it. Taking it would buy nothing on the suite. Alternative A is
+revised accordingly.
 
 ### 9. Conformance runs nightly against an expected-failures baseline, not on every PR
 
@@ -205,18 +245,78 @@ repository on every commit, and this repo pays for its Actions minutes. The suit
 regression alarm on a surface that changes rarely, not a merge gate; nightly is the
 proportionate cadence for it.
 
-Target: **≥18/27** on `server-stateless`, with 5 removed-method checks red by design, 2
-subscription checks deferred to OMC-007, and 2 `test_missing_capability` checks declared
-unreachable.
+Target at plan time was **≥18/27** on `server-stateless`, with 5 removed-method checks red by
+design, 2 subscription checks deferred to OMC-007, and 2 `test_missing_capability` checks
+declared unreachable.
+
+Measured after implementation: **26/28, exit 0, baseline satisfied** — no unexpected red, and
+no baseline entry that has started passing. (The scenario reports 28 checks at the pinned
+ref; the 7/27 in Context is the pre-change measurement at the plan-time ref.)
+
+**The baseline is four entries, not the nine planned for.** The five removed-method entries
+were never written, because the checks pass (§8). What remains, and why each one is there:
+
+- the two `test_missing_capability` checks — unreachable while the SDK's
+  `REQUIRED_CLIENT_CAPABILITIES_BY_METHOD` is `{}` (`src-CX2iR2pK.mjs:452`). No spec method
+  carries a static client-capability requirement, so only a shipped fixture tool could
+  satisfy them, and that tool would sit in `tools/list` in every user's vault forever
+  (Alternative F);
+- the two `list-changed-on-subscription` checks — the listen stream now opens, SDK-owned, and
+  the acknowledgement and `subscriptionId` checks pass with nothing written here. What is
+  missing is **fan-out onto an already-open stream**: this server delivers
+  `notifications/tools/list_changed` on the calling request's own response and has no
+  broadcast path (§5, ADR-0011). That is OMC-007's work, which this ADR unblocks and defers.
+
+All four carry their reason in the file itself, and the file is kept honest **by hand** —
+never regenerated from a failing run (see Consequences).
+
+## Call-site facts found during implementation
+
+Three things the plan's contract table did not have. Each was found by a failing run rather
+than by grep, and each is recorded here so the next change to this transport does not have to
+rediscover it.
+
+**1. The malformed-`_meta` test depends on `checkProtocolVersion` *rejecting*.**
+`services/httpServer.test.ts` asserts `-32602` for a `_meta` that is present but not an
+object, and that body comes from `buildProtocolVersionErrorBody` — whose `-32602` path is
+reachable only behind a version rejection, because the helper builds the body for a request
+the rung has already turned down at 400. The test pinned `2026-07-28` precisely because that
+value was unsupported when it was written. Adding the revision to
+`SUPPORTED_PROTOCOL_VERSIONS` made the header pass the rung and took the assertion with it,
+so it now pins a pre-2026 value (`2023-01-01`) and carries a comment against "modernising" it
+back. Any future addition to `SUPPORTED_PROTOCOL_VERSIONS` hits this the same way: a version
+header chosen because it would be rejected stops being rejected, and an assertion quietly
+stops testing what it names.
+
+**2. `applyDeferredVersionRung` is reachable only for an unparseable body and for a JSON-RPC
+batch.** §3 describes the deferred rung as answering "a deferred header that then classifies
+legacy". That is true, but wider than the reachable set. `classifyRequestBody`
+(`src-CX2iR2pK.mjs:5101-5140`) classifies on the header as well as the body, so a
+single-request POST carrying a 2026-era `MCP-Protocol-Version` classifies **modern** whatever
+its body looks like, and the SDK's ladder owns the answer. Only two inputs reach the helper:
+a body that failed `JSON.parse` (short-circuited to legacy before any `Request` is built) and
+a batch. It is not dead code and it still protects the `unsupported-version-400` answer, but
+it protects a narrower case than the prose suggests.
+
+**3. `Mcp-Method` is mandatory on every 2026-era request, `Mcp-Name` on three of them.**
+`validateStandardRequestHeaders` (`src-CX2iR2pK.mjs:5044`) rejects a modern request whose
+body names a method but which carries no `Mcp-Method` header —
+`crossCheckMismatch("method-header-missing")`, before the request reaches any handler.
+`Mcp-Name` is mandatory for the methods in `MCP_NAME_HEADER_SOURCE` (`:4990-4994`) —
+`tools/call`, `prompts/get`, `resources/read` — where it mirrors `params.name`, or
+`params.uri` for `resources/read`. Nothing derives either header from the body. A modern-era
+request written by hand, in a test or in a client, has to set both explicitly or it never
+gets past that validator.
 
 ## Alternatives considered
 
 **A. `legacy: 'reject'` on the endpoint now, one era only.**
 Rejected: it removes `initialize` from a server whose entire installed base reaches it that
 way — every configured Claude Desktop, Cursor and Cline client, plus every already
-distributed `.mcpb` bundle, stops working the moment the plugin updates. The conformance
-score would jump by five checks and the product would break. The decision is recorded with
-a measurable trigger instead of taken blind.
+distributed `.mcpb` bundle, stops working the moment the plugin updates. It would also buy
+nothing on the suite: the five removed-method checks already pass, because the modern era is
+the only era the suite probes (§8). The trade is a broken product for no measured gain, so
+the decision is recorded with a trigger instead of taken blind.
 
 **B. Plain `createMcpHandler(factory)` with the SDK's default stateless legacy fallback,
 no user-land routing.**
@@ -287,6 +387,9 @@ change that touches the transport.
   baseline, instead of a number someone measures by hand in a scratch directory.
 - The `legacy: 'reject'` decision now has a trigger and a counter that will fire it, rather
   than an argument that recurs every release.
+- Conformance on the modern era cost the legacy era nothing. All five removed-method checks
+  pass while a claim-less client still gets the handshake, byte for byte — the outcome
+  Alternative A was expected to be the only route to (§8).
 
 ### Negative
 
@@ -300,6 +403,10 @@ change that touches the transport.
   the SDK does not export it. If the SDK ever changes the era boundary from a lexicographic
   ISO-date comparison, this copy goes stale silently. It sits next to
   `SUPPORTED_PROTOCOL_VERSIONS`, which is already a project-owned copy for the same reason.
+- A test that needs a *rejected* protocol version has to pick one this server will never
+  serve. Widening `SUPPORTED_PROTOCOL_VERSIONS` broke exactly such an assertion under this
+  work, silently rather than loudly, and the next widening will do it again (Call-site
+  facts, 1).
 - **A conformance regression is caught by the next nightly run, not by the PR that caused
   it.** Nothing blocks a merge on the suite. The mitigations are the expected-failures
   baseline (which makes a nightly failure readable rather than a wall of red) and a local
@@ -317,8 +424,9 @@ change that touches the transport.
 
 ### Neutral
 
-- The conformance score moves from 7/27 to ≥18/27. Nine checks stay red on purpose and the
-  baseline says which and why; the score is not expected to reach 27 under this ADR.
+- The conformance score moves from 7/27 at plan time to a measured **26/28** on the pinned
+  ref, exit 0. The baseline planned for nine entries and needed four — two unreachable, two
+  deferred to OMC-007 (§9). The score is not expected to reach 28 under this ADR.
 - `SUPPORTED_PROTOCOL_VERSIONS` gains a modern revision, but the `initialize` handshake
   still offers `2025-11-25` at most: the SDK keeps the two lists structurally separate, and
   the instance-level modern version is appended by the entry, per request, on the modern

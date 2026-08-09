@@ -1,4 +1,8 @@
 import { describe, expect, test, afterEach, beforeEach } from "bun:test";
+import {
+  InMemoryTransport,
+  type McpServer,
+} from "@modelcontextprotocol/server";
 import { mockApp, mockPlugin, resetMockVault } from "$/test-setup";
 import {
   createMcpService,
@@ -817,6 +821,114 @@ describe("Task 5 — per-token scope threading (ADR-0014 §3)", () => {
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
+  });
+});
+
+describe("OMC-008 Task 3 — buildMcpServer is the single per-request factory, called directly (R-09)", () => {
+  // TDD RED phase (plan Task 3 sub-step 1, `docs/superpowers/plans/2026-08-08-omc-008-adopt-mcp-spec-2026-07-28.md`).
+  // `buildMcpServer` does not exist yet: `createMcpService` still builds its
+  // `McpServer` inline inside `handleRequest`, unreachable from a test. This
+  // block pins the surface the extraction (plan Task 3 sub-step 2) must
+  // expose: a `buildMcpServer(tokenId)` field on the returned `McpService`,
+  // synchronous, returning an `McpServer` wired exactly like today's inline
+  // one. Both the compiler (no such property on `McpService`) and the
+  // runtime (`svc.buildMcpServer is not a function`) reject this file until
+  // that field exists — the missing export IS the RED.
+  const TOKEN_A = {
+    id: "tok-a",
+    label: "A",
+    token: "a".repeat(32),
+    createdAt: 1,
+  };
+  const TOKEN_B = {
+    id: "tok-b",
+    label: "B",
+    token: "b".repeat(32),
+    createdAt: 2,
+  };
+
+  /** Two tokens, `all` vs `core`, matching the fixture ADR-0014's own tests
+   * use (`Task 5 — per-token scope threading` above) — reused here rather
+   * than imported so this file stays a self-contained anchor for R-09's
+   * direct-call guarantee. */
+  function makeTwoTokenPlugin() {
+    let store: Record<string, unknown> = {
+      mcpTransport: {
+        bearerToken: TOKEN_A.token,
+        tokens: [TOKEN_A, TOKEN_B],
+      },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          [TOKEN_A.id]: { profile: "all", promoted: [], allowed: null },
+          [TOKEN_B.id]: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    };
+    return mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+  }
+
+  /**
+   * Drives `tools/list` straight against an `McpServer` instance with no
+   * HTTP server and no `fetch` — `InMemoryTransport.createLinkedPair()` is
+   * the SDK's own exported test seam for exactly this ("one should be
+   * passed to a Client and one to a Server", `@modelcontextprotocol/server`
+   * `dist/src-CX2iR2pK.mjs`). One end is handed to the server under test;
+   * the other is driven by hand, since this project depends on `server` and
+   * `node` only — no `@modelcontextprotocol/client` package is installed.
+   */
+  async function listToolsDirect(server: McpServer): Promise<string[]> {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const response = new Promise<{
+      result?: { tools?: Array<{ name: string }> };
+    }>((resolve) => {
+      clientTransport.onmessage = (message) =>
+        resolve(message as { result?: { tools?: Array<{ name: string }> } });
+    });
+    await server.connect(serverTransport);
+    await clientTransport.start();
+    await clientTransport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    const body = await response;
+    return (body.result?.tools ?? []).map((t) => t.name);
+  }
+
+  test("buildMcpServer(tokenA) and buildMcpServer(tokenB) produce tools/list sets matching each token's own policy", async () => {
+    const plugin = makeTwoTokenPlugin();
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    const serverA = svc.buildMcpServer(TOKEN_A.id);
+    const serverB = svc.buildMcpServer(TOKEN_B.id);
+
+    const namesA = await listToolsDirect(serverA);
+    const namesB = await listToolsDirect(serverB);
+
+    // Both tokens see the meta-tools, but the core token's set is the
+    // narrower one (same CORE_SET / promotion semantics the HTTP-level
+    // "Task 5" tests above already pin) — the point under test here is that
+    // this holds when `buildMcpServer` is called directly, no HTTP involved.
+    expect(namesB.length).toBeLessThan(namesA.length);
+    expect(namesB).toContain("get_active_file");
+    expect(namesB).not.toContain("find_broken_links");
+    expect(namesA).toContain("find_broken_links");
   });
 });
 

@@ -305,6 +305,102 @@ describe("runMiddleware", () => {
   });
 });
 
+describe("runMiddleware — protocol-version era split (OMC-008 Task 1, R-06, R-07)", () => {
+  // checkProtocolVersion splits by era: pre-2026 unsupported values keep
+  // rejecting with 400 exactly as today; 2026-era values (lexicographic
+  // ">= 2026-07-28") are DEFERRED — the SDK's own ladder answers them once
+  // classification exists (Task 2) — so the middleware itself must let them
+  // through as `{ ok: true }` rather than 400ing.
+  const token = "test-token-12345678901234567890abcd";
+  const tokens = [tok(token, "solo")];
+
+  test("2026-07-28 is a genuinely supported version: passes the rung and yields the matched token (R-07)", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "2026-07-28",
+        },
+      },
+      tokens,
+    );
+    expect(result).toEqual({ ok: true, tokenId: "solo" });
+  });
+
+  test("a 2026-era revision this server does not list (2027-05-01) is DEFERRED, not rejected at 400 (R-06)", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "2027-05-01",
+        },
+      },
+      tokens,
+    );
+    // Deferred means the middleware itself never rejects it — the request
+    // proceeds to auth and, with a valid bearer, succeeds. The SDK's own
+    // ladder (wired in later tasks) owns the unsupported-version answer for
+    // a value in this shape; this rung must not preempt it with 400.
+    expect(result).toEqual({ ok: true, tokenId: "solo" });
+  });
+
+  test("pre-2026 unsupported values keep rejecting with 400: 1.0.0", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "1.0.0",
+        },
+      },
+      tokens,
+    );
+    expect(result).toEqual({ ok: false, status: 400 });
+  });
+
+  test("pre-2026 unsupported values keep rejecting with 400: 2023-01-01", () => {
+    const result = runMiddleware(
+      {
+        method: "POST",
+        url: "/mcp",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "mcp-protocol-version": "2023-01-01",
+        },
+      },
+      tokens,
+    );
+    expect(result).toEqual({ ok: false, status: 400 });
+  });
+
+  test("check-order sibling of the end-to-end order test above: a 2026-era bad version no longer wins at 400, so a bad bearer alongside it now falls through to 401", () => {
+    // Mirrors "check order is unchanged end to end: 404 → 405 → 403 → 400 →
+    // 401" (which deliberately stays untouched and keeps pinning 1.0.0, a
+    // PRE-2026 value, at 400). This sibling probes the other half of the
+    // split: method/path valid, no Origin header (allowed), a 2026-era bad
+    // version (now deferred, not 400), and a bad bearer — the version rung
+    // must not be the one that wins any more, so the request falls through
+    // to the auth check and gets 401.
+    const badVersionDeferredBadAuth = {
+      method: "POST",
+      url: "/mcp",
+      headers: {
+        "mcp-protocol-version": "2027-05-01",
+        authorization: "Bearer wrong",
+      },
+    };
+    expect(runMiddleware(badVersionDeferredBadAuth, tokens)).toEqual({
+      ok: false,
+      status: 401,
+    });
+  });
+});
+
 describe("runMiddleware — N-token bearer matching (issue #348, ADR-0014 §2)", () => {
   const tokens: TokenRecord[] = [
     tok("token-at-position-0-aaaaaaaaaaaaaaaaaa", "id-0"),

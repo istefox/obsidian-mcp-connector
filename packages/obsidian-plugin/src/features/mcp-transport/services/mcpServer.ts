@@ -1,6 +1,11 @@
-import { NodeStreamableHTTPServerTransport } from "@modelcontextprotocol/node";
 import {
+  NodeStreamableHTTPServerTransport,
+  toNodeHandler,
+} from "@modelcontextprotocol/node";
+import {
+  createMcpHandler,
   McpServer,
+  type AuthInfo,
   type CallToolResult,
   type ListToolsResult,
 } from "@modelcontextprotocol/server";
@@ -20,6 +25,12 @@ import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolSc
 import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
 import { composeToolRegistry } from "$/composeToolRegistry";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
+import {
+  flush as flushEraCounters,
+  record as recordEra,
+  scheduleFlush as scheduleEraFlush,
+} from "./eraCounters";
+import { applyDeferredVersionRung, classifyEra } from "./eraRouter";
 import {
   bodyTargetsSseNotificationTool,
   readBodyWithCap,
@@ -63,8 +74,28 @@ export type McpService = {
     /** Id of the bearer token this request authenticated with. */
     tokenId: string,
   ) => Promise<void>;
-  /** Persist any in-memory tool-call counters (see ToolLoadingManager). */
+  /**
+   * Build the per-request McpServer serving `tokenId`. The single
+   * construction site for both protocol eras: the legacy branch calls it
+   * directly, the modern branch reaches it through the SDK's
+   * McpServerFactory (ADR-0016 §4). Per-token tool surfaces (ADR-0014) and
+   * the tools/list stability invariant (ADR-0015) therefore cannot drift
+   * between eras — there is no second implementation to drift.
+   */
+  buildMcpServer: (tokenId: string) => McpServer;
+  /**
+   * Persist both in-memory counter batches: tool calls (see
+   * ToolLoadingManager) and per-era requests (see eraCounters). One entry
+   * point rather than two so every existing call site — the tests and
+   * `destroyMcpService` — keeps draining everything this service batches.
+   */
   flushPendingCalls: () => Promise<void>;
+  /**
+   * Tear down the modern-era handler: aborts in-flight modern exchanges and
+   * closes their per-request instances. The legacy branch needs no
+   * equivalent — it closes its own server and transport per request.
+   */
+  closeModernHandler: () => Promise<void>;
 };
 
 /**
@@ -108,15 +139,19 @@ export async function createMcpService(
     return resolveToolScope(tokenId, policy, allNames, session.get(tokenId));
   };
 
-  const handleRequest = async (
-    req: IncomingMessage,
-    res: ServerResponse,
-    tokenId: string,
-  ): Promise<void> => {
+  /**
+   * The per-request McpServer, built once per serving unit and shared by
+   * both eras. It closes nothing: the legacy branch tears its instance down
+   * in its own `finally`, and on the modern branch the SDK's serving entry
+   * owns the lifecycle.
+   */
+  const buildMcpServer = (tokenId: string): McpServer => {
     // Resolving a scope costs a settings read, and only tools/* needs
     // one: `initialize`, `prompts/*` and malformed requests must pay
     // nothing. Memoizing the PROMISE (not the value) also collapses the
-    // tools/list + tools/call pair of a batched POST into one read.
+    // tools/list + tools/call pair of a batched POST into one read. The
+    // memo lives as long as the instance, which is one request on either
+    // era, so its lifetime is unchanged by the extraction.
     let scopePromise: Promise<ToolScope> | undefined;
     const getScope = (): Promise<ToolScope> =>
       (scopePromise ??= resolveScope(tokenId));
@@ -190,6 +225,40 @@ export async function createMcpService(
       promptRegistry.dispatch(req.params),
     );
 
+    return server;
+  };
+
+  // The 2026-07-28 leg. Built once per service and wrapped once: the entry
+  // allocates an event bus, so one per request would be waste (ADR-0016 §2).
+  //
+  // `legacy: "reject"` is deliberate and is NOT the same decision as strict
+  // mode on the endpoint. `classifyEra` has already separated the traffic, so
+  // a legacy-classified request arriving here is a routing bug: rejecting it
+  // makes that bug loud instead of silently double-serving 2025 requests
+  // through a second, differently-configured stateless transport. The
+  // endpoint itself stays permissive because the legacy branch sits in front
+  // of this handler.
+  const modernHandler = createMcpHandler(
+    (ctx) => buildMcpServer(ctx.authInfo?.clientId ?? ""),
+    {
+      legacy: "reject",
+      responseMode: "auto",
+      onerror: (error) =>
+        logger.warn("[mcp] modern-era request rejected", {
+          error: error.message,
+        }),
+    },
+  );
+  const modern = toNodeHandler(modernHandler, {
+    onerror: (error) =>
+      logger.error("[mcp] modern-era handler failed", { error: error.message }),
+  });
+
+  const handleRequest = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    tokenId: string,
+  ): Promise<void> => {
     // Inspect the body before choosing the response mode. The GET SSE
     // stream is blocked (POST-only transport), so a server-initiated
     // notification has nowhere to go — EXCEPT the response stream of the
@@ -222,6 +291,70 @@ export async function createMcpService(
       parsedBody = undefined;
     }
 
+    // Route by protocol era, from that single read (ADR-0016 §1). Routing
+    // lives here rather than in httpServer.ts because this is where the body
+    // is already read: classifying earlier would mean widening RequestHandler
+    // to carry a parsed body, for no behavioural gain.
+    const era = await classifyEra(req, parsedBody);
+
+    // Counted at the point of classification: every request that reaches
+    // here counts for the era it classified as, however it is subsequently
+    // answered — the deferred version rung's 400 below included, since that
+    // request classified legacy. A request short-circuited BEFORE this line
+    // (the 413 over-cap path above, and anything runMiddleware rejected)
+    // counts for neither era.
+    //
+    // The counter answers one question and only one: is anyone still
+    // reaching this server on the legacy era. ADR-0016 §8 makes the
+    // `legacy: 'reject'` trigger depend on that answer, so a request whose
+    // era was never determined has no era to attribute, and inventing one
+    // would corrupt exactly the signal that decision rests on. Counting a
+    // rejected-but-classified request is correct for the same reason: the
+    // client reached us on that era, and that is what the trigger measures.
+    recordEra(era);
+    scheduleEraFlush(config.plugin);
+
+    if (era === "modern") {
+      // The token id reaches the factory as pass-through AuthInfo, read back
+      // as `ctx.authInfo?.clientId`. The bearer SECRET deliberately does not
+      // travel with it: downstream of auth the identity is the token id and
+      // never the string (ADR-0014 §2, ADR-0016 §4), so a future handler that
+      // logged its own context cannot leak a credential. `token` is a
+      // pass-through field the SDK never inspects, left empty for that
+      // reason.
+      (req as IncomingMessage & { auth?: AuthInfo }).auth = {
+        token: "",
+        clientId: tokenId,
+        scopes: [],
+      };
+      // Pass the pre-parsed body: `readBodyWithCap` drained the stream, and
+      // the entry classifies from the value rather than re-reading it.
+      await modern(req, res, parsedBody);
+      return;
+    }
+
+    // Everything below is the legacy branch, and this line is what keeps it
+    // honest. After the `return` above, TypeScript narrows `era` to whatever
+    // is left of the union — today exactly "legacy", so this compiles. Add a
+    // third era and it narrows to `"legacy" | "third"`, this assignment stops
+    // compiling, and whoever added it is forced to decide which transport
+    // serves it. Without this line a new era would silently fall through and
+    // be served by the 2025 transport. The SDK added one era in two releases,
+    // so a third is a when, not an if.
+    const eraIsLegacy: "legacy" = era;
+    void eraIsLegacy;
+
+    // The other half of the split protocol-version rung: a 2026-era header
+    // the middleware deferred, on a request that turned out to be legacy,
+    // has no downstream owner and is answered here (ADR-0016 §3).
+    const deferred = applyDeferredVersionRung(req.headers, parsedBody);
+    if (deferred !== null) {
+      res.writeHead(deferred.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(deferred.body));
+      return;
+    }
+
+    const server = buildMcpServer(tokenId);
     // Stateless mode (no sessionIdGenerator). Per-request transport — see
     // file header for the SDK constraint. JSON response by default; SSE
     // only for SSE_NOTIFICATION_TOOLS so their notification can be delivered.
@@ -256,23 +389,49 @@ export async function createMcpService(
     registry,
     promptRegistry,
     handleRequest,
-    flushPendingCalls: () =>
-      toolLoadingManager.flushPendingCalls(config.plugin),
+    buildMcpServer,
+    flushPendingCalls: async () => {
+      // Both batches drain, independently. Chaining them with bare awaits
+      // meant a rejected first flush skipped the second entirely, which is
+      // the opposite of what this field's own contract promises above: one
+      // entry point so every call site drains EVERYTHING this service
+      // batches. Neither write is more important than the other, and the
+      // transient failure they share a cause with — a contended
+      // `SettingsStore.updateSlice` — is exactly when both need attempting.
+      const results = await Promise.allSettled([
+        toolLoadingManager.flushPendingCalls(config.plugin),
+        flushEraCounters(config.plugin),
+      ]);
+      // Rethrow the first rejection so the caller still learns a flush
+      // failed. `destroyMcpService` logs it; the batches restore themselves
+      // for the next attempt either way.
+      const failed = results.find((r) => r.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    },
+    closeModernHandler: () => modernHandler.close(),
   };
 }
 
 /**
- * Service-level teardown. With per-request server+transport creation
- * there is nothing to close at the request level — every request
- * already cleans up after itself in the `finally` block. The one piece
- * of service state is the in-memory tool-call counter batch, flushed
- * here so an unload does not drop it.
+ * Service-level teardown. The legacy branch needs nothing here — every
+ * request already cleans up after itself in its `finally` block. Two pieces
+ * of service state do: the in-memory counter batches (tool calls and per-era
+ * requests), flushed first so an unload does not drop them, and the
+ * modern-era handler, whose in-flight exchanges and their per-request
+ * instances are the SDK's to abort.
  */
 export async function destroyMcpService(svc: McpService): Promise<void> {
   try {
     await svc.flushPendingCalls();
   } catch (error) {
-    logger.warn("[mcp] flushing tool-call counters on teardown failed", {
+    logger.warn("[mcp] flushing pending counters on teardown failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    await svc.closeModernHandler();
+  } catch (error) {
+    logger.warn("[mcp] closing the modern-era handler on teardown failed", {
       error: error instanceof Error ? error.message : String(error),
     });
   }

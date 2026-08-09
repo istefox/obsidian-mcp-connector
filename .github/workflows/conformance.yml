@@ -1,0 +1,47 @@
+name: Conformance
+
+# Runs the MCP conformance suite's `server-stateless` scenario against a
+# headless instance of the plugin's MCP server, judged against
+# packages/obsidian-plugin/scripts/conformance/expected-failures.yml.
+#
+# Nightly and on demand, never on push or pull_request. Each run is a git
+# clone, a dependency install and a from-source build of an external
+# pre-release repository, on a repo that pays for its Actions minutes, to
+# re-measure a surface that changes only when the transport does
+# (ADR-0016 §9, Alternative H). The accepted trade: a conformance
+# regression surfaces on the next nightly rather than on the PR that
+# caused it, and the pre-merge signal is a local
+# `bun run test:conformance` on any change that touches the transport.
+
+on:
+  schedule:
+    - cron: "27 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      # modelcontextprotocol/conformance @ 0.2.0-alpha.10. Pinned, never
+      # `main`: the suite is pre-release, and an upstream scenario change
+      # would otherwise turn this job red for reasons unrelated to any
+      # commit here. scripts/conformance/run.sh defaults to the same sha;
+      # the two move together.
+      MCP_CONFORMANCE_REF: 81eb1c3edaed87d7fd585d7b80186da7a2960660
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Conformance (server-stateless, against the expected-failures baseline)
+        run: cd packages/obsidian-plugin && bun run test:conformance
