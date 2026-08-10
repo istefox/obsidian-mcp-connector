@@ -5,19 +5,38 @@ Updated: 2026-08-10 · Open: 5 (P1: 0) · In progress: 0
 
 ## Next — measured gaps, actionable now
 
+- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness: a second client keeps serving a tool list that changed under it until it happens to re-list. Closed by fan-out onto an open `subscriptions/listen` stream. **No longer blocked, and smaller than it was written.** The lifecycle decision it waited on was answered by OMC-008 — two eras coexist on one endpoint, so a listen stream never had to replace `initialize` — and the narrow untested question is now measured rather than open: the SDK's modern entry owns `subscriptions/listen`, so the stream opens and the acknowledgement and `subscriptionId` checks pass with nothing implemented here. What is missing is only the fan-out. Today `notifications/tools/list_changed` rides the calling request's own response stream on that call's `relatedRequestId` (`activateTool.ts:127`) and there is no broadcast path at all. Two conformance baseline entries are exactly this and come out when it lands. Careful with the scoreboard: `sep-2575-server-honors-notification-filter` reads green today only because nothing exists that could leak — a vacuous pass that becomes a real check the moment a listen stream is open <!-- src:session opened:2026-08-05 updated:2026-08-10 -->
 - [ ] `OMC-024` **P2** The transport settings report per-era request counts as a single global pair, so they cannot answer the question a user actually asks: *which protocol is this client speaking?* The transport is stateless and the era is decided per request, so there is no one answer for the server — on 2026-08-09 the Labs vault was genuinely serving both at once (Claude Desktop on 2025, hand-built probes on 2026). The answer is only well-defined per client, and the identity to key it on already exists: ADR-0014 gives every client a token id, and `eraCounters` is the last thing in the slice that stayed global. Make it a map keyed by token id and render one settings row per token. This also turns ADR-0016 §8's `legacy: 'reject'` trigger from a number into a decision: you would know *which* client is holding the legacy era open. Needs a migration from the flat `{legacy, modern}` shape already persisted in real vaults — absent must read as zero, existing values must not be lost. Deferred out of OMC-008 deliberately: that work was green, reviewed and conformance-verified, and this is a data-model change, not a wording fix <!-- src:session opened:2026-08-09 -->
 - [ ] `OMC-023` **P3** The server advertises a prompts capability it does not honour, on both protocol eras. `mcpServer.ts` declares `prompts: {}`, but `McpServer`'s constructor calls `setPromptRequestHandlers()` for any declared prompts capability (`mcp-DXXb3Vv3.mjs:1351`), which registers `listChanged: … ?? true` (`:1550`) — so the declared set is upgraded before anything reads it. The legacy `initialize` reply and the 2026 `server/discover` result both report `prompts: { listChanged: true }`, and nothing in the codebase ever sends `notifications/prompts/list_changed` (`tools/list_changed` is sent from `activateTool.ts:127`; there is no prompts equivalent). Found during OMC-008 and deliberately not fixed there: declaring `listChanged: false` would change the legacy `initialize` bytes, which that work's Invariant 1 forbids. Either honour it by sending the notification when the prompt set changes, or declare it false in a release that is allowed to move the legacy reply <!-- src:session opened:2026-08-08 -->
 - [ ] `OMC-016` **P3** #427 MCP Apps: **answered, it works.** The spike on `spike/427-mcp-apps-ui-resource` proved Claude Desktop reads and renders a `ui://` resource from this connector. What mattered was declaring `capabilities.extensions` with `io.modelcontextprotocol/ui`; the generic `resources` capability alone did nothing. Two hard requirements: mime type exactly `text/html;profile=mcp-app`, and the view must complete the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe blank. Real implementation is the remaining work: a proper resources capability, the handshake via `@modelcontextprotocol/ext-apps` (1.7.5 on npm) rather than hand-rolled `postMessage`, then the ranked search list <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
-
-## Parked — external trigger, nothing to do until it fires
-
-- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
 
 ## In Progress
 
 _none_
 
+## Parked — external trigger, nothing to do until it fires
+
+- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
+
 ## Blocked / Decisions Needed
+
+_none_
+
+OMC-007 was the last entry here and it left on 2026-08-10, unblocked rather than closed: what gated it was the `2026-07-28` lifecycle decision, and OMC-008 made that decision additive. Nothing currently waits on a user decision or an external input.
+
+## Standing notes — true until something changes
+
+**Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
+`draft` suite, no `server-stateless`. Those live only on the repo's `main` (`0.2.0-alpha.10`) and
+must be run from source. Against the published suite we pass every scenario that applies to our
+surface; the failures are fixture-dependent (it expects the reference server's `test_*` tools and
+`test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
+`completion/complete` (that is #347, closed as not planned — this is the first visible cost of
+that call) and resource subscriptions.
+
+## Superseded premises — kept rather than deleted
+
+Both entries below were wrong in a way that mattered, and both are kept in the form ADR-0016 §8 uses: the falsified claim stays readable next to what replaced it, so the same reasoning does not get re-derived from scratch.
 
 **The `2026-07-28` lifecycle break — resolved by OMC-008, and its central premise was wrong.**
 This entry read: *"adopting the revision is a migration that breaks every configured client, not a
@@ -39,23 +58,13 @@ or missing `protocolVersion`/`clientCapabilities`. Requiring those is the 2026 l
 those three checks belong to OMC-008 and cannot move before it. The `-32602` branch OMC-018 did
 ship — `_meta` present but not an object — is ordinary shape validation the suite never exercises.
 
-- [ ] `OMC-007` **P2** #419 cross-client `tools/list` staleness. Closed by `subscriptions/listen`, whose acceptance criteria now come from conformance rather than from us: the ack notification must be the stream's first message, later notifications must carry a matching `subscriptionId`, and notification types outside the client's filter must not be sent. The SDK already exports every schema needed. Gated on the lifecycle decision above; the untested narrow question is whether a listen stream can coexist with today's `initialize` rather than replace it. Careful with the scoreboard here: `sep-2575-server-honors-notification-filter` reads green today only because we have no listen stream and therefore nothing that can leak — it is a vacuous pass and will become a real check the moment this lands <!-- src:session opened:2026-08-05 updated:2026-08-08 -->
-
-**Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
-`draft` suite, no `server-stateless`. Those live only on the repo's `main` (`0.2.0-alpha.10`) and
-must be run from source. Against the published suite we pass every scenario that applies to our
-surface; the failures are fixture-dependent (it expects the reference server's `test_*` tools and
-`test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
-`completion/complete` (that is #347, closed as not planned — this is the first visible cost of
-that call) and resource subscriptions.
-
 ## Project Map
 
 - **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
 - **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
-- **Build & test**: `bun run build` · `bun run release` · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`
-- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states
-- **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
+- **Build & test**: `bun run build` · `bun run release` · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`. `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
+- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint
+- **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
 ## Done
 
