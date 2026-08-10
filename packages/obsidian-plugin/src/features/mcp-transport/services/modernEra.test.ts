@@ -675,3 +675,221 @@ describe("search_vault_smart's notifications/progress rides the modern path's ow
     ).toEqual({ name: "mcp-connector", version: "0.4.0-alpha.1" });
   });
 });
+
+/**
+ * OMC-007 / issue #419: a vault-wide auto-promotion reaches a client that
+ * made no request of its own.
+ *
+ * This is the half nothing else covers. `toolLoadingManager.test.ts` proves
+ * the manager decides to signal at the right moments; this proves the signal
+ * survives the whole path — `notify.toolsChanged()` → the SDK's bus → the
+ * listen router's per-stream filter → an SSE frame on a POST response that
+ * was opened by an EARLIER request and is still hanging.
+ *
+ * The stream is genuinely long-lived, so `readSseFrames` above cannot be
+ * reused: it reads to completion and would hang here forever. `collectFrames`
+ * reads incrementally and gives up on a deadline instead.
+ */
+describe("modern path — tools/list_changed fans out to an open subscriptions/listen stream (OMC-007)", () => {
+  /**
+   * Read SSE frames off a still-open response until `count` have arrived or
+   * the deadline passes. Keep-alive frames (`: keepalive`) carry no `data:`
+   * line and are skipped rather than counted.
+   */
+  async function collectFrames(
+    res: Response,
+    count: number,
+    timeoutMs = 5_000,
+  ): Promise<Array<Record<string, unknown>>> {
+    const body = res.body;
+    if (body === null) throw new Error("response carried no body to read");
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const frames: Array<Record<string, unknown>> = [];
+    let buffer = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `timed out after ${timeoutMs}ms with ${frames.length}/${count} frame(s)`,
+            ),
+          ),
+        timeoutMs,
+      );
+    });
+    const loop = (async () => {
+      while (frames.length < count) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let end = buffer.indexOf("\n\n");
+        while (end !== -1) {
+          const raw = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const dataLine = raw
+            .split("\n")
+            .find((line) => line.startsWith("data:"));
+          if (dataLine !== undefined) {
+            frames.push(JSON.parse(dataLine.slice("data:".length).trim()));
+          }
+          end = buffer.indexOf("\n\n");
+        }
+      }
+      return frames;
+    })();
+    try {
+      return await Promise.race([loop, timeout]);
+    } finally {
+      clearTimeout(timer);
+      await reader.cancel().catch(() => undefined);
+    }
+  }
+
+  /**
+   * A single-token vault on the adaptive profile, one call short of promoting
+   * a CORE tool.
+   *
+   * Core rather than a random name on purpose: in `adaptive` a non-core tool
+   * is inactive, and `mcpServer.ts` skips `recordCall` for an inactive tool
+   * (ADR-0011), so it could never reach the threshold by being called. A core
+   * tool executes, counts, and is still absent from `promoted` — so crossing
+   * the threshold genuinely widens the list, which is what the fan-out is
+   * gated on.
+   */
+  async function bootAdaptiveService(): Promise<{
+    server: RunningServer;
+    svc: McpService;
+  }> {
+    const { startHttpServer } = await import("./httpServer");
+    let store: Record<string, unknown> = {
+      toolLoading: {
+        profile: "adaptive",
+        promoted: [],
+        counters: { get_server_info: 2 },
+        profiles: {},
+      },
+    };
+    const plugin = mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(TOKEN),
+      requestHandler: svc.handleRequest,
+    });
+    runningServers.push(server);
+    return { server, svc };
+  }
+
+  /** Open a `subscriptions/listen` stream and assert it was accepted. */
+  async function openListen(
+    port: number,
+    id: number,
+    notifications: Record<string, unknown>,
+  ): Promise<Response> {
+    const res = await postMcp(
+      port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id,
+        method: "subscriptions/listen",
+        params: { _meta: VALID_ENVELOPE, notifications },
+      },
+      modernHeaders("subscriptions/listen"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    return res;
+  }
+
+  /**
+   * Both subscribers live on ONE service, on purpose, and not only for speed.
+   *
+   * Two of them side by side is the stronger claim: the same published event
+   * has to reach the stream that opted in and miss the one that did not, in
+   * the same instant, on the same bus. Two separate tests could each pass
+   * against a fan-out that ignored the filter and simply notified nobody, or
+   * everybody, depending on which one you read.
+   *
+   * It also avoids a real hazard. `startHttpServer` takes the first free port
+   * in `PORT_RANGE`, not a random one, so two servers booted in sequence get
+   * the SAME port — and `fetch`'s keep-alive pool then hands the second test a
+   * socket still attached to the first test's (already closed) handler. That
+   * produced an intermittent 500, "This MCP handler has been closed", roughly
+   * one run in six. One service, one port, no reuse.
+   */
+  test("the promotion reaches the stream that opted in, and only that one", async () => {
+    const { server, svc } = await bootAdaptiveService();
+
+    // Open both subscriptions BEFORE anything changes: a compliant server
+    // only notifies streams that were already open at the time of the change.
+    const subscribed = await openListen(server.port, 100, {
+      toolsListChanged: true,
+    });
+    const bystander = await openListen(server.port, 200, {
+      resourcesListChanged: true,
+    });
+
+    const subscribedFrames = collectFrames(subscribed, 2);
+    // Asking the bystander for two frames when only its ack can legitimately
+    // arrive makes the timeout the assertion: it rejects on time if the
+    // filter holds, and resolves — failing the test — the moment a second
+    // frame shows up. Reading "whatever is there" would pass either way.
+    const bystanderFrames = collectFrames(bystander, 2, 2_000);
+
+    // One call crosses the threshold: `get_server_info` is seeded at 2 and
+    // PROMOTION_THRESHOLD is 3.
+    const call = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          _meta: VALID_ENVELOPE,
+          name: "get_server_info",
+          arguments: {},
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "get_server_info" },
+    );
+    expect(call.status).toBe(200);
+    // Drain the response so the socket is not left half-read behind us.
+    await call.text();
+
+    // Counter writes are debounced by 2s in production; draining keeps this
+    // test off the clock. The flush is what applies the promotion and, with
+    // it, publishes onto the bus.
+    await svc.flushPendingCalls();
+
+    const frames = await subscribedFrames;
+    // The ack is mandated to be the stream's first message.
+    expect(frames[0]?.method).toBe("notifications/subscriptions/acknowledged");
+    const changed = frames.find(
+      (f) => f.method === "notifications/tools/list_changed",
+    );
+    expect(changed).toBeDefined();
+    // Every frame carries the id of the request that opened its stream, so a
+    // client multiplexing subscriptions can tell them apart.
+    expect(
+      (changed?.params as Record<string, unknown> | undefined)?._meta,
+    ).toMatchObject({
+      "io.modelcontextprotocol/subscriptionId": 100,
+    });
+
+    await expect(bystanderFrames).rejects.toThrow(/timed out/);
+  });
+});

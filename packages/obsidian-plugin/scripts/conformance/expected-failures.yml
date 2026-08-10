@@ -31,17 +31,28 @@ server:
   # Same fixture tool, so the -32021 response's HTTP 400 can never be exercised.
   - server-stateless:sep-2575-missing-capability-http-400
 
-  # --- List-changed on a subscription stream, deferred to OMC-007 ---------
-  # The SDK's modern entry owns `subscriptions/listen`, so the stream opens
-  # and the acknowledgement and subscriptionId checks pass without this
-  # project implementing anything. What does not exist is the fan-out that
-  # would push a list-changed notification onto an already-open stream:
-  # this server delivers `notifications/tools/list_changed` on the calling
-  # request's own response stream and has no broadcast path (ADR-0016 §5,
-  # ADR-0011). Both checks are SHOULD-level. Adopting 2026-07-28 unblocks
-  # OMC-007; it does not perform it.
+  # --- List-changed on a subscription stream, also unreachable ------------
+  # These two entries used to say the missing piece was the fan-out onto an
+  # already-open stream. That was measured wrong, and OMC-007 is what proved
+  # it: the fan-out now exists (`notify.toolsChanged()` published from an
+  # auto-promotion, covered end to end in modernEra.test.ts) and BOTH checks
+  # stayed exactly where they were.
+  #
+  # The real reason is the one above, repeated. Each check drives a
+  # diagnostic fixture tool to mutate the list inside its own window —
+  # `test_trigger_tool_change` and `test_trigger_prompt_change`
+  # (conformance `src/scenarios/server/stateless.ts`, the tools twin at
+  # :1285). We do not expose them, so nothing changes while the stream is
+  # open, so no notification can be published no matter how good the
+  # delivery path is. Shipping them is refused for the same reason as
+  # `test_missing_capability` (ADR-0016, Alternative F): a diagnostic tool
+  # in every user's `tools/list`, in every client's tool picker, forever.
+  #
+  # Both checks are SHOULD-level and report WARNING rather than FAILURE.
+  # Neither will move until the suite grows a way to trigger a list change
+  # that does not require a shipped fixture.
 
-  # No fan-out to open listen streams; tools/list_changed rides the caller's own response.
+  # Needs a shipped `test_trigger_tool_change` to mutate the list; the fan-out itself exists.
   - server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription
-  # Same missing fan-out on the prompts side.
+  # Same, via `test_trigger_prompt_change` — and nothing here mutates prompts either (OMC-023).
   - server-stateless:sep-2575-server-sends-prompts-list-changed-on-subscription
