@@ -93,6 +93,23 @@ const runningServers: RunningServer[] = [];
 afterEach(async () => {
   for (const s of active.splice(0)) await destroyMcpService(s);
   for (const s of runningServers.splice(0)) {
+    // Kill live sockets before waiting on close(). `startHttpServer` takes
+    // the first free port in PORT_RANGE rather than a random one, so the next
+    // server booted in this process — in this file or any other — is likely
+    // to land on the same port, and `fetch`'s keep-alive pool will happily
+    // hand it a socket still wired to THIS server. On Linux that surfaced as
+    // unrelated suites receiving 406 from an MCP endpoint they never booted;
+    // macOS never showed it. close() alone does not settle it: it stops new
+    // connections and waits for existing ones, which is the opposite of what
+    // a lingering pooled socket needs.
+    //
+    // Cast because the installed `@types/node` for this workspace does not
+    // declare `closeAllConnections` (Node 18.2+, present in the runtime that
+    // actually serves these tests). Optional-called rather than assumed, so a
+    // runtime without it degrades to today's behaviour instead of throwing.
+    (
+      s.server as unknown as { closeAllConnections?: () => void }
+    ).closeAllConnections?.();
     await new Promise<void>((r) => s.server.close(() => r()));
   }
 });
@@ -121,6 +138,8 @@ async function postMcp(
   token: string,
   body: unknown,
   headers: Record<string, string> = {},
+  /** Only the long-lived subscription streams pass one — see `openListen`. */
+  signal?: AbortSignal,
 ): Promise<Response> {
   return fetch(`http://127.0.0.1:${port}/mcp`, {
     method: "POST",
@@ -131,6 +150,7 @@ async function postMcp(
       ...headers,
     },
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -792,12 +812,22 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     return { server, svc };
   }
 
-  /** Open a `subscriptions/listen` stream and assert it was accepted. */
+  /**
+   * Open a `subscriptions/listen` stream and assert it was accepted.
+   *
+   * Carries its own `AbortController` because this is the only request in the
+   * file that stays open: aborting it tears the socket down on the client
+   * side deterministically, where cancelling the body reader alone leaves it
+   * for the keep-alive pool to reuse against whatever binds the port next.
+   */
+  const listenAborts: AbortController[] = [];
   async function openListen(
     port: number,
     id: number,
     notifications: Record<string, unknown>,
   ): Promise<Response> {
+    const controller = new AbortController();
+    listenAborts.push(controller);
     const res = await postMcp(
       port,
       TOKEN,
@@ -808,6 +838,7 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
         params: { _meta: VALID_ENVELOPE, notifications },
       },
       modernHeaders("subscriptions/listen"),
+      controller.signal,
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
@@ -891,5 +922,10 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     });
 
     await expect(bystanderFrames).rejects.toThrow(/timed out/);
+
+    // Both subscriptions are long-lived by construction, so nothing else in
+    // this process closes them. Leaving them to the shared afterEach was
+    // enough on macOS and not on Linux.
+    for (const c of listenAborts.splice(0)) c.abort();
   });
 });
