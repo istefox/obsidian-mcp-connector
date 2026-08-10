@@ -17,7 +17,9 @@
   import { parsePortInput } from "$/features/mcp-transport/services/portInput";
   import {
     readEraCounters,
+    readEraCountersByToken,
     type EraCounters,
+    type EraCountersByToken,
   } from "$/features/mcp-transport/services/eraCounters";
   import {
     BIND_HOST,
@@ -104,13 +106,42 @@
   // than guessed at, and nothing here writes it back.
   let eraCounters: EraCounters = { legacy: 0, modern: 0 };
 
+  // The same counts split by token, which is the only level at which "which
+  // protocol is in use" has an answer: the transport is stateless and the era
+  // is chosen per request, so the server as a whole can be speaking both at
+  // once — and in a real vault it was. Not derivable from `eraCounters` and
+  // not a breakdown OF it: requests counted before this field existed, and
+  // those that left with a revoked token, are in the total and in no bucket.
+  let eraByToken: EraCountersByToken = {};
+
+  /**
+   * What one token's row says about the protocol it speaks. Deliberately not
+   * a pair of raw numbers: the question the row exists to answer is "which
+   * era", and two counters make the reader do the comparison themselves.
+   */
+  function eraLabel(id: string): string {
+    const counts = eraByToken[id];
+    if (counts === undefined) return "";
+    const { legacy, modern } = counts;
+    if (legacy === 0 && modern === 0) return "";
+    if (modern === 0) return `2025 · ${legacy}`;
+    if (legacy === 0) return `2026-07-28 · ${modern}`;
+    return `2025 · ${legacy} + 2026-07-28 · ${modern}`;
+  }
+
   onMount(async () => {
     const raw = (await new SettingsStore(plugin).readSlice("mcpTransport")) as
-      | { port?: number; serverName?: string; eraCounters?: unknown }
+      | {
+          port?: number;
+          serverName?: string;
+          eraCounters?: unknown;
+          eraCountersByToken?: unknown;
+        }
       | undefined;
     portInput = raw?.port ?? null;
     serverNameInput = raw?.serverName ?? "";
     eraCounters = readEraCounters(raw?.eraCounters);
+    eraByToken = readEraCountersByToken(raw?.eraCountersByToken);
     const registry = plugin.mcpTransportState?.mcp.registry;
     allToolNames = registry ? registry.listAll().map((t) => t.name) : [];
     await refreshTokens();
@@ -514,6 +545,17 @@
             {#if allToolNames.length > 0}
               <span class="token-count">{toolCounts[token.id] ?? 0} tools</span>
             {/if}
+            <!-- Absent until this client has actually been served: a row
+                 reading "2025 · 0" on a token nothing has ever used says
+                 something false about which protocol it speaks. -->
+            {#if eraLabel(token.id) !== ""}
+              <span
+                class="token-era"
+                title="Requests this client has been served, by protocol era, as of when this pane opened"
+              >
+                {eraLabel(token.id)}
+              </span>
+            {/if}
           </div>
 
           <div class="token-secret">
@@ -733,9 +775,17 @@
   }
 
   .token-profile,
-  .token-count {
+  .token-count,
+  .token-era {
     color: var(--text-muted);
     font-size: 0.85em;
+  }
+
+  /* The era label is the one span here that can hold a long string (both
+     eras plus two counts), and it sits in a settings pane that is narrow on
+     a split view. Let it wrap as a unit rather than push the row wider. */
+  .token-era {
+    white-space: nowrap;
   }
 
   .rename-input {

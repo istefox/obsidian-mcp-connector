@@ -326,7 +326,11 @@ export async function createMcpService(
     // would corrupt exactly the signal that decision rests on. Counting a
     // rejected-but-classified request is correct for the same reason: the
     // client reached us on that era, and that is what the trigger measures.
-    recordEra(era);
+    // Counted twice over, against the vault and against this client: the
+    // vault total is what ADR-0016 §8's trigger reads, the per-token bucket is
+    // what makes "which protocol does THIS client speak" answerable at all
+    // (OMC-024). They are not derivable from each other — see eraCounters.ts.
+    recordEra(era, tokenId);
     scheduleEraFlush(config.plugin);
 
     if (era === "modern") {

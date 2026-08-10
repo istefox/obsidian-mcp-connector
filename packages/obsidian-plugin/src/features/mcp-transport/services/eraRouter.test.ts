@@ -385,3 +385,107 @@ describe("eraRouter — the request body is read exactly once per request (R-08)
     }
   });
 });
+
+/**
+ * OMC-024. The per-token split is decided in eraCounters.ts and covered
+ * there; what only a wired request can prove is that `mcpServer.handleRequest`
+ * hands its `tokenId` to `record`. A unit test cannot see that argument go
+ * missing — the counters would still add up, against the vault, with every
+ * bucket empty.
+ */
+describe("eraRouter — each era is attributed to the token that authenticated it (OMC-024)", () => {
+  const TOK_LEGACY = {
+    id: "tok_legacy",
+    label: "Legacy client",
+    token: "l".repeat(32),
+    createdAt: 1,
+  };
+  const TOK_MODERN = {
+    id: "tok_modern",
+    label: "Modern client",
+    token: "m".repeat(32),
+    createdAt: 2,
+  };
+
+  test("a claim-less request on one token and a 2026-envelope request on another land in different buckets", async () => {
+    const { startHttpServer } = await import("./httpServer");
+    let store: Record<string, unknown> = {
+      mcpTransport: { tokens: [TOK_LEGACY, TOK_MODERN] },
+    };
+    const plugin = mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin,
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: async () => [TOK_LEGACY, TOK_MODERN],
+      requestHandler: svc.handleRequest,
+    });
+
+    const post = async (token: string, body: unknown, extra = {}) => {
+      const res = await fetch(`http://127.0.0.1:${server.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...extra,
+        },
+        body: JSON.stringify(body),
+      });
+      // Drain: an unread body leaves the socket to the keep-alive pool, and
+      // startHttpServer takes the first free port in PORT_RANGE rather than a
+      // random one, so the next server booted in this process inherits it.
+      await res.text();
+      return res;
+    };
+
+    try {
+      await post(TOK_LEGACY.token, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      });
+      await post(
+        TOK_MODERN.token,
+        {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/list",
+          params: {
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientCapabilities": {},
+            },
+          },
+        },
+        { "mcp-method": "tools/list" },
+      );
+
+      await svc.flushPendingCalls();
+
+      const slice = store.mcpTransport as Record<string, unknown>;
+      expect(slice.eraCountersByToken).toEqual({
+        tok_legacy: { legacy: 1, modern: 0 },
+        tok_modern: { legacy: 0, modern: 1 },
+      });
+      // The vault total still counts both, unchanged in meaning: it is what
+      // ADR-0016 §8's trigger reads.
+      expect(slice.eraCounters).toEqual({ legacy: 1, modern: 1 });
+    } finally {
+      (
+        server.server as unknown as { closeAllConnections?: () => void }
+      ).closeAllConnections?.();
+      await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+});
