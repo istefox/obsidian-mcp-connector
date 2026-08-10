@@ -120,7 +120,22 @@ export type McpService = {
 export async function createMcpService(
   config: McpServiceConfig,
 ): Promise<McpService> {
-  const toolLoadingManager = new ToolLoadingManager();
+  // The fan-out for issue #419. Counters are vault-wide (ADR-0014), so a
+  // promotion triggered by one client's traffic widens every adaptive token's
+  // list — including clients that made no request and would otherwise serve a
+  // stale `tools/list` until they happened to re-list. `notify.toolsChanged()`
+  // publishes onto the 2026-era handler's bus, and its listen router delivers
+  // to every open `subscriptions/listen` stream that opted in.
+  //
+  // A thunk, not a direct reference: `modernHandler` is constructed further
+  // down. It can only fire from inside a request, long after both exist.
+  //
+  // 2025-era clients get nothing from this — no listen stream exists on that
+  // wire, and the endpoint is POST-only by design. #419 is repaired for the
+  // era that provides the mechanism, not for the one that never had it.
+  const toolLoadingManager = new ToolLoadingManager({
+    onToolsPromoted: () => modernHandler.notify.toolsChanged(),
+  });
   // `activate_tool`'s default (persist: false) promotions, per token.
   // Owned here because it must outlive the request that created it and
   // die with the service; composeToolRegistry only wires the meta-tools

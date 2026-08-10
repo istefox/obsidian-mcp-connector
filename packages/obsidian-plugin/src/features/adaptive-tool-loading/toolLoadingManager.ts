@@ -1,3 +1,4 @@
+import { logger } from "$/shared";
 import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
 import {
@@ -92,7 +93,23 @@ function pendingFor(plugin: PluginDataLike): PendingState {
 }
 
 export class ToolLoadingManager {
-  constructor(private opts: { flushDelayMs?: number } = {}) {}
+  /**
+   * `onToolsPromoted` fires after {@link flushPendingCalls} has PERSISTED an
+   * auto-promotion that actually widened somebody's list — the vault-wide
+   * event of issue #419. The transport wires it to the 2026-era handler's
+   * `notify.toolsChanged()`, which fans a `notifications/tools/list_changed`
+   * out to every open `subscriptions/listen` stream, so a client that made no
+   * request of its own still learns its surface moved.
+   *
+   * Deliberately NOT called by `activateTool`/`activateTools`: those promote
+   * into ONE token's list, the caller already gets the notification on its own
+   * response stream, and the SDK's bus cannot target a single subscriber — a
+   * publish there would wake every other client for a change that did not
+   * touch it.
+   */
+  constructor(
+    private opts: { flushDelayMs?: number; onToolsPromoted?: () => void } = {},
+  ) {}
   async loadState(plugin: PluginDataLike): Promise<ToolLoadingState> {
     return mergeState(await new SettingsStore(plugin).readSlice(SLICE));
   }
@@ -172,6 +189,11 @@ export class ToolLoadingManager {
     if (pending.counts.size === 0) return;
     const batch = pending.counts;
     pending.counts = new Map();
+    // Set inside the recipe, read after the write resolves. A promotion that
+    // was computed but never persisted must not be announced, and the recipe
+    // itself is a pure function of one snapshot — it is the wrong place to
+    // reach out to the transport from.
+    let widened = false;
     try {
       await updateToolLoading(plugin, (state, ctx) => {
         for (const [toolName, count] of batch) {
@@ -189,12 +211,18 @@ export class ToolLoadingManager {
           // policy entry resolves to `all` and is never promoted into.
           if (ctx.tokenIds.length === 0) {
             if (state.profile === "adaptive") {
+              // Past the threshold the tool STAYS past it, so every later
+              // flush re-runs this branch for an already-promoted name.
+              // Gate the signal on the list actually gaining something or
+              // the notification turns into a per-flush storm.
+              if (!state.promoted.includes(toolName)) widened = true;
               setPromoted(state, null, union(state.promoted, toolName));
             }
             continue;
           }
           for (const [id, policy] of Object.entries(state.profiles)) {
             if (policy.profile !== "adaptive") continue;
+            if (!policy.promoted.includes(toolName)) widened = true;
             setPromoted(state, id, union(policy.promoted, toolName));
           }
         }
@@ -210,6 +238,17 @@ export class ToolLoadingManager {
         );
       }
       throw error;
+    }
+    if (!widened) return;
+    try {
+      this.opts.onToolsPromoted?.();
+    } catch (error) {
+      // The counters are already persisted at this point. A listener that
+      // throws is a transport problem, not a reason to report the flush as
+      // failed and have the caller replay a batch that landed.
+      logger.warn("[adaptive] onToolsPromoted listener threw", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

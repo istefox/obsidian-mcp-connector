@@ -570,6 +570,152 @@ describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
   });
 });
 
+// The publish side of issue #419: an auto-promotion is a vault-wide change,
+// so the transport is told once per WIDENING, never per flush.
+describe("onToolsPromoted", () => {
+  function counting() {
+    let calls = 0;
+    return {
+      cb: () => {
+        calls++;
+      },
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  test("fires once when a counter crosses the threshold", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    const state = (plugin._store() as Record<string, unknown>).toolLoading as {
+      promoted: string[];
+    };
+    expect(state.promoted).toContain("search_and_replace");
+    expect(spy.calls).toBe(1);
+  });
+
+  // The regression this guard exists for: past the threshold the counter
+  // STAYS past it, so every later flush re-enters the promotion branch for a
+  // name that is already in the list. Signalling on the branch instead of on
+  // the list actually growing turns an advisory notification into a storm —
+  // one per call, forever, for as long as the tool keeps being used.
+  test("does not fire again once the tool is already promoted", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD + 5; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    expect(spy.calls).toBe(1);
+  });
+
+  test("does not fire below the threshold", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD - 1; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    expect(spy.calls).toBe(0);
+  });
+
+  test("does not fire for a meta-tool, which is never promoted", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD + 2; i++) {
+      await m.recordCall("tool_catalog", plugin);
+    }
+    expect(spy.calls).toBe(0);
+  });
+
+  test("does not fire in the core profile, where nothing is promoted", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "core", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    expect(spy.calls).toBe(0);
+  });
+
+  // A promotion that was computed but never reached disk must not be
+  // announced: the clients would re-list and see the old surface.
+  test("does not fire when the settings write fails", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const spy = counting();
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: spy.cb,
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD - 1; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    plugin.saveData = async () => {
+      throw new Error("disk full");
+    };
+    await expect(m.recordCall("search_and_replace", plugin)).rejects.toThrow(
+      "disk full",
+    );
+    expect(spy.calls).toBe(0);
+  });
+
+  // The counters are already persisted when the listener runs, so a throwing
+  // listener must not make the caller replay a batch that landed.
+  test("a throwing listener does not fail the flush", async () => {
+    const plugin = makePlugin({
+      toolLoading: { profile: "adaptive", counters: {}, promoted: [] },
+    });
+    const m = new ToolLoadingManager({
+      flushDelayMs: 0,
+      onToolsPromoted: () => {
+        throw new Error("handler is closed");
+      },
+    });
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      await m.recordCall("search_and_replace", plugin);
+    }
+    const state = (plugin._store() as Record<string, unknown>).toolLoading as {
+      promoted: string[];
+      counters: Record<string, number>;
+    };
+    expect(state.promoted).toContain("search_and_replace");
+    expect(state.counters["search_and_replace"]).toBe(PROMOTION_THRESHOLD);
+  });
+});
+
 // Smoke-test: CORE_SET contains only real tool names
 describe("CORE_SET", () => {
   test("all core tools are known names (sanity check)", () => {
