@@ -322,3 +322,39 @@ export async function applySettings(
     state.provider = state.chooser(next);
   }
 }
+
+/**
+ * Re-run the chooser after `plugin.smartSearch` becomes available (or is
+ * detected absent), so a vault that started before Smart Connections
+ * finished loading does not stay pinned to the native fallback for the
+ * rest of the session (#430).
+ *
+ * `wireSemanticSearch` resolves and caches the provider synchronously
+ * during `onload()`, before `plugin.smartSearch` is ever assigned — that
+ * binding happens later, asynchronously, via the reactive
+ * `loadSmartSearchAPI` loader. `isSmartConnectionsAvailable` reads
+ * `plugin.smartSearch?.search`, so `"auto"` always resolved to the native
+ * provider at chooser-time regardless of how fast Smart Connections
+ * itself loaded — this call is what lets it reconsider once the binding
+ * actually lands.
+ *
+ * Gated on `"auto"` specifically: it is the only setting whose chooser
+ * decision depends on `plugin.smartSearch` at choice-time. `native` and
+ * `smart-connections` do not (`SmartConnectionsProvider` reads
+ * `plugin.smartSearch` lazily, at search time, not at construction), and
+ * `embedding-gemma` / `multilingual-e5-base` do not either — so every
+ * other value is a no-op here BY CONSTRUCTION, which is what keeps this
+ * call from ever interacting with the DLC pending-provider guard above:
+ * a bare `state.chooser(state.settings)` would swap in a provider backed
+ * by an unfinished DLC store the moment `plugin.smartSearch` binds,
+ * because `NativeProviderImpl.isReady()` is unconditionally `true` and
+ * the gemma/e5 chooser branches do not check store readiness themselves
+ * — that check is this function's `pendingKey` guard above, and a stale
+ * setting value never reaching this branch is what protects it, not an
+ * added check against `state.pendingProvider`.
+ */
+export function refreshAutoProvider(state: SemanticSearchState): void {
+  if (state.chooser && state.settings.provider === "auto") {
+    state.provider = state.chooser(state.settings);
+  }
+}
