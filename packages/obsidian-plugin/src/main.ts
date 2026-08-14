@@ -15,6 +15,7 @@ import {
   type PromptsFeatureState,
 } from "./features/prompts";
 import {
+  refreshAutoProvider,
   teardown as semanticSearchTeardown,
   type SemanticSearchState,
 } from "./features/semantic-search";
@@ -114,6 +115,16 @@ export default class McpToolsPlugin extends Plugin {
     this.smartSearchSub = loadSmartSearchAPI(this).subscribe({
       next: (dep) => {
         this.smartSearch = dep.api;
+        // #430: `wireSemanticSearch` above already cached a provider
+        // choice before this binding could exist, so "auto" was pinned
+        // to the native fallback regardless of how fast Smart
+        // Connections loaded. Reconsider now that the binding is real.
+        // `semanticSearchState` is guaranteed set-or-absent by this
+        // point: this subscription is not created until the `await
+        // wireSemanticSearch(this)` above has already resolved.
+        if (this.semanticSearchState) {
+          refreshAutoProvider(this.semanticSearchState);
+        }
       },
       complete: () => {
         if (this.smartSearch) {

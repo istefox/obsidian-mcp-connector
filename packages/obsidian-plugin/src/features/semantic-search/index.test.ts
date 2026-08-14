@@ -1,6 +1,11 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import type McpToolsPlugin from "$/main";
-import { applySettings, setup, type SemanticSearchState } from "./index";
+import {
+  applySettings,
+  refreshAutoProvider,
+  setup,
+  type SemanticSearchState,
+} from "./index";
 import {
   DEFAULT_SEMANTIC_SETTINGS,
   type SemanticSearchSettings,
@@ -500,5 +505,204 @@ describe("applySettings — UI swap path (T12)", () => {
     expect(result.state.provider).not.toBe(initialProvider);
     // #344: cleared alongside pendingProvider in the ready-immediately branch.
     expect(result.state.pendingProviderStartedAt).toBeNull();
+  });
+});
+
+/**
+ * OMC-025 / #430. `wireSemanticSearch` caches the chooser's decision
+ * synchronously during `onload()`, before `plugin.smartSearch` is ever
+ * assigned — so "auto" always resolved to native regardless of how fast
+ * Smart Connections loaded. `refreshAutoProvider` is the fix: re-run the
+ * chooser once the binding actually lands.
+ */
+describe("refreshAutoProvider — re-selects auto once smartSearch binds (OMC-025, #430)", () => {
+  function fixtureDeps() {
+    const embedder = {
+      embed: async () => new Float32Array(4),
+      embedBatch: async (texts: string[]) =>
+        texts.map(() => new Float32Array(4)),
+      unload: async () => undefined,
+      isLoaded: () => true,
+    };
+    return { embedder };
+  }
+
+  // Same in-memory adapter idiom the T8 describe block above uses for
+  // `createEmbeddingStore` — a real store, not a hand-rolled stand-in, so
+  // `buildNative()`'s full construction path is exercised for real.
+  async function fixtureStore() {
+    const { createEmbeddingStore } = await import("./services/store");
+    const memFiles = new Map<string, string>();
+    const memBins = new Map<string, ArrayBuffer>();
+    const adapter = {
+      async exists(p: string) {
+        return memFiles.has(p) || memBins.has(p);
+      },
+      async read(p: string) {
+        const v = memFiles.get(p);
+        if (v === undefined) throw new Error(`ENOENT ${p}`);
+        return v;
+      },
+      async write(p: string, d: string) {
+        memFiles.set(p, d);
+      },
+      async readBinary(p: string) {
+        const v = memBins.get(p);
+        if (v === undefined) throw new Error(`ENOENT ${p}`);
+        return v.slice(0);
+      },
+      async writeBinary(p: string, d: ArrayBuffer) {
+        memBins.set(p, d.slice(0));
+      },
+      async remove(p: string) {
+        memFiles.delete(p);
+        memBins.delete(p);
+      },
+      async mkdir() {},
+    };
+    const store = createEmbeddingStore({
+      adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: 4,
+    });
+    await store.init();
+    return store;
+  }
+
+  test("smartSearch bound after setup: swaps auto from native to Smart Connections", async () => {
+    const { plugin } = makePluginStub({
+      semanticSearch: { provider: "auto" },
+    });
+    const { embedder } = fixtureDeps();
+    const store = await fixtureStore();
+
+    const result = await setup(plugin, {
+      factoryDeps: { plugin, embedder, store },
+    });
+    if (!result.success) throw new Error(result.error);
+    const state = result.state;
+
+    // Before the binding: unavailable, so chooser already resolved to
+    // native at setup() time. isReady() is unconditionally true for the
+    // native provider, so this alone would not distinguish the two —
+    // that is exactly why the reported bug was silent.
+    const beforeRefresh = state.provider;
+    expect(beforeRefresh.isReady()).toBe(true);
+
+    // The binding this defect was missing: assigned asynchronously,
+    // after chooser-time, exactly as main.ts's subscribe callback does.
+    (
+      plugin as unknown as { smartSearch: { search: () => never[] } }
+    ).smartSearch = { search: () => [] };
+
+    refreshAutoProvider(state);
+
+    expect(state.provider).not.toBe(beforeRefresh);
+    // Behavioral proof, not just a new instance of the same kind: the
+    // Smart Connections provider reads `plugin.smartSearch` LIVE
+    // (smartConnectionsProvider.ts), so removing the binding again must
+    // flip isReady() to false — something a native provider can never do.
+    expect(state.provider.isReady()).toBe(true);
+    delete (plugin as unknown as { smartSearch?: unknown }).smartSearch;
+    expect(state.provider.isReady()).toBe(false);
+  });
+
+  test('provider !== "auto": no-op even with smartSearch bound', async () => {
+    const { plugin } = makePluginStub({
+      semanticSearch: { provider: "native" },
+    });
+    const { embedder } = fixtureDeps();
+    const store = await fixtureStore();
+
+    const result = await setup(plugin, {
+      factoryDeps: { plugin, embedder, store },
+    });
+    if (!result.success) throw new Error(result.error);
+    const state = result.state;
+    const before = state.provider;
+
+    (
+      plugin as unknown as { smartSearch: { search: () => never[] } }
+    ).smartSearch = { search: () => [] };
+    refreshAutoProvider(state);
+
+    // Gated on "auto" specifically: every other setting is untouched by
+    // this call, which is also what keeps it from ever reaching the DLC
+    // pending-provider branch below.
+    expect(state.provider).toBe(before);
+  });
+
+  test("no chooser (NoopProvider path): does not throw", async () => {
+    const result = await setup(makePluginStub().plugin);
+    if (!result.success) throw new Error(result.error);
+    expect(result.state.chooser).toBeNull();
+    expect(() => refreshAutoProvider(result.state)).not.toThrow();
+  });
+
+  test("does not touch a pending DLC swap, even under auto", async () => {
+    const { plugin } = makePluginStub();
+    const { createEmbeddingStore } = await import("./services/store");
+    const { createEmbeddingStoreRegistry } =
+      await import("./services/storeRegistry");
+    const adapter = {
+      async exists() {
+        return false;
+      },
+      async read(): Promise<string> {
+        throw new Error("nope");
+      },
+      async write() {
+        return;
+      },
+      async readBinary(): Promise<ArrayBuffer> {
+        throw new Error("nope");
+      },
+      async writeBinary() {
+        return;
+      },
+      async remove() {
+        return;
+      },
+      async mkdir() {},
+    };
+    const store = createEmbeddingStore({
+      adapter,
+      binPath: "/p/embeddings.bin",
+      indexPath: "/p/embeddings.index.json",
+      vectorDim: 4,
+    });
+    await store.init();
+    const embedder = {
+      embed: async () => new Float32Array(4),
+      embedBatch: async (ts: string[]) => ts.map(() => new Float32Array(4)),
+      unload: async () => undefined,
+      isLoaded: () => true,
+    };
+    const registry = createEmbeddingStoreRegistry(adapter, "/p/embeddings");
+
+    const result = await setup(plugin, {
+      factoryDeps: { plugin, embedder, store, registry },
+    });
+    if (!result.success) throw new Error(result.error);
+    result.state.registry = registry;
+    const initialProvider = result.state.provider;
+
+    // Puts the state into the exact condition this call must never
+    // disturb: a DLC download in flight, old provider intentionally kept
+    // live, per "DLC: embedding-gemma with store not ready ..." above.
+    await applySettings(plugin, result.state, {
+      ...result.state.settings,
+      provider: "embedding-gemma",
+    });
+    expect(result.state.pendingProvider).toBe("embedding-gemma-300m");
+
+    (
+      plugin as unknown as { smartSearch: { search: () => never[] } }
+    ).smartSearch = { search: () => [] };
+    refreshAutoProvider(result.state);
+
+    expect(result.state.pendingProvider).toBe("embedding-gemma-300m");
+    expect(result.state.provider).toBe(initialProvider);
   });
 });
