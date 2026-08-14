@@ -43,7 +43,7 @@ describe("search_and_replace tool", () => {
       arguments: {
         pattern: "foo",
         replacement: "baz",
-        dry_run: "false",
+        dry_run: false,
       },
       app: mockApp(),
     });
@@ -94,7 +94,7 @@ describe("search_and_replace tool", () => {
       arguments: {
         pattern: "match",
         replacement: "X",
-        dry_run: "false",
+        dry_run: false,
         scope: ["a"],
       },
       app: mockApp(),
@@ -111,7 +111,7 @@ describe("search_and_replace tool", () => {
     setMockFile("a.md", "a a a");
     const r = await searchAndReplaceHandler({
       // No flags — should still replace ALL occurrences
-      arguments: { pattern: "a", replacement: "b", dry_run: "false" },
+      arguments: { pattern: "a", replacement: "b", dry_run: false },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
@@ -142,7 +142,7 @@ describe("search_and_replace tool", () => {
         arguments: {
           pattern: "replace me",
           replacement: "done",
-          dry_run: "false",
+          dry_run: false,
         },
         app: mockApp(),
       });

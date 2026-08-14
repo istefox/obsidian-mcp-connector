@@ -1039,3 +1039,89 @@ describe("ToolRegistry — per-client tool profiles (issue #348, ADR-0014)", () 
     });
   });
 });
+
+/**
+ * #444. `coerceBooleanParams` repairs one direction only: a `"true"` /
+ * `"false"` STRING arriving where the ArkType schema says `"boolean"`.
+ * Six tool fields used to declare the mirror shape,
+ * `type('"true" | "false"')`, which that guard never matches — so a
+ * genuine JSON boolean reached `schema.assert()` uncoerced and threw.
+ * They are plain booleans now.
+ *
+ * These live here rather than beside the tools because the handler-level
+ * tests call handlers DIRECTLY, below the registry, and never traverse
+ * `coerceBooleanParams` at all — this is the only place the coercion
+ * seam is actually exercised.
+ */
+describe("dispatch() boolean argument coercion (#444)", () => {
+  function buildRegistryWithBooleanTool() {
+    const tools = new ToolRegistryClass();
+    const seen: unknown[] = [];
+
+    const flagSchema = type({
+      name: '"flagged"',
+      arguments: { "flag?": type("boolean") },
+    }).describe("Tool with one optional boolean argument");
+
+    tools.register(flagSchema, (params) => {
+      seen.push(params.arguments.flag);
+      return { content: [{ type: "text", text: "ok" }] };
+    });
+
+    return { tools, seen };
+  }
+
+  const dispatchFlag = async (
+    tools: ReturnType<typeof buildRegistryWithBooleanTool>["tools"],
+    flag: unknown,
+  ): Promise<{ isError?: boolean }> =>
+    (await tools.dispatch(
+      { name: "flagged", arguments: flag === undefined ? {} : { flag } },
+      fakeContext,
+    )) as { isError?: boolean };
+
+  test("real JSON booleans reach the handler unchanged", async () => {
+    const { tools, seen } = buildRegistryWithBooleanTool();
+
+    expect((await dispatchFlag(tools, true)).isError).toBeUndefined();
+    expect((await dispatchFlag(tools, false)).isError).toBeUndefined();
+
+    // The shape the report hit: while the equivalent field was a
+    // string-literal union, `false` threw right here.
+    expect(seen).toEqual([true, false]);
+  });
+
+  test('"true" / "false" strings are coerced to real booleans', async () => {
+    const { tools, seen } = buildRegistryWithBooleanTool();
+
+    expect((await dispatchFlag(tools, "true")).isError).toBeUndefined();
+    expect((await dispatchFlag(tools, "false")).isError).toBeUndefined();
+
+    // `toBe` and not `toEqual`: this asserts the coercion happened, not
+    // merely that the call survived validation.
+    expect(seen[0]).toBe(true);
+    expect(seen[1]).toBe(false);
+  });
+
+  test("a value that is neither still fails validation", async () => {
+    const { tools, seen } = buildRegistryWithBooleanTool();
+
+    // Fail-closed is the point: `delete_vault_directory.recursive` is
+    // one of the six, and it is irreversible from MCP.
+    expect((await dispatchFlag(tools, "maybe")).isError).toBe(true);
+    expect((await dispatchFlag(tools, 1)).isError).toBe(true);
+    expect((await dispatchFlag(tools, "TRUE")).isError).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  test("an omitted flag stays undefined, so each tool's own default governs", async () => {
+    const { tools, seen } = buildRegistryWithBooleanTool();
+
+    expect((await dispatchFlag(tools, undefined)).isError).toBeUndefined();
+
+    // The six do not share a default — `dry_run` and `includeNested`
+    // default true, `recursive` and get_backlinks' `includeUnresolved`
+    // default false — so the registry must not substitute one.
+    expect(seen).toEqual([undefined]);
+  });
+});

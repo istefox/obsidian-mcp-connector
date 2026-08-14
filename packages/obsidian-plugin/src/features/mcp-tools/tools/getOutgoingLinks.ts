@@ -7,11 +7,11 @@ export const getOutgoingLinksSchema = type({
   name: '"get_outgoing_links"',
   arguments: {
     path: type("string>0").describe("Vault-relative path to the source file."),
-    "includeEmbeds?": type('"true" | "false"').describe(
-      'Default `"true"`: embeds included, marked `embed: true`. `"false"` returns only regular links.',
+    "includeEmbeds?": type("boolean").describe(
+      "Default `true`: embeds included, marked `embed: true`. `false` returns only regular links.",
     ),
-    "includeUnresolved?": type('"true" | "false"').describe(
-      'Default `"true"`: unresolved links included with `resolved: false`. `"false"` filters them out.',
+    "includeUnresolved?": type("boolean").describe(
+      "Default `true`: unresolved links included with `resolved: false`. `false` filters them out.",
     ),
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
@@ -22,8 +22,8 @@ export const getOutgoingLinksSchema = type({
 export type GetOutgoingLinksContext = {
   arguments: {
     path: string;
-    includeEmbeds?: "true" | "false";
-    includeUnresolved?: "true" | "false";
+    includeEmbeds?: boolean;
+    includeUnresolved?: boolean;
     limit?: number;
   };
   app: App;
@@ -66,9 +66,8 @@ export async function getOutgoingLinksHandler(
     frontmatterLinks?: Array<RawLink & { key: string }>;
   } | null;
 
-  const includeEmbeds = (ctx.arguments.includeEmbeds ?? "true") === "true";
-  const includeUnresolved =
-    (ctx.arguments.includeUnresolved ?? "true") === "true";
+  const includeEmbeds = ctx.arguments.includeEmbeds ?? true;
+  const includeUnresolved = ctx.arguments.includeUnresolved ?? true;
 
   // Resolution helper. `getFirstLinkpathDest` is the documented public
   // API for turning a linkpath (e.g. `"Note Name"` or `"folder/Note"`)

@@ -18,15 +18,15 @@ export const searchAndReplaceSchema = type({
     "flags?": type("string").describe(
       'Regex flags (default `"g"`). The `g` flag is always active — omitting it is equivalent to passing `"g"`. Combine: `"gi"`, `"gm"`, `"gims"`, etc.',
     ),
-    "dry_run?": type('"true" | "false"').describe(
-      'When `"true"` (default), no files are modified — returns a preview of changes. Pass `"false"` to apply. Always preview first to verify scope and intent.',
+    "dry_run?": type("boolean").describe(
+      "When `true` (default), no files are modified — returns a preview of changes. Pass `false` to apply. Always preview first to verify scope and intent.",
     ),
     "scope?": type("string[]").describe(
       "Optional list of vault-relative paths or folder prefixes to limit the search. A folder prefix matches any file under it. Omit for vault-wide search.",
     ),
   },
 }).describe(
-  'Regex find-and-replace across the vault or a scoped file list. `dry_run` defaults to `"true"` (preview only); pass `"false"` to write. Returns files_matched, total_replacements, and up to 5 match previews per file (`line_number: 0` = multi-line match). JavaScript regex, `g` flag always active; patterns with nested quantifiers are rejected.',
+  "Regex find-and-replace across the vault or a scoped file list. `dry_run` defaults to `true` (preview only); pass `false` to write. Returns files_matched, total_replacements, and up to 5 match previews per file (`line_number: 0` = multi-line match). JavaScript regex, `g` flag always active; patterns with nested quantifiers are rejected.",
 );
 
 export type SearchAndReplaceContext = {
@@ -34,7 +34,7 @@ export type SearchAndReplaceContext = {
     pattern: string;
     replacement: string;
     flags?: string;
-    dry_run?: "true" | "false";
+    dry_run?: boolean;
     scope?: string[];
   };
   app: App;
@@ -54,7 +54,7 @@ export async function searchAndReplaceHandler(
   isError?: boolean;
 }> {
   const { pattern, replacement } = ctx.arguments;
-  const dryRun = (ctx.arguments.dry_run ?? "true") === "true";
+  const dryRun = ctx.arguments.dry_run ?? true;
   const scope = ctx.arguments.scope;
 
   // Always inject the global flag.
@@ -162,7 +162,7 @@ export async function searchAndReplaceHandler(
           preview.push({
             line_number: 0,
             before: "(multi-line match — no per-line preview)",
-            after: '(apply with dry_run:"false" to see result)',
+            after: "(apply with dry_run: false to see result)",
           });
         }
 

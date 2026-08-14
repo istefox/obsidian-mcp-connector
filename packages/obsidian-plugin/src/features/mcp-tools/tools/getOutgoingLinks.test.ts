@@ -89,7 +89,7 @@ describe("get_outgoing_links tool", () => {
       ],
     });
     const r = await getOutgoingLinksHandler({
-      arguments: { path: "note.md", includeUnresolved: "false" },
+      arguments: { path: "note.md", includeUnresolved: false },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
@@ -121,7 +121,7 @@ describe("get_outgoing_links tool", () => {
       embeds: [{ link: "image.png", original: "![[image.png]]" }],
     });
     const r = await getOutgoingLinksHandler({
-      arguments: { path: "note.md", includeEmbeds: "false" },
+      arguments: { path: "note.md", includeEmbeds: false },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
@@ -207,8 +207,8 @@ describe("get_outgoing_links tool", () => {
     const r = await getOutgoingLinksHandler({
       arguments: {
         path: "note.md",
-        includeEmbeds: "false",
-        includeUnresolved: "false",
+        includeEmbeds: false,
+        includeUnresolved: false,
       },
       app: mockApp(),
     });

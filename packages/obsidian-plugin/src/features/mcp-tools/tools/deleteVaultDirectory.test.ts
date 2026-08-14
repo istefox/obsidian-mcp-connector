@@ -54,7 +54,7 @@ describe("delete_vault_directory tool", () => {
     setMockFile("Archive/2025/Q1/note.md", "");
     const app = mockApp();
     const result = await deleteVaultDirectoryHandler({
-      arguments: { path: "Archive", recursive: "true" },
+      arguments: { path: "Archive", recursive: true },
       app,
     });
     expect(result.isError).toBeUndefined();
@@ -140,7 +140,7 @@ describe("delete_vault_directory tool", () => {
     expect(result.isError).toBe(true);
     // Errno-keyed actionable shape: the caller learns that recursive=true
     // is the way out.
-    expect(result.content[0].text).toContain('use recursive: "true"');
+    expect(result.content[0].text).toContain("use recursive: true");
     // No absolute-path trailer ("rmdir '<abs>'" segment from Node).
     expect(result.content[0].text).not.toContain("rmdir '");
     // Belt-and-suspenders: no obvious absolute-path indicators of any
