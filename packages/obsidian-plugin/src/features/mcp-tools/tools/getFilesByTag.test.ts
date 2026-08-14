@@ -123,7 +123,7 @@ describe("get_files_by_tag tool", () => {
     setMockMetadata("a.md", { tags: [{ tag: "#project" }] });
     setMockMetadata("b.md", { tags: [{ tag: "#project/active" }] });
     const r = await getFilesByTagHandler({
-      arguments: { tag: "project", includeNested: "false" },
+      arguments: { tag: "project", includeNested: false },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);

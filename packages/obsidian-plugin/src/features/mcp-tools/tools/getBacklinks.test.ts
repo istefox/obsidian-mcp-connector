@@ -113,7 +113,7 @@ describe("get_backlinks tool", () => {
     // when opted-in, it should still surface as a backlink.
     setMockUnresolvedLinks("typo.md", { target: 1 });
     const r = await getBacklinksHandler({
-      arguments: { path: "target.md", includeUnresolved: "true" },
+      arguments: { path: "target.md", includeUnresolved: true },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
@@ -123,7 +123,7 @@ describe("get_backlinks tool", () => {
   test("includeUnresolved=true picks up exact path matches", async () => {
     setMockUnresolvedLinks("typo.md", { "target.md": 2 });
     const r = await getBacklinksHandler({
-      arguments: { path: "target.md", includeUnresolved: "true" },
+      arguments: { path: "target.md", includeUnresolved: true },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
@@ -134,7 +134,7 @@ describe("get_backlinks tool", () => {
     setMockResolvedLinks("mixed.md", { "target.md": 1 });
     setMockUnresolvedLinks("mixed.md", { target: 2 });
     const r = await getBacklinksHandler({
-      arguments: { path: "target.md", includeUnresolved: "true" },
+      arguments: { path: "target.md", includeUnresolved: true },
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);

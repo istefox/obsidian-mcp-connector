@@ -8,16 +8,16 @@ export const deleteVaultDirectorySchema = type({
     path: type("string>0").describe(
       "Vault-relative directory path to delete (e.g. 'Archive/old-project'). Cannot be empty or the vault root.",
     ),
-    "recursive?": type('"true" | "false"').describe(
-      'When `"true"`, deletes the directory together with every file and sub-directory it contains. When `"false"` (default), the call fails if the directory is non-empty. Use `"true"` deliberately — this operation is irreversible from MCP and bypasses the trash setting.',
+    "recursive?": type("boolean").describe(
+      "When `true`, deletes the directory together with every file and sub-directory it contains. When `false` (default), the call fails if the directory is non-empty. Use `true` deliberately — this operation is irreversible from MCP and bypasses the trash setting.",
     ),
   },
 }).describe(
-  'Deletes a directory from the vault. Defaults to non-recursive (fails if the directory is not empty). Use `recursive: "true"` to remove the directory and all its contents in one call. Bottoms out in `app.vault.adapter.rmdir`, so deleted content does NOT go through the Obsidian trash.',
+  "Deletes a directory from the vault. Defaults to non-recursive (fails if the directory is not empty). Use `recursive: true` to remove the directory and all its contents in one call. Bottoms out in `app.vault.adapter.rmdir`, so deleted content does NOT go through the Obsidian trash.",
 );
 
 export type DeleteVaultDirectoryContext = {
-  arguments: { path: string; recursive?: "true" | "false" };
+  arguments: { path: string; recursive?: boolean };
   app: App;
 };
 
@@ -34,7 +34,7 @@ export async function deleteVaultDirectoryHandler(
     );
   }
 
-  const recursive = (ctx.arguments.recursive ?? "false") === "true";
+  const recursive = ctx.arguments.recursive ?? false;
 
   // Reject pointing at a file: this tool is for directories. The
   // sibling `delete_vault_file` covers files.
@@ -63,7 +63,7 @@ export async function deleteVaultDirectoryHandler(
     const errno = (e as NodeJS.ErrnoException | undefined)?.code;
     const msg =
       errno === "ENOTEMPTY"
-        ? 'directory not empty (use recursive: "true" to delete it together with its contents)'
+        ? "directory not empty (use recursive: true to delete it together with its contents)"
         : errno === "ENOENT"
           ? "directory does not exist"
           : errno === "EACCES" || errno === "EPERM"

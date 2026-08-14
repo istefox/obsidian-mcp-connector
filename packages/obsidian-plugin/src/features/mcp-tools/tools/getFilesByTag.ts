@@ -8,8 +8,8 @@ export const getFilesByTagSchema = type({
     tag: type("string>0").describe(
       "Tag to search for. The leading `#` is optional and matching is case-insensitive.",
     ),
-    "includeNested?": type('"true" | "false"').describe(
-      'When `"true"` (default), `tag="#project"` matches `#project`, `#project/active`, `#project/archived`, etc., mirroring Obsidian\'s hierarchical tag pane behaviour. When `"false"`, only exact matches are returned.',
+    "includeNested?": type("boolean").describe(
+      'When `true` (default), `tag="#project"` matches `#project`, `#project/active`, `#project/archived`, etc., mirroring Obsidian\'s hierarchical tag pane behaviour. When `false`, only exact matches are returned.',
     ),
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
@@ -18,7 +18,7 @@ export const getFilesByTagSchema = type({
 );
 
 export type GetFilesByTagContext = {
-  arguments: { tag: string; includeNested?: "true" | "false"; limit?: number };
+  arguments: { tag: string; includeNested?: boolean; limit?: number };
   app: App;
 };
 
@@ -36,7 +36,7 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
     );
   }
 
-  const includeNested = (ctx.arguments.includeNested ?? "true") === "true";
+  const includeNested = ctx.arguments.includeNested ?? true;
 
   // Pinned locale + sensitivity for cross-platform deterministic order
   // (matches the contract used by `list_tags`).

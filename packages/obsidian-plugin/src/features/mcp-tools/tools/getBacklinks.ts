@@ -8,8 +8,8 @@ export const getBacklinksSchema = type({
     path: type("string>0").describe(
       "Vault-relative path of the target file. The tool returns every file that links to this path.",
     ),
-    "includeUnresolved?": type('"true" | "false"').describe(
-      'When `"true"`, also includes sources whose link does not resolve (typo or broken-link sources matching by path or filename). Default `"false"`: unresolved backlinks are usually noise.',
+    "includeUnresolved?": type("boolean").describe(
+      "When `true`, also includes sources whose link does not resolve (typo or broken-link sources matching by path or filename). Default `false`: unresolved backlinks are usually noise.",
     ),
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
@@ -20,7 +20,7 @@ export const getBacklinksSchema = type({
 export type GetBacklinksContext = {
   arguments: {
     path: string;
-    includeUnresolved?: "true" | "false";
+    includeUnresolved?: boolean;
     limit?: number;
   };
   app: App;
@@ -30,8 +30,7 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
 }> {
   const target = ctx.arguments.path;
-  const includeUnresolved =
-    (ctx.arguments.includeUnresolved ?? "false") === "true";
+  const includeUnresolved = ctx.arguments.includeUnresolved ?? false;
 
   const compareName = (a: string, b: string): number =>
     a.localeCompare(b, "en", { sensitivity: "variant" });
