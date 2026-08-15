@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 2/4
 
 ## Roadmap — 2.0
 
@@ -25,12 +25,23 @@ Gate C is by far the longest piece.
 - [ ] `A2` `.mcpb` smoke test on Claude Desktop, outstanding since OMC-008. 1.0.1 existed
       because of a bug in exactly this class (#412), so releasing without it repeats the
       same risk. Needs a human at the machine
-- [ ] `A3` `bun run test:conformance` by hand. `main` carries transport changes made after
-      OMC-008 (OMC-007, OMC-024) and the suite only runs nightly, so this is the only
-      pre-release signal there is. Expected: `server-stateless` 26/28, baseline at four entries
-- [ ] `A4` Close #407. Phase 1 is done (`@modelcontextprotocol/{node,server}@2.0.0`, zero
-      residual v1 imports under `src/`), Phase 2 is OMC-008, merged. Verify nothing is left
-      and close it rather than leaving it open making noise
+- [x] `A3` `bun run test:conformance` by hand. **Done 2026-08-15 on `main` at `6c8e182`:
+      `Passed: 26/28, 2 failed, 2 warnings`, exit 0, and the four red checks are exactly the
+      four in `expected-failures.yml`.** No transport regression from OMC-007 or OMC-024, which
+      is what this run existed to rule out. The two FAILUREs are the capability pair, the two
+      WARNINGs the list-changed pair; both pairs need a shipped fixture tool this project
+      refuses to ship (ADR-0016 Alternative F)
+- [x] `A4` Close #407. **Done 2026-08-15, closed as completed.** All three of its Phase 2 open
+      problems were verified rather than assumed. The Windows bridge needs nothing:
+      `obsidian_mcp_bridge.py` contains zero `_meta` occurrences and negotiates through
+      `initialize`, so it classifies legacy on every request; its held-open
+      `subscriptions/listen` connection becomes necessary only when the legacy era is retired,
+      which ADR-0016 §8 already gates behind a measured trigger that is nowhere near firing
+      (`legacy 22 · modern 2`). `search_vault_smart` progress rides the same untouched legacy
+      path and stays unverified on the modern era on purpose. The `tools/list` invariant is
+      confirmed in writing by ADR-0015 §1, not by assumption. One record correction went with
+      the close: #407 claimed the `relatedRequestId` mechanism was "retired" by Phase 2. It was
+      not — the legacy era still uses it, and `notify.toolsChanged()` sits alongside it
 
 ### Gate B — OMC-023, the only change that requires the major
 
