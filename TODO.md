@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/2 (B2 unverified end-to-end)
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/3
 
 ## Roadmap — 2.0
 
@@ -34,9 +34,25 @@ Gate C is by far the longest piece.
       held, character for character. **Still not exercised:** the pre-existing-vault shape (no
       `eraCountersByToken` key at all) — it edits `data.json`, so it moved to A2's checklist with
       a backup step rather than being run against a live vault mid-verification
-- [ ] `A2` `.mcpb` smoke test on Claude Desktop, outstanding since OMC-008. 1.0.1 existed
-      because of a bug in exactly this class (#412), so releasing without it repeats the
-      same risk. Needs a human at the machine
+- [ ] `A2` **`.mcpb` smoke test on Claude Desktop. Needs a human at the machine.** Outstanding
+      since OMC-008; 1.0.1 existed because of a bug in exactly this class (#412), so releasing
+      without it repeats the same risk.
+      **The mechanical half is already green** — `bun run test:mcpb` on `main`, four checks: the
+      archive unzips, `server/index.js` is byte-identical to `scripts/connectorShim.js`, and the
+      bundle answers `initialize` under both plain `node` and the built-in-Node loader. What is
+      left is the part no harness reaches: Claude Desktop driving the bundle against a live vault.
+      **"Shows as running" is not a pass.** In the #412 failure the extension installed, reported
+      running, and answered nothing for exactly 60 seconds until Claude Desktop gave up with
+      `Request timed out`. A pass means a tool call returns data.
+      **Test with "Use Built-in Node.js for MCP" ON** — it is the default and it is the path that
+      failed; testing with it off tests the path that always worked. On that path Claude Desktop
+      does not write the shim's stderr to `mcp-server-*.log`, so the missing banner and `-> method`
+      lines are normal there and are not a symptom.
+      Steps: export the `.mcpb` from a token's row (it carries that token's id, it is not generic)
+      → install in Claude Desktop → restart → call a read-only tool such as `get_vault_overview`.
+      Also covers A1's untested tail: back up `data.json`, delete the `mcpTransport.eraCountersByToken`
+      key, reload the plugin, and confirm the per-token rows render instead of throwing — that is
+      the upgrade path for every existing user. Restore the backup afterwards
 - [x] `A3` `bun run test:conformance` by hand. **Done 2026-08-15 on `main` at `6c8e182`:
       `Passed: 26/28, 2 failed, 2 warnings`, exit 0, and the four red checks are exactly the
       four in `expected-failures.yml`.** No transport regression from OMC-007 or OMC-024, which
@@ -87,7 +103,23 @@ Gate C is by far the longest piece.
       mock mid-run unhooks the watcher it is exercising. **Remaining**: no unit test can see the
       notification reach a client, and no shipping client opens a `subscriptions/listen` stream —
       a hand-built listen client against a real vault is the only way, in the shape of A1's
-      script. Do not claim B2 verified until that runs <!-- src:session opened:2026-08-15 -->
+      script. That is `B3` below. Do not claim B2 verified until it runs <!-- src:session opened:2026-08-15 -->
+- [ ] `B3` **Watch the notification actually arrive. Needs a human at the machine.** B2's unit
+      tests prove the connector decides to publish; nothing in them proves a client receives
+      anything. No shipping client opens a `subscriptions/listen` stream — the same reason
+      OMC-007's two conformance checks stayed red — so the only way to see it is to be that
+      client: hold the stream open by hand, add a file under `Prompts/`, and watch.
+      What to assert, in order: the stream's first message is
+      `notifications/subscriptions/acknowledged`; adding a prompt produces exactly one
+      `notifications/prompts/list_changed` carrying the subscription id in its `_meta`; saving
+      that same file again **unchanged** produces nothing further (the whole point of the
+      comparison, and the failure mode a per-event implementation would show only here); and a
+      legacy-classified client on the same vault receives nothing at all, ever.
+      The request shape is the trap, not the logic: a hand-built modern request needs the `_meta`
+      envelope carrying BOTH `protocolVersion` and `clientCapabilities`, plus the
+      `mcp-protocol-version` AND `mcp-method` headers on every call. Omit any one and the SDK
+      rejects before a handler runs, which reads as a delivery bug rather than a malformed
+      request. Port and token come from `data.json`, as in the A1 script <!-- src:session opened:2026-08-15 -->
 
 ### Gate C — OMC-016 / #427, the feature that carries the number
 
