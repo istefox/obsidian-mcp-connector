@@ -1,5 +1,5 @@
 import { describe, expect, test, afterEach, beforeEach } from "bun:test";
-import { mockApp, mockPlugin, resetMockVault } from "$/test-setup";
+import { mockApp, mockPlugin, resetMockVault, setMockFile } from "$/test-setup";
 import {
   createMcpService,
   destroyMcpService,
@@ -1047,5 +1047,110 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     // this process closes them. Leaving them to the shared afterEach was
     // enough on macOS and not on Linux.
     for (const c of listenAborts.splice(0)) c.abort();
+  });
+});
+
+describe("search_vault_simple / search_vault_smart — no outputSchema, _meta payload present, no structuredContent (R-05)", () => {
+  test("legacy path: neither tool's tools/list entry carries outputSchema; a search_vault_simple call carries the payload under the fixed _meta key and no structuredContent", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+
+    const listRes = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 40,
+      method: "tools/list",
+      params: {},
+    });
+    const listBody = await listRes.json();
+    const tools = (listBody.result?.tools ?? []) as Array<{
+      name: string;
+      outputSchema?: unknown;
+    }>;
+    const simpleEntry = tools.find((t) => t.name === "search_vault_simple");
+    const smartEntry = tools.find((t) => t.name === "search_vault_smart");
+    expect(simpleEntry).toBeDefined();
+    expect(smartEntry).toBeDefined();
+    // A declared outputSchema makes the SDK reject any non-error response
+    // that lacks structuredContent — the exact defect that broke
+    // get_vault_file in 0.27.2–0.27.6. search_vault_smart is polymorphic
+    // (it has an index_building error branch) and search_vault_simple
+    // shares the same payload channel, so neither may declare one.
+    expect(!!simpleEntry && "outputSchema" in simpleEntry).toBe(false);
+    expect(!!smartEntry && "outputSchema" in smartEntry).toBe(false);
+
+    const callRes = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 41,
+      method: "tools/call",
+      params: { name: "search_vault_simple", arguments: { query: "hit" } },
+    });
+    const callBody = await callRes.json();
+    const result = callBody.result as {
+      _meta?: Record<string, unknown>;
+      structuredContent?: unknown;
+    };
+    expect(
+      result._meta?.["io.github.istefox.mcp-connector/searchResults"],
+    ).toBeDefined();
+    expect(!!result && "structuredContent" in result).toBe(false);
+  });
+});
+
+describe("search_vault_simple — the _meta payload key survives both the legacy transport and the modern 2026 encode seam (R-06)", () => {
+  test("legacy: tools/call result carries the payload under the fixed _meta key", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 50,
+      method: "tools/call",
+      params: { name: "search_vault_simple", arguments: { query: "hit" } },
+    });
+    const body = await res.json();
+    expect(
+      body.result?._meta?.["io.github.istefox.mcp-connector/searchResults"],
+    ).toBeDefined();
+  });
+
+  test("modern: the same key survives the 2026 encode seam, alongside the seam's own stamped _meta fields", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 51,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          _meta: VALID_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
+    );
+    // Confirmed empirically before writing this assertion: a tools/call
+    // that never triggers a server-initiated notification (search_vault_
+    // simple never calls sendNotification) answers plain JSON on this
+    // path, not SSE — unlike activate_tool and search_vault_smart
+    // elsewhere in this file, which genuinely notify.
+    expect(res.headers.get("content-type")).not.toContain("text/event-stream");
+    const body = await res.json();
+    // A whole-body toEqual here would also pin the encode seam's own
+    // stamped fields (serverInfo, resultType, and — per
+    // modernEra.test.ts's own note a few hundred lines up — cacheScope
+    // and ttlMs on results where the seam adds them), which this test
+    // does not claim and should not be coupled to. Read the one field it
+    // does claim.
+    expect(
+      body.result?._meta?.["io.github.istefox.mcp-connector/searchResults"],
+    ).toBeDefined();
+    // Pin that this genuinely ran through the 2026 codec rather than
+    // coincidentally matching the legacy one — the same discriminator
+    // used throughout this file.
+    expect(
+      body.result?._meta?.["io.modelcontextprotocol/serverInfo"],
+    ).toBeDefined();
   });
 });

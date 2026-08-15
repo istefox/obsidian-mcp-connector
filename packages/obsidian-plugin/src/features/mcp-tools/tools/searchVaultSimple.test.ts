@@ -136,3 +136,65 @@ describe("search_vault_simple — regex-literal scan", () => {
     expect(names).toEqual([...names].sort()); // vault order preserved
   });
 });
+
+describe("search_vault_simple — content bytes are pinned for a client that never reads _meta (R-06)", () => {
+  // The literal below was captured from this handler's actual output for
+  // this exact fixture and query, then pasted in — it is not derived or
+  // recomputed here. A structural comparison (parsing content[0].text and
+  // checking fields) would not catch a change to key order, whitespace or
+  // a renamed field, and those are exactly the things a client reading
+  // raw text is exposed to. If the payload work ever touches the argument
+  // passed to successText(), this test fails loudly; if it only adds a
+  // sibling _meta key, this test keeps passing.
+  test("JSON.stringify(result.content) matches the captured literal", async () => {
+    setMockFile(
+      "vault-fixture.md",
+      "The quick brown fox jumps over the lazy dog. The fox runs again.",
+    );
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "fox" },
+      app: mockApp(),
+    });
+    expect(JSON.stringify(result.content)).toBe(
+      '[{"type":"text","text":"{\\"results\\":[{\\"filename\\":\\"vault-fixture.md\\",\\"matches\\":[{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"match\\":{\\"start\\":16,\\"end\\":19},\\"line\\":0},{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"match\\":{\\"start\\":49,\\"end\\":52},\\"line\\":0}]}]}"}]',
+    );
+  });
+});
+
+describe("search_vault_simple — result _meta carries the structured payload on success (R-05, ADR-0018 D5/D6)", () => {
+  test("_meta.io.github.istefox.mcp-connector/searchResults carries vaultName, totalRows, truncated and rows; structuredContent is absent", async () => {
+    setMockFile("a.md", "one hit here");
+    const result = (await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    })) as {
+      content: Array<{ type: "text"; text: string }>;
+      _meta?: Record<string, unknown>;
+      structuredContent?: unknown;
+    };
+
+    const payload = result._meta?.[
+      "io.github.istefox.mcp-connector/searchResults"
+    ] as
+      | {
+          vaultName: string;
+          totalRows: number;
+          truncated: boolean;
+          rows: unknown[];
+        }
+      | undefined;
+    expect(payload).toBeDefined();
+    expect(typeof payload?.vaultName).toBe("string");
+    expect(typeof payload?.totalRows).toBe("number");
+    expect(typeof payload?.truncated).toBe("boolean");
+    expect(Array.isArray(payload?.rows)).toBe(true);
+
+    // structuredContent is a first-class, client-visible field; emitting
+    // it alongside a payload that only ever lives in _meta would invite a
+    // client to expect the pair (ADR-0018 D4). Whether the tool's
+    // *tools/list* entry carries no outputSchema is checked where that
+    // entry actually exists — mcpServer.test.ts — not on the call result,
+    // which never carries that key regardless.
+    expect("structuredContent" in result).toBe(false);
+  });
+});
