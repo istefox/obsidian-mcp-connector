@@ -824,6 +824,58 @@ describe("ToolRegistry outputSchema", () => {
   });
 });
 
+/**
+ * ADR-0018 (OMC-016), Task 2, R-04. `setMeta` is the harvested sibling of
+ * `setAnnotations`/`setOutputSchemas`: same lazy-lookup-by-name contract,
+ * same cache invalidation, same "absent means the key is not there at
+ * all" rule — a client that does not read `_meta` must see nothing extra
+ * on an entry, not an `undefined` value it has to filter out.
+ */
+describe("ToolRegistry _meta (R-04)", () => {
+  test("list() includes _meta for matching names and omits the key entirely otherwise", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setMeta({
+      alpha: {
+        ui: { resourceUri: "ui://mcp-connector/search-results" },
+        "ui/resourceUri": "ui://mcp-connector/search-results",
+      },
+    });
+
+    const listed = tools.list().tools;
+    const alpha = listed.find((t) => t.name === "alpha");
+    const beta = listed.find((t) => t.name === "beta");
+    expect(alpha?._meta).toEqual({
+      ui: { resourceUri: "ui://mcp-connector/search-results" },
+      "ui/resourceUri": "ui://mcp-connector/search-results",
+    });
+    // Absent, not undefined — mirrors annotations/outputSchema behavior.
+    expect(beta && "_meta" in beta).toBe(false);
+  });
+
+  test("setMeta invalidates the memoized list()", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setMeta({ alpha: { ui: { resourceUri: "ui://test/widget" } } });
+    const second = tools.list();
+    expect(second).not.toBe(first);
+    expect(second.tools.find((t) => t.name === "alpha")?._meta).toEqual({
+      ui: { resourceUri: "ui://test/widget" },
+    });
+  });
+
+  test("an entry that never received setMeta has no _meta key on any list() call", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setMeta({ alpha: { ui: { resourceUri: "ui://test/widget" } } });
+
+    const beta = tools.list().tools.find((t) => t.name === "beta");
+    expect(beta).toBeDefined();
+    expect(Object.keys(beta as object)).not.toContain("_meta");
+  });
+});
+
 describe("ToolRegistry name-keyed lookups", () => {
   test("registering two distinct schemas with the same name throws", () => {
     const tools = new ToolRegistryClass();

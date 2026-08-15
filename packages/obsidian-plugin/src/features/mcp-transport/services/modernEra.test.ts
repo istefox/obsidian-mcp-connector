@@ -213,9 +213,24 @@ describe("modern path — server/discover (R-02, R-03)", () => {
     // capability nothing honoured, on both eras. `mcpServer.ts` now passes
     // the bit explicitly, and the legacy half is pinned to the opposite
     // value in `eraRouter.test.ts` — that pair is the whole decision.
+    // `resources` and `extensions` are the ADR-0018 addition, and unlike
+    // `prompts.listChanged` they do NOT differ by era: the `ui://` set is
+    // static on both, so `resources.listChanged` stays `false` here too,
+    // and `extensions` is what tells a host this server's resource is an
+    // application view rather than plain content. This assertion is the
+    // modern half of a pair — the legacy half is `eraRouter.test.ts`'s
+    // full-body `initialize` pin — and together they are the proof that
+    // one declaration in `buildMcpServer` reaches both eras (ADR-0018 D1,
+    // D2).
     expect(body.result?.capabilities).toEqual({
       tools: { listChanged: true },
       prompts: { listChanged: true },
+      resources: { subscribe: false, listChanged: false },
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app"],
+        },
+      },
     });
     expect(body.result?._meta?.["io.modelcontextprotocol/serverInfo"]).toEqual({
       name: "mcp-connector",
@@ -257,6 +272,97 @@ describe("modern path — server/discover (R-02, R-03)", () => {
     const promptsBody = await promptsRes.json();
     expect(promptsBody.error).toBeUndefined();
     expect(Array.isArray(promptsBody.result?.prompts)).toBe(true);
+  });
+});
+
+/**
+ * ADR-0018 (OMC-016). The `resources` capability declared above must be
+ * backed by a real `resources/list` and `resources/read` on the modern
+ * path too — D1/D2 name `buildMcpServer` as the single declaration site,
+ * and this is the modern half of the proof; `mcpAppResources.test.ts`
+ * covers the same two methods over the legacy transport.
+ *
+ * A hand-written `resources/read` needs BOTH `Mcp-Method` and `Mcp-Name`
+ * mirroring `params.uri` (CLAUDE.md gotcha, verified at
+ * `src-CX2iR2pK.mjs:4990`, `:5041` per ADR-0018) — omitting either is
+ * rejected before the handler runs and would read as a handler bug
+ * rather than the header it actually is.
+ */
+describe("modern path — resources/list and resources/read serve the ui:// application resource (R-02, R-03)", () => {
+  const RESOURCE_URI = "ui://mcp-connector/search-results";
+  const MIME_TYPE = "text/html;profile=mcp-app";
+
+  test("resources/list carries the search-results entry at exactly text/html;profile=mcp-app", async () => {
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("resources/list"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toBeUndefined();
+    const resources = (body.result?.resources ?? []) as Array<{
+      uri: string;
+      mimeType?: string;
+    }>;
+    const entry = resources.find((r) => r.uri === RESOURCE_URI);
+    expect(entry).toBeDefined();
+    expect(entry?.mimeType).toBe(MIME_TYPE);
+  });
+
+  test("resources/read on the declared URI returns the generated HTML at exactly text/html;profile=mcp-app", async () => {
+    const server = await startService();
+    // Imported inside the test (not at module top level) so a module that
+    // does not exist yet fails only this assertion, not every test in the
+    // file — the placeholder ships in Task 1 step 3, this test does not
+    // depend on its content beyond byte-equality with what the feature
+    // actually serves.
+    const { SEARCH_RESULTS_APP_HTML } =
+      await import("$/features/mcp-apps/assets/searchResultsAppSource");
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/read",
+        params: { uri: RESOURCE_URI, _meta: VALID_ENVELOPE },
+      },
+      { ...modernHeaders("resources/read"), "mcp-name": RESOURCE_URI },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toBeUndefined();
+    const content = body.result?.contents?.[0];
+    expect(content?.uri).toBe(RESOURCE_URI);
+    expect(content?.mimeType).toBe(MIME_TYPE);
+    expect(content?.text).toBe(SEARCH_RESULTS_APP_HTML);
+  });
+
+  test("resources/templates/list answers an empty template list — SDK-owned once `resources` is declared, not registered by this project", async () => {
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "resources/templates/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("resources/templates/list"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toBeUndefined();
+    expect(body.result).toEqual({ resourceTemplates: [] });
   });
 });
 
