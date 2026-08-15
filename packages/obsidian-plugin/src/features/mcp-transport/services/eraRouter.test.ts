@@ -77,6 +77,16 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
       // `params._meta` envelope claim must classify legacy and answer
       // with exactly these bytes, both before eraRouter exists and after
       // it is wired into mcpServer.ts.
+      //
+      // `prompts.listChanged` READ `true` HERE UNTIL 2.0, and this is the
+      // record of what moved it. OMC-008's Invariant 1 forbade touching
+      // these bytes, so the unhonoured claim survived that work on purpose
+      // (OMC-023). ADR-0017 is the decision that retired it: this era has
+      // no server-initiated stream, so a vault event has no way to reach a
+      // client, so advertising the capability was a promise the transport
+      // could not keep. The modern era declares `true` and honours it —
+      // see the `server/discover` assertion in modernEra.test.ts, which is
+      // deliberately the opposite value and pins the other half.
       expect(body).toEqual({
         jsonrpc: "2.0",
         id: 1,
@@ -84,7 +94,7 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
           protocolVersion: "2025-06-18",
           capabilities: {
             tools: { listChanged: true },
-            prompts: { listChanged: true },
+            prompts: { listChanged: false },
           },
           serverInfo: { name: "mcp-connector", version: "0.4.0-alpha.1" },
         },

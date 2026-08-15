@@ -54,5 +54,11 @@ server:
 
   # Needs a shipped `test_trigger_tool_change` to mutate the list; the fan-out itself exists.
   - server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription
-  # Same, via `test_trigger_prompt_change` — and nothing here mutates prompts either (OMC-023).
+  # Same, via `test_trigger_prompt_change`. The prompts half of that
+  # parenthetical used to read "and nothing here mutates prompts either
+  # (OMC-023)" — that stopped being true in 2.0. ADR-0017 wired
+  # `notifications/prompts/list_changed`, and the modern era declares and
+  # honours `prompts.listChanged`. The check stays red for the FIRST reason
+  # alone: the suite drives its own fixture tool to mutate the list inside
+  # the check's window, and we refuse to ship one.
   - server-stateless:sep-2575-server-sends-prompts-list-changed-on-subscription

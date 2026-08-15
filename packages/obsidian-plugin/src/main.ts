@@ -75,6 +75,14 @@ export default class McpToolsPlugin extends Plugin {
       const promptsResult = await promptsSetup(
         mcpResult.state.mcp.promptRegistry,
         this.app,
+        {
+          // ADR-0017: the prompts feature decides WHEN the list changed, the
+          // transport owns HOW it is published. Wiring it here rather than
+          // inside the transport keeps the vault-watching in the feature
+          // that already watches the vault.
+          notifyPromptsChanged: () =>
+            mcpResult.state.mcp.notifyPromptsChanged(),
+        },
       );
       if (promptsResult.success) {
         this.promptsState = promptsResult.state;

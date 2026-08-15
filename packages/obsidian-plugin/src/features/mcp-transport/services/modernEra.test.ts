@@ -200,19 +200,19 @@ describe("modern path — server/discover (R-02, R-03)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.result?.supportedVersions).toEqual(["2026-07-28"]);
-    // `mcpServer.ts:163` declares `prompts: {}`, but `McpServer`'s
-    // constructor upgrades any declared `prompts` capability to
-    // `{ listChanged: true }` before advertising it (it calls
-    // `setPromptRequestHandlers()`, which calls `registerCapabilities`
-    // with that default) — the discovered set reflects the upgrade, not
-    // the bare declaration. This isn't new to the 2026 era: the legacy
-    // `initialize` reply already reports `prompts: { listChanged: true }`
-    // for the same reason (see `eraRouter.test.ts`'s pinned assertion).
-    // The server does not currently emit
-    // `notifications/prompts/list_changed`, so this advertised capability
-    // isn't honoured yet; that's a pre-existing gap tracked as a
-    // follow-up, not something this test fixes. This assertion pins what
-    // the server actually answers, not what it ought to.
+    // `prompts.listChanged` is `true` here because this era CAN deliver
+    // the notification and does: the prompts feature compares the
+    // discovered list after a vault event and calls
+    // `notifyPromptsChanged()`, which publishes onto every open
+    // `subscriptions/listen` stream (ADR-0017).
+    //
+    // The value is now deliberate rather than inherited. It used to be the
+    // SDK's doing — `setPromptRequestHandlers()` rewrites a declared
+    // `prompts` capability to `{ listChanged: … ?? true }`
+    // (mcp-DXXb3Vv3.mjs:1550), so the old bare `prompts: {}` advertised a
+    // capability nothing honoured, on both eras. `mcpServer.ts` now passes
+    // the bit explicitly, and the legacy half is pinned to the opposite
+    // value in `eraRouter.test.ts` — that pair is the whole decision.
     expect(body.result?.capabilities).toEqual({
       tools: { listChanged: true },
       prompts: { listChanged: true },

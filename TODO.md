@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 1/2
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/2 (B2 unverified end-to-end)
 
 ## Roadmap — 2.0
 
@@ -71,14 +71,23 @@ Gate C is by far the longest piece.
       explicit `false` survives, `:164` gates delivery on that same bit, and
       `notify.promptsChanged()` exists as the exact twin of the `toolsChanged()` OMC-007 wired
       at `mcpServer.ts:137`
-- [ ] `B2` Implement ADR-0017 and pin the resulting legacy reply with a test, so whoever reads
-      OMC-008's Invariant 1 next sees what superseded it. Shape: the prompts capability becomes
-      a parameter of `buildMcpServer` instead of the literal at `mcpServer.ts:188`, an
-      `onPromptsChanged` callback fires where the watcher invalidates `epoch`, and one line
-      mirrors `mcpServer.ts:137`. **Emit only when the discovered list actually differs from
-      the cached one** — the watcher fires on every save, including saves that change neither
-      the description nor the argument declarations, and per-tick emission would notify on
-      every keystroke-debounced write inside a prompt
+- [x] `B2` Implement ADR-0017. **Done 2026-08-15, code and unit tests. NOT yet observed
+      end-to-end.** `buildMcpServer` takes `promptsListChanged` (default `false`, the legacy
+      shape) and the two call sites are the era discriminant; `McpService.notifyPromptsChanged`
+      wraps `modernHandler.notify.promptsChanged()`; the prompts feature schedules a debounced
+      re-scan on any watcher event and publishes only when the canonicalised list differs.
+      `eraRouter.test.ts`'s full-body `initialize` pin now reads `prompts: { listChanged: false }`
+      — that assertion IS the record of what OMC-008's Invariant 1 forbade and 2.0 allowed.
+      Conformance re-run: 26/28 unchanged, baseline still four entries.
+      **Two things the mutation checks taught, both kept in comments:** counting notifications
+      does not pin the debounce, because the list comparison already collapses a burst on its own
+      (deleting the timer reset left a notification-counting assertion green) — the re-scan is the
+      cost the debounce avoids, so the test counts `getMarkdownFiles` calls instead; and
+      `resetMockVault()` clears the registered vault-event handlers, so a test that resets the
+      mock mid-run unhooks the watcher it is exercising. **Remaining**: no unit test can see the
+      notification reach a client, and no shipping client opens a `subscriptions/listen` stream —
+      a hand-built listen client against a real vault is the only way, in the shape of A1's
+      script. Do not claim B2 verified until that runs <!-- src:session opened:2026-08-15 -->
 
 ### Gate C — OMC-016 / #427, the feature that carries the number
 

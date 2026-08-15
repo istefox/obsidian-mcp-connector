@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test, beforeEach, spyOn } from "bun:test";
 import {
   fireMockVaultEvent,
   mockApp,
@@ -229,5 +229,167 @@ describe("prompts feature setup", () => {
     if (result.success) {
       expect(() => teardown(result.state)).not.toThrow();
     }
+  });
+});
+
+/**
+ * ADR-0017. The modern era advertises `prompts.listChanged: true`, so the
+ * server has to actually send `notifications/prompts/list_changed` when the
+ * set changes — and, just as importantly, NOT send one when it hasn't.
+ *
+ * The watcher fires on `modify` as well as create/delete/rename, so every
+ * save inside a prompt reaches this path. A per-event implementation passes
+ * "notifies on create" and still floods a client with one notification per
+ * keystroke burst, which is why the negative cases below carry the design
+ * rather than decorating it.
+ */
+describe("prompts list-changed notification (ADR-0017)", () => {
+  const DEBOUNCE = 5;
+  // Comfortably past the debounce, and past the microtask the comparison's
+  // own `await discoverPrompts` costs.
+  const settle = () => new Promise((r) => setTimeout(r, DEBOUNCE + 40));
+
+  function promptFile(path: string, description: string): void {
+    setMockFile(path, "Body");
+    setMockMetadata(path, {
+      frontmatter: { tags: ["mcp-tools-prompt"], description },
+    });
+  }
+
+  async function setupWithSpy(app: ReturnType<typeof mockApp>) {
+    const calls: number[] = [];
+    const result = await setup(new PromptRegistryClass(), app, {
+      notifyPromptsChanged: () => calls.push(1),
+      debounceMs: DEBOUNCE,
+    });
+    if (!result.success) throw new Error(result.error);
+    return { calls, state: result.state };
+  }
+
+  test("a new prompt file notifies once", async () => {
+    promptFile("Prompts/greet.md", "one");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    promptFile("Prompts/second.md", "two");
+    fireMockVaultEvent("create", { path: "Prompts/second.md" });
+    await settle();
+
+    expect(calls).toHaveLength(1);
+    teardown(state);
+  });
+
+  test("a prompt leaving the list notifies once", async () => {
+    promptFile("Prompts/greet.md", "one");
+    promptFile("Prompts/second.md", "two");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    // The list shrinks by dropping the qualifying tag rather than by
+    // removing the file: `resetMockVault()` also clears the registered
+    // vault-event handlers, so tearing the mock down mid-test would unhook
+    // the very watcher under test. What reaches `discoverPrompts` is the
+    // same either way — one fewer entry — and the `delete` event is real.
+    setMockMetadata("Prompts/second.md", { frontmatter: { tags: [] } });
+    fireMockVaultEvent("delete", { path: "Prompts/second.md" });
+    await settle();
+
+    expect(calls).toHaveLength(1);
+    teardown(state);
+  });
+
+  test("a save that changes nothing observable does NOT notify", async () => {
+    promptFile("Prompts/greet.md", "unchanged");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    // Exactly what Obsidian does while the user types in a prompt: a
+    // modify event whose content leaves the description and the argument
+    // declarations alone. Nothing a client can observe moved, so there is
+    // no list change to announce.
+    fireMockVaultEvent("modify", { path: "Prompts/greet.md" });
+    await settle();
+
+    expect(calls).toHaveLength(0);
+    teardown(state);
+  });
+
+  test("a changed description notifies, because the list carries it", async () => {
+    promptFile("Prompts/greet.md", "old");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    promptFile("Prompts/greet.md", "new");
+    fireMockVaultEvent("modify", { path: "Prompts/greet.md" });
+    await settle();
+
+    expect(calls).toHaveLength(1);
+    teardown(state);
+  });
+
+  test("a burst of saves re-scans the vault once, not once per event", async () => {
+    promptFile("Prompts/greet.md", "old");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    // Counting NOTIFICATIONS here would prove nothing: the list comparison
+    // already collapses a burst to one notification even with no debounce
+    // at all, because the first comparison to run updates the baseline and
+    // the rest find nothing new. Verified by mutation — deleting the
+    // `stopNotifier()` that resets the timer leaves a notification-counting
+    // assertion green.
+    //
+    // The re-scan is the cost the debounce actually exists to avoid, so the
+    // scan is what gets counted. `discoverPrompts` calls `getMarkdownFiles`
+    // exactly once per scan (`promptDiscovery.ts:34`).
+    const scan = spyOn(app.vault, "getMarkdownFiles");
+    promptFile("Prompts/greet.md", "new");
+    for (let i = 0; i < 5; i++) {
+      fireMockVaultEvent("modify", { path: "Prompts/greet.md" });
+    }
+    await settle();
+
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+    scan.mockRestore();
+    teardown(state);
+  });
+
+  test("no callback (legacy-only wiring) still invalidates the memo", async () => {
+    promptFile("Prompts/greet.md", "one");
+    const app = mockApp();
+    const registry = new PromptRegistryClass();
+    // No `notifyPromptsChanged`: what the legacy era gets, and what every
+    // other suite in this file constructs.
+    const result = await setup(registry, app, { debounceMs: DEBOUNCE });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect((await registry.list()).prompts).toHaveLength(1);
+
+    promptFile("Prompts/second.md", "two");
+    fireMockVaultEvent("create", { path: "Prompts/second.md" });
+    await settle();
+
+    // Cache invalidation is not era-specific and must not have moved into
+    // the notification path: without a callback there is nothing to send,
+    // but the next list still re-discovers.
+    expect((await registry.list()).prompts).toHaveLength(2);
+    teardown(result.state);
+  });
+
+  test("teardown cancels a comparison already scheduled", async () => {
+    promptFile("Prompts/greet.md", "old");
+    const app = mockApp();
+    const { calls, state } = await setupWithSpy(app);
+
+    promptFile("Prompts/greet.md", "new");
+    fireMockVaultEvent("modify", { path: "Prompts/greet.md" });
+    // Tear down INSIDE the debounce window: the callback would otherwise
+    // publish onto a handler this teardown is closing.
+    teardown(state);
+    await settle();
+
+    expect(calls).toHaveLength(0);
   });
 });
