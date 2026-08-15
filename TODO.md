@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 2/4
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 2/4 · Gate B: 1/2
 
 ## Roadmap — 2.0
 
@@ -45,13 +45,28 @@ Gate C is by far the longest piece.
 
 ### Gate B — OMC-023, the only change that requires the major
 
-- [ ] `B1` Decide: honour or retract. Honouring means sending
-      `notifications/prompts/list_changed` when the prompt set changes (the tools equivalent
-      already exists at `activateTool.ts:127`). Retracting means declaring
-      `listChanged: false`, which moves the legacy `initialize` bytes. Write the decision
-      down; do not leave it to be inferred from the diff
-- [ ] `B2` Implement B1's choice and pin the resulting legacy reply with a test, so whoever
-      reads OMC-008's Invariant 1 next sees what superseded it
+- [x] `B1` Decide: honour or retract. **Done 2026-08-15 — ADR-0017, and the answer is
+      neither of those two.** The choice is three-way once the eras are separated, and
+      "honour on both" is architecturally impossible: the legacy transport is POST-only with
+      `GET /mcp` at 405 by design, so a vault file event has no request in flight to ride, and
+      no deferred-notification queue exists (`flushPendingCalls` is persistence, not a queue).
+      Decided: **modern declares `listChanged: true` and honours it, legacy declares `false`.**
+      What made it decidable was checking that the prompt set is genuinely dynamic — prompts
+      are vault files under `Prompts/`, `vaultWatcher.ts` already watches
+      create/delete/rename/modify and invalidates an `epoch` cache in `prompts/index.ts` — so
+      `listChanged: true` was a true claim that was never wired, not a false one. SDK facts
+      verified by reading `@modelcontextprotocol/server@2.0.0`: `:1550` `?? true` means an
+      explicit `false` survives, `:164` gates delivery on that same bit, and
+      `notify.promptsChanged()` exists as the exact twin of the `toolsChanged()` OMC-007 wired
+      at `mcpServer.ts:137`
+- [ ] `B2` Implement ADR-0017 and pin the resulting legacy reply with a test, so whoever reads
+      OMC-008's Invariant 1 next sees what superseded it. Shape: the prompts capability becomes
+      a parameter of `buildMcpServer` instead of the literal at `mcpServer.ts:188`, an
+      `onPromptsChanged` callback fires where the watcher invalidates `epoch`, and one line
+      mirrors `mcpServer.ts:137`. **Emit only when the discovered list actually differs from
+      the cached one** — the watcher fires on every save, including saves that change neither
+      the description nor the argument declarations, and per-tick emission would notify on
+      every keystroke-debounced write inside a prompt
 
 ### Gate C — OMC-016 / #427, the feature that carries the number
 
@@ -145,7 +160,7 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 - **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
 - **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
 - **Build & test**: `bun run build` · `bun run release` · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`. `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
-- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint
+- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
 - **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
 ## Done
