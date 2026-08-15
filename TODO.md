@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 2/4 · Gate B: 1/2
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 1/2
 
 ## Roadmap — 2.0
 
@@ -18,10 +18,22 @@ Gate C is by far the longest piece.
 
 ### Gate A — verification debt. Blocks any release, 2.0 or not
 
-- [ ] `A1` OMC-024 in a real vault: two clients on two tokens, one on 2025 and one on
-      `2026-07-28`, two rows that disagree while the global row still sums the vault's
-      history; plus a pre-existing vault with no `eraCountersByToken` rendering without
-      breaking. Never once looked at — `check:svelte` only. Needs a human at the machine
+- [x] `A1` OMC-024 in a real vault. **Done 2026-08-15 in the Labs vault, behaviour asserted and
+      UI observed.** Two tokens driven on different eras: `default` took 3 legacy calls, a second
+      token 2 modern ones, and the counters came back `default legacy 26 · modern 0`,
+      `ookNoFmFPLPg legacy 0 · modern 2` against a global `legacy 48 · modern 4`. So the two rows
+      disagree, and the global exceeds their sum by 22 legacy and 2 modern — that gap is the
+      pre-split history belonging to no token, which is the prediction OMC-024 made when it
+      refused to attribute it, now measured rather than argued (the 2 orphan modern calls are the
+      hand-built probes of 2026-08-09). All five scripted checks green, `sum(byToken) <= global`
+      included. **All three `eraLabel()` branches
+      (`AccessControlSection.svelte:122-130`) are now drawn**, which the two-token setup alone
+      could not do: a follow-up modern call on `default` forced the mixed state and the row
+      renders `adaptive 16 tools 2025 · 26 + 2026-07-28 · 1` in full at that pane width, no
+      ellipsis and no overlap with the tool count. The rendered string matches what `data.json`
+      held, character for character. **Still not exercised:** the pre-existing-vault shape (no
+      `eraCountersByToken` key at all) — it edits `data.json`, so it moved to A2's checklist with
+      a backup step rather than being run against a live vault mid-verification
 - [ ] `A2` `.mcpb` smoke test on Claude Desktop, outstanding since OMC-008. 1.0.1 existed
       because of a bug in exactly this class (#412), so releasing without it repeats the
       same risk. Needs a human at the machine
