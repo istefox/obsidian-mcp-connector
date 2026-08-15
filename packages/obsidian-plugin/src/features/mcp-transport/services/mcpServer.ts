@@ -81,8 +81,26 @@ export type McpService = {
    * McpServerFactory (ADR-0016 §4). Per-token tool surfaces (ADR-0014) and
    * the tools/list stability invariant (ADR-0015) therefore cannot drift
    * between eras — there is no second implementation to drift.
+   *
+   * `promptsListChanged` is the ONE thing that legitimately differs by era
+   * (ADR-0017): only the modern era can deliver
+   * `notifications/prompts/list_changed`, so only it may advertise it.
+   * Defaults to the legacy shape, so a call site that says nothing gets the
+   * era that cannot notify rather than re-claiming the capability.
    */
-  buildMcpServer: (tokenId: string) => McpServer;
+  buildMcpServer: (tokenId: string, promptsListChanged?: boolean) => McpServer;
+  /**
+   * Publish `notifications/prompts/list_changed` onto every open
+   * `subscriptions/listen` stream that opted in (ADR-0017). The prompts
+   * feature owns WHEN — it watches the vault and compares the discovered
+   * list — and this owns HOW.
+   *
+   * Safe to call with no subscribers: the SDK's notifier publishes to open
+   * subscriptions and there is nothing to deliver to when there are none.
+   * Legacy-era clients never see one, by construction: nothing on that wire
+   * can carry a notification outside a request.
+   */
+  notifyPromptsChanged: () => void;
   /**
    * Persist both in-memory counter batches: tool calls (see
    * ToolLoadingManager) and per-era requests (see eraCounters). One entry
@@ -160,7 +178,10 @@ export async function createMcpService(
    * in its own `finally`, and on the modern branch the SDK's serving entry
    * owns the lifecycle.
    */
-  const buildMcpServer = (tokenId: string): McpServer => {
+  const buildMcpServer = (
+    tokenId: string,
+    promptsListChanged = false,
+  ): McpServer => {
     // Resolving a scope costs a settings read, and only tools/* needs
     // one: `initialize`, `prompts/*` and malformed requests must pay
     // nothing. Memoizing the PROMISE (not the value) also collapses the
@@ -185,7 +206,15 @@ export async function createMcpService(
           // listChanged: true signals support for notifications/tools/list_changed
           // (MCP spec 2025-06-18), emitted by activate_tool.
           tools: { listChanged: true },
-          prompts: {},
+          // Declared EXPLICITLY, both ways round, because the SDK does not
+          // leave a bare `{}` alone: `setPromptRequestHandlers()` rewrites
+          // it to `{ listChanged: … ?? true }` (mcp-DXXb3Vv3.mjs:1550), so
+          // the old `prompts: {}` advertised a capability nothing honoured.
+          // An explicit `false` survives that `??` and is how the legacy era
+          // stops claiming it (ADR-0017). Declaring the capability at all is
+          // what registers the prompts/* handlers, so `false` costs nothing
+          // but the claim.
+          prompts: { listChanged: promptsListChanged },
         },
       },
     );
@@ -254,7 +283,10 @@ export async function createMcpService(
   // endpoint itself stays permissive because the legacy branch sits in front
   // of this handler.
   const modernHandler = createMcpHandler(
-    (ctx) => buildMcpServer(ctx.authInfo?.clientId ?? ""),
+    // `true` is the era discriminant for prompts.listChanged (ADR-0017):
+    // this leg is the one with a `subscriptions/listen` stream to publish
+    // onto, so it is the one allowed to advertise the capability.
+    (ctx) => buildMcpServer(ctx.authInfo?.clientId ?? "", true),
     {
       legacy: "reject",
       responseMode: "auto",
@@ -373,6 +405,10 @@ export async function createMcpService(
       return;
     }
 
+    // No second argument: this leg advertises `prompts.listChanged: false`
+    // (ADR-0017). It is not a lesser implementation — the era has no
+    // server-initiated stream at all, so there is nowhere to deliver a
+    // notification a vault event produces.
     const server = buildMcpServer(tokenId);
     // Stateless mode (no sessionIdGenerator). Per-request transport — see
     // file header for the SDK constraint. JSON response by default; SSE
@@ -409,6 +445,7 @@ export async function createMcpService(
     promptRegistry,
     handleRequest,
     buildMcpServer,
+    notifyPromptsChanged: () => modernHandler.notify.promptsChanged(),
     flushPendingCalls: async () => {
       // Both batches drain, independently. Chaining them with bare awaits
       // meant a rejected first flush skipped the second entirely, which is
