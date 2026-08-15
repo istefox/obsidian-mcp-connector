@@ -4,6 +4,10 @@ import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
 import { createExclusionFilter } from "$/shared/isUserIgnored";
+import {
+  projectSmartSearchResults,
+  withSearchResultsPayload,
+} from "$/features/mcp-apps/services/searchResultsPayload";
 
 export const searchVaultSmartSchema = type({
   name: '"search_vault_smart"',
@@ -262,5 +266,8 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
-  return successText(JSON.stringify({ results }));
+  return withSearchResultsPayload(
+    successText(JSON.stringify({ results })),
+    projectSmartSearchResults(results, ctx.app.vault.getName()),
+  );
 }

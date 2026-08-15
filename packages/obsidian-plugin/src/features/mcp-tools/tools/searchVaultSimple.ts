@@ -1,6 +1,10 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
+import {
+  projectSimpleSearchResults,
+  withSearchResultsPayload,
+} from "$/features/mcp-apps/services/searchResultsPayload";
 
 const DEFAULT_CONTEXT = 100;
 const DEFAULT_LIMIT = 50;
@@ -111,5 +115,8 @@ export async function searchVaultSimpleHandler(
     }
   }
 
-  return successText(JSON.stringify({ results }));
+  return withSearchResultsPayload(
+    successText(JSON.stringify({ results })),
+    projectSimpleSearchResults(results, ctx.app.vault.getName()),
+  );
 }
