@@ -362,7 +362,21 @@ describe("modern path — resources/list and resources/read serve the ui:// appl
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.error).toBeUndefined();
-    expect(body.result).toEqual({ resourceTemplates: [] });
+    // A whole-result `toEqual` here would compare against more than this
+    // test claims: the 2026 encode seam stamps `_meta` (serverInfo,
+    // cacheScope, resultType, ttlMs) onto every modern result, so the bare
+    // `{ resourceTemplates: [] }` this test used to assert against never
+    // matches on the modern path. Read the field this test actually cares
+    // about instead, the way the two sibling tests above already do
+    // (`body.result?.resources`, `body.result?.contents?.[0]`).
+    expect(body.result?.resourceTemplates).toEqual([]);
+    // And pin that the seam ran at all — nothing else in this describe
+    // block checks for the stamped identity, so a future modern route that
+    // silently re-delegated to the legacy encode path would otherwise pass
+    // here by coincidence.
+    expect(
+      body.result?._meta?.["io.modelcontextprotocol/serverInfo"],
+    ).toBeDefined();
   });
 });
 
