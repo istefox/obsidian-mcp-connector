@@ -1,7 +1,79 @@
 <!-- project-tasks: prefix=OMC lastId=26 -->
 # PROJECT TASKS
 
-Updated: 2026-08-14 · Open: 4 (P1: 0) · In progress: 0
+Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0
+
+## Roadmap — 2.0
+
+Target: **MCP Apps as the headline, OMC-023 as what earns the major.**
+Semver alone would say 1.1.0 — the 45 commits since tag `1.0.1` break nothing. OMC-023 is the
+one place in the codebase where the higher number buys something: its entry is blocked on
+"a release that is allowed to move the legacy reply", and this is that release.
+
+Out of 2.0: OMC-010 (#416, parked, no client declares Tasks) and #445 (`expectedHash`,
+unscheduled, @Madulone may prototype it).
+
+A → B → C → D is dependency order, not calendar order: Gate A is independent of Gate C, and
+Gate C is by far the longest piece.
+
+### Gate A — verification debt. Blocks any release, 2.0 or not
+
+- [ ] `A1` OMC-024 in a real vault: two clients on two tokens, one on 2025 and one on
+      `2026-07-28`, two rows that disagree while the global row still sums the vault's
+      history; plus a pre-existing vault with no `eraCountersByToken` rendering without
+      breaking. Never once looked at — `check:svelte` only. Needs a human at the machine
+- [ ] `A2` `.mcpb` smoke test on Claude Desktop, outstanding since OMC-008. 1.0.1 existed
+      because of a bug in exactly this class (#412), so releasing without it repeats the
+      same risk. Needs a human at the machine
+- [ ] `A3` `bun run test:conformance` by hand. `main` carries transport changes made after
+      OMC-008 (OMC-007, OMC-024) and the suite only runs nightly, so this is the only
+      pre-release signal there is. Expected: `server-stateless` 26/28, baseline at four entries
+- [ ] `A4` Close #407. Phase 1 is done (`@modelcontextprotocol/{node,server}@2.0.0`, zero
+      residual v1 imports under `src/`), Phase 2 is OMC-008, merged. Verify nothing is left
+      and close it rather than leaving it open making noise
+
+### Gate B — OMC-023, the only change that requires the major
+
+- [ ] `B1` Decide: honour or retract. Honouring means sending
+      `notifications/prompts/list_changed` when the prompt set changes (the tools equivalent
+      already exists at `activateTool.ts:127`). Retracting means declaring
+      `listChanged: false`, which moves the legacy `initialize` bytes. Write the decision
+      down; do not leave it to be inferred from the diff
+- [ ] `B2` Implement B1's choice and pin the resulting legacy reply with a test, so whoever
+      reads OMC-008's Invariant 1 next sees what superseded it
+
+### Gate C — OMC-016 / #427, the feature that carries the number
+
+The spike on `spike/427-mcp-apps-ui-resource` already proved Claude Desktop reads and renders
+a `ui://` resource from this connector. Hard requirements, already measured: declare
+`capabilities.extensions` with `io.modelcontextprotocol/ui` (the generic `resources`
+capability alone does nothing), mime type exactly `text/html;profile=mcp-app`, and complete
+the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe
+blank.
+
+- [ ] `C1` A real `resources` capability, not the spike's shortcut
+- [ ] `C2` The handshake via `@modelcontextprotocol/ext-apps` instead of hand-rolled
+      `postMessage`
+- [ ] `C3` `search_vault_smart` / `search_vault_simple` results as a ranked, clickable list
+      with score and line anchor. Spec constraint: the tool must keep returning meaningful
+      text content for clients without the extension, so adoption is additive per tool and
+      cannot fork the surface
+
+### Gate D — the cut
+
+- [ ] `D1` CHANGELOG entry for 2.0, in the user-facing register 1.0.0 and 1.0.1 already use:
+      what changes for someone using the plugin, not what changed in the code
+- [ ] `D2` Confirm `minAppVersion` stays `1.7.2`. Raising it strands users and nothing in 2.0
+      requires it
+- [ ] `D3` `bun run version major`. From there `release.yml` does the rest: build, `.mcpb`
+      validation, upload of `main.js` + `manifest.json` + `.mcpb`, publish. No PR against
+      `obsidian-releases` — the plugin is already in `community-plugins.json` as
+      `mcp-tools-istefox`
+- [ ] `D4` The Obsidian scanner runs **on the release, never before**. Known constraints that
+      have already failed a release: no `eslint-disable` on `obsidianmd/*` rules, and
+      non-plugin code stays out of `src/` because the scanner lints `src/**` only
+- [ ] `D5` Post-release: tell @smollern (#406), @ottopichlhoefer (#430) and @Madulone (#352)
+      that their work is in a release, not just on `main`
 
 ## Next — measured gaps, actionable now
 
