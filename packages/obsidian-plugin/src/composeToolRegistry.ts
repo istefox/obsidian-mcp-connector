@@ -1,11 +1,11 @@
 /**
  * Composition root for the tool registry.
  *
- * Building the populated registry orchestrates four features (mcp-tools,
- * tool-toggle, adaptive-tool-loading, plus the prompt registry), which
- * is policy, not transport. Keeping it here rather than inside
+ * Building the populated registries orchestrates five features (mcp-tools,
+ * tool-toggle, adaptive-tool-loading, mcp-apps, plus the prompt registry),
+ * which is policy, not transport. Keeping it here rather than inside
  * mcp-transport leaves the HTTP layer free of feature wiring: it just
- * consumes the registries this returns.
+ * consumes the tool, prompt and resource registries this returns.
  */
 
 import { Notice, type App } from "obsidian";
@@ -18,6 +18,11 @@ import {
   PromptRegistryClass,
   type PromptRegistry,
 } from "$/features/mcp-transport/services/promptRegistry";
+import {
+  ResourceRegistryClass,
+  type ResourceRegistry,
+} from "$/features/mcp-transport/services/resourceRegistry";
+import { wireSearchResultsApp } from "$/features/mcp-apps";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
 import type { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
@@ -48,9 +53,10 @@ export type ToolRegistryConfig = {
 };
 
 /**
- * Build the populated tool + prompt registries: register every vault
- * tool, add the always-active adaptive meta-tools, then apply the user's
- * disabled-tools filter.
+ * Build the populated tool, prompt and resource registries: register
+ * every vault tool, add the always-active adaptive meta-tools, apply the
+ * user's disabled-tools filter, then wire the MCP Apps `ui://` resource
+ * and its tool pointers (ADR-0018).
  *
  * There is no profile filter at this level any more: the profile is per
  * token and the registry is shared, so the surface is narrowed per
@@ -58,11 +64,14 @@ export type ToolRegistryConfig = {
  * registry's adaptive flags (ADR-0014 §3). The disable list still wins,
  * because the registry re-applies `userDisabled` under every scope.
  */
-export async function composeToolRegistry(
-  config: ToolRegistryConfig,
-): Promise<{ toolRegistry: ToolRegistry; promptRegistry: PromptRegistry }> {
+export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
+  toolRegistry: ToolRegistry;
+  promptRegistry: PromptRegistry;
+  resourceRegistry: ResourceRegistry;
+}> {
   const toolRegistry = new ToolRegistryClass();
   const promptRegistry = new PromptRegistryClass();
+  const resourceRegistry = new ResourceRegistryClass();
 
   await registerTools(toolRegistry, {
     app: config.app,
@@ -129,5 +138,7 @@ export async function composeToolRegistry(
   // MethodNotFound. Idempotent.
   await applyDisabledToolsFilter(toolRegistry, config.plugin);
 
-  return { toolRegistry, promptRegistry };
+  wireSearchResultsApp(toolRegistry, resourceRegistry);
+
+  return { toolRegistry, promptRegistry, resourceRegistry };
 }

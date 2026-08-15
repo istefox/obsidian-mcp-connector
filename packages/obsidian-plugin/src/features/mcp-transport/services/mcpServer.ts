@@ -16,6 +16,7 @@ import { logger } from "$/shared";
 import type { ToolScope } from "$/shared/types";
 import type { ToolRegistry } from "./toolRegistry";
 import type { PromptRegistry } from "./promptRegistry";
+import type { ResourceRegistry } from "./resourceRegistry";
 import {
   ToolLoadingManager,
   META_TOOLS,
@@ -68,6 +69,7 @@ export type McpServiceConfig = {
 export type McpService = {
   registry: ToolRegistry;
   promptRegistry: PromptRegistry;
+  resourceRegistry: ResourceRegistry;
   handleRequest: (
     req: IncomingMessage,
     res: ServerResponse,
@@ -161,7 +163,11 @@ export async function createMcpService(
   const session = new SessionPromotions();
   // The populated registry is composed outside the transport (policy
   // lives in $/composeToolRegistry); this layer only serves it.
-  const { toolRegistry: registry, promptRegistry } = await composeToolRegistry({
+  const {
+    toolRegistry: registry,
+    promptRegistry,
+    resourceRegistry,
+  } = await composeToolRegistry({
     ...config,
     session,
   });
@@ -215,6 +221,32 @@ export async function createMcpService(
           // what registers the prompts/* handlers, so `false` costs nothing
           // but the claim.
           prompts: { listChanged: promptsListChanged },
+          // MCP Apps (ADR-0018). Both fields explicit for the same reason
+          // as prompts.listChanged above: the SDK rewrites a bare `{}` at
+          // handler-registration time and an omitted `listChanged` becomes
+          // `true` (OMC-023's defect, recreated on a new capability if left
+          // implicit). `listChanged: false` because the `ui://` set is
+          // static and compiled in — nothing would ever publish the
+          // notification. `subscribe: false` because this transport is
+          // POST-only and cannot push outside a request. Unlike
+          // prompts.listChanged this does NOT differ by era: a `ui://`
+          // resource is fetched by an ordinary resources/read that both
+          // eras serve, so both eras carry the identical declaration
+          // (ADR-0018 D1, D2).
+          resources: { subscribe: false, listChanged: false },
+          // Declares the MCP Apps extension so a host knows this server's
+          // `ui://` resource is an application view, not plain content —
+          // the generic `resources` capability alone was measured to
+          // produce nothing (ADR-0018). The shape mirrors
+          // McpUiClientCapabilities from @modelcontextprotocol/ext-apps;
+          // the SDK types `extensions` as an unconstrained
+          // Record<string, JSONObject>, so this is a project-owned copy in
+          // the same class as isModernProtocolVersion (CLAUDE.md).
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
         },
       },
     );
@@ -267,6 +299,17 @@ export async function createMcpService(
     server.server.setRequestHandler("prompts/list", promptRegistry.list);
     server.server.setRequestHandler("prompts/get", (req) =>
       promptRegistry.dispatch(req.params),
+    );
+    // Declaring `resources` above makes the SDK register all three
+    // resource handlers and installs its own resources/templates/list,
+    // answering an empty template list (ADR-0018 §"What the installed
+    // server actually does"). Overriding list and read here is the same
+    // move prompts/* already makes; resources/templates/list is
+    // deliberately left alone — there is nothing to register and nothing
+    // to refuse.
+    server.server.setRequestHandler("resources/list", resourceRegistry.list);
+    server.server.setRequestHandler("resources/read", (req) =>
+      resourceRegistry.read(req.params),
     );
 
     return server;
@@ -443,6 +486,7 @@ export async function createMcpService(
   return {
     registry,
     promptRegistry,
+    resourceRegistry,
     handleRequest,
     buildMcpServer,
     notifyPromptsChanged: () => modernHandler.notify.promptsChanged(),
