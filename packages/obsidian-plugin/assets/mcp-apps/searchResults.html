@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search results</title>
+    <style>
+      /* Everything inline: the host renders this in a sandboxed iframe
+         with a deny-by-default CSP, so an external stylesheet, font or
+         script would simply not load. This is the minimal shell that
+         proves the handshake and gets measured; the ranked list, the
+         empty/error states, click-out and theming are a later pass. */
+      body {
+        margin: 0;
+        padding: 16px;
+        font:
+          13px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="output">waiting for a tool result…</pre>
+    <!--
+      Holds the ext-apps view bundle as inert text, never executed as a
+      script: the type attribute is not a JavaScript or "module" MIME
+      type, so the browser treats this element as a data block. Read by
+      the module script below via its own id.
+    -->
+    <script type="application/x-mcp-apps-bundle" id="mcp-apps-bundle">
+__MCP_APPS_BUNDLE_SOURCE__
+    </script>
+    <script type="module">
+      // The bundle is an ES module (`export { ... }`), so its exports are
+      // only reachable through real import machinery — concatenating it
+      // into this script's own top-level scope would only expose its
+      // internal, minified binding names, which change on every ext-apps
+      // release. A Blob URL gives it a real module identity to import
+      // from, keyed off the bundle's own public export names instead.
+      const bundleSource = document.getElementById("mcp-apps-bundle").textContent;
+      const bundleUrl = URL.createObjectURL(
+        new Blob([bundleSource], { type: "text/javascript" }),
+      );
+      const { App } = await import(bundleUrl);
+      URL.revokeObjectURL(bundleUrl);
+
+      const output = document.getElementById("output");
+      const app = new App(
+        { name: "mcp-connector-search-results", version: "1.0.0" },
+        {},
+      );
+
+      // ontoolresult is one-shot: the App class warns (throws under
+      // strict) if it is assigned after connect() resolves, because the
+      // host may already have sent the notification by then.
+      app.ontoolresult = (params) => {
+        output.textContent = JSON.stringify(params, null, 2);
+      };
+
+      await app.connect();
+    </script>
+  </body>
+</html>
