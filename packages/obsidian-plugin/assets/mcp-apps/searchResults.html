@@ -144,8 +144,11 @@ __MCP_APPS_BUNDLE_SOURCE__
       const output = document.getElementById("output");
       // Replaces the static placeholder as soon as the module starts, so
       // that string surviving means unambiguously "this script never ran"
-      // — a CSP that refuses inline modules outright. Every failure below
-      // renders its own message instead of leaving a stale state up.
+      // — a CSP that refuses inline modules outright. A failure that stops
+      // results from arriving renders its own message here instead of
+      // leaving a stale state up; the two post-connect getters only cost
+      // what they own (theme, click-out), so those report to the console
+      // and leave the rest of the view running.
       output.textContent = "Loading search results…";
 
       // The view has no access to the server's TypeScript constants, so
@@ -207,12 +210,15 @@ __MCP_APPS_BUNDLE_SOURCE__
         if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
       }
 
-      function revealPath(row, rowEl) {
+      // Takes the path rather than the row: every read of the untrusted
+      // payload happens once, in createRowElement, and everything
+      // downstream works off the normalized value.
+      function revealPath(filePath, rowEl) {
         if (rowEl.dataset.pathRevealed) return;
         rowEl.dataset.pathRevealed = "true";
         const revealEl = document.createElement("code");
         revealEl.className = "search-results__row-path-reveal";
-        revealEl.textContent = row.filePath;
+        revealEl.textContent = filePath;
         // Selecting the revealed path to copy it shouldn't re-trigger the
         // row's own click handler.
         revealEl.addEventListener("click", (event) => event.stopPropagation());
@@ -222,6 +228,20 @@ __MCP_APPS_BUNDLE_SOURCE__
       // obsidian://open has no line parameter (ADR-0018 D9): the line is
       // rendered as information only and never wired to a click target.
       function createRowElement(row, vaultName, canOpenLinks) {
+        // The row crosses a JSON round trip into this untyped module, and
+        // JSON.stringify drops keys whose value is `undefined` — so a
+        // producer that assigned `undefined` arrives here as a *missing*
+        // key, which `!== null` waves straight through to `.toFixed()`.
+        // Each field is checked for the type it is about to be used as, so
+        // a wrong-typed one costs its own line and nothing else: the
+        // optional three fall back to `null`, which is already the
+        // "omit this" value the markup below is built around.
+        const filePath = typeof row.filePath === "string" ? row.filePath : "";
+        const excerpt = typeof row.excerpt === "string" ? row.excerpt : "";
+        const heading = typeof row.heading === "string" ? row.heading : null;
+        const score = typeof row.score === "number" ? row.score : null;
+        const line = typeof row.line === "number" ? row.line : null;
+
         const li = document.createElement("li");
         li.className = "search-results__row";
         li.tabIndex = 0;
@@ -229,33 +249,33 @@ __MCP_APPS_BUNDLE_SOURCE__
 
         const pathEl = document.createElement("span");
         pathEl.className = "search-results__row-path";
-        pathEl.textContent = row.filePath;
+        pathEl.textContent = filePath;
         li.appendChild(pathEl);
 
         const excerptEl = document.createElement("p");
         excerptEl.className = "search-results__row-excerpt";
-        excerptEl.textContent = row.excerpt;
+        excerptEl.textContent = excerpt;
         li.appendChild(excerptEl);
 
-        if (row.heading !== null || row.score !== null || row.line !== null) {
+        if (heading !== null || score !== null || line !== null) {
           const metaEl = document.createElement("div");
           metaEl.className = "search-results__row-meta";
-          if (row.heading !== null) {
+          if (heading !== null) {
             const headingEl = document.createElement("span");
             headingEl.className = "search-results__row-heading";
-            headingEl.textContent = row.heading;
+            headingEl.textContent = heading;
             metaEl.appendChild(headingEl);
           }
-          if (row.score !== null) {
+          if (score !== null) {
             const scoreEl = document.createElement("span");
             scoreEl.className = "search-results__row-score";
-            scoreEl.textContent = "score " + row.score.toFixed(2);
+            scoreEl.textContent = "score " + score.toFixed(2);
             metaEl.appendChild(scoreEl);
           }
-          if (row.line !== null) {
+          if (line !== null) {
             const lineEl = document.createElement("span");
             lineEl.className = "search-results__row-line";
-            lineEl.textContent = "line " + row.line;
+            lineEl.textContent = "line " + line;
             metaEl.appendChild(lineEl);
           }
           li.appendChild(metaEl);
@@ -266,19 +286,19 @@ __MCP_APPS_BUNDLE_SOURCE__
         // reveals the vault-relative path instead of doing nothing.
         async function activate() {
           if (!canOpenLinks) {
-            revealPath(row, li);
+            revealPath(filePath, li);
             return;
           }
           const url =
             "obsidian://open?vault=" +
             encodeURIComponent(vaultName) +
             "&file=" +
-            encodeURIComponent(row.filePath);
+            encodeURIComponent(filePath);
           try {
             const result = await app.openLink({ url });
-            if (result?.isError) revealPath(row, li);
+            if (result?.isError) revealPath(filePath, li);
           } catch {
-            revealPath(row, li);
+            revealPath(filePath, li);
           }
         }
 
@@ -300,13 +320,34 @@ __MCP_APPS_BUNDLE_SOURCE__
         output.classList.remove("search-results__status--message");
 
         if (view.state === "rows") {
-          output.hidden = true;
-          for (const row of view.rows) {
-            resultsList.appendChild(
-              createRowElement(row, view.vaultName, canOpenLinks),
+          // Invariant: when this returns, exactly one of #output and
+          // #results-list is visible — never neither. So the list is filled
+          // while #output is still up, and the two are swapped only once
+          // every row has survived. Hiding #output first, as this branch
+          // used to, means a row that throws mid-loop leaves both hidden:
+          // a blank frame, in a sandboxed iframe with no reachable
+          // devtools, saying nothing about which of several causes it was.
+          try {
+            for (const row of view.rows) {
+              resultsList.appendChild(
+                createRowElement(row, view.vaultName, canOpenLinks),
+              );
+            }
+          } catch (error) {
+            // The list is still hidden from the reset above; drop the rows
+            // built so far so a half-list cannot outlive the message.
+            resultsList.replaceChildren();
+            showFailure(
+              "The search results arrived but could not be rendered.",
+              error,
             );
+            return;
           }
+          // Reveal, then hide, never the reverse: should anything between
+          // these two lines ever throw, the failure mode is both visible
+          // rather than the blank frame this branch exists to rule out.
           resultsList.hidden = false;
+          output.hidden = true;
           if (view.truncated) {
             truncatedNote.textContent =
               "Showing " +
@@ -331,9 +372,10 @@ __MCP_APPS_BUNDLE_SOURCE__
       // Writes #output directly instead of going through mountView: this
       // is the last thing the view gets to say, so it depends on the one
       // element it is certain of rather than on the row list and the
-      // truncation note as well. The console line carries the stack that
-      // a one-line message cannot, for whoever has devtools open.
-      function showStartupFailure(summary, error) {
+      // truncation note as well — a caller that has already touched those
+      // owns resetting them. The console line carries the stack that a
+      // one-line message cannot, for whoever has devtools open.
+      function showFailure(summary, error) {
         const reason = error instanceof Error ? error.message : String(error);
         output.hidden = false;
         output.classList.add("search-results__status--message");
@@ -366,7 +408,7 @@ __MCP_APPS_BUNDLE_SOURCE__
           ({ App, applyDocumentTheme, applyHostStyleVariables } =
             await import(bundleUrl));
         } catch (error) {
-          showStartupFailure(
+          showFailure(
             "Could not load the search results view: its interface bundle " +
               "failed to import. A host whose content-security-policy blocks " +
               "blob: scripts fails exactly here, and so does a damaged bundle.",
@@ -408,7 +450,7 @@ __MCP_APPS_BUNDLE_SOURCE__
 
           await app.connect();
         } catch (error) {
-          showStartupFailure(
+          showFailure(
             "The search results view loaded, but connecting to the host " +
               "failed: the ui/initialize handshake never completed, so no " +
               "results can arrive.",
@@ -418,8 +460,33 @@ __MCP_APPS_BUNDLE_SOURCE__
         }
 
         output.textContent = "Connected. Waiting for search results…";
-        applyThemeFromContext(app.getHostContext());
-        canOpenLinks = Boolean(app.getHostCapabilities()?.openLinks);
+
+        // Both getters sit past every catch above, so a throw here would
+        // reject start()'s promise — and the top-level `await start()` has
+        // no handler either, making it an unhandled rejection: no message,
+        // no console line, and a view still claiming it is connected.
+        // They are guarded apart because they fail differently and neither
+        // is allowed to take the other down: unguarded, a throw from the
+        // first also skipped the capability read. Results can still arrive
+        // through either failure, so neither disturbs the status line.
+        try {
+          applyThemeFromContext(app.getHostContext());
+        } catch (error) {
+          console.error(
+            "Could not apply the host theme; the view keeps its fallback " +
+              "colours, which already follow the OS light/dark preference.",
+            error,
+          );
+        }
+        try {
+          canOpenLinks = Boolean(app.getHostCapabilities()?.openLinks);
+        } catch (error) {
+          console.error(
+            "Could not read the host capabilities; rows stay clickable but " +
+              "reveal their vault-relative path instead of opening the note.",
+            error,
+          );
+        }
       }
 
       // Awaited, not fire-and-forget: the page is not usable until this
