@@ -1,14 +1,17 @@
-<!-- project-tasks: prefix=OMC lastId=27 -->
+<!-- project-tasks: prefix=OMC lastId=30 -->
 # PROJECT TASKS
 
-Updated: 2026-08-16 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/3 · Gate C: 3/4
+Updated: 2026-08-16 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 0/3
 
 ## Roadmap — 2.0
 
 Target: **MCP Apps as the headline, OMC-023 as what earns the major.**
-Semver alone would say 1.1.0 — the 45 commits since tag `1.0.1` break nothing. OMC-023 is the
-one place in the codebase where the higher number buys something: its entry is blocked on
-"a release that is allowed to move the legacy reply", and this is that release.
+Semver alone would say 1.1.0 — the 45 commits since tag `1.0.1` break nothing. Two of them move
+the legacy `initialize` result, but only one is a retraction: ADR-0018 *adds* `resources` to a
+reply that never carried it, which no client can break on. OMC-023 withdraws a claim already
+made — `prompts.listChanged` from `true` to `false` — and that is the one place where the higher
+number buys something: its entry is blocked on "a release that is allowed to move the legacy
+reply", and this is that release.
 
 Out of 2.0: OMC-010 (#416, parked, no client declares Tasks) and #445 (`expectedHash`,
 unscheduled, @Madulone may prototype it).
@@ -33,26 +36,36 @@ Gate C is by far the longest piece.
       ellipsis and no overlap with the tool count. The rendered string matches what `data.json`
       held, character for character. **Still not exercised:** the pre-existing-vault shape (no
       `eraCountersByToken` key at all) — it edits `data.json`, so it moved to A2's checklist with
-      a backup step rather than being run against a live vault mid-verification
-- [ ] `A2` **`.mcpb` smoke test on Claude Desktop. Needs a human at the machine.** Outstanding
-      since OMC-008; 1.0.1 existed because of a bug in exactly this class (#412), so releasing
-      without it repeats the same risk.
-      **The mechanical half is already green** — `bun run test:mcpb` on `main`, four checks: the
-      archive unzips, `server/index.js` is byte-identical to `scripts/connectorShim.js`, and the
-      bundle answers `initialize` under both plain `node` and the built-in-Node loader. What is
-      left is the part no harness reaches: Claude Desktop driving the bundle against a live vault.
-      **"Shows as running" is not a pass.** In the #412 failure the extension installed, reported
-      running, and answered nothing for exactly 60 seconds until Claude Desktop gave up with
-      `Request timed out`. A pass means a tool call returns data.
-      **Test with "Use Built-in Node.js for MCP" ON** — it is the default and it is the path that
-      failed; testing with it off tests the path that always worked. On that path Claude Desktop
-      does not write the shim's stderr to `mcp-server-*.log`, so the missing banner and `-> method`
-      lines are normal there and are not a symptom.
-      Steps: export the `.mcpb` from a token's row (it carries that token's id, it is not generic)
-      → install in Claude Desktop → restart → call a read-only tool such as `get_vault_overview`.
-      Also covers A1's untested tail: back up `data.json`, delete the `mcpTransport.eraCountersByToken`
-      key, reload the plugin, and confirm the per-token rows render instead of throwing — that is
-      the upgrade path for every existing user. Restore the backup afterwards
+      a backup step rather than being run against a live vault mid-verification. **Run and
+      passed 2026-08-16 as part of `A2`**; see there
+- [x] `A2` **`.mcpb` smoke test on Claude Desktop. Done 2026-08-16**, outstanding since OMC-008.
+      **The mechanical half**: `bun run test:mcpb` green on `main` at `e3dcd8c`, all four checks
+      including the #412 built-in-Node regression guard.
+      **The half no harness reaches** was satisfied by `R-18`'s own traffic, which nobody
+      planned: the connector is installed in Claude Desktop as a local `.mcpb` extension with
+      **"Use Built-in Node.js for MCP" ON** — the default, and the exact path that failed in
+      #412 — and both search tools returned real vault data through it. That is the stated pass
+      criterion, "a tool call returns data", not "shows as running".
+      **A false alarm worth keeping, because it will recur.** The installed bundle's
+      `server/index.js` hashes `6a0056d1…` while `scripts/connectorShim.js` hashes `72fe569e…`,
+      which reads as a stale bundle and is not one: `generateMcpb()` substitutes three
+      placeholders — `__OBSIDIAN_MCP_VAULT_PATH__`, `__OBSIDIAN_MCP_CONFIG_DIR__`,
+      `__OBSIDIAN_MCP_TOKEN_ID__` — so a shipped shim can never hash equal to its own source.
+      Diff, do not hash: a freshly exported bundle differed from the source in exactly those
+      three lines and nowhere else, which is how "the installed extension is current" was
+      actually established. A reinstall was therefore not needed and was not done.
+      **A1's tail, run here with the plugin stopped on both sides of the edit** (it writes
+      `data.json` from memory on unload, so an edit made while it runs is silently reverted):
+      backed up `data.json`, removed `mcpTransport.eraCountersByToken`, restarted. The token row
+      renders `Default · adaptive · 17 tools` with **no era label at all** — the correct
+      `eraLabel()` branch for absent counters — the global `Requests served` still reads
+      `2025 era 80 · 2026-07-28 era 46` from `eraCounters`, and the server answers `initialize`
+      and `prompts/list` normally. Nothing dereferences the missing map. Backup restored and the
+      restore survived a reload.
+      **Not exercised**: Claude Desktop's `mcp-server-*.log` was never read, so the shim's own
+      stderr under the built-in-Node loader remains unobserved (it is not written on that path
+      by design); and no fresh install was performed, since the installed bundle was proven
+      current — an install-from-scratch on a machine that has never had it is still untested
 - [x] `A3` `bun run test:conformance` by hand. **Done 2026-08-15 on `main` at `6c8e182`:
       `Passed: 26/28, 2 failed, 2 warnings`, exit 0, and the four red checks are exactly the
       four in `expected-failures.yml`.** No transport regression from OMC-007 or OMC-024, which
@@ -87,8 +100,8 @@ Gate C is by far the longest piece.
       explicit `false` survives, `:164` gates delivery on that same bit, and
       `notify.promptsChanged()` exists as the exact twin of the `toolsChanged()` OMC-007 wired
       at `mcpServer.ts:137`
-- [x] `B2` Implement ADR-0017. **Done 2026-08-15, code and unit tests. NOT yet observed
-      end-to-end.** `buildMcpServer` takes `promptsListChanged` (default `false`, the legacy
+- [x] `B2` Implement ADR-0017. **Done 2026-08-15, code and unit tests; observed end-to-end on
+      2026-08-16 by `B3`.** `buildMcpServer` takes `promptsListChanged` (default `false`, the legacy
       shape) and the two call sites are the era discriminant; `McpService.notifyPromptsChanged`
       wraps `modernHandler.notify.promptsChanged()`; the prompts feature schedules a debounced
       re-scan on any watcher event and publishes only when the canonicalised list differs.
@@ -103,23 +116,41 @@ Gate C is by far the longest piece.
       mock mid-run unhooks the watcher it is exercising. **Remaining**: no unit test can see the
       notification reach a client, and no shipping client opens a `subscriptions/listen` stream —
       a hand-built listen client against a real vault is the only way, in the shape of A1's
-      script. That is `B3` below. Do not claim B2 verified until it runs <!-- src:session opened:2026-08-15 -->
-- [ ] `B3` **Watch the notification actually arrive. Needs a human at the machine.** B2's unit
-      tests prove the connector decides to publish; nothing in them proves a client receives
-      anything. No shipping client opens a `subscriptions/listen` stream — the same reason
-      OMC-007's two conformance checks stayed red — so the only way to see it is to be that
-      client: hold the stream open by hand, add a file under `Prompts/`, and watch.
-      What to assert, in order: the stream's first message is
-      `notifications/subscriptions/acknowledged`; adding a prompt produces exactly one
-      `notifications/prompts/list_changed` carrying the subscription id in its `_meta`; saving
-      that same file again **unchanged** produces nothing further (the whole point of the
-      comparison, and the failure mode a per-event implementation would show only here); and a
-      legacy-classified client on the same vault receives nothing at all, ever.
-      The request shape is the trap, not the logic: a hand-built modern request needs the `_meta`
-      envelope carrying BOTH `protocolVersion` and `clientCapabilities`, plus the
-      `mcp-protocol-version` AND `mcp-method` headers on every call. Omit any one and the SDK
-      rejects before a handler runs, which reads as a delivery bug rather than a malformed
-      request. Port and token come from `data.json`, as in the A1 script <!-- src:session opened:2026-08-15 -->
+      script. That is `B3` below. **`B3` ran on 2026-08-16 and B2 is now verified end to end**:
+      the notification was watched arriving at a client, and the debounced comparison was
+      watched staying silent on a change no client could see <!-- src:session opened:2026-08-15 updated:2026-08-16 -->
+- [x] `B3` **Watch the notification actually arrive. Done 2026-08-16 against the Labs vault**,
+      plugin built from `main` at `e3dcd8c`, port 27200, token `default`, three hand-built
+      `subscriptions/listen` streams held open at once. Every assertion the entry asked for was
+      observed, and the notification reached a client for the first time.
+      **The ack**: first frame on the stream is `notifications/subscriptions/acknowledged`,
+      echoing `{"promptsListChanged":true}` with subscription id `100`. **The create**: exactly
+      one `notifications/prompts/list_changed`, carrying `_meta` subscription id `100` — the
+      ack's own id, so it is addressed to that subscription rather than broadcast. **The
+      delete**: exactly one, twice over (21:45:35 and 21:48:21). **The comparison**: a body edit
+      that changed the file on disk but changed no field a client can see — no name, no
+      description, no argument declaration — produced **nothing**, though the `modify` event
+      fired. That is the one place a per-event implementation would have failed, and the only
+      way to reach it.
+      **A bystander subscribed to `toolsListChanged` received nothing while all of this
+      happened**, and its filter was genuinely honored (`{"toolsListChanged":true}` in its own
+      ack), so the silence is routing rather than an inert subscription.
+      **Correction to this entry's own procedure, found by running it**: "save the same file
+      again unchanged" cannot test anything. Obsidian does not write an unmodified file, so
+      `Cmd+S` fires no vault event and the resulting silence is vacuous. The body-edit case
+      above replaces it and is strictly stronger.
+      **Unplanned observation worth keeping**: a stream asking for `resourcesListChanged` acks
+      with `"notifications":{}` — `honoredSubset` narrows the requested filter against declared
+      capabilities, and `resources.listChanged` is `false` (ADR-0018), so the server tells the
+      client honestly that it will deliver nothing rather than accepting a subscription it
+      cannot serve.
+      **Assertion 4, the legacy era, is structural and was measured as such**: `GET /mcp`
+      answers 405 and a legacy `initialize` against the running vault returns
+      `prompts.listChanged: false`. There is no stream for a notification to ride, which is
+      stronger than observing that none arrived.
+      **Not exercised**: a renamed prompt (a distinct watcher event from create/delete); two
+      prompt subscribers at once; any real host, since none opens this stream — which is why the
+      verification had to be the client <!-- src:session opened:2026-08-15 updated:2026-08-16 -->
 
 ### Gate C — OMC-016 / #427, the feature that carries the number
 
@@ -154,38 +185,38 @@ blank.
       `obsidian://open?vault=...&file=...`, degrading to a shown vault-relative path when
       `openLink` is unavailable or refuses. **Not yet observed rendering in a real host — that
       is `R-18` below**
-- [ ] `R-18` **The view in Claude Desktop, against a live vault. Needs a human at the machine.
-      Blocks the 2.0 cut**, on the same standard as `A2` and `B3`: no unit test can see a page
-      render, and nothing in the gate type-checks HTML.
-      Preconditions: a real vault with at least a dozen markdown notes; the plugin built from
-      this branch and installed; the MCP Connector running; Claude Desktop configured against a
-      token whose profile includes both search tools. Note the vault name exactly as Obsidian
-      reports it — a vault name with a space is the first thing the URL encoding gets wrong.
-      Run in order, record the answer to each: (1) the pointer arrives — `tools/list` carries
-      `_meta.ui.resourceUri` on both search tools, or nothing below can pass; (2) the host
-      fetches the resource — a `resources/read` for that `ui://` URI appears in the connector's
-      traffic after a `search_vault_simple` call; if it never does, check the
-      `capabilities.extensions` declaration in the `initialize` reply; (3) the page renders — a
-      real-height iframe with a ranked list, not a blank card and not a collapsed strip; (4) the
-      payload arrived — real vault paths and excerpts, not a placeholder or an empty state (the
-      one thing unverifiable anywhere else: whether the host forwards the tool result's `_meta`
-      — if it strips it, record that, because it moves the design to ADR-0018 Alternative D,
-      `structuredContent`); (5) the smart tool's extras — `search_vault_smart` rows show a
-      score, and a line where the provider resolves one (absent, not `null`, under Smart
-      Connections); (6) both empty paths — a zero-match query renders the vault-named empty
-      state ("No results found in `<vault>`.", not the query — see the follow-up below); with
-      the index still building, `search_vault_smart` renders the error text legibly, not a
-      broken list; (7) the click — the correct note opens in Obsidian, tested with at least one
-      path containing a space or a non-ASCII character; if the host refuses the `obsidian://`
-      scheme, the row must instead reveal the vault-relative path — record which of the two
-      happened, since a refusal is host policy this project cannot verify from the package; (8)
-      the theme — light/dark follows Claude Desktop's switch without a reload, or, if the host
-      sends no `hostContext.theme`, the `prefers-color-scheme` fallback tracks the OS setting
-      instead; (9) a client without the extension (Claude Code, or the Windows bridge) — the
-      text result is unchanged and there is no visible artefact of any of this.
-      Record every outcome with the same specificity `A1` uses: what was run, what was
-      observed, what was **not** exercised. "Shows a card" is not a pass; a rendered row that
-      opens the right note is
+- [x] `R-18` **The view in Claude Desktop, against a live vault. Done 2026-08-16, all nine
+      checks run against the Labs vault** (81 notes, plugin from `main` at `e3dcd8c`, token
+      `default`, `search_vault_smart` session-activated for the run because the adaptive profile
+      had it at 2 calls of 3).
+      **The decisive unknown is settled: Claude Desktop DOES forward the tool result's `_meta`
+      to the view.** Real vault paths and real excerpts rendered, so the payload arrived intact.
+      **ADR-0018 Alternative D (`structuredContent`) is therefore retired as a contingency** —
+      it existed for the case that just failed to happen.
+      Per check: (1) `tools/list` carries `_meta.ui.resourceUri` on both search tools, in both
+      the nested and the legacy flat form, with no `outputSchema`; (2) the host fetched the
+      resource — proven by the render, since nothing else produces that page; (3) a real-height
+      iframe with a ranked list, not a card and not a strip; (4) payload intact, above; (5)
+      `search_vault_smart` rows carry heading, `score 0.30`, `line 16`, and the simple tool's
+      rows carry none of them, with no branching on which tool produced the row; (6) a
+      zero-match query renders `No results found in Labs.` — the vault, not the query, which is
+      OMC-027's decision seen in production; (7) **the click does NOT open Obsidian: Claude
+      Desktop refuses the `obsidian://` scheme, and the row degraded to revealing the
+      vault-relative path**, which is the designed fallback and is host policy this project
+      cannot change from the package; (8) the theme followed a dark→light switch with no reload
+      and no re-run of the search; (9) a 2025-era client gets `content[0].text` in the shape it
+      always had, no `structuredContent`, no `outputSchema` — it also receives the pointer and
+      the payload in `_meta`, which it ignores, so search responses are heavier for every client
+      including the ones that render nothing.
+      **Not exercised, and each for a stated reason.** The `obsidian://` URL encoding was never
+      tested at all: check 7 was meant to exercise it through a path with a space, but the host
+      refuses the scheme before any URL is built, so the encoding remains unverified by any
+      means. The `index_building` branch of check 6 was measured at the connector (the tool
+      returns `errorCode: "index_building"` with `filesIndexed/filesTotal`, and on `isError` the
+      `_meta` payload key is correctly absent so the view falls back to `content[0].text`), but
+      the semantic index finished rebuilding mid-session and the host-side rendering of that
+      error was never seen. The 50-row cap and `truncated: true` were not reached. The vault
+      name has no space in it, which the entry flagged as the first thing encoding gets wrong
 
 ### Gate D — the cut
 
@@ -205,9 +236,23 @@ blank.
 
 ## Next — measured gaps, actionable now
 
-- [ ] `OMC-024` **P2** Per-token era counters. **Implemented, not yet verified in a vault** — that check is what closes this. `eraCountersByToken` now sits alongside `eraCounters` in the `mcpTransport` slice, keyed by token id, and each token row in the transport settings says which era it is served on. Additive rather than the migration this entry originally asked for, and the original framing was wrong: the counts already on disk predate the split and belong to no token, so attributing them would invent data and dropping them would damage ADR-0016 §8's trigger, which reads the vault-wide legacy total. `sum(byToken) <= eraCounters` holds by construction. A revoked token's bucket is pruned in the counter's own recipe; an absent or malformed `tokens` key prunes nothing, so a boot that writes before `ensureTokenStore` seeds the list cannot wipe the map. **Remaining**: a real vault with two clients on different tokens, one on 2025 and one on 2026-07-28, showing two rows that disagree while the global row still sums the vault's history; plus a pre-existing vault with no `eraCountersByToken` rendering without breaking <!-- src:session opened:2026-08-09 updated:2026-08-10 -->
-- [ ] `OMC-023` **P3** The server advertises a prompts capability it does not honour, on both protocol eras. `mcpServer.ts` declares `prompts: {}`, but `McpServer`'s constructor calls `setPromptRequestHandlers()` for any declared prompts capability (`mcp-DXXb3Vv3.mjs:1351`), which registers `listChanged: … ?? true` (`:1550`) — so the declared set is upgraded before anything reads it. The legacy `initialize` reply and the 2026 `server/discover` result both report `prompts: { listChanged: true }`, and nothing in the codebase ever sends `notifications/prompts/list_changed` (`tools/list_changed` is sent from `activateTool.ts:127`; there is no prompts equivalent). Found during OMC-008 and deliberately not fixed there: declaring `listChanged: false` would change the legacy `initialize` bytes, which that work's Invariant 1 forbids. Either honour it by sending the notification when the prompt set changes, or declare it false in a release that is allowed to move the legacy reply <!-- src:session opened:2026-08-08 -->
-- [ ] `OMC-016` **P3** #427 MCP Apps: **answered, it works.** The spike on `spike/427-mcp-apps-ui-resource` proved Claude Desktop reads and renders a `ui://` resource from this connector. What mattered was declaring `capabilities.extensions` with `io.modelcontextprotocol/ui`; the generic `resources` capability alone did nothing. Two hard requirements: mime type exactly `text/html;profile=mcp-app`, and the view must complete the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe blank. Real implementation is the remaining work: a proper resources capability, the handshake via `@modelcontextprotocol/ext-apps` (1.7.5 on npm) rather than hand-rolled `postMessage`, then the ranked search list <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
+- [ ] `OMC-030` **P2** A vault verification can silently run against the wrong build, and one
+      did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
+      fresh `bun run build` in the repo changes nothing there until someone copies it across.
+      The first `B3` run on 2026-08-16 failed all four of its assertions for exactly this
+      reason, and it read like a defect in freshly merged code. **The version string cannot
+      catch it**: repo and vault both report `1.0.1` until the 2.0 cut, so `serverInfo.version`
+      discriminates nothing. The `initialize` capabilities do — a build predating `e3dcd8c`
+      answers `prompts.listChanged: true` and carries no `resources` key at all. **So every
+      vault verification should read the capabilities first and pin which build answered**. `B3`
+      and `R-18` both did, once burned, and `A2` did too. Nothing open still has to, but the next vault verification will. Replacing the copy with the symlink would
+      fix it at the root but means deleting a directory holding `data.json` and `embeddings/`,
+      which is its own risk and its own decision. **Also unresolved, recorded rather than
+      explained**: in the 15:10 run `prompts/list` stayed frozen on its baseline and never saw
+      the probe at all, while at 21:44 the identical action worked. Either the probe was not
+      created where it was believed to be, or the instance was left in a bad state by swapping
+      `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
+      the probe before concluding anything about notifications <!-- src:session opened:2026-08-16 -->
 - [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
       plan's task 6 step 2 specified that the empty state should name "the query"; the result
       payload carries only `vaultName`, never the query string — both projections are called as
@@ -216,7 +261,31 @@ blank.
       results" and does not mention the query, so the requirement is met and the plan was
       stricter than the SPEC on a detail the data cannot support. Decided, not a defect. A
       follow-up would carry the query into the payload, touching the payload type, both
-      projections, both tools, the renderer and its tests <!-- src:session opened:2026-08-16 -->
+      projections, both tools, the renderer and its tests. **Observed in production 2026-08-16
+      during `R-18`**: a zero-match query renders `No results found in Labs.` in Claude Desktop,
+      so this is now a measured behaviour rather than a read of the code <!-- src:session opened:2026-08-16 updated:2026-08-16 -->
+- [ ] `OMC-028` **P3** Two MINOR findings from the OMC-016 gate 5.06 pass, surfaced and
+      deliberately left. **(a)** `assets/mcp-apps/searchResults.html` — `activate()`'s
+      `catch { revealPath(...) }` has no error binding and no `console.error`. It is only
+      reached when `canOpenLinks` is already true, so a throw from `app.openLink` there is a
+      genuine runtime failure being handled identically to the expected "no capability" branch;
+      the UI still degrades visibly, so this costs the diagnostic trail rather than
+      correctness. **(b)** `mcp-apps/services/searchResultsPayload.ts` — `SmartSearchResult`
+      duplicates `semantic-search`'s `SearchResult` field for field instead of importing it.
+      It compiles today by structural coincidence, so if `SearchResult` gains a required field
+      nothing here fails to compile and the new field is silently dropped from the payload.
+      **(b) is the one worth not leaving long**: silent divergence with no compile error is
+      exactly the failure this repo keeps paying for elsewhere <!-- src:session opened:2026-08-16 -->
+- [ ] `OMC-029` **P3** Measured figures written into comments are guarded by nothing. The
+      generated-asset drift tests compare **identity** — is `searchResultsAppSource.ts` what
+      the generator would produce from the shell and the bundle — and never the **content** of
+      a hand-typed measurement. R-08's `main.js` delta went stale exactly this way: it was
+      measured against task 4's stub page, survived unchanged through task 6's full view, and
+      three copies of a wrong number passed every gate until a reviewer rebuilt and compared.
+      There is no cheap mechanical fix (a test asserting a byte count would fail on every
+      unrelated change), so the standing defence is procedural and belongs in the habit, not in
+      CI: whenever a generated artifact changes, re-measure with a clean `bun run build` plus
+      `stat` and sweep the repo for the previous figures <!-- src:session opened:2026-08-16 -->
 
 ## In Progress
 
@@ -276,6 +345,9 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-024` Per-token era counters. **Implemented, and verified in a vault on both of the checks that were holding it open.** `eraCountersByToken` now sits alongside `eraCounters` in the `mcpTransport` slice, keyed by token id, and each token row in the transport settings says which era it is served on. Additive rather than the migration this entry originally asked for, and the original framing was wrong: the counts already on disk predate the split and belong to no token, so attributing them would invent data and dropping them would damage ADR-0016 §8's trigger, which reads the vault-wide legacy total. `sum(byToken) <= eraCounters` holds by construction. A revoked token's bucket is pruned in the counter's own recipe; an absent or malformed `tokens` key prunes nothing, so a boot that writes before `ensureTokenStore` seeds the list cannot wipe the map. **Both remaining checks are now done, so this closes.** Two tokens on different eras with disagreeing rows against a global that exceeds their sum: `A1`, 2026-08-15. A pre-existing vault with no `eraCountersByToken` key: `A2`, 2026-08-16 — the key removed with the plugin stopped, the token row rendering with no era label at all, the global `Requests served` still reading from `eraCounters`, and the server answering normally; backup restored (2026-08-16)
+- [x] `OMC-016` #427 MCP Apps: a `ui://` resource surface for the two search tools, decided in `docs/architecture/ADR-0018-omc-016-mcp-apps-ui-resource.md`, SPEC archived at `docs/specs/omc-016-mcp-apps-ui-resource.spec.md`. `C1` the `resources` capability with every field explicit and `extensions: { "io.modelcontextprotocol/ui": … }` declared once at `buildMcpServer(tokenId)` for both eras; `C2` the `@modelcontextprotocol/ext-apps` handshake bundled from the view-side entry, `main.js` 2,649,591 → 3,011,578 B (+13.66%, trigger +20%); `C3` both search tools' rows riding the result's own `_meta`, `content` byte-identical to before. Merged as PR #454 (`e3dcd8c`), squashed, CI green, 1849 tests, conformance 26/28 baseline unmoved. **Closed 2026-08-16 by `R-18`**, which put the view in front of a human for the first time: it renders, and **Claude Desktop forwards the tool result's `_meta` to it**, so ADR-0018 Alternative D (`structuredContent`) never has to be built. Two things the run settled that no test could: the host refuses the `obsidian://` scheme, so the click degrades to revealing the vault-relative path — designed fallback, host policy, and it leaves the URL encoding untested by any means; and the theme follows a host switch with no reload. Full per-check measurements in `R-18` under Gate C (2026-08-16)
+- [x] `OMC-023` The server advertised a prompts capability it did not honour, on both protocol eras. ADR-0017 settled it three ways rather than two: modern declares `prompts: { listChanged: true }` and honours it, legacy declares `false`, because a POST-only transport with `GET /mcp` at 405 structurally cannot deliver a notification with no request in flight. Shipped 2026-08-15 (PR #450 decision, #452 code); `eraRouter.test.ts`'s full-body `initialize` pin reads `false`, and that assertion IS the record of what a major release moved. **Closed 2026-08-16 by `B3`**, the only thing it was still open on: a hand-built `subscriptions/listen` client against the Labs vault saw `notifications/prompts/list_changed` arrive on a prompt create and on a delete, carrying the ack's own subscription id; saw nothing for a body edit that changed no field a client can see, which is the case the list comparison exists for and the only place a per-event implementation would have failed; and saw a `toolsListChanged` bystander stay silent throughout, with its filter genuinely honored. The legacy half stayed structural rather than observational — `GET /mcp` is 405 and a live legacy `initialize` returns `prompts.listChanged: false`, so there is no stream for a notification to ride. Conformance stayed 26/28. Full measurements in `B3` under Gate B (2026-08-16)
 - [x] `OMC-026` #444 six boolean-shaped tool arguments across five tools rejected a genuine JSON boolean. `coerceBooleanParams` (`toolRegistry.ts:504-540`) repairs one direction only — a `"true"`/`"false"` string arriving where the ArkType schema says `"boolean"` — and these six declared the mirror shape, `type('"true" | "false"')`, which the guard never matches, so a real boolean reached `schema.assert()` uncoerced and threw. Retyped all six as `type("boolean")`, which covers both directions at once: a boolean validates directly, a string is coerced by the guard that now matches. `coerceBooleanParams` itself untouched — it was correct for what it claimed; the schemas were wrong. Root-caused by @smollern in discussion #406, who found it on `search_and_replace.dry_run`; reading the codebase turned one field into six, including `delete_vault_directory.recursive`, the destructive one. The four handler-level test files could not have caught this: they call handlers directly, below the registry, so they never traverse the coercion seam — hence the new `dispatch()` block in `toolRegistry.test.ts`, which is the only place that seam is exercised. Mutation-checked: reverting the fixture schema to the literal union turns 2 of the 4 new tests red. Defaults are not uniform across the six (`dry_run`/`includeNested`/`includeEmbeds`/`get_outgoing_links.includeUnresolved` default true, `recursive`/`get_backlinks.includeUnresolved` default false) and each was preserved individually. `inputSchema` is served fresh in every `tools/list`, so no client or `.mcpb` needs re-exporting, and an agent that memorised the string form keeps working through coercion — but the wire schema does change, so it earns a release-note line (2026-08-14)
 - [x] `OMC-025` #430 `search_vault_smart` returned `{"results":[]}` for every query under `provider: "auto"` (the default), silently, whenever Smart Connections was installed. `wireSemanticSearch` cached the chooser's decision synchronously during `onload()`, before `this.smartSearch` was ever assigned — `isSmartConnectionsAvailable` always read `undefined` at selection time, so `"auto"` could never pick Smart Connections no matter how fast it loaded. Fixed by re-running the chooser once the binding actually lands: `refreshAutoProvider` (`semantic-search/index.ts`), called from `main.ts`'s existing `loadSmartSearchAPI` subscription. Not a bare re-run of the existing `state.chooser(state.settings)` pattern already used in two other places (`applySettings` on a settings change, `startRebuildFor`'s completion handler) — gated on `settings.provider === "auto"` specifically, because a bare call would have clobbered the DLC pending-provider guard for `embedding-gemma`/`multilingual-e5-base` (their chooser branches build against the DLC store regardless of readiness, and `NativeProviderImpl.isReady()` is unconditionally `true`). Confirmed the fix is real, not decorative: disabling the function's body flipped the new swap-identity test red while the other 17 stayed green. Deployed and verified in the Labs vault — `search_vault_smart` under `auto` now returns real Smart Connections results without any settings toggle needed to "unstick" it (2026-08-11)
 - [x] `OMC-007` #419 cross-client `tools/list` staleness. An auto-promotion is a vault-wide change (ADR-0014 keeps counters global), so one client's traffic widens every adaptive token's list; a client that made no request of its own was never told and kept serving a stale list. `ToolLoadingManager` now signals a PERSISTED widening and `mcpServer.ts` publishes it through the 2026-era handler's `notify.toolsChanged()`, which the SDK's listen router fans out to every open `subscriptions/listen` stream that opted in. Signalled per widening, never per flush: past the threshold the counter stays past it, so signalling on the branch would have emitted a notification on every call, forever — there is a test pinning exactly that. Verified end to end with two concurrent streams on one service, one opted in and one not, and confirmed red with the wiring removed. **The prediction this entry carried was wrong**: the two conformance checks did NOT move. They drive fixture tools (`test_trigger_tool_change`, `test_trigger_prompt_change`) we refuse to ship for ADR-0016 Alternative F's reason, so nothing mutates the list inside their window and the delivery path is never exercised — same class as the two `test_missing_capability` entries. Baseline stays at four, `server-stateless` stays 26/28. Nothing a shipping client can observe yet either: no client speaks `2026-07-28` (Labs vault, 2026-08-09: `legacy 22 · modern 2`, and the two were hand-built probes) (2026-08-10)
