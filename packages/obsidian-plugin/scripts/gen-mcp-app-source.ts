@@ -28,8 +28,11 @@ const html = buildSearchResultsHtml(shell, bundle);
 // Bundle size figures are cheap to recompute on every generation and stay
 // accurate by construction. `main.js` before/after is not: it needs two
 // full production builds, which this generator does not orchestrate. Those
-// two numbers are a measurement recorded once, by hand, per ADR-0018 R-08 —
-// see the task report for the run that produced them.
+// two numbers are recorded by hand, per ADR-0018 R-08: re-measure with a
+// clean `bun run build` and update them here whenever the page or the
+// bundle changes, or the header keeps quoting a build nobody can reproduce.
+// `before` is the same tree with the placeholder asset in its place, so it
+// only moves when something outside this feature enters the bundle.
 const bundleBytes = Buffer.byteLength(bundle, "utf8");
 const bundleJsonBytes = Buffer.byteLength(JSON.stringify(bundle), "utf8");
 
@@ -42,8 +45,8 @@ const header = [
   `// ext-apps bundle: ${bundleBytes} B raw, ${bundleJsonBytes} B JSON.stringify-escaped.`,
   "// main.js (clean `bun run build`), ADR-0018 R-08 measurement:",
   "//   before: 2,649,591 B",
-  "//   after:  2,993,253 B",
-  "//   delta:  +343,662 B, +12.97% — below the +20% Alternative G trigger",
+  "//   after:  3,007,439 B",
+  "//   delta:  +357,848 B, +13.51% — below the +20% Alternative G trigger",
 ].join("\n");
 const raw = `${header}\nexport const SEARCH_RESULTS_APP_HTML = ${JSON.stringify(html)};\n`;
 
