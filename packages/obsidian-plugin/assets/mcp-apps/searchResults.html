@@ -2,31 +2,124 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
     <title>Search results</title>
     <style>
       /* Everything inline: the host renders this in a sandboxed iframe
          with a deny-by-default CSP, so an external stylesheet, font or
-         script would simply not load. This is the minimal shell that
-         proves the handshake and gets measured; the ranked list, the
-         empty/error states, click-out and theming are a later pass. */
+         script would simply not load. Every colour is a host CSS
+         variable with a local fallback, so a host that sends no theme
+         still matches the surrounding OS preference (ADR-0018 D8). */
+      :root {
+        --sr-fallback-bg-primary: #ffffff;
+        --sr-fallback-bg-secondary: #f4f5f6;
+        --sr-fallback-text-primary: #16181d;
+        --sr-fallback-text-secondary: #4b4f56;
+        --sr-fallback-text-tertiary: #767b83;
+        --sr-fallback-border-primary: #d7dade;
+        --sr-fallback-border-warning: #d9a441;
+        --sr-fallback-ring-primary: #2f6fed;
+        --sr-fallback-radius-md: 6px;
+        --sr-fallback-shadow-sm: 0 1px 2px rgba(15, 17, 21, 0.08);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --sr-fallback-bg-primary: #1c1d21;
+          --sr-fallback-bg-secondary: #26272c;
+          --sr-fallback-text-primary: #edeef0;
+          --sr-fallback-text-secondary: #b7bac0;
+          --sr-fallback-text-tertiary: #888d95;
+          --sr-fallback-border-primary: #3a3c42;
+          --sr-fallback-border-warning: #caa24d;
+          --sr-fallback-ring-primary: #6d97f7;
+          --sr-fallback-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      /* The [hidden] attribute is author-overridable by any later
+         display rule of equal or lower origin; without this the flex
+         rule below would make a hidden list visible. */
+      [hidden] {
+        display: none !important;
+      }
       body {
         margin: 0;
         padding: 16px;
-        font:
-          13px/1.5 -apple-system,
-          BlinkMacSystemFont,
-          "Segoe UI",
-          sans-serif;
+        background: var(--color-background-primary, var(--sr-fallback-bg-primary));
+        color: var(--color-text-primary, var(--sr-fallback-text-primary));
+        font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+        font-size: 13px;
+        line-height: 1.5;
       }
-      pre {
+      .search-results__status {
+        margin: 0 0 12px;
+        white-space: normal;
+        font-family: inherit;
+      }
+      .search-results__status--message {
+        padding: 8px 10px;
+        border-left: 3px solid
+          var(--color-border-warning, var(--sr-fallback-border-warning));
+        background: var(--color-background-secondary, var(--sr-fallback-bg-secondary));
+        border-radius: var(--border-radius-md, var(--sr-fallback-radius-md));
+      }
+      .search-results__list {
+        list-style: none;
         margin: 0;
-        white-space: pre-wrap;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .search-results__row {
+        padding: 8px 10px;
+        border: 1px solid var(--color-border-primary, var(--sr-fallback-border-primary));
+        border-radius: var(--border-radius-md, var(--sr-fallback-radius-md));
+        background: var(--color-background-secondary, var(--sr-fallback-bg-secondary));
+        box-shadow: var(--shadow-sm, var(--sr-fallback-shadow-sm));
+        cursor: pointer;
+      }
+      .search-results__row:hover,
+      .search-results__row:focus-visible {
+        outline: 2px solid var(--color-ring-primary, var(--sr-fallback-ring-primary));
+        outline-offset: 1px;
+      }
+      .search-results__row-path {
+        display: block;
+        font-weight: 600;
         word-break: break-word;
+      }
+      .search-results__row-excerpt {
+        margin: 4px 0 0;
+        color: var(--color-text-secondary, var(--sr-fallback-text-secondary));
+        word-break: break-word;
+      }
+      .search-results__row-meta {
+        display: flex;
+        gap: 10px;
+        margin-top: 4px;
+        font-size: 0.9em;
+        color: var(--color-text-tertiary, var(--sr-fallback-text-tertiary));
+      }
+      .search-results__row-path-reveal {
+        display: block;
+        margin-top: 6px;
+        user-select: all;
+        color: var(--color-text-tertiary, var(--sr-fallback-text-tertiary));
+      }
+      .search-results__truncated {
+        margin: 8px 0 0;
+        font-size: 0.9em;
+        color: var(--color-text-tertiary, var(--sr-fallback-text-tertiary));
       }
     </style>
   </head>
   <body>
-    <pre id="output">waiting for a tool result…</pre>
+    <pre id="output" class="search-results__status">waiting for a tool result…</pre>
+    <ul id="results-list" class="search-results__list" hidden></ul>
+    <p id="truncated-note" class="search-results__truncated" hidden></p>
     <!--
       Holds the ext-apps view bundle as inert text, never executed as a
       script: the type attribute is not a JavaScript or "module" MIME
@@ -37,6 +130,54 @@
 __MCP_APPS_BUNDLE_SOURCE__
     </script>
     <script type="module">
+      const output = document.getElementById("output");
+      // Replaces the static placeholder as soon as the module starts, so
+      // that string means unambiguously "the bundle never ran" (a CSP
+      // that blocks the blob: import below leaves it untouched).
+      output.textContent = "Loading search results…";
+
+      // The view has no access to the server's TypeScript constants, so
+      // this key is a project-owned copy that must stay byte-identical
+      // to searchResultsPayload.ts's SEARCH_RESULTS_PAYLOAD_KEY.
+      const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+
+      // Pure: no reference to `app`, the DOM or any variable outside its
+      // own arguments, so it is testable without a host or a document.
+      // `payload` is the row-list stamped onto a successful result's
+      // `_meta`; `content` is the result's own content array, present on
+      // every branch. Exactly one state applies: a payload with rows, a
+      // payload with none, no payload but message text (covers every
+      // isError branch, index_building included, per ADR-0018 D5), or
+      // neither.
+      export function renderSearchResultsView(payload, content) {
+        if (payload && Array.isArray(payload.rows)) {
+          if (payload.rows.length > 0) {
+            return {
+              state: "rows",
+              vaultName: payload.vaultName,
+              rows: payload.rows,
+              totalRows: payload.totalRows,
+              truncated: payload.truncated,
+            };
+          }
+          return {
+            state: "empty",
+            message: "No results found in " + payload.vaultName + ".",
+          };
+        }
+        const text =
+          content && content[0] && typeof content[0].text === "string"
+            ? content[0].text
+            : undefined;
+        if (text !== undefined) {
+          return { state: "message", message: text };
+        }
+        return {
+          state: "no-data",
+          message: "No data received for this search.",
+        };
+      }
+
       // The bundle is an ES module (`export { ... }`), so its exports are
       // only reachable through real import machinery — concatenating it
       // into this script's own top-level scope would only expose its
@@ -47,23 +188,173 @@ __MCP_APPS_BUNDLE_SOURCE__
       const bundleUrl = URL.createObjectURL(
         new Blob([bundleSource], { type: "text/javascript" }),
       );
-      const { App } = await import(bundleUrl);
+      const { App, applyDocumentTheme, applyHostStyleVariables } =
+        await import(bundleUrl);
       URL.revokeObjectURL(bundleUrl);
 
-      const output = document.getElementById("output");
+      const resultsList = document.getElementById("results-list");
+      const truncatedNote = document.getElementById("truncated-note");
+
+      function applyThemeFromContext(ctx) {
+        if (!ctx) return;
+        if (ctx.theme) applyDocumentTheme(ctx.theme);
+        if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+      }
+
+      function revealPath(row, rowEl) {
+        if (rowEl.dataset.pathRevealed) return;
+        rowEl.dataset.pathRevealed = "true";
+        const revealEl = document.createElement("code");
+        revealEl.className = "search-results__row-path-reveal";
+        revealEl.textContent = row.filePath;
+        // Selecting the revealed path to copy it shouldn't re-trigger the
+        // row's own click handler.
+        revealEl.addEventListener("click", (event) => event.stopPropagation());
+        rowEl.appendChild(revealEl);
+      }
+
+      // obsidian://open has no line parameter (ADR-0018 D9): the line is
+      // rendered as information only and never wired to a click target.
+      function createRowElement(row, vaultName, canOpenLinks) {
+        const li = document.createElement("li");
+        li.className = "search-results__row";
+        li.tabIndex = 0;
+        li.setAttribute("role", "button");
+
+        const pathEl = document.createElement("span");
+        pathEl.className = "search-results__row-path";
+        pathEl.textContent = row.filePath;
+        li.appendChild(pathEl);
+
+        const excerptEl = document.createElement("p");
+        excerptEl.className = "search-results__row-excerpt";
+        excerptEl.textContent = row.excerpt;
+        li.appendChild(excerptEl);
+
+        if (row.heading !== null || row.score !== null || row.line !== null) {
+          const metaEl = document.createElement("div");
+          metaEl.className = "search-results__row-meta";
+          if (row.heading !== null) {
+            const headingEl = document.createElement("span");
+            headingEl.className = "search-results__row-heading";
+            headingEl.textContent = row.heading;
+            metaEl.appendChild(headingEl);
+          }
+          if (row.score !== null) {
+            const scoreEl = document.createElement("span");
+            scoreEl.className = "search-results__row-score";
+            scoreEl.textContent = "score " + row.score.toFixed(2);
+            metaEl.appendChild(scoreEl);
+          }
+          if (row.line !== null) {
+            const lineEl = document.createElement("span");
+            lineEl.className = "search-results__row-line";
+            lineEl.textContent = "line " + row.line;
+            metaEl.appendChild(lineEl);
+          }
+          li.appendChild(metaEl);
+        }
+
+        // Click-out degrades visibly rather than failing silently
+        // (ADR-0018 D9): no openLinks capability, or an isError result,
+        // reveals the vault-relative path instead of doing nothing.
+        async function activate() {
+          if (!canOpenLinks) {
+            revealPath(row, li);
+            return;
+          }
+          const url =
+            "obsidian://open?vault=" +
+            encodeURIComponent(vaultName) +
+            "&file=" +
+            encodeURIComponent(row.filePath);
+          try {
+            const result = await app.openLink({ url });
+            if (result?.isError) revealPath(row, li);
+          } catch {
+            revealPath(row, li);
+          }
+        }
+
+        li.addEventListener("click", activate);
+        li.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            activate();
+          }
+        });
+
+        return li;
+      }
+
+      function mountView(view, canOpenLinks) {
+        resultsList.replaceChildren();
+        resultsList.hidden = true;
+        truncatedNote.hidden = true;
+        output.classList.remove("search-results__status--message");
+
+        if (view.state === "rows") {
+          output.hidden = true;
+          for (const row of view.rows) {
+            resultsList.appendChild(
+              createRowElement(row, view.vaultName, canOpenLinks),
+            );
+          }
+          resultsList.hidden = false;
+          if (view.truncated) {
+            truncatedNote.textContent =
+              "Showing " +
+              view.rows.length +
+              " of " +
+              view.totalRows +
+              " results.";
+            truncatedNote.hidden = false;
+          }
+          return;
+        }
+
+        output.hidden = false;
+        output.textContent = view.message;
+        if (view.state === "message") {
+          output.classList.add("search-results__status--message");
+        }
+      }
+
+      // autoResize stays at its default (true): a ResizeObserver reports
+      // size changes for free. allowUnsafeEval stays at its default
+      // (false): zod runs jitless, which is what the extension's default
+      // CSP (no unsafe-eval) requires.
       const app = new App(
         { name: "mcp-connector-search-results", version: "1.0.0" },
         {},
       );
 
-      // ontoolresult is one-shot: the App class warns (throws under
-      // strict) if it is assigned after connect() resolves, because the
-      // host may already have sent the notification by then.
+      let canOpenLinks = false;
+
+      // ontoolresult/ontoolcancelled/onhostcontextchanged are one-shot
+      // events: the App class warns if a handler is registered after
+      // connect() resolves, because the host may already have sent the
+      // notification. Every handler goes on before that await.
       app.ontoolresult = (params) => {
-        output.textContent = JSON.stringify(params, null, 2);
+        const payload = params?._meta?.[PAYLOAD_KEY];
+        mountView(
+          renderSearchResultsView(payload, params?.content),
+          canOpenLinks,
+        );
       };
+      app.ontoolcancelled = () => {
+        mountView(
+          { state: "message", message: "Search cancelled." },
+          canOpenLinks,
+        );
+      };
+      app.onhostcontextchanged = (ctx) => applyThemeFromContext(ctx);
 
       await app.connect();
+
+      output.textContent = "Connected. Waiting for search results…";
+      applyThemeFromContext(app.getHostContext());
+      canOpenLinks = Boolean(app.getHostCapabilities()?.openLinks);
     </script>
   </body>
 </html>
