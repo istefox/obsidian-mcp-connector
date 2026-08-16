@@ -141,7 +141,7 @@ blank.
 - [x] `C2` The handshake via `@modelcontextprotocol/ext-apps` instead of hand-rolled
       `postMessage`. **Done 2026-08-16.** The view bundles the `./app-with-deps` entry (1.7.5),
       self-contained, no `zod/v4`, no SDK v1. Measured `main.js` delta from a clean
-      `bun run build`: 2,649,591 B → 3,007,439 B, **+357,848 B, +13.51%**, below the +20%
+      `bun run build`: 2,649,591 B → 3,011,578 B, **+361,987 B, +13.66%**, below the +20%
       Alternative G trigger, so ext-apps was kept rather than falling back to a hand-written
       handshake
 - [x] `C3` `search_vault_smart` / `search_vault_simple` results as a ranked, clickable list

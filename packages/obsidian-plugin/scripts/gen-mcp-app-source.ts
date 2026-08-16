@@ -45,8 +45,8 @@ const header = [
   `// ext-apps bundle: ${bundleBytes} B raw, ${bundleJsonBytes} B JSON.stringify-escaped.`,
   "// main.js (clean `bun run build`), ADR-0018 R-08 measurement:",
   "//   before: 2,649,591 B",
-  "//   after:  3,007,439 B",
-  "//   delta:  +357,848 B, +13.51% — below the +20% Alternative G trigger",
+  "//   after:  3,011,578 B",
+  "//   delta:  +361,987 B, +13.66% — below the +20% Alternative G trigger",
 ].join("\n");
 const raw = `${header}\nexport const SEARCH_RESULTS_APP_HTML = ${JSON.stringify(html)};\n`;
 
