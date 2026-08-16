@@ -132,8 +132,9 @@ __MCP_APPS_BUNDLE_SOURCE__
     <script type="module">
       const output = document.getElementById("output");
       // Replaces the static placeholder as soon as the module starts, so
-      // that string means unambiguously "the bundle never ran" (a CSP
-      // that blocks the blob: import below leaves it untouched).
+      // that string surviving means unambiguously "this script never ran"
+      // — a CSP that refuses inline modules outright. Every failure below
+      // renders its own message instead of leaving a stale state up.
       output.textContent = "Loading search results…";
 
       // The view has no access to the server's TypeScript constants, so
@@ -178,19 +179,13 @@ __MCP_APPS_BUNDLE_SOURCE__
         };
       }
 
-      // The bundle is an ES module (`export { ... }`), so its exports are
-      // only reachable through real import machinery — concatenating it
-      // into this script's own top-level scope would only expose its
-      // internal, minified binding names, which change on every ext-apps
-      // release. A Blob URL gives it a real module identity to import
-      // from, keyed off the bundle's own public export names instead.
-      const bundleSource = document.getElementById("mcp-apps-bundle").textContent;
-      const bundleUrl = URL.createObjectURL(
-        new Blob([bundleSource], { type: "text/javascript" }),
-      );
-      const { App, applyDocumentTheme, applyHostStyleVariables } =
-        await import(bundleUrl);
-      URL.revokeObjectURL(bundleUrl);
+      // Assigned by start(), from the view bundle and from the App it
+      // constructs. They live out here because the functions below close
+      // over them; nothing reads one before start() has assigned it, and
+      // if start() gives up early nothing that reads one ever runs.
+      let applyDocumentTheme;
+      let applyHostStyleVariables;
+      let app;
 
       const resultsList = document.getElementById("results-list");
       const truncatedNote = document.getElementById("truncated-note");
@@ -320,41 +315,105 @@ __MCP_APPS_BUNDLE_SOURCE__
         }
       }
 
-      // autoResize stays at its default (true): a ResizeObserver reports
-      // size changes for free. allowUnsafeEval stays at its default
-      // (false): zod runs jitless, which is what the extension's default
-      // CSP (no unsafe-eval) requires.
-      const app = new App(
-        { name: "mcp-connector-search-results", version: "1.0.0" },
-        {},
-      );
-
       let canOpenLinks = false;
 
-      // ontoolresult/ontoolcancelled/onhostcontextchanged are one-shot
-      // events: the App class warns if a handler is registered after
-      // connect() resolves, because the host may already have sent the
-      // notification. Every handler goes on before that await.
-      app.ontoolresult = (params) => {
-        const payload = params?._meta?.[PAYLOAD_KEY];
-        mountView(
-          renderSearchResultsView(payload, params?.content),
-          canOpenLinks,
-        );
-      };
-      app.ontoolcancelled = () => {
-        mountView(
-          { state: "message", message: "Search cancelled." },
-          canOpenLinks,
-        );
-      };
-      app.onhostcontextchanged = (ctx) => applyThemeFromContext(ctx);
+      // Writes #output directly instead of going through mountView: this
+      // is the last thing the view gets to say, so it depends on the one
+      // element it is certain of rather than on the row list and the
+      // truncation note as well. The console line carries the stack that
+      // a one-line message cannot, for whoever has devtools open.
+      function showStartupFailure(summary, error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        output.hidden = false;
+        output.classList.add("search-results__status--message");
+        output.textContent = summary + " (" + reason + ")";
+        console.error(summary, error);
+      }
 
-      await app.connect();
+      // Nothing catches a rejection thrown at module top level: the script
+      // just stops, no handler is ever registered, mountView never runs,
+      // and the frame keeps showing "Loading search results…" for good —
+      // with no devtools reachable from inside a sandboxed iframe. So both
+      // startup steps report instead of throwing, and they report
+      // separately, because they are different diagnoses: the import is
+      // this view's own code arriving, the handshake is the host
+      // answering. Which half broke decides where to look next.
+      async function start() {
+        // The bundle is an ES module (`export { ... }`), so its exports are
+        // only reachable through real import machinery — concatenating it
+        // into this script's own top-level scope would only expose its
+        // internal, minified binding names, which change on every ext-apps
+        // release. A Blob URL gives it a real module identity to import
+        // from, keyed off the bundle's own public export names instead.
+        const bundleSource =
+          document.getElementById("mcp-apps-bundle").textContent;
+        const bundleUrl = URL.createObjectURL(
+          new Blob([bundleSource], { type: "text/javascript" }),
+        );
+        let App;
+        try {
+          ({ App, applyDocumentTheme, applyHostStyleVariables } =
+            await import(bundleUrl));
+        } catch (error) {
+          showStartupFailure(
+            "Could not load the search results view: its interface bundle " +
+              "failed to import. A host whose content-security-policy blocks " +
+              "blob: scripts fails exactly here, and so does a damaged bundle.",
+            error,
+          );
+          return;
+        } finally {
+          URL.revokeObjectURL(bundleUrl);
+        }
 
-      output.textContent = "Connected. Waiting for search results…";
-      applyThemeFromContext(app.getHostContext());
-      canOpenLinks = Boolean(app.getHostCapabilities()?.openLinks);
+        try {
+          // autoResize stays at its default (true): a ResizeObserver reports
+          // size changes for free. allowUnsafeEval stays at its default
+          // (false): zod runs jitless, which is what the extension's default
+          // CSP (no unsafe-eval) requires.
+          app = new App(
+            { name: "mcp-connector-search-results", version: "1.0.0" },
+            {},
+          );
+
+          // ontoolresult/ontoolcancelled/onhostcontextchanged are one-shot
+          // events: the App class warns if a handler is registered after
+          // connect() resolves, because the host may already have sent the
+          // notification. Every handler goes on before that await.
+          app.ontoolresult = (params) => {
+            const payload = params?._meta?.[PAYLOAD_KEY];
+            mountView(
+              renderSearchResultsView(payload, params?.content),
+              canOpenLinks,
+            );
+          };
+          app.ontoolcancelled = () => {
+            mountView(
+              { state: "message", message: "Search cancelled." },
+              canOpenLinks,
+            );
+          };
+          app.onhostcontextchanged = (ctx) => applyThemeFromContext(ctx);
+
+          await app.connect();
+        } catch (error) {
+          showStartupFailure(
+            "The search results view loaded, but connecting to the host " +
+              "failed: the ui/initialize handshake never completed, so no " +
+              "results can arrive.",
+            error,
+          );
+          return;
+        }
+
+        output.textContent = "Connected. Waiting for search results…";
+        applyThemeFromContext(app.getHostContext());
+        canOpenLinks = Boolean(app.getHostCapabilities()?.openLinks);
+      }
+
+      // Awaited, not fire-and-forget: the page is not usable until this
+      // has either connected or said why it could not.
+      await start();
     </script>
   </body>
 </html>
