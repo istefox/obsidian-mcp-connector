@@ -36,7 +36,12 @@ function extractBundleSource(html: string): string {
 }
 
 function extractInitialOutputText(html: string): string {
-  const match = html.match(/<pre id="output">([^<]*)<\/pre>/);
+  // Attribute-order-tolerant: the element is found by carrying
+  // id="output" among its attributes, in any position, rather than by
+  // requiring a bare <pre id="output"> with nothing else on the tag. A
+  // <pre> with a different id, or none at all, still does not match —
+  // only the text content changes here, never what counts as a match.
+  const match = html.match(/<pre\b[^>]*\bid="output"[^>]*>([^<]*)<\/pre>/);
   if (!match) {
     throw new Error("generated page has no #output element");
   }
@@ -72,6 +77,10 @@ interface CapturedMessage {
 interface ShellRunResult {
   calls: CapturedMessage[];
   outputTextContent: string;
+  // The resolved module namespace object, so a test can reach a named
+  // export (`renderSearchResultsView`) without a second Blob-URL-import
+  // path of its own.
+  moduleExports: Record<string, unknown>;
 }
 
 /**
@@ -148,6 +157,7 @@ async function runShellModule(html: string): Promise<ShellRunResult> {
     requestAnimationFrame: () => 0,
   });
 
+  let moduleExports: Record<string, unknown> = {};
   try {
     const blob = new Blob([moduleSource], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
@@ -155,7 +165,7 @@ async function runShellModule(html: string): Promise<ShellRunResult> {
       // The module has a top-level `await app.connect()`, so this import
       // does not settle until the whole handshake (or its failure) has
       // already happened — nothing to poll for.
-      await import(url);
+      moduleExports = (await import(url)) as Record<string, unknown>;
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -163,7 +173,7 @@ async function runShellModule(html: string): Promise<ShellRunResult> {
     restore();
   }
 
-  return { calls, outputTextContent: output.textContent };
+  return { calls, outputTextContent: output.textContent, moduleExports };
 }
 
 describe("search results view — handshake (R-07)", () => {
@@ -177,16 +187,162 @@ describe("search results view — handshake (R-07)", () => {
 });
 
 describe("search results view — idle output text", () => {
-  // Currently red: the module only ever writes #output from inside
-  // app.ontoolresult, so a page that loaded and completed the handshake
-  // but has not yet received a tool result looks byte-identical to a page
-  // that never ran at all (CSP blocked the blob: import, etc). Both show
-  // "waiting for a tool result…". Making the connected-but-idle state say
-  // something different is what would make the static string mean only
-  // "never ran".
+  // The module writes #output twice before any tool result arrives: once
+  // synchronously on load ("Loading search results…") and once after
+  // connect() resolves ("Connected. Waiting for search results…"). Either
+  // way it no longer reads the static placeholder, so that string keeps
+  // meaning only "never ran" (CSP blocked the blob: import, etc) rather
+  // than being indistinguishable from "connected but idle".
   test("no longer shows the static placeholder once the handshake has completed", async () => {
     const initialText = extractInitialOutputText(SEARCH_RESULTS_APP_HTML);
     const { outputTextContent } = await runShellModule(SEARCH_RESULTS_APP_HTML);
     expect(outputTextContent).not.toBe(initialText);
+  });
+});
+
+type RenderSearchResultsView = (
+  payload: unknown,
+  content: unknown,
+) => { state: string; [key: string]: unknown };
+
+// The handshake in runShellModule is real work — a schema-valid
+// ui/initialize round trip plus parsing the whole ext-apps bundle — and
+// renderSearchResultsView is pure, so one load is shared across every test
+// below instead of repeating it per assertion. Nothing here mutates
+// anything the function reads, so sharing carries no cross-test coupling.
+let cachedRenderSearchResultsView: RenderSearchResultsView | undefined;
+async function getRenderSearchResultsView(): Promise<RenderSearchResultsView> {
+  if (!cachedRenderSearchResultsView) {
+    const { moduleExports } = await runShellModule(SEARCH_RESULTS_APP_HTML);
+    cachedRenderSearchResultsView =
+      moduleExports.renderSearchResultsView as RenderSearchResultsView;
+  }
+  return cachedRenderSearchResultsView;
+}
+
+describe("search results view — row renderer (R-09, R-10)", () => {
+  test("rows: a row with score, heading and line keeps all of them; a row with none of them still carries filePath and excerpt, with the rest left `null`", async () => {
+    const renderSearchResultsView = await getRenderSearchResultsView();
+    const payload = {
+      vaultName: "My Vault",
+      totalRows: 2,
+      truncated: false,
+      rows: [
+        {
+          filePath: "notes/alpha.md",
+          excerpt: "alpha excerpt",
+          line: 4,
+          score: 0.87,
+          heading: "Alpha heading",
+        },
+        {
+          filePath: "notes/beta.md",
+          excerpt: "beta excerpt",
+          line: null,
+          score: null,
+          heading: null,
+        },
+      ],
+    };
+
+    const view = renderSearchResultsView(payload, undefined);
+
+    expect(view.state).toBe("rows");
+    expect(view.vaultName).toBe("My Vault");
+    expect(view.totalRows).toBe(2);
+    expect(view.truncated).toBe(false);
+
+    const rows = view.rows as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+
+    expect(rows[0]).toEqual({
+      filePath: "notes/alpha.md",
+      excerpt: "alpha excerpt",
+      line: 4,
+      score: 0.87,
+      heading: "Alpha heading",
+    });
+
+    // The three optional fields survive as `null`, never `undefined` and
+    // never the string "null" — the DOM layer's own per-field omission
+    // (`row.score !== null`, etc.) depends on that exact value.
+    expect(rows[1].filePath).toBe("notes/beta.md");
+    expect(rows[1].excerpt).toBe("beta excerpt");
+    expect(rows[1].line).toBeNull();
+    expect(rows[1].score).toBeNull();
+    expect(rows[1].heading).toBeNull();
+  });
+
+  test("zero rows: renders the explicit empty state", async () => {
+    const renderSearchResultsView = await getRenderSearchResultsView();
+    const payload = {
+      vaultName: "My Vault",
+      totalRows: 0,
+      truncated: false,
+      rows: [],
+    };
+
+    const view = renderSearchResultsView(payload, undefined);
+
+    expect(view.state).toBe("empty");
+    // The message names the vault the search ran against — the payload
+    // this function receives carries no query string at all (see
+    // searchResultsPayload.ts's SearchResultsPayload type and both
+    // projectors), so "naming the query" is not something this function
+    // has the data to do. Recorded as a finding in the report rather than
+    // asserted here as if it were true.
+    expect(view.message).toBe("No results found in My Vault.");
+  });
+
+  test("isError: no payload key at all, so content[0].text is rendered as the message", async () => {
+    const renderSearchResultsView = await getRenderSearchResultsView();
+    const content = [
+      { type: "text", text: "Semantic index is still building." },
+    ];
+
+    const view = renderSearchResultsView(undefined, content);
+
+    expect(view.state).toBe("message");
+    expect(view.message).toBe("Semantic index is still building.");
+  });
+
+  test("neither payload nor content: the neutral no-data state, without throwing", async () => {
+    const renderSearchResultsView = await getRenderSearchResultsView();
+
+    expect(() => renderSearchResultsView(undefined, undefined)).not.toThrow();
+
+    const view = renderSearchResultsView(undefined, undefined);
+    expect(view.state).toBe("no-data");
+    expect(view.message).toBe("No data received for this search.");
+  });
+});
+
+describe("search results view — excerpts are never markup (R-09)", () => {
+  test("the module never assigns innerHTML", () => {
+    const moduleSource = extractModuleScript(SEARCH_RESULTS_APP_HTML);
+    expect(moduleSource).not.toContain("innerHTML");
+  });
+
+  test("an excerpt containing markup survives renderSearchResultsView as a literal string", async () => {
+    const renderSearchResultsView = await getRenderSearchResultsView();
+    const malicious = "<img src=x onerror=alert(1)>";
+    const payload = {
+      vaultName: "My Vault",
+      totalRows: 1,
+      truncated: false,
+      rows: [
+        {
+          filePath: "notes/gamma.md",
+          excerpt: malicious,
+          line: null,
+          score: null,
+          heading: null,
+        },
+      ],
+    };
+
+    const view = renderSearchResultsView(payload, undefined);
+    const rows = view.rows as Array<Record<string, unknown>>;
+    expect(rows[0].excerpt).toBe(malicious);
   });
 });
