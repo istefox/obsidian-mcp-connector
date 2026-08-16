@@ -98,15 +98,26 @@
       }
       .search-results__row-meta {
         display: flex;
+        /* A heading is vault content and can be long. Without wrapping,
+           the flex line cannot break and the row overflows sideways. */
+        flex-wrap: wrap;
         gap: 10px;
         margin-top: 4px;
         font-size: 0.9em;
         color: var(--color-text-tertiary, var(--sr-fallback-text-tertiary));
       }
+      /* A flex item refuses to shrink below its content's intrinsic width
+         unless min-width is cleared, so wrapping alone does not save a
+         heading that is one unbroken token. */
+      .search-results__row-heading {
+        min-width: 0;
+        word-break: break-word;
+      }
       .search-results__row-path-reveal {
         display: block;
         margin-top: 6px;
         user-select: all;
+        word-break: break-word;
         color: var(--color-text-tertiary, var(--sr-fallback-text-tertiary));
       }
       .search-results__truncated {
