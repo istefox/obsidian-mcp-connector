@@ -36,7 +36,7 @@ The project is a Bun monorepo:
 
 The plugin is organized by feature. Each feature is a self-contained module that sets itself up, owns its dependencies, and keeps running even if another feature fails.
 
-Current features: core (plugin initialization and settings), mcp-transport (the in-process HTTP MCP server), mcp-tools (MCP tool handlers for vault, fetch, commands, Canvas, and more), prompts (vault-driven MCP prompts, tag-gated), semantic-search (native semantic search via Transformers.js), command-permissions (gated execution of Obsidian commands), adaptive-tool-loading (profile-based tool activation with frequency promotion), tool-toggle (enable or disable individual tools), and mcp-client-config (writes the MCP client config such as claude_desktop_config.json).
+Current features: core (plugin initialization and settings), mcp-transport (the in-process HTTP MCP server), mcp-tools (MCP tool handlers for vault, fetch, commands, Canvas, and more), mcp-apps (the `ui://` resource that renders `search_vault_smart` and `search_vault_simple` results in a host that speaks the MCP Apps extension), prompts (vault-driven MCP prompts, tag-gated), semantic-search (native semantic search via Transformers.js), command-permissions (gated execution of Obsidian commands), adaptive-tool-loading (profile-based tool activation with frequency promotion), tool-toggle (enable or disable individual tools), and mcp-client-config (writes the MCP client config such as claude_desktop_config.json).
 
 ### Feature Structure (convention for new features)
 
@@ -128,3 +128,15 @@ POST /mcp
 - **Lifecycle differs by branch.** `buildMcpServer` closes nothing. The legacy branch owns its own `finally` teardown; on the modern branch the SDK entry owns the instance.
 - **`server/discover` is not hand-written.** The SDK's serving entry installs it on whatever instance the factory returns, and stamps server identity into every modern result's `_meta`. A hand-built `McpServer` answers `-32601` to it.
 - Each classified request is counted against its era in `mcpTransport.eraCounters`, batched in memory and flushed through `SettingsStore.updateSlice`. The counter is diagnostic: nothing reads it at runtime.
+
+## Resources Surface
+
+`buildMcpServer(tokenId)` also declares a `resources` capability (ADR-0018) and registers two methods against a `ResourceRegistry` filled at composition time, shaped like the existing `PromptRegistry`:
+
+- `resources/list` — returns the registry's static `ui://` entries with their mime type.
+- `resources/read` — returns the generated HTML for a known `ui://` URI at `text/html;profile=mcp-app`; an unknown URI is a protocol error naming it, never an empty result.
+- `resources/templates/list` — not registered. Declaring the capability makes the SDK constructor install all three resource handlers; overriding `list` and `read` and leaving the third alone means the SDK's own handler answers `{ resourceTemplates: [] }`.
+
+The registry serves `ui://` application resources only, and nothing else. `ToolScope`, the per-token allowlist and `userDisabled` are all tool-level concepts that do not reach `resources/read` — putting vault content on this surface would need a policy model designed from scratch, so vault notes are deliberately not exposed here. The registry is populated once, from a static declaration, and never dereferences a token id.
+
+Both capability fields are declared explicitly — `resources: { subscribe: false, listChanged: false }` — because the SDK rewrites a bare `{}` to `listChanged: true` at handler-registration time, and this transport is POST-only so `subscribe` can never be honoured. The two search tools carry `_meta.ui.resourceUri` on their `tools/list` entries, pointing at the one static `ui://mcp-connector/search-results` page; their results carry the structured row payload in the result's own `_meta`, success branch only.

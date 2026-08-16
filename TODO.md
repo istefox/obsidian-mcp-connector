@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=26 -->
+<!-- project-tasks: prefix=OMC lastId=27 -->
 # PROJECT TASKS
 
-Updated: 2026-08-15 · Open: 4 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/3
+Updated: 2026-08-16 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 3/4 · Gate B: 2/3 · Gate C: 3/4
 
 ## Roadmap — 2.0
 
@@ -130,13 +130,62 @@ capability alone does nothing), mime type exactly `text/html;profile=mcp-app`, a
 the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe
 blank.
 
-- [ ] `C1` A real `resources` capability, not the spike's shortcut
-- [ ] `C2` The handshake via `@modelcontextprotocol/ext-apps` instead of hand-rolled
-      `postMessage`
-- [ ] `C3` `search_vault_smart` / `search_vault_simple` results as a ranked, clickable list
-      with score and line anchor. Spec constraint: the tool must keep returning meaningful
-      text content for clients without the extension, so adoption is additive per tool and
-      cannot fork the surface
+- [x] `C1` A real `resources` capability, not the spike's shortcut. **Done 2026-08-16.**
+      `buildMcpServer(tokenId)` declares `resources: { subscribe: false, listChanged: false }`
+      and `extensions: { "io.modelcontextprotocol/ui": ... }` explicitly, from the single
+      construction site, on both eras. `ResourceRegistryClass`, shaped like
+      `PromptRegistryClass`, serves `resources/list` and `resources/read` against one static
+      `ui://mcp-connector/search-results` entry; `resources/templates/list` is left to the
+      SDK, which answers `{resourceTemplates: []}` once the capability is declared. R-14 holds:
+      grepped, no vault path appears in either response
+- [x] `C2` The handshake via `@modelcontextprotocol/ext-apps` instead of hand-rolled
+      `postMessage`. **Done 2026-08-16.** The view bundles the `./app-with-deps` entry (1.7.5),
+      self-contained, no `zod/v4`, no SDK v1. Measured `main.js` delta from a clean
+      `bun run build`: 2,649,591 B → 2,993,253 B, **+343,662 B, +12.97%**, below the +20%
+      Alternative G trigger, so ext-apps was kept rather than falling back to a hand-written
+      handshake
+- [x] `C3` `search_vault_smart` / `search_vault_simple` results as a ranked, clickable list
+      with score and line anchor. **Done 2026-08-16.** Both tools' `content` array is
+      byte-identical to the pre-change output (golden-bytes test, R-06); the structured row
+      payload rides the result's own `_meta` under `io.github.istefox.mcp-connector/searchResults`,
+      success branch only, capped at 50 rows with excerpts clipped to 400 characters. The view
+      renders one list, omits absent fields (`score`, `line`, `heading`) without branching on
+      which tool produced the row, and click-out opens
+      `obsidian://open?vault=...&file=...`, degrading to a shown vault-relative path when
+      `openLink` is unavailable or refuses. **Not yet observed rendering in a real host — that
+      is `R-18` below**
+- [ ] `R-18` **The view in Claude Desktop, against a live vault. Needs a human at the machine.
+      Blocks the 2.0 cut**, on the same standard as `A2` and `B3`: no unit test can see a page
+      render, and nothing in the gate type-checks HTML.
+      Preconditions: a real vault with at least a dozen markdown notes; the plugin built from
+      this branch and installed; the MCP Connector running; Claude Desktop configured against a
+      token whose profile includes both search tools. Note the vault name exactly as Obsidian
+      reports it — a vault name with a space is the first thing the URL encoding gets wrong.
+      Run in order, record the answer to each: (1) the pointer arrives — `tools/list` carries
+      `_meta.ui.resourceUri` on both search tools, or nothing below can pass; (2) the host
+      fetches the resource — a `resources/read` for that `ui://` URI appears in the connector's
+      traffic after a `search_vault_simple` call; if it never does, check the
+      `capabilities.extensions` declaration in the `initialize` reply; (3) the page renders — a
+      real-height iframe with a ranked list, not a blank card and not a collapsed strip; (4) the
+      payload arrived — real vault paths and excerpts, not a placeholder or an empty state (the
+      one thing unverifiable anywhere else: whether the host forwards the tool result's `_meta`
+      — if it strips it, record that, because it moves the design to ADR-0018 Alternative D,
+      `structuredContent`); (5) the smart tool's extras — `search_vault_smart` rows show a
+      score, and a line where the provider resolves one (absent, not `null`, under Smart
+      Connections); (6) both empty paths — a zero-match query renders the vault-named empty
+      state ("No results found in `<vault>`.", not the query — see the follow-up below); with
+      the index still building, `search_vault_smart` renders the error text legibly, not a
+      broken list; (7) the click — the correct note opens in Obsidian, tested with at least one
+      path containing a space or a non-ASCII character; if the host refuses the `obsidian://`
+      scheme, the row must instead reveal the vault-relative path — record which of the two
+      happened, since a refusal is host policy this project cannot verify from the package; (8)
+      the theme — light/dark follows Claude Desktop's switch without a reload, or, if the host
+      sends no `hostContext.theme`, the `prefers-color-scheme` fallback tracks the OS setting
+      instead; (9) a client without the extension (Claude Code, or the Windows bridge) — the
+      text result is unchanged and there is no visible artefact of any of this.
+      Record every outcome with the same specificity `A1` uses: what was run, what was
+      observed, what was **not** exercised. "Shows a card" is not a pass; a rendered row that
+      opens the right note is
 
 ### Gate D — the cut
 
@@ -159,6 +208,15 @@ blank.
 - [ ] `OMC-024` **P2** Per-token era counters. **Implemented, not yet verified in a vault** — that check is what closes this. `eraCountersByToken` now sits alongside `eraCounters` in the `mcpTransport` slice, keyed by token id, and each token row in the transport settings says which era it is served on. Additive rather than the migration this entry originally asked for, and the original framing was wrong: the counts already on disk predate the split and belong to no token, so attributing them would invent data and dropping them would damage ADR-0016 §8's trigger, which reads the vault-wide legacy total. `sum(byToken) <= eraCounters` holds by construction. A revoked token's bucket is pruned in the counter's own recipe; an absent or malformed `tokens` key prunes nothing, so a boot that writes before `ensureTokenStore` seeds the list cannot wipe the map. **Remaining**: a real vault with two clients on different tokens, one on 2025 and one on 2026-07-28, showing two rows that disagree while the global row still sums the vault's history; plus a pre-existing vault with no `eraCountersByToken` rendering without breaking <!-- src:session opened:2026-08-09 updated:2026-08-10 -->
 - [ ] `OMC-023` **P3** The server advertises a prompts capability it does not honour, on both protocol eras. `mcpServer.ts` declares `prompts: {}`, but `McpServer`'s constructor calls `setPromptRequestHandlers()` for any declared prompts capability (`mcp-DXXb3Vv3.mjs:1351`), which registers `listChanged: … ?? true` (`:1550`) — so the declared set is upgraded before anything reads it. The legacy `initialize` reply and the 2026 `server/discover` result both report `prompts: { listChanged: true }`, and nothing in the codebase ever sends `notifications/prompts/list_changed` (`tools/list_changed` is sent from `activateTool.ts:127`; there is no prompts equivalent). Found during OMC-008 and deliberately not fixed there: declaring `listChanged: false` would change the legacy `initialize` bytes, which that work's Invariant 1 forbids. Either honour it by sending the notification when the prompt set changes, or declare it false in a release that is allowed to move the legacy reply <!-- src:session opened:2026-08-08 -->
 - [ ] `OMC-016` **P3** #427 MCP Apps: **answered, it works.** The spike on `spike/427-mcp-apps-ui-resource` proved Claude Desktop reads and renders a `ui://` resource from this connector. What mattered was declaring `capabilities.extensions` with `io.modelcontextprotocol/ui`; the generic `resources` capability alone did nothing. Two hard requirements: mime type exactly `text/html;profile=mcp-app`, and the view must complete the `ui/initialize` → `ui/notifications/initialized` handshake or the host leaves the iframe blank. Real implementation is the remaining work: a proper resources capability, the handshake via `@modelcontextprotocol/ext-apps` (1.7.5 on npm) rather than hand-rolled `postMessage`, then the ranked search list <!-- src:session opened:2026-08-06 updated:2026-08-07 -->
+- [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
+      plan's task 6 step 2 specified that the empty state should name "the query"; the result
+      payload carries only `vaultName`, never the query string — both projections are called as
+      `(results, ctx.app.vault.getName())` — so the shipped empty state renders "No results
+      found in `<vault>`." instead. SPEC R-10 requires only "an explicit empty state for zero
+      results" and does not mention the query, so the requirement is met and the plan was
+      stricter than the SPEC on a detail the data cannot support. Decided, not a defect. A
+      follow-up would carry the query into the payload, touching the payload type, both
+      projections, both tools, the renderer and its tests <!-- src:session opened:2026-08-16 -->
 
 ## In Progress
 
