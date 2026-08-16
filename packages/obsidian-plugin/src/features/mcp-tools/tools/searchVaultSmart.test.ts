@@ -576,3 +576,130 @@ describe("search_vault_smart — notifications/progress push (#344)", () => {
     expect(parsed.errorCode).toBe("index_building");
   });
 });
+
+describe("search_vault_smart — content bytes are pinned for a client that never reads _meta (R-06)", () => {
+  // The literal below was captured from this handler's actual output for
+  // this exact fixture and query, then pasted in — it is not derived or
+  // recomputed here. A structural comparison would not catch a change to
+  // key order, whitespace or a renamed field. If the payload work ever
+  // touches the argument passed to successText(), this test fails
+  // loudly; if it only adds a sibling _meta key, this test keeps passing.
+  test("JSON.stringify(result.content) matches the captured literal", async () => {
+    const sampleResults: SearchResult[] = [
+      {
+        filePath: "Notes/ml.md",
+        heading: "ML Notes",
+        excerpt: "ML Notes: introduction to gradient descent.",
+        line: 3,
+        score: 0.91,
+      },
+    ];
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+    });
+    expect(JSON.stringify(result.content)).toBe(
+      '[{"type":"text","text":"{\\"results\\":[{\\"filePath\\":\\"Notes/ml.md\\",\\"heading\\":\\"ML Notes\\",\\"excerpt\\":\\"ML Notes: introduction to gradient descent.\\",\\"line\\":3,\\"score\\":0.91}]}"}]',
+    );
+  });
+});
+
+describe("search_vault_smart — result _meta carries the structured payload on success, and is absent on every isError branch (R-05, ADR-0018 D5/D6)", () => {
+  test("_meta.io.github.istefox.mcp-connector/searchResults carries vaultName, totalRows, truncated and rows; structuredContent is absent", async () => {
+    const sampleResults: SearchResult[] = [
+      {
+        filePath: "Notes/ml.md",
+        heading: "ML Notes",
+        excerpt: "ML Notes: introduction to gradient descent.",
+        line: 3,
+        score: 0.91,
+      },
+    ];
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+    })) as {
+      content: Array<{ type: "text"; text: string }>;
+      _meta?: Record<string, unknown>;
+      structuredContent?: unknown;
+    };
+
+    const payload = result._meta?.[
+      "io.github.istefox.mcp-connector/searchResults"
+    ] as
+      | {
+          vaultName: string;
+          totalRows: number;
+          truncated: boolean;
+          rows: unknown[];
+        }
+      | undefined;
+    expect(payload).toBeDefined();
+    expect(typeof payload?.vaultName).toBe("string");
+    expect(typeof payload?.totalRows).toBe("number");
+    expect(typeof payload?.truncated).toBe("boolean");
+    expect(Array.isArray(payload?.rows)).toBe(true);
+
+    // structuredContent is a first-class, client-visible field; emitting
+    // it alongside a payload that only ever lives in _meta would invite a
+    // client to expect the pair (ADR-0018 D4). Whether the tool's
+    // *tools/list* entry carries no outputSchema is checked where that
+    // entry actually exists — mcpServer.test.ts — not on the call result.
+    expect("structuredContent" in result).toBe(false);
+  });
+
+  test("index_building: a tool that has no results yet must not stamp a results payload it does not have — _meta is absent entirely", async () => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+    const spy = fakeProvider({ ready: false });
+    const plugin = mockPlugin({
+      semanticSearchState: {
+        provider: spy.provider,
+        pendingProvider: "embedding-gemma",
+        store: undefined,
+      },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    })) as { isError?: true; _meta?: Record<string, unknown> };
+
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(
+      (result as unknown as { content: Array<{ text: string }> }).content[0]
+        .text,
+    );
+    expect(parsed.errorCode).toBe("index_building");
+    expect("_meta" in result).toBe(false);
+  });
+
+  test("provider not ready (non-index_building error): _meta is also absent — the rule is isError, not a specific error code", async () => {
+    const spy = fakeProvider({ ready: false });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+    })) as { isError?: true; _meta?: Record<string, unknown> };
+
+    expect(result.isError).toBe(true);
+    expect("_meta" in result).toBe(false);
+  });
+});

@@ -87,6 +87,23 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
       // could not keep. The modern era declares `true` and honours it —
       // see the `server/discover` assertion in modernEra.test.ts, which is
       // deliberately the opposite value and pins the other half.
+      //
+      // `resources` and `extensions` are the second move of these bytes,
+      // on the same permission ADR-0017 already used: 2.0 is the release
+      // allowed to move them (ADR-0018). Both `resources` fields are
+      // explicit rather than left as `{}` — the SDK rewrites a bare
+      // capability object at handler-registration time, and an omitted
+      // `listChanged` becomes `true`, which is the exact OMC-023 defect
+      // recreated on a new capability if left implicit. `subscribe:
+      // false` because this transport is POST-only and cannot push
+      // outside a request; `listChanged: false` because the `ui://` set
+      // is static and nothing would ever publish the notification.
+      // `extensions` names the MCP Apps extension so a host knows this
+      // server's `ui://` resource is an application view. This is the
+      // legacy half of a pair: the modern half is `modernEra.test.ts`'s
+      // `server/discover` capability assertion, and together they are the
+      // record that one declaration in `buildMcpServer` reaches both eras
+      // (ADR-0018 D1, D2).
       expect(body).toEqual({
         jsonrpc: "2.0",
         id: 1,
@@ -95,6 +112,12 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
           capabilities: {
             tools: { listChanged: true },
             prompts: { listChanged: false },
+            resources: { subscribe: false, listChanged: false },
+            extensions: {
+              "io.modelcontextprotocol/ui": {
+                mimeTypes: ["text/html;profile=mcp-app"],
+              },
+            },
           },
           serverInfo: { name: "mcp-connector", version: "0.4.0-alpha.1" },
         },
