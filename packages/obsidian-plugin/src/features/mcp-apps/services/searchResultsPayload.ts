@@ -4,6 +4,7 @@
  *
  * Pure: no `App` dependency beyond a vault name the caller already has.
  */
+import type { SearchResult } from "$/features/semantic-search";
 
 /** Naming and limits fixed by ADR-0018 D6 — do not derive or re-invent. */
 export const SEARCH_RESULTS_PAYLOAD_KEY =
@@ -32,14 +33,48 @@ export type SimpleSearchFile = {
   matches: ReadonlyArray<{ context: string; line: number }>;
 };
 
-/** Shape `search_vault_smart`'s `SearchResult` needs to project a row. */
-export type SmartSearchResult = {
-  filePath: string;
-  heading: string | null;
-  excerpt: string;
-  line: number | null;
-  score: number;
-};
+/**
+ * What `search_vault_smart` produces. An alias rather than a copy: this used
+ * to redeclare `SearchResult`'s five fields, and the two stayed compatible by
+ * structural coincidence.
+ *
+ * Type-only import, so this stays as pure as the header claims — nothing from
+ * `semantic-search` survives to runtime.
+ */
+export type SmartSearchResult = SearchResult;
+
+/**
+ * Fields of `SearchResult` deliberately NOT carried into a row. Empty today.
+ * Adding a name here is how "we looked at it and the view does not need it"
+ * gets recorded, rather than happening by omission.
+ */
+type NotProjected = never;
+
+/**
+ * Forces a decision in THIS file when `SearchResult` grows a field.
+ *
+ * Measured before writing it (#466), because the issue's premise was wrong:
+ * adding a required field to `SearchResult` already breaks the build today,
+ * in eight places — every one of them inside `semantic-search` or
+ * `mcp-tools`, its producers and their fixtures. **None in `mcp-apps`.** So
+ * the real failure is not "no compile error", it is that the error never
+ * points here: you fix the producers, the build goes green, and nobody is
+ * ever asked whether the payload should carry the new field. Aliasing alone
+ * does not fix that either — an unread field is not an error.
+ *
+ * This does. `Unprojected` is the set of `SearchResult` keys that reach
+ * neither a row nor `NotProjected`; `Assert` then fails with the offending
+ * key NAME in the message rather than a generic mismatch. Type-level only:
+ * nothing is emitted.
+ */
+type Assert<T extends true> = T;
+type Unprojected = Exclude<
+  keyof SearchResult,
+  keyof SearchResultRow | NotProjected
+>;
+type _EverySearchResultFieldIsAccountedFor = Assert<
+  [Unprojected] extends [never] ? true : Unprojected
+>;
 
 function clipExcerpt(excerpt: string): string {
   return excerpt.length > SEARCH_RESULTS_EXCERPT_CLIP

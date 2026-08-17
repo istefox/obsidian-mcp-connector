@@ -297,7 +297,14 @@ __MCP_APPS_BUNDLE_SOURCE__
           try {
             const result = await app.openLink({ url });
             if (result?.isError) revealPath(filePath, li);
-          } catch {
+          } catch (error) {
+            // Bound and logged, unlike the two branches above. Those are the
+            // expected shapes of "the host will not follow this link"; this
+            // one is only reachable once openLinks was advertised, so a throw
+            // here is a real failure. The user sees the same degradation
+            // either way, so without this line the only difference between
+            // "declined" and "broke" is invisible to whoever reports it.
+            console.error("openLink threw for " + filePath, error);
             revealPath(filePath, li);
           }
         }

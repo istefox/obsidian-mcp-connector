@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=34 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 6 (P1: 0) · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -16,20 +16,18 @@ rather than by anything on this list, and planning as if a feature were coming w
 one.
 
 The open work sorts into three tracks. The tracks are not a sequence: nothing here blocks anything
-else here.
+else here. **Track 1 is empty as of 2026-08-17**; what is left ships nothing to a user, or is
+unscheduled design.
 
-### Track 1 — silent-failure debt. Would earn a patch
+### Track 1 — silent-failure debt. Cleared 2026-08-17
 
-Two items, the same shape: something is wrong and **nothing fails**, which is the class this repo
-keeps paying for (`outputSchema` on a polymorphic tool, the stale R-08 figure, the `.mcpb` that
-shipped npx for five releases).
+Both entries closed the same day they were filed, and **both had a premise that did not survive
+measurement** — recorded in their Done entries rather than quietly corrected. `OMC-034` was wider
+than filed: the plugin's own `scripts/` was unchecked too, not just the root's. `OMC-028`'s stated
+failure ("no compile error") was false, and the fix as planned would not have fixed the real one.
 
-- `OMC-028` / `#466` **(b)** — `SmartSearchResult` duplicates `semantic-search`'s `SearchResult` field for
-  field instead of importing it. It compiles by structural coincidence, so a new required field on
-  `SearchResult` is silently dropped from the payload with no compile error. The ledger already
-  calls this "the one worth not leaving long".
-- `OMC-034` / `#467` — root `scripts/` is outside both packages' `tsconfig.json`, so `bun run check` type-checks
-  neither `version.ts` nor anything else there. Found 2026-08-17 while closing `OMC-032`.
+`bun run check` now reaches every `.ts` in the repo, and a field added to `SearchResult` fails inside
+`mcp-apps` with the field's name in the message.
 
 ### Track 2 — verification and process. Ships nothing to a user
 
@@ -46,8 +44,9 @@ Neither reaches a user; both cost real hours when they bite, and one already did
   discussion #352. A brainstorm brief exists locally (`BRAINSTORM.md`, gitignored) and **contradicts
   two of the issue's own statements**: post-#351 the three target tools are transformations
   recomputed inside `vault.process`, so only `patch_vault_file`'s replace destroys authored text;
-  and constraint 1's opt-in makes the protection optional, which is not protection. Those two
-  corrections are not yet on the issue.
+  and constraint 1's opt-in makes the protection optional, which is not protection. **Both
+  corrections are now on the issue** (2026-08-17), with the file:line evidence and addressed to
+  @Madulone, since #445 declares itself the spec for whoever prototypes it.
 - `#465` — the brief's declared gap: no ecosystem survey of how other MCP servers handle
   read-then-write staleness. Informs #445's ADR, blocks nothing. Established while filing it: the
   MCP SDK v2.0.0 defines no write-precondition mechanism at all.
@@ -65,9 +64,9 @@ section exists so the next drift is visible rather than rediscovered.
 
 | Ledger | Issue | State |
 |---|---|---|
-| `OMC-034` | `#467` | root `scripts/` outside every type check |
 | `OMC-030` | `#468` | verification against a stale build |
-| `OMC-028` | `#466` | structural duplicate + a catch that discards its error |
+| `OMC-034` | `#467` | **both closed 2026-08-17** — type-check coverage |
+| `OMC-028` | `#466` | **both closed 2026-08-17** — the projector now fails when `SearchResult` grows |
 | `OMC-010` | `#416` | both parked on the same external trigger |
 | `OMC-027` | — | ledger-only **on purpose**: decided, not a defect |
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
@@ -90,18 +89,6 @@ Two of these are deliberately **not** actionable and say so in their own text: `
 non-defect and `OMC-029` has no mechanical fix by design. They are kept as records. The section used
 to be titled "actionable now", which was false for both.
 
-- [ ] `OMC-034` **P2** #467 Root `scripts/` is type-checked by nothing. `bun run check` is
-      `bun --filter '*' check`, which runs `tsc --noEmit` inside each package, and there is no root
-      `tsconfig.json` — so `scripts/version.ts` (306 lines, the release cutter), its test file, and
-      anything else added there are outside every type check the gate runs.
-      Found 2026-08-17 while closing `OMC-032`, which is what put a substantial new TypeScript file in
-      that directory in the first place. It was checked by hand with `bunx tsc --noEmit --strict` and is clean, and nothing
-      keeps it that way. `bun test scripts/` does run its unit tests, so the gap is types only, which
-      is the half that catches a rename or a changed signature. Fix is a root `tsconfig.json` covering
-      `scripts/**` plus a step in `bun run check`; the cost is that `bun run check` gains a third tsc
-      invocation. **Worth doing before the next release**, because the file it protects is the one
-      that cuts releases and its git-orchestration half is covered by `DRY_RUN` rather than by types
-      <!-- src:session opened:2026-08-17 -->
 - [ ] `OMC-030` **P2** #468 A vault verification can silently run against the wrong build, and one
       did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
       fresh `bun run build` in the repo changes nothing there until someone copies it across.
@@ -130,18 +117,6 @@ to be titled "actionable now", which was false for both.
       projections, both tools, the renderer and its tests. **Observed in production 2026-08-16
       during `R-18`**: a zero-match query renders `No results found in Labs.` in Claude Desktop,
       so this is now a measured behaviour rather than a read of the code <!-- src:session opened:2026-08-16 updated:2026-08-16 -->
-- [ ] `OMC-028` **P3** #466 Two MINOR findings from the OMC-016 gate 5.06 pass, surfaced and
-      deliberately left. **(a)** `assets/mcp-apps/searchResults.html` — `activate()`'s
-      `catch { revealPath(...) }` has no error binding and no `console.error`. It is only
-      reached when `canOpenLinks` is already true, so a throw from `app.openLink` there is a
-      genuine runtime failure being handled identically to the expected "no capability" branch;
-      the UI still degrades visibly, so this costs the diagnostic trail rather than
-      correctness. **(b)** `mcp-apps/services/searchResultsPayload.ts` — `SmartSearchResult`
-      duplicates `semantic-search`'s `SearchResult` field for field instead of importing it.
-      It compiles today by structural coincidence, so if `SearchResult` gains a required field
-      nothing here fails to compile and the new field is silently dropped from the payload.
-      **(b) is the one worth not leaving long**: silent divergence with no compile error is
-      exactly the failure this repo keeps paying for elsewhere <!-- src:session opened:2026-08-16 -->
 - [ ] `OMC-029` **P3** Measured figures written into comments are guarded by nothing. The
       generated-asset drift tests compare **identity** — is `searchResultsAppSource.ts` what
       the generator would produce from the shell and the bundle — and never the **content** of
@@ -181,7 +156,7 @@ that call) and resource subscriptions.
 
 - **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
 - **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
-- **Build & test**: `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge) and `bun test scripts/` for the root scripts. **`bun run check` does not reach root `scripts/`** — no root `tsconfig.json` exists, so `version.ts` is type-checked by nothing (`OMC-034`). `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
+- **Build & test**: `bun run check` is `tsc --noEmit && bun --filter '*' check` and now reaches **every** `.ts` in the repo — a root `tsconfig.json` covers `scripts/**`, and the plugin's `include` covers its own `scripts/**` (`OMC-034`). · `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge) and `bun test scripts/` for the root scripts. `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
 - **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
 - **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
@@ -479,6 +454,59 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-034` #467 Root `scripts/` was type-checked by nothing, and **the gap was wider than the
+      issue filed it as**. True as written: no root `tsconfig.json` existed and `bun run check` is
+      `bun --filter '*' check`, which a filter over workspace packages cannot extend to the root. What
+      the issue missed is that the plugin's own `tsconfig.json` pinned
+      `"include": ["src/**/*.ts", "scripts/connectorShim.test.ts", "bun.config.ts"]`, so **most of
+      `packages/obsidian-plugin/scripts/` was unchecked too** — measured with `tsc --listFiles`: 3 of
+      its files were seen, including `connectorShim.js` pulled in through `allowJs`. Unchecked were
+      `mcpb-smoke.ts` (the #412 regression guard), both generator scripts, `zip.ts`, `link.ts`,
+      `bench.ts`, `buildAppHtml.test.ts` and `conformance/harness.ts`. `mcpb-smoke.ts` had gained 80
+      lines that same morning in #462 and `bun run check` never looked at it.
+      **Two hand attempts to pre-verify those files produced false negatives**, the second such pair
+      in a day: `bunx tsc` with `--paths` on the command line dies with `TS6064` and checks nothing,
+      and an `rg "^scripts/"` filter hid the error line. Only a real `tsconfig` could answer it.
+      Shipped: a root `tsconfig.json` over `scripts/**/*.ts` (`types: ["bun"]` — `Bun.file`,
+      `Bun.argv`, `import.meta.main` and the `$` tag all come from there), the plugin's `include`
+      widened to `scripts/**/*.ts`, and root `check` becomes `tsc --noEmit && bun --filter '*' check`
+      so the two-file check fails first. **One real error surfaced, and it was a genuine finding, not
+      noise**: `zip.ts` imports `archiver` with no declarations (`TS7016`). Fixed with
+      `@types/archiver@8.0.0`, matching the installed `archiver@8.0.0` exactly and joining the four
+      `@types/*` devDependencies already there — not a `declare module` stub, which would have been
+      silencing rather than fixing. Coverage measured: plugin `scripts/` 3 → **11** files,
+      `svelte-check` 1397 → 1411, root `tsconfig` sees 2. **Proved by mutation in both new places**:
+      a deliberate type error in `scripts/version.ts` and in `packages/obsidian-plugin/scripts/mcpb-smoke.ts`
+      each turns `bun run check` red, and both files restored byte-identical
+      <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
+- [x] `OMC-028` #466 Two findings from the OMC-016 gate 5.06 pass, and **(b)'s stated premise was
+      wrong — measured before implementing it, not after.** The entry said a required field added to
+      `SearchResult` would be "silently dropped with no compile error". Probed on the unfixed code by
+      actually adding one: the build breaks in **eight** places. Every one of them is inside
+      `semantic-search` or `mcp-tools` — the producers and their fixtures — and **none in
+      `mcp-apps`.** So the real failure is narrower and nastier than "no error": you fix the eight,
+      the build goes green, and nothing ever asks whether the payload should carry the new field. The
+      projector is invisible in that change.
+      **The planned fix would not have fixed it.** Aliasing `SmartSearchResult = SearchResult` makes
+      the two provably one type, but an unread field is not an error, so the alias alone still raises
+      nothing in `mcp-apps`'s source. Verified by probe: with the alias and without the guard below,
+      the only `mcp-apps` errors are in **test fixtures**, which someone can satisfy by mechanically
+      adding the field to the fixtures without ever opening the projector.
+      Shipped: the alias (type-only import, so the file stays as pure as its header claims) **plus** a
+      type-level assertion — `Unprojected = Exclude<keyof SearchResult, keyof SearchResultRow |
+      NotProjected>` fed through `Assert<T extends true>`, which fails **in the source file** and puts
+      the offending key name in the message (`Type '"probeNewField"' does not satisfy the constraint
+      'true'`), emitting nothing at runtime. `NotProjected` is where "we looked and the view does not
+      need it" gets recorded, so the guard forces a decision rather than forbidding one. No new
+      runtime test: the existing fixtures already exercise assignability through the parameter type,
+      and a second one would assert nothing the suite does not.
+      **(a)** the unbound `catch` at `searchResults.html:300` now binds and logs, matching its sibling
+      at `:336`. `SimpleSearchFile` two types above was checked and deliberately left alone: it is a
+      genuine narrowing of the unexported `FileResult`, which carries a `match` field the projector
+      does not want — a subset by design, not a copy. Regenerated with `bun run gen:mcp-app`; the
+      drift test went red first, which is the guard working, and the decoded diff of
+      `searchResultsAppSource.ts` is exactly the catch change and nothing else
+      <!-- src:session opened:2026-08-16 closed:2026-08-17 -->
 - [x] `OMC-032` `bun run version` could not cut a release and now can, in two commands with a human
       gate between them. It used to end in `git push -u origin main`, which `main` refuses: a ruleset
       requires a pull request and classic branch protection requires `check-and-test` and (since
