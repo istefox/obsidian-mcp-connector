@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-08-17
+
 ### Added
 
 - **The assistant can now be stopped from overwriting an edit you made while it was thinking.** When it replaces a section of a note, it can state what it believes is currently there; if you have since typed in that section, or Obsidian Sync landed a change from another device, the replacement is refused instead of quietly discarding your words. The refusal explains itself, including that the usual cause is exactly this and not a fault. Nothing else changes: adding to a note is never blocked, since nothing is being overwritten, and an assistant that says nothing about what it expects keeps working exactly as before. There is also a new switch in **Settings → MCP Connector → MCP Tools**, off by default, that turns the check into a requirement — with it on, a replacement that does not say what it expects to overwrite is refused outright. Leave it off unless you want that, because a client that does not send the information will start seeing refusals for that one operation. The reasoning, including why the default will change in a future major version, is in `docs/architecture/ADR-0019-write-preconditions-across-mcp-calls.md`. Reported by @Madulone. (#445)
