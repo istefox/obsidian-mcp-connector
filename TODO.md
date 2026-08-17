@@ -47,9 +47,17 @@ Neither reaches a user; both cost real hours when they bite, and one already did
   and constraint 1's opt-in makes the protection optional, which is not protection. **Both
   corrections are now on the issue** (2026-08-17), with the file:line evidence and addressed to
   @Madulone, since #445 declares itself the spec for whoever prototypes it.
-- `#465` — the brief's declared gap: no ecosystem survey of how other MCP servers handle
-  read-then-write staleness. Informs #445's ADR, blocks nothing. Established while filing it: the
-  MCP SDK v2.0.0 defines no write-precondition mechanism at all.
+- `#465` — **survey done 2026-08-17, findings on the issue.** Prior art exists: `hashfile-mcp`
+  (`file_hash` parameter, token in a text footer, whole-file plus per-line, refuses) and
+  `stale-write-guard-fs` (a **tracked read** holding the view server-side, a typed `stale_view` deny
+  carrying `recover: reacquire`, **mandatory not opt-in**, and it explicitly catches edits made
+  outside the tool surface). Two of the brainstorm's first-principles conclusions now have
+  independent support: opt-in is the wrong default, and a server-held view is an ordinary pattern
+  rather than an exotic one. **Nobody merges** — both refuse — so the pre-mortem's fear about
+  merging prose is neither confirmed nor refuted by anyone's shipped experience. **Nobody uses
+  `_meta`** for the token either, so #445's ADR has to say why it diverges. The spec side is now
+  checked from both ends: no SEP and no issue in `modelcontextprotocol/modelcontextprotocol` about
+  write preconditions, matching the SDK finding.
 
 ### Not on any track
 
@@ -134,7 +142,7 @@ _none_
 
 ## Parked — external trigger, nothing to do until it fires
 
-- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
+- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only. **Trigger re-checked 2026-08-17 and it has NOT fired, in a sharper way than this entry assumed.** `modelcontextprotocol.io/extensions/client-matrix` tracks three official extensions — MCP Apps, OAuth Client Credentials, Enterprise-Managed Authorization — and **Tasks is not among them**: no column, no row, and the Tasks overview page points back at that same matrix. So it is not "no client declares it yet", it is "nobody's support is recorded anywhere". Implementing now would mean building against a spec no listed client is known to speak, with no way to verify one end-to-end call. Watch condition sharpened from "when the tiering page's client matrix moves" to **a Tasks column appearing there with at least one client checked**. The MCP Apps half moved to OMC-016 and shipped in 2.0.0 — and that matrix now lists **eleven** clients supporting `io.modelcontextprotocol/ui` (Claude web, Claude Desktop, VS Code Copilot, M365 Copilot, Goose, Postman, MCPJam, ChatGPT, Cursor, Archestra.AI, PostHog Code), against the **one** `R-18` verified. Both of `R-18`'s host findings are host-specific: `_meta` forwarding and the refusal of `obsidian://`. On a client that follows the scheme the click would open the note and the URL encoding — recorded as untested by any means — would finally be exercised <!-- src:session opened:2026-08-05 updated:2026-08-17 -->
 
 ## Blocked / Decisions Needed
 
