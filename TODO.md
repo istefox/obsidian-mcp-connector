@@ -175,11 +175,24 @@ to be titled "actionable now", which was false for both.
       refuted either: the mechanism reproduces the symptom exactly, nothing recovers what actually
       happened at 15:10, and the standing rule to confirm `prompts/list` sees the probe costs
       nothing and stays.
+      **UPDATE 2026-08-17 — the recovery `link.ts` prints was half of one, fixed in `2912174`.** It
+      named `mv` and stopped, and the two steps it skipped are the ones that lose data: the symlink
+      makes the **repo root** the plugin directory, so `data.json` and `embeddings/` have to be
+      copied *there*, not left behind in the vault. Both are gitignored at the root. Found by
+      compiling the sequence by hand for a real vault; verified by running what the script prints,
+      end to end, against a scratch vault.
+      **And the Labs vault turned out to be on iCloud Drive** (`~/Library/Mobile Documents/
+      com~apple~CloudDocs/Vaults/Labs`), which nothing in this repo recorded and which changes the
+      advice. Two claims, not one: *certain* — the link's target is outside the synced container, so
+      any other device on that vault finds a plugin folder it cannot resolve; *unverified* — whether
+      iCloud leaves the link itself alone, which nothing here has measured and for which this
+      machine has no precedent (no symlink exists anywhere in iCloud Drive, checked to depth 6).
+      `link.ts` now detects it on the **create** path only and refuses pending `ALLOW_ICLOUD=1`,
+      keeping the two claims separate in the message. The plugin directory is `mcp-tools-istefox`,
+      the manifest id — not `obsidian-mcp-tools`, which is what a hand-written recovery guessed.
       **Still open, deliberately, and now this alone:** the Labs vault is still a copy, and moving
-      that directory is a human step this script asks for rather than performs. The recovery has a
-      fourth step `link.ts` does not print — the symlink points at the repo root, so `data.json` and
-      `embeddings/` have to be restored *there*, not left in the vault; both are gitignored at the
-      root and neither exists there today <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
+      that directory is a human step this script asks for rather than performs
+      <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
 - [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
       plan's task 6 step 2 specified that the empty state should name "the query"; the result
       payload carries only `vaultName`, never the query string — both projections are called as

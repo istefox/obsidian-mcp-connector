@@ -103,6 +103,73 @@ export function decideLinkAction(
 }
 
 /**
+ * Everything macOS keeps in iCloud lives under this one directory: the Drive
+ * itself is `com~apple~CloudDocs`, per-app containers are siblings of it
+ * (`iCloud~md~obsidian`). Matching the parent covers both, and a vault in
+ * either is synced the same way.
+ */
+const ICLOUD_MARKER = "/Library/Mobile Documents/";
+
+export type ICloudDecision =
+  | { kind: "not-icloud" }
+  | { kind: "allowed"; message: string }
+  | { kind: "blocked"; message: string };
+
+/**
+ * Whether to link into a vault that iCloud syncs, which is a question this
+ * script refuses to answer on its own.
+ *
+ * Deliberately separate from {@link decideLinkAction}: what is there is a fact
+ * about the filesystem, this is a judgement about someone's setup. Folding the
+ * two together would make a `create` conditional on an environment variable,
+ * and the copied-directory refusal must never become overridable by one.
+ *
+ * The confirmation is an env var rather than a stdin prompt, matching
+ * `scripts/version.ts`'s `FORCE=true`. A prompt would hang this script the
+ * first time anything non-interactive ran it. The name is narrow on purpose:
+ * `FORCE=true` would read as "override the refusals too", and those are not
+ * negotiable.
+ */
+export function decideICloudTarget(
+  targetPath: string,
+  repoRoot: string,
+  allowICloud: boolean,
+): ICloudDecision {
+  if (!targetPath.includes(ICLOUD_MARKER)) return { kind: "not-icloud" };
+
+  // Stated as two separate claims because they are not equally solid, and
+  // collapsing them into one confident warning would be the same error this
+  // repo keeps catching elsewhere.
+  const certain =
+    `  Certain: the link points at ${repoRoot}, which is OUTSIDE the synced\n` +
+    `    container. Any other device syncing this vault finds a plugin folder it\n` +
+    `    cannot resolve, so the plugin is simply absent there.\n`;
+  const unknown =
+    `  NOT known: whether iCloud leaves the link itself intact over time.\n` +
+    `    Nothing here has measured it. Treat it as unverified, not as safe.\n`;
+
+  if (allowICloud) {
+    return {
+      kind: "allowed",
+      message:
+        `${targetPath} is inside iCloud. Proceeding because ALLOW_ICLOUD is set.\n` +
+        certain +
+        unknown,
+    };
+  }
+
+  return {
+    kind: "blocked",
+    message:
+      `${targetPath} is inside iCloud, and this script will not decide that for you.\n` +
+      certain +
+      unknown +
+      `  If this vault is only ever opened on this Mac, neither point applies.\n` +
+      `  Re-run the same command with ALLOW_ICLOUD=1 in front of it.`,
+  };
+}
+
+/**
  * `lstat`, never `stat`, and that is load-bearing: `stat` follows the link, so a
  * valid symlink would report as a directory and a broken one as absent — the
  * exact conflation this whole change exists to undo.
@@ -173,6 +240,25 @@ async function main() {
     // `.catch(console.error)` and exited 0 whatever happened.
     console.error(`\n✗ ${decision.message}\n`);
     process.exit(1);
+  }
+
+  // BEFORE `decision.message` is printed, not after. That message is
+  // "Creating symlink at …", and printing it ahead of a refusal would announce
+  // an action that is not going to happen — the precise false claim #468 was
+  // about. Only the create path asks the question: an existing correct link is
+  // not a decision being taken now, and re-running must not start refusing a
+  // setup already in place and working.
+  if (decision.action === "create") {
+    const icloud = decideICloudTarget(
+      targetPath,
+      projectRootDirectory,
+      process.env.ALLOW_ICLOUD === "1",
+    );
+    if (icloud.kind === "blocked") {
+      console.error(`\n✗ ${icloud.message}\n`);
+      process.exit(1);
+    }
+    if (icloud.kind === "allowed") console.warn(`\n! ${icloud.message}`);
   }
 
   console.log(decision.message);
