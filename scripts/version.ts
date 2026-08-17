@@ -22,6 +22,11 @@
  * after means the tag points at whatever main actually has, so either merge
  * method is correct and that constraint is gone.
  *
+ * Phase one also refuses a cut whose CHANGELOG.md is not ready (#476), and is
+ * the reason CHANGELOG.md is the one path it tolerates as uncommitted: the
+ * release notes are moved and the version bumped in the same commit, rather
+ * than in a PR of their own that exists only to relocate a heading.
+ *
  * DRY_RUN=1 prints every mutating command instead of running it, and still
  * runs every read-only preflight. It is the only way to exercise this flow
  * without cutting a real release.
@@ -35,6 +40,14 @@ const FORCE = !!process.env.FORCE;
 const PKG_PATH = "./package.json";
 const MANIFEST_PATH = "./manifest.json";
 const VERSIONS_PATH = "./versions.json";
+const CHANGELOG_PATH = "./CHANGELOG.md";
+
+/**
+ * The one path phase one tolerates as uncommitted. See
+ * {@link checkChangelogReady} for why the release notes are edited in the same
+ * breath as the cut rather than in a PR of their own.
+ */
+const CHANGELOG_STATUS_PATH = "CHANGELOG.md";
 
 export type SemverPart = "major" | "minor" | "patch";
 
@@ -104,6 +117,118 @@ export function verifyCommittedVersion(
   return problems;
 }
 
+/**
+ * The `## [label]` headings in a changelog, with the body lines under each.
+ *
+ * Structural rather than a regex built from the version string, which contains
+ * dots: the label is whatever sits between the first `[` and the first `]`, and
+ * a section runs to the next such heading or to the end of the file.
+ */
+function changelogSections(text: string): Map<string, string[]> {
+  const lines = text.split("\n");
+  const sections = new Map<string, string[]>();
+  let current: string[] | null = null;
+  for (const line of lines) {
+    if (line.startsWith("## [")) {
+      const end = line.indexOf("]");
+      const label = end === -1 ? line.slice(4) : line.slice(4, end);
+      current = [];
+      // First heading wins on a duplicate label. A file with two of them is
+      // already malformed and this function is not the place to say so.
+      if (!sections.has(label)) sections.set(label, current);
+      else current = sections.get(label)!;
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  return sections;
+}
+
+/**
+ * Every reason `CHANGELOG.md` is not ready for `version` to be cut, as
+ * human-readable lines. Empty means it is ready.
+ *
+ * This exists because nothing else in the repo reads this file. `bun run
+ * check`, the whole suite, `format:check`, both CI jobs and `release.yml` all
+ * pass with the released changes still sitting under `## [Unreleased]`, so a
+ * release can publish with its own notes in the wrong section and no signal
+ * anywhere (#476). It nearly happened on the 2.1.0 cut, caught only because a
+ * dry run listed three filenames and the fourth was missing.
+ *
+ * It refuses rather than writing the heading itself. The prose under a release
+ * heading is written by a human every time, and this repo's bias is to refuse
+ * rather than to guess.
+ *
+ * The date is deliberately not validated. The convention is
+ * `## [X.Y.Z] — YYYY-MM-DD`, but policing prose formatting buys little and
+ * would refuse honest cuts; the version label is the part that carries meaning.
+ */
+export function checkChangelogReady(text: string, version: string): string[] {
+  const problems: string[] = [];
+  const sections = changelogSections(text);
+  const nonEmpty = (lines: string[]): string[] =>
+    lines.filter((l) => l.trim() !== "");
+
+  const unreleased = sections.get("Unreleased");
+  if (!unreleased) {
+    // Not a pass. A file this check cannot read is the failure mode it exists
+    // to prevent, not an exemption from it.
+    problems.push(
+      "CHANGELOG.md has no `## [Unreleased]` heading, so this check cannot tell whether the release notes were moved.",
+    );
+  } else {
+    const left = nonEmpty(unreleased);
+    if (left.length > 0) {
+      problems.push(
+        `CHANGELOG.md still has content under \`## [Unreleased]\`, starting: ${left[0]!.trim()}\n` +
+          `    Move it under a \`## [${version}] — <date>\` heading.`,
+      );
+    }
+  }
+
+  const released = sections.get(version);
+  if (!released) {
+    problems.push(
+      `CHANGELOG.md has no \`## [${version}]\` heading. The release would publish with no entry of its own.`,
+    );
+  } else if (nonEmpty(released).length === 0) {
+    problems.push(
+      `CHANGELOG.md's \`## [${version}]\` section is empty. A dated heading with nothing under it is as wrong as notes left under Unreleased.`,
+    );
+  }
+
+  return problems;
+}
+
+/**
+ * The uncommitted paths that should block a release, given the ones this phase
+ * tolerates.
+ *
+ * Exported and tested because "which uncommitted files block a release" is
+ * exactly the kind of predicate that is wrong silently: too permissive and a
+ * cut carries someone's work in progress, too strict and the changelog cannot
+ * be edited in the same breath as the bump.
+ */
+export function blockingStatusPaths(
+  porcelain: string,
+  allowed: string[] = [],
+): string[] {
+  const allow = new Set(allowed);
+  return porcelain
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .map((line) => {
+      // `XY path`, with renames and copies spelled `XY old -> new`. The
+      // destination is the path that is actually dirty.
+      const path = line.slice(2).trim();
+      const arrow = path.indexOf(" -> ");
+      return arrow === -1 ? path : path.slice(arrow + 4);
+    })
+    .map((path) => path.replace(/^"|"$/g, ""))
+    .filter((path) => !allow.has(path));
+}
+
 function die(message: string): never {
   console.error(`\n✗ ${message}\n`);
   process.exit(1);
@@ -131,12 +256,19 @@ async function gitText(argv: string[]): Promise<string> {
  *
  * The origin/main comparison is new. A stale local main would have based a
  * release on old code, and the old script had nothing to say about it.
+ *
+ * `allowDirty` is how phase one lets `CHANGELOG.md` be edited in the same
+ * breath as the bump. Phase TWO passes nothing and stays strict: it reads the
+ * committed tree to decide what to tag, so a dirty file there would mean the
+ * tag does not describe what was checked.
  */
-async function assertReleasableMain(): Promise<void> {
+async function assertReleasableMain(allowDirty: string[] = []): Promise<void> {
   const status = await gitText(["git", "status", "--porcelain"]);
-  if (status && !FORCE) {
+  const blocking = blockingStatusPaths(status, allowDirty);
+  if (blocking.length > 0 && !FORCE) {
     die(
-      "There are uncommitted changes. Commit them before releasing, or run with FORCE=true.",
+      `There are uncommitted changes. Commit them before releasing, or run with FORCE=true.\n` +
+        blocking.map((p) => `    ${p}`).join("\n"),
     );
   }
   const branch = await gitText(["git", "rev-parse", "--abbrev-ref", "HEAD"]);
@@ -158,7 +290,7 @@ async function assertReleasableMain(): Promise<void> {
 }
 
 async function prepare(semverPart: string): Promise<void> {
-  await assertReleasableMain();
+  await assertReleasableMain([CHANGELOG_STATUS_PATH]);
 
   const pkg = await Bun.file(PKG_PATH).json();
   const version = bump(pkg.version, semverPart);
@@ -167,6 +299,28 @@ async function prepare(semverPart: string): Promise<void> {
   const existing = await gitText(["git", "tag", "-l", version]);
   if (existing) {
     die(`Tag ${version} already exists locally. Nothing to prepare.`);
+  }
+
+  // Read-only, so it runs for real under DRY_RUN like every other preflight. A
+  // dry run that skipped it would prove nothing about the real one.
+  const changelogProblems = checkChangelogReady(
+    readFileSync(CHANGELOG_PATH, "utf8"),
+    version,
+  );
+  if (changelogProblems.length > 0) {
+    if (FORCE) {
+      console.warn(
+        `\n! CHANGELOG.md is not ready and FORCE=true is set. Continuing:\n` +
+          changelogProblems.map((p) => `    ${p}`).join("\n"),
+      );
+    } else {
+      die(
+        `CHANGELOG.md is not ready for ${version}:\n` +
+          changelogProblems.map((p) => `    ${p}`).join("\n") +
+          `\n  Edit it now — it is the one file this phase lets you leave uncommitted, ` +
+          `and it rides the release commit. Or run with FORCE=true.`,
+      );
+    }
   }
 
   console.log(`\nPreparing ${pkg.version} → ${version} (${semverPart})\n`);
@@ -197,7 +351,17 @@ async function prepare(semverPart: string): Promise<void> {
   );
 
   await run(["git", "checkout", "-b", branch]);
-  await run(["git", "add", PKG_PATH, MANIFEST_PATH, VERSIONS_PATH]);
+  // CHANGELOG.md is in the list whether or not it was edited: `git add` on an
+  // unchanged path is a no-op, and leaving it out would strand the one edit
+  // this phase deliberately allowed.
+  await run([
+    "git",
+    "add",
+    PKG_PATH,
+    MANIFEST_PATH,
+    VERSIONS_PATH,
+    CHANGELOG_PATH,
+  ]);
   await run(["git", "commit", "-m", version]);
   await run(["git", "push", "-u", "origin", branch]);
 
@@ -213,7 +377,8 @@ async function prepare(semverPart: string): Promise<void> {
       "--title",
       `chore(release): ${version}`,
       "--body",
-      `Version bump only: \`package.json\`, \`manifest.json\`, \`versions.json\`.\n\n` +
+      `Version bump: \`package.json\`, \`manifest.json\`, \`versions.json\`, ` +
+        `plus \`CHANGELOG.md\` if the release notes were moved in the same step.\n\n` +
         `Merge this once CI is green, pull \`main\`, then run \`bun run version:tag\` to tag and publish. ` +
         `Either merge method is fine — the tag is created after the merge, so it points at whatever \`main\` has.`,
     ]);

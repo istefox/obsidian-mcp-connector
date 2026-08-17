@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=35 -->
+<!-- project-tasks: prefix=OMC lastId=36 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 5 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -65,10 +65,9 @@ None of these reaches a user; they cost real hours when they bite, and two alrea
   failed all four assertions against an Aug 11 `main.js` and read as a defect in new code.
 - `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
   mechanical fix and no issue: the defence is procedural and belongs in the habit.
-- `#476` — `version.ts` cuts a release without touching `CHANGELOG.md`. Found during the `2.1.0` cut
-  and issue-only for now, since nobody has committed to fixing it. The proposed answer is a refusal
-  at phase one when `[Unreleased]` is non-empty, rather than generating the heading: the prose under
-  it is written by a human anyway, and this repo's bias is to refuse rather than guess.
+- `OMC-036` / `#476` — **closed 2026-08-17**, same day it was filed. `version.ts` now refuses a cut
+  whose `CHANGELOG.md` is not ready, and tolerates that one file being uncommitted so the notes and
+  the bump land in the same commit.
 
 ### Track 3 — design. Cleared 2026-08-17, same day it was written down
 
@@ -108,7 +107,7 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
 | `OMC-035` | `#445` | **both closed 2026-08-17** — `ADR-0019` decided it, `ffca69f` shipped it, the issue closed with what diverged from its own proposal |
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
-| — | `#476` | issue-only **for now**: found during the `2.1.0` cut, nobody has committed to fixing it, so no ledger id yet by this table's own rule |
+| `OMC-036` | `#476` | **both closed 2026-08-17** — the guard ships with the dirty-`CHANGELOG.md` allowance the issue's proposal turned out to need |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
@@ -496,6 +495,28 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-036` #476 `version.ts` cuts a release without touching `CHANGELOG.md`. Found during the
+      `2.1.0` cut, hours after that cut nearly shipped its own notes under `[Unreleased]` with every
+      check green — nothing in the gate or in `release.yml` reads that file.
+      **The issue's own proposal was not enough, and implementing it is what showed why.** A pure
+      refusal collides with phase one's clean-tree preflight: the heading would have to land on
+      `main` first, through a PR that exists only to move it. So the guard ships with the one
+      allowance that makes it usable — `CHANGELOG.md` is the single path phase one tolerates as
+      uncommitted, and it rides the release commit. Phase two passes no allowance and stays strict,
+      because it reads the committed tree to decide what to tag.
+      Two exported pure functions, tested the way `verifyCommittedVersion` is: `checkChangelogReady`
+      reports **every** problem rather than the first (missing `[Unreleased]`, notes left under it,
+      no heading for the version being cut, a dated heading with nothing under it), and
+      `blockingStatusPaths` decides which uncommitted paths block. Version labels are matched
+      exactly, so `2.1.1` is not satisfied by a `## [2.1.10]` heading — the trap an unescaped-dot
+      regex would have walked into.
+      **No date validation and no generated prose**, on purpose: the notes are written by a human
+      every time and this repo refuses rather than guesses.
+      Verified against the real `CHANGELOG.md` rather than only fixtures: cutting `2.1.1` today is
+      refused for the missing heading, cutting `2.1.0` passes, notes left under `[Unreleased]` are
+      refused with **both** problems named. Mutation-checked both ways — a `checkChangelogReady` that
+      never refuses turns 6 tests red, an inert `blockingStatusPaths` turns 3 red. Suite `scripts/`
+      134 → 148.
 - [x] `OMC-035` #445 Write preconditions across separate MCP calls. **Decided in `ADR-0019` and
       implemented the same day**, after the shape had been recorded as unscheduled — the schedule
       changed, not the design. `patch_vault_file` and `patch_active_file` accept an optional
