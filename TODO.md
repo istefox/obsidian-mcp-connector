@@ -1,4 +1,4 @@
-<!-- project-tasks: prefix=OMC lastId=37 -->
+<!-- project-tasks: prefix=OMC lastId=38 -->
 # PROJECT TASKS
 
 Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
@@ -62,7 +62,13 @@ failure ("no compile error") was false, and the fix as planned would not have fi
 None of these reaches a user; they cost real hours when they bite, and two already have.
 
 - `OMC-030` / `#468` — a vault verification can run against a stale build, and one did: the first `B3` run
-  failed all four assertions against an Aug 11 `main.js` and read as a defect in new code.
+  failed all four assertions against an Aug 11 `main.js` and read as a defect in new code. Down to
+  one open half — relinking the Labs vault, a human step. Its "unexplained" half turned out to be a
+  real defect and left as `OMC-038`.
+- `OMC-038` / `#483` — **closed 2026-08-17**, the day it was split out. `prompts/list` cached a scan
+  taken before the file was indexed and never re-checked, so a prompt could stay invisible for a
+  whole session. Found by reading `OMC-030`'s "may have no close condition" half rather than
+  believing it.
 - `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
   mechanical fix and no issue: the defence is procedural and belongs in the habit.
 - `OMC-036` / `#476` — **closed 2026-08-17**, same day it was filed. `version.ts` now refuses a cut
@@ -109,6 +115,7 @@ section exists so the next drift is visible rather than rediscovered.
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | `OMC-036` | `#476` | **both closed 2026-08-17** — the guard ships with the dirty-`CHANGELOG.md` allowance the issue's proposal turned out to need |
 | `OMC-037` | `#481` | **both closed 2026-08-17** — found while archiving a branch: any tag published a release |
+| `OMC-038` | `#483` | **both closed 2026-08-17** — split out of `OMC-030` once the "unexplained" half turned out to have a mechanism |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
@@ -159,9 +166,20 @@ to be titled "actionable now", which was false for both.
       vault. Mutation-checked both ways. `readlink` may return a **relative** path and is resolved
       against the link's own directory, not the cwd — resolving against the cwd would refuse a
       perfectly good link.
-      **Still open, deliberately:** the Labs vault is still a copy, and moving that directory is a
-      human step this script now asks for rather than performing. The `prompts/list` mystery above
-      is untouched and may have no close condition <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
+      **UPDATE 2026-08-17 — the `prompts/list` mystery is not a mystery, and it is not about the
+      vault.** It is a defect in plugin code, split out as `OMC-038` / `#483` and fixed there:
+      `discoverPrompts` reads frontmatter out of `app.metadataCache`, which lags the vault, and the
+      memoized lister is keyed on an epoch only a **vault** event advances — so a list served inside
+      the indexing window omits the new prompt, caches that answer, and never re-checks, because
+      indexing is not a vault event. Both guesses recorded above were unnecessary. Neither is
+      refuted either: the mechanism reproduces the symptom exactly, nothing recovers what actually
+      happened at 15:10, and the standing rule to confirm `prompts/list` sees the probe costs
+      nothing and stays.
+      **Still open, deliberately, and now this alone:** the Labs vault is still a copy, and moving
+      that directory is a human step this script asks for rather than performs. The recovery has a
+      fourth step `link.ts` does not print — the symlink points at the repo root, so `data.json` and
+      `embeddings/` have to be restored *there*, not left in the vault; both are gitignored at the
+      root and neither exists there today <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
 - [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
       plan's task 6 step 2 specified that the empty state should name "the query"; the result
       payload carries only `vaultName`, never the query string — both projections are called as
@@ -515,6 +533,42 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-038` #483 `prompts/list` could return a list missing a prompt that demonstrably exists,
+      and keep returning it for the whole session. Split out of `OMC-030`, whose text called this
+      "recorded rather than explained" and "may not have a close condition". It has one.
+      **Three reasonable pieces, one hole between them.** `discoverPrompts` reads frontmatter from
+      `app.metadataCache.getFileCache` and skips any file whose cache is still null.
+      `app.metadataCache` lags the vault: `vault.on("create")` fires when the file appears, the
+      cache fills once the file has been indexed. And the memoized lister in `features/prompts/
+      index.ts` is keyed on an epoch that **only a vault event** advances. So a `prompts/list`
+      arriving inside the indexing window scans, correctly finds no frontmatter, omits the file —
+      and caches that under the current epoch. Indexing completing is not a vault event, so the
+      epoch never moves and the omission is permanent until some unrelated prompt file is touched.
+      **The same hole has two more faces.** The debounced comparison can fire
+      `notifications/prompts/list_changed` and not invalidate the memo, so a client that re-lists on
+      the notification is told the set changed and then shown that it had not. And if the comparison
+      itself runs before indexing it computes `next === lastNotified`, declines to notify, and is
+      never re-scheduled — which is exactly the state `#468` described as "a silent notification
+      path and a frozen list are indistinguishable". One cause, both symptoms. A third door is
+      startup: `promptsSetup` runs from `onload()`, not behind `onLayoutReady`, so a list served
+      while Obsidian is indexing at launch can freeze with no vault event anywhere to unstick it.
+      **The fix is one listener**: `app.metadataCache.on("changed", ...)` in `vaultWatcher.ts`,
+      behind the `isPromptFile` filter the vault hooks already use, unregistered from `stop()`.
+      Checked against the installed typings (`node_modules/obsidian/obsidian.d.ts`, obsidian 1.13.1,
+      read 2026-08-17): documented as "Called when a file has been indexed, and its (updated) cache
+      is now available", and documented as **not** firing on rename — already covered by the vault
+      rename hook, so this is the one event to add rather than the first of several. Nothing else in
+      `src/` listened to `metadataCache`.
+      **Why no test caught it.** Every existing prompt test sets the file and its metadata in the
+      same breath, so the window does not exist in the harness. The three regression tests set them
+      as separate steps with the list call in between; the mock `metadataCache` had `getFileCache`
+      and no `on`/`offref`, so it got both, on a **separate** handler map from the vault's — one
+      registry walked by event name would let a vault fire reach a metadata listener and erase the
+      very gap under test. All three fail before the fix; the `offref` and the path filter were each
+      mutation-checked.
+      **What is not claimed.** This reproduces the 15:10 symptom of 2026-08-16 exactly, but nothing
+      recovers what happened that afternoon, so it is not proven to have been that run's cause.
+      `OMC-030`'s two guesses are unnecessary, not refuted <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-037` #481 Any tag pushed to this repo published a release. `release.yml` triggered on
       `tags: ["*"]` with the job gated only on `github.ref_type == 'tag'`, and that job creates a
       draft and then promotes it with `gh release edit --draft=false`. So `git push origin <tag>`

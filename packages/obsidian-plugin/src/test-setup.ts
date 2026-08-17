@@ -645,6 +645,14 @@ type MockVaultState = {
     object,
     { event: string; handler: (...args: unknown[]) => void }
   >;
+  // Same shape as `eventHandlers`, for metadataCache.on / offref, and
+  // deliberately a SEPARATE map. The two emitters share event names in
+  // the real API surface, so one registry walked by name would let
+  // `fireMockVaultEvent` reach a metadataCache listener and vice versa.
+  metadataEventHandlers: Map<
+    object,
+    { event: string; handler: (...args: unknown[]) => void }
+  >;
 };
 
 // Synthetic absolute filesystem prefix used by the mock `adapter.rmdir`
@@ -673,6 +681,7 @@ const _mockState: MockVaultState = {
   modifyFailPaths: new Set(),
   readMutations: new Map(),
   eventHandlers: new Map(),
+  metadataEventHandlers: new Map(),
 };
 
 export function resetMockVault(): void {
@@ -699,6 +708,7 @@ export function resetMockVault(): void {
   _mockState.modifyFailPaths.clear();
   _mockState.readMutations.clear();
   _mockState.eventHandlers.clear();
+  _mockState.metadataEventHandlers.clear();
   resetMockPeriodicNotes();
   resetMockDataview();
   resetMockBookmarks();
@@ -711,6 +721,24 @@ export function resetMockVault(): void {
  */
 export function fireMockVaultEvent(event: string, ...args: unknown[]): void {
   for (const { event: e, handler } of _mockState.eventHandlers.values()) {
+    if (e === event) handler(...args);
+  }
+}
+
+/**
+ * Simulate a `metadataCache` event (`changed` / `deleted` / `resolve` / ...).
+ *
+ * Separate from {@link fireMockVaultEvent} because the timing gap between the
+ * two emitters is the thing under test: the vault announces a file the moment
+ * it appears, the metadata cache only once that file has been indexed, and a
+ * list derived from frontmatter is wrong in between. Firing both from one
+ * helper would erase exactly the window a test needs to reproduce.
+ */
+export function fireMockMetadataEvent(event: string, ...args: unknown[]): void {
+  for (const {
+    event: e,
+    handler,
+  } of _mockState.metadataEventHandlers.values()) {
     if (e === event) handler(...args);
   }
 }
@@ -1228,6 +1256,20 @@ export function mockApp(): App {
       return _mockState.metadataCache.get(path) ?? null;
     },
     getTags: (): Record<string, number> => ({ ..._mockState.tags }),
+    // `metadataCache` is an `Events` subclass in the real API, so it
+    // carries the same on/offref pair the vault does. Driven by
+    // `fireMockMetadataEvent`, never by `fireMockVaultEvent`.
+    on: (event: string, handler: unknown) => {
+      const ref = {};
+      _mockState.metadataEventHandlers.set(ref, {
+        event,
+        handler: handler as (...args: unknown[]) => void,
+      });
+      return ref;
+    },
+    offref: (ref: object) => {
+      _mockState.metadataEventHandlers.delete(ref);
+    },
     // Mirrors Obsidian's runtime `MetadataCache.isUserIgnored` (not in
     // the bundled `obsidian.d.ts`). Backed by `setMockIgnored()`.
     isUserIgnored: (path: string): boolean => _mockState.ignored.has(path),

@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach, spyOn } from "bun:test";
 import {
+  fireMockMetadataEvent,
   fireMockVaultEvent,
   mockApp,
   resetMockVault,
@@ -391,5 +392,112 @@ describe("prompts list-changed notification (ADR-0017)", () => {
     await settle();
 
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * The indexing window (#483).
+ *
+ * `discoverPrompts` reads frontmatter out of `app.metadataCache` and skips any
+ * file whose cache is still null. The vault announces a file the moment it
+ * appears; the cache is populated later, when the file has been indexed. Every
+ * test above sets the file and its metadata together, so none of them can see
+ * what happens in between — and what happens is that a list served inside that
+ * window omits the new prompt and is then MEMOIZED, keyed on an epoch only a
+ * vault event advances. Indexing is not a vault event, so the omission is
+ * permanent for the session.
+ *
+ * These tests therefore set the file and its metadata as two separate steps,
+ * with the list call deliberately placed between them.
+ */
+describe("prompts list vs the metadata indexing window", () => {
+  const DEBOUNCE = 5;
+  const settle = () => new Promise((r) => setTimeout(r, DEBOUNCE + 40));
+
+  /** A prompt that exists on disk but has not been indexed yet. */
+  function unindexedPromptFile(path: string): void {
+    setMockFile(path, "Body");
+  }
+
+  /** The indexing that `metadataCache` performs some time afterwards. */
+  function indexPromptFile(path: string, description = "d"): void {
+    setMockMetadata(path, {
+      frontmatter: { tags: ["mcp-tools-prompt"], description },
+    });
+    fireMockMetadataEvent("changed", { path });
+  }
+
+  test("a list served before the new file is indexed is not cached forever", async () => {
+    unindexedPromptFile("Prompts/greet.md");
+    indexPromptFile("Prompts/greet.md");
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app, { debounceMs: DEBOUNCE });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    unindexedPromptFile("Prompts/probe.md");
+    fireMockVaultEvent("create", { path: "Prompts/probe.md" });
+
+    // Correct at this instant, and the whole problem: the file is there, its
+    // frontmatter is not, so it is not a prompt yet. This answer gets cached.
+    expect((await registry.list()).prompts).toHaveLength(1);
+
+    indexPromptFile("Prompts/probe.md");
+
+    expect((await registry.list()).prompts).toHaveLength(2);
+    teardown(result.state);
+  });
+
+  test("a list served at startup, before ANY file is indexed, is not cached forever", async () => {
+    // No vault event anywhere in this test. This is a client that calls
+    // prompts/list while Obsidian is still indexing at launch — `setup` runs
+    // from `onload`, not behind `onLayoutReady`, so the window is reachable.
+    unindexedPromptFile("Prompts/greet.md");
+
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app, { debounceMs: DEBOUNCE });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect((await registry.list()).prompts).toHaveLength(0);
+
+    indexPromptFile("Prompts/greet.md");
+
+    expect((await registry.list()).prompts).toHaveLength(1);
+    teardown(result.state);
+  });
+
+  test("the list a client re-fetches on a notification is the list that was notified about", async () => {
+    unindexedPromptFile("Prompts/greet.md");
+    indexPromptFile("Prompts/greet.md");
+
+    const calls: number[] = [];
+    const registry = new PromptRegistryClass();
+    const app = mockApp();
+    const result = await setup(registry, app, {
+      notifyPromptsChanged: () => calls.push(1),
+      debounceMs: DEBOUNCE,
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    unindexedPromptFile("Prompts/probe.md");
+    fireMockVaultEvent("create", { path: "Prompts/probe.md" });
+    // Poisons the memo, exactly as above.
+    await registry.list();
+
+    indexPromptFile("Prompts/probe.md");
+    await settle();
+
+    // The comparison re-scans and sees the probe, so it notifies. The memo is
+    // keyed on an epoch that comparison never touches, so a client acting on
+    // that notification used to be handed the list without the probe in it —
+    // told the set had changed and then shown that it had not.
+    expect(calls).toHaveLength(1);
+    expect((await registry.list()).prompts).toHaveLength(2);
+    teardown(result.state);
   });
 });
