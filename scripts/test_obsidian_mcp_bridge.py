@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 import urllib.error
+from typing import Optional
 from unittest import mock
 
 import obsidian_mcp_bridge as bridge
@@ -359,6 +360,76 @@ class ConcurrencyTests(unittest.TestCase):
         ]
         _, elapsed = self._run_main(fake_urlopen, lines)
         self.assertLess(elapsed, 1.0)
+
+
+class _RecordingStream:
+    """Text stream double that records the encodings it was reconfigured to."""
+
+    def __init__(self, name: str, raises: Optional[Exception] = None):
+        self.name = name
+        self.raises = raises
+        self.encodings: list[str] = []
+
+    def reconfigure(self, encoding: Optional[str] = None, **kwargs) -> None:
+        if self.raises is not None:
+            raise self.raises
+        self.encodings.append(encoding)
+
+
+class ForceUtf8StdioTests(unittest.TestCase):
+    """Regression guard for the Windows non-ASCII corruption of discussion #406.
+
+    These assert the CALL, not the platform behaviour. On macOS and Linux the
+    default stdio encoding is already UTF-8, so a test that only checked that
+    round-tripping `ø` works would pass with the fix deleted, on every machine
+    that runs CI. What actually has to hold is that the bridge forces the
+    encoding rather than inheriting it.
+    """
+
+    def test_reconfigures_every_stream_to_utf8(self):
+        streams = [_RecordingStream("<stdin>"), _RecordingStream("<stdout>")]
+        moved = bridge.force_utf8_stdio(streams)
+        self.assertEqual(moved, 2)
+        self.assertEqual(streams[0].encodings, ["utf-8"])
+        self.assertEqual(streams[1].encodings, ["utf-8"])
+
+    def test_skips_a_stream_with_no_reconfigure(self):
+        # io.StringIO has no reconfigure, and the suite's own _run_main patches
+        # sys.stdout with one — so this is the path every other test here takes.
+        moved = bridge.force_utf8_stdio([io.StringIO()])
+        self.assertEqual(moved, 0)
+
+    def test_a_refusing_stream_does_not_stop_the_bridge(self):
+        # A detached or closed stream raises. Refusing to start would be worse
+        # than running with the platform default, which is correct off Windows.
+        hostile = _RecordingStream("<stdout>", raises=ValueError("detached"))
+        healthy = _RecordingStream("<stdin>")
+        moved = bridge.force_utf8_stdio([hostile, healthy])
+        self.assertEqual(moved, 1)
+        self.assertEqual(healthy.encodings, ["utf-8"])
+
+    def test_main_forces_utf8_before_reading_a_single_line(self):
+        # The ordering IS the invariant: the corruption happens at the stdio
+        # boundary, so a reconfigure that lands after the first read has
+        # already lost that line. Deleting the call from main(), or moving it
+        # below the read loop, fails here.
+        events: list[str] = []
+
+        class _RecordingStdin:
+            def __iter__(self):
+                events.append("read")
+                return iter([])
+
+        with mock.patch.object(
+            bridge, "force_utf8_stdio", lambda *a, **k: events.append("reconfigure")
+        ):
+            bridge.main(
+                argv=["bridge.py", "http://fake.local/mcp", "tok"],
+                stdin=_RecordingStdin(),
+            )
+
+        self.assertEqual(events[0], "reconfigure")
+        self.assertIn("read", events)
 
 
 if __name__ == "__main__":

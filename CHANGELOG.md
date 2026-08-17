@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] — 2026-08-17
+
+### Fixed
+
+- **The Windows Python bridge no longer corrupts accented and non-Latin characters.** If you use `scripts/obsidian_mcp_bridge.py` — the documented Windows path — every file name, folder name and piece of content containing a character outside plain ASCII was mangled in both directions. A note at `Personer/Person - Søren Møller-Nielsen.md` was looked up as `Personer/Person - SÃ¸ren MÃ¸ller-Nielsen.md` and reported as not found, and an alias written through the bridge landed in the note corrupted the same way. Sending an already-corrupted string corrupted it again. The cause was one step at the very edge of the process: Claude Desktop writes UTF-8 down the pipe, but Python opens `sys.stdin` and `sys.stdout` using the encoding your Windows locale prefers, which is usually not UTF-8, so the bytes were decoded as the wrong character set before anything else looked at them. That is also why it affected everything at once rather than one tool. The bridge now forces both streams to UTF-8 before it reads its first line. Nothing to configure, and nothing changes on macOS or Linux, where the default was already UTF-8. If you had set `PYTHONUTF8=1` or `PYTHONIOENCODING=utf-8` in your client config to work around this, you can leave it or remove it; the bridge no longer depends on it. Root-caused by @smollern against a Danish vault, including the fix, in discussion #406.
+
 ## [2.0.0] — 2026-08-17
 
 ### Added

@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=32 -->
+<!-- project-tasks: prefix=OMC lastId=33 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 7 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 3/5
+Updated: 2026-08-17 · Open: 8 (P1: 1) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 4/5
 
 ## Roadmap — 2.0
 
@@ -250,7 +250,7 @@ blank.
       3,577 B size that did not fit a 38 KB shim. Shipping since 2026-07-15, so not a 2.0.0
       regression; recorded as `OMC-031` rather than fixed here, and it is the one thing in this
       release nothing in the gate speaks for
-- [ ] `D4` The Obsidian scanner runs **on the release, never before**. Known constraints that
+- [x] `D4` **Passed on the 2.0.0 release, 2026-08-17.** The Obsidian scanner runs **on the release, never before**. Known constraints that
       have already failed a release: no `eslint-disable` on `obsidianmd/*` rules, and
       non-plugin code stays out of `src/` because the scanner lints `src/**` only
 - [ ] `D5` Post-release: tell @smollern (#406), @ottopichlhoefer (#430) and @Madulone (#352)
@@ -258,6 +258,35 @@ blank.
 
 ## Next — measured gaps, actionable now
 
+- [ ] `OMC-033` **P1** The Windows bridge still corrupts every non-ASCII path and body, and the
+      fix has been known and confirmed since 2026-07-26. @smollern root-caused it in discussion
+      #406 against a Danish vault: `scripts/obsidian_mcp_bridge.py` reads `sys.stdin` and writes
+      through `sys.stdout.write` (`main()` at :316-326, `write_message` at :216), both **text**
+      streams, so on Windows they use the locale codepage rather than UTF-8. Claude Desktop sends
+      UTF-8 down the pipe, so `ø` (`0xC3 0xB8`) is decoded as two cp1252 characters and arrives as
+      `Ã¸`; a path lookup then fails as "File not found", and a written alias lands corrupted in
+      the file. Re-sending a corrupted string doubles the corruption, which is what identified it
+      as a single reinterpretation at the stdio boundary. **He applied
+      `sys.stdin/sys.stdout.reconfigure(encoding="utf-8")` and confirmed it round-trips æ, ø, å, ü
+      and Japanese vault-wide. That change was never made here**: grepped 2026-08-17, the repo
+      contains no `reconfigure`, no `PYTHONUTF8` and no `PYTHONIOENCODING` anywhere. The two
+      `decode("utf-8")` calls at :189 and :200 are on the HTTP response body and do not touch the
+      stdio boundary. So 2.0.0 shipped with it, and #406's other two points did not: bug 2 needed
+      no code change (`set_note_property` was the right tool) and bug 3 is the six-field boolean
+      fix released in 2.0.0. **Do not tell @smollern his report is in a release until this is** —
+      two of three is not three. **Fixed on `main` 2026-08-17; this entry closes when 2.0.1
+      ships.** `force_utf8_stdio()` reconfigures `sys.stdin` and `sys.stdout` to UTF-8 and is
+      called as the first statement of `main()`, before a byte is read; `sys.stderr` is
+      deliberately left alone, so the diagnostic channel does not depend on the thing being
+      diagnosed. A stream with no `reconfigure`, or one that refuses, is skipped with a log line
+      rather than aborting the bridge — off Windows the default is already UTF-8. Four tests added
+      (`ForceUtf8StdioTests`), 28 → 32, and they assert the **call**, not the platform: a test that
+      merely round-tripped `ø` would pass with the fix deleted on every machine CI runs on.
+      Mutation-checked both ways — deleting the call from `main()` turns 1 red, reconfiguring to
+      `cp1252` instead turns 2 red. **Weakness to keep in view**: the bridge suite is stdlib
+      `unittest`, run by `python3 -m unittest discover -s scripts`, and is deliberately outside
+      `bun test` (issue #355) — so nothing in CI runs it, and this guard is a discipline rather
+      than an enforcement. Worth a CI step of its own <!-- src:session opened:2026-08-17 updated:2026-08-17 -->
 - [ ] `OMC-031` **P2** The `.mcpb` attached to every GitHub release is the pre-ADR-0013 bundle,
       and has been since 2026-07-15. Two build paths produce a `.mcpb` and only one was migrated.
       `generateMcpb()` (`features/mcp-client-config/services/mcpbGenerator.ts`), the plugin's

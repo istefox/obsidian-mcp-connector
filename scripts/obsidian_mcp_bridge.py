@@ -66,6 +66,60 @@ def log(msg):
     print(f"[obsidian-bridge] {msg}", file=sys.stderr, flush=True)
 
 
+def force_utf8_stdio(streams: Optional[list] = None) -> int:
+    """Force this process's stdio text streams to UTF-8, and report how many moved.
+
+    The MCP client writes UTF-8 bytes down the stdio pipe and expects UTF-8
+    back. Python does NOT guarantee that on the receiving end: `sys.stdin` and
+    `sys.stdout` are text streams opened with the locale's preferred encoding,
+    which on Windows is typically cp1252 rather than UTF-8 unless the
+    environment forces it (`PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`). Decoding
+    UTF-8 bytes as cp1252 mangles every non-ASCII character in a way that
+    survives into the vault: `ø` is `0xC3 0xB8` in UTF-8, and read one byte at
+    a time as cp1252 those become `Ã` + `¸`, so the path
+    `Personer/Person - Søren Møller-Nielsen.md` is looked up as
+    `Personer/Person - SÃ¸ren MÃ¸ller-Nielsen.md` and answered "File not
+    found", while a frontmatter alias written through the bridge lands
+    corrupted in the note. Because the damage happens once at the stdio
+    boundary, before the bytes are ever parsed as JSON, it hits every tool
+    argument and every response body alike, and re-sending an
+    already-corrupted string corrupts it again.
+
+    Root-caused by @smollern against a Danish vault in discussion #406, with
+    this fix confirmed round-tripping æ, ø, å, ü and Japanese vault-wide.
+
+    Args:
+        streams: Streams to reconfigure. Defaults to `[sys.stdin, sys.stdout]`
+            — override only for tests. `sys.stderr` is deliberately absent:
+            it carries only this bridge's own ASCII log lines, and touching it
+            would make a diagnostic channel depend on the thing being
+            diagnosed.
+
+    Returns:
+        How many streams were actually reconfigured. Returned rather than
+        logged so a test can assert the call did something, which is the only
+        way to catch this regressing on a platform where the default encoding
+        already happens to be UTF-8.
+    """
+    if streams is None:
+        streams = [sys.stdin, sys.stdout]
+    moved = 0
+    for stream in streams:
+        # A stream replaced by a test double (StringIO) has no reconfigure,
+        # and a closed or detached stream raises when asked. Neither is a
+        # reason to refuse to start: the bridge still works wherever the
+        # platform default is already UTF-8, which is every non-Windows host.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+            moved += 1
+        except (ValueError, OSError) as exc:
+            log(f"could not force UTF-8 on {getattr(stream, 'name', stream)}: {exc}")
+    return moved
+
+
 def parse_sse(body: str) -> list[dict]:
     """Parse an SSE response body into ordered JSON-RPC messages.
 
@@ -322,6 +376,11 @@ def main(argv: Optional[list[str]] = None, stdin=None) -> None:
         stdin: Line-iterable input source. Defaults to `sys.stdin` —
             override only for tests.
     """
+    # FIRST, before anything reads a byte: the streams have to be UTF-8 or
+    # every non-ASCII path and body is corrupted at this boundary (see
+    # force_utf8_stdio). Ordered ahead of the argv checks on purpose — those
+    # can log, and a log line is easier to read than a mangled one.
+    force_utf8_stdio()
     argv = sys.argv if argv is None else argv
     stdin = sys.stdin if stdin is None else stdin
     if len(argv) < 2:
