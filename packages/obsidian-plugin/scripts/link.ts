@@ -82,8 +82,16 @@ export function decideLinkAction(
           `${targetPath} is a real directory, not a symlink — the plugin there is a COPY.\n` +
           `  A build in this repo does not reach it, and nothing else says so: this is #468.\n` +
           `  Not touching it, because it holds your live \`data.json\` and \`embeddings/\`.\n` +
-          `  Move it aside yourself, then re-run this script:\n` +
-          `    mv "${targetPath}" "${targetPath}.copy-backup"`,
+          `  Recovery, in full:\n` +
+          `    mv "${targetPath}" "${targetPath}.copy-backup"\n` +
+          `    <re-run this script>\n` +
+          `    cp "${targetPath}.copy-backup/data.json" "${repoRoot}/"\n` +
+          `    cp -R "${targetPath}.copy-backup/embeddings" "${repoRoot}/"\n` +
+          `  The last two steps are the ones that get skipped, and skipping them\n` +
+          `  loses your settings and your vector store: linking makes THIS repo the\n` +
+          `  plugin directory, so they have to end up here rather than staying in\n` +
+          `  the vault. Both paths are gitignored at the repo root.\n` +
+          `  Keep the backup until Obsidian has restarted and the settings look right.`,
       };
 
     case "file":
