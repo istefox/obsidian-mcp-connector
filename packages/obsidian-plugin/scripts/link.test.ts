@@ -50,6 +50,26 @@ describe("decideLinkAction", () => {
     expect(decide({ kind: "directory" }).message).toMatch(/mv .*copy-backup/);
   });
 
+  test("the directory refusal names the RESTORE step, into the repo root", () => {
+    // `mv` alone is half a recovery and the wrong half to stop at: the link
+    // makes the repo root the plugin directory, so settings and vector store
+    // left behind in the vault are simply gone. The first version of this
+    // message said `mv` and stopped, and the step nobody prints is the step
+    // nobody performs.
+    const { message } = decide({ kind: "directory" });
+    expect(message).toContain(`data.json" "${REPO}/"`);
+    expect(message).toContain(`embeddings" "${REPO}/"`);
+  });
+
+  test("the restore step copies FROM the backup, not from the live directory", () => {
+    // Sourcing the copy from `targetPath` would read the symlink this script
+    // is about to create — that is, the repo root — and copy a file onto
+    // itself, or nothing at all.
+    const { message } = decide({ kind: "directory" });
+    expect(message).toContain(`${TARGET}.copy-backup/data.json`);
+    expect(message).not.toMatch(/cp "[^"]*plugins\/mcp-tools-istefox\/data/);
+  });
+
   test("REFUSES a symlink pointing at another checkout", () => {
     // Also silent before this change, and just as stale-making as a copy.
     const d = decide({ kind: "symlink", target: "/Users/dev/other-checkout" });
