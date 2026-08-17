@@ -141,7 +141,26 @@ to be titled "actionable now", which was false for both.
       the probe at all, while at 21:44 the identical action worked. Either the probe was not
       created where it was believed to be, or the instance was left in a bad state by swapping
       `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
-      the probe before concluding anything about notifications <!-- src:session opened:2026-08-16 -->
+      the probe before concluding anything about notifications
+      **UPDATE 2026-08-17 — the silent half is fixed, and its mechanism was in this repo, not in
+      the vault.** `scripts/link.ts` decided with `existsSync(targetPath)`, which is true for any
+      existing path including a plain directory, so running `bun run link` against a vault whose
+      plugin directory is a copy printed **"Symlink already exists."** and did nothing. The tool
+      whose only job is to guarantee the link claimed success in precisely the case where the link
+      was absent — not silence, an active false claim, and the reason this stayed invisible.
+      It now inspects with `lstat` and refuses: a copied directory is named as a copy, with
+      `data.json` and `embeddings/` cited as the reason it will not act and `mv` given as the
+      recovery step; a symlink pointing at a **different** checkout is refused too, which was
+      equally silent before and equally stale-making. It never deletes. A refusal exits non-zero,
+      which `main().catch(console.error)` previously made impossible.
+      Verified by running the real script against four scratch vaults (absent / copy / correct
+      link / foreign link → create, refuse, ok, refuse; exit 0/1/0/1), never against the Labs
+      vault. Mutation-checked both ways. `readlink` may return a **relative** path and is resolved
+      against the link's own directory, not the cwd — resolving against the cwd would refuse a
+      perfectly good link.
+      **Still open, deliberately:** the Labs vault is still a copy, and moving that directory is a
+      human step this script now asks for rather than performing. The `prompts/list` mystery above
+      is untouched and may have no close condition <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
 - [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
       plan's task 6 step 2 specified that the empty state should name "the query"; the result
       payload carries only `vaultName`, never the query string — both projections are called as
