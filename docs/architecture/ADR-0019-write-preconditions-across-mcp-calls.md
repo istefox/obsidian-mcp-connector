@@ -1,6 +1,6 @@
 # ADR-0019: Write preconditions across separate MCP calls
 
-- **Status:** Accepted (shape decided; the work is **not scheduled**)
+- **Status:** Accepted and **implemented** 2026-08-17 (see the amendment at the foot of this file)
 - **Date:** 2026-08-17
 - **Issue:** [#445](https://github.com/istefox/obsidian-mcp-connector/issues/445), from
   @Madulone's discussion [#352](https://github.com/istefox/obsidian-mcp-connector/discussions/352)
@@ -252,3 +252,52 @@ the work to a release.
   ADR-0018 (`_meta` as a payload seam, if alternative G is ever taken)
 - `services/patchHelpers.ts`, `tools/searchAndReplace.ts`, `tools/renameHeading.ts`,
   `services/vaultWriteLock.ts`
+
+
+## Amendment (2026-08-17): implemented, and it covers `patch_active_file` too
+
+The shape above was decided while the work was unscheduled. It was scheduled the same day and built,
+and implementing it surfaced one thing the decision had not settled.
+
+**`patch_active_file` is not a separate tool underneath.** Its context type *is* `PatchArgs`
+(`tools/patchActiveFile.ts:29-32`) and it forwards the whole args object into the same `applyPatch`
+(`:51`), because the two tools once carried duplicated ~200-line copies that diverged (fork #137) and
+the duplicate was retired. So adding `expectedContent` to `PatchArgs` and enforcing it inside
+`computePatchedContent` reaches `patch_active_file` **whether or not anyone decides it should**.
+
+Leaving its schema alone would have produced the worst combination: a client sending
+`expectedContent` to `patch_active_file` has it validated away by arktype, while a vault with
+`requireWritePreconditions` on refuses the call for an argument that tool never advertised.
+
+**Decision: `patch_active_file` declares it too**, and this is not a concession to the
+implementation. It follows from the ADR's own reasoning more strongly than the original scope did:
+the active file is the one the user is looking at, so it is the single most likely place for an
+agent's replace to land on top of something a human just typed. Scoping the guard to the file the
+user is *not* looking at would have been the odd choice.
+
+**What shipped**, beyond the decision above:
+
+- `expectedContent` on both schemas; `PatchArgs` carries it; ignored on `append`/`prepend`.
+- The comparison runs inside the existing `vault.process` callback for heading and block targets, and
+  inside `processFrontMatter` for frontmatter ones, against the region as resolved at that moment.
+- `checkReplacePrecondition` and `normalizeForPreconditionCompare` are pure and exported, so the
+  policy is tested without an App, a vault or a file.
+- Normalisation settled concretely: line endings, then per-line trailing whitespace, then leading and
+  trailing blank lines. **Interior blank lines and leading indentation stay significant** — a dropped
+  paragraph break and a changed list indent are real edits, and a guard that forgave them would
+  forgive the thing it exists to catch. There is a test pinning exactly that.
+- The refusal is `errorJson` with `errorCode: "stale_precondition"`, carrying `targetType` and
+  `target`, matching the house style set by `searchVaultSmart`'s `index_building`.
+- `requireWritePreconditions` lives in the existing `mcpTools` slice with a checkbox in its settings
+  section. That section's save was migrated from a hand-rolled load/spread/save to
+  `SettingsStore.updateSlice` at the same time — a hand-rolled spread is exactly where one field
+  quietly clobbers the other once a slice has two.
+- An absent `expectedContent` and an empty one are **different**: absent means unguarded, `""` is a
+  legitimate expectation that an empty section is there. Pinned by test.
+
+**Mutation-checked, both directions.** Making `checkReplacePrecondition` always return `null` turns 7
+tests red; making `normalizeForPreconditionCompare` a no-op turns 6 red. Suite 1863 → 1882.
+
+**Still true, and still the honest cost:** the guard is opt-in, so by default it protects the careful
+and not the everyone. Nothing here measures the real read-to-write window either. Both were named as
+open in the original decision and neither is closed by having built it.

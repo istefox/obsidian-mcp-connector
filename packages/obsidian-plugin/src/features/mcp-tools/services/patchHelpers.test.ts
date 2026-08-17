@@ -11,6 +11,8 @@ import {
   findHeadingSectionEnd,
   planFrontmatterReplace,
   planFrontmatterAppend,
+  normalizeForPreconditionCompare,
+  checkReplacePrecondition,
 } from "./patchHelpers";
 
 describe("resolveHeadingPath", () => {
@@ -528,5 +530,102 @@ describe("findHeadingSectionEnd (#137 — heading-branch fenced-code guard)", ()
   test("deeper heading is not a boundary; section runs to EOF", () => {
     const lines = ["## A", "", "### sub", "x", "#### deeper", "y"];
     expect(findHeadingSectionEnd(lines, 0, 2)).toBe(6);
+  });
+});
+
+describe("normalizeForPreconditionCompare (ADR-0019)", () => {
+  test("line endings do not make two identical texts differ", () => {
+    expect(normalizeForPreconditionCompare("a\r\nb")).toBe(
+      normalizeForPreconditionCompare("a\nb"),
+    );
+    expect(normalizeForPreconditionCompare("a\rb")).toBe("a\nb");
+  });
+
+  test("trailing whitespace per line is insignificant", () => {
+    expect(normalizeForPreconditionCompare("a   \nb\t")).toBe("a\nb");
+  });
+
+  test("leading and trailing blank lines are insignificant", () => {
+    expect(normalizeForPreconditionCompare("\n\nbody\n\n")).toBe("body");
+  });
+
+  test("interior blank lines and leading indentation ARE significant", () => {
+    // A dropped paragraph break or a changed list indent is a real edit; a
+    // guard that forgave them would forgive the thing it exists to catch.
+    expect(normalizeForPreconditionCompare("a\n\nb")).not.toBe(
+      normalizeForPreconditionCompare("a\nb"),
+    );
+    expect(normalizeForPreconditionCompare("  - x")).not.toBe(
+      normalizeForPreconditionCompare("- x"),
+    );
+  });
+});
+
+describe("checkReplacePrecondition (ADR-0019)", () => {
+  const base = {
+    operation: "replace" as const,
+    actualRegion: "current body",
+    require: false,
+    targetLabel: 'the section under heading "A"',
+  };
+
+  test("append and prepend are never guarded, even with a wrong expectation", () => {
+    // Additive: there is no authored text for them to overwrite, which is the
+    // same reasoning #445's constraint 2 used to exclude the append tools.
+    for (const operation of ["append", "prepend"] as const) {
+      expect(
+        checkReplacePrecondition({
+          ...base,
+          operation,
+          expectedContent: "something else entirely",
+          require: true,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  test("absent expectation is allowed while the vault does not require one", () => {
+    expect(checkReplacePrecondition({ ...base })).toBeNull();
+  });
+
+  test("absent expectation is refused once the vault requires one", () => {
+    const refusal = checkReplacePrecondition({ ...base, require: true });
+    expect(refusal).toContain("requires a write precondition");
+    expect(refusal).toContain("expectedContent");
+  });
+
+  test("a matching expectation proceeds", () => {
+    expect(
+      checkReplacePrecondition({ ...base, expectedContent: "current body" }),
+    ).toBeNull();
+  });
+
+  test("a match survives whitespace drift the caller cannot see", () => {
+    expect(
+      checkReplacePrecondition({
+        ...base,
+        actualRegion: "\ncurrent body  \n",
+        expectedContent: "current body\r\n",
+      }),
+    ).toBeNull();
+  });
+
+  test("a mismatch refuses, names the recovery step and the likely cause", () => {
+    const refusal = checkReplacePrecondition({
+      ...base,
+      expectedContent: "what I read earlier",
+    });
+    expect(refusal).toContain("Refusing to patch");
+    expect(refusal).toContain("get_vault_file");
+    expect(refusal).toContain("not a bug");
+    expect(refusal).toContain('the section under heading "A"');
+  });
+
+  test("an empty expectation against a non-empty region still refuses", () => {
+    // "" is a legitimate expectation (an empty section) and must not be
+    // confused with "absent", which is the unguarded case.
+    expect(
+      checkReplacePrecondition({ ...base, expectedContent: "" }),
+    ).toContain("Refusing to patch");
   });
 });

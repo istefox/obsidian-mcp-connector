@@ -5,6 +5,7 @@ import {
   resetMockVault,
   setMockFile,
   setMockMetadata,
+  mockPlugin,
 } from "$/test-setup";
 
 beforeEach(() => resetMockVault());
@@ -885,5 +886,186 @@ describe("patch_vault_file — non-markdown guard and change detection", () => {
     });
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toMatch(/no changes detected/i);
+  });
+});
+
+describe("patch_vault_file — expectedContent write precondition (ADR-0019)", () => {
+  const FILE = "Notes/precond.md";
+  const ORIGINAL = "## A\n\nwhat the human just wrote\n\n## B\n";
+
+  /** Reads the file back through the vault, so assertions are about disk. */
+  async function readBack(app: ReturnType<typeof mockApp>): Promise<string> {
+    const file = app.vault.getAbstractFileByPath(FILE);
+    return await app.vault.read(file as never);
+  }
+
+  test("a stale expectation refuses AND leaves the file byte-identical", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "the agent's stale rewrite",
+        expectedContent: "what the agent read ten minutes ago",
+      },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    // The refusal is only worth having if nothing was written.
+    expect(await readBack(app)).toBe(ORIGINAL);
+  });
+
+  test("the refusal is machine-readable and names its cause", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "x",
+        expectedContent: "stale",
+      },
+      app,
+    });
+    const parsed = JSON.parse(result.content[0].text) as {
+      error: string;
+      errorCode: string;
+      targetType: string;
+      target: string;
+    };
+    expect(parsed.errorCode).toBe("stale_precondition");
+    expect(parsed.target).toBe("A");
+    expect(parsed.targetType).toBe("heading");
+    expect(parsed.error).toContain("get_vault_file");
+  });
+
+  test("a matching expectation writes, whitespace drift included", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "replaced",
+        // Trailing spaces and CRLF: what a model round-tripping text produces.
+        expectedContent: "what the human just wrote  \r\n",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBack(app)).toContain("replaced");
+  });
+
+  test("omitting it keeps today's behaviour exactly", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "replaced with no precondition",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBack(app)).toContain("replaced with no precondition");
+  });
+
+  test("append ignores it, so an additive call cannot be blocked", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "append",
+        targetType: "heading",
+        target: "A",
+        content: "appended",
+        expectedContent: "deliberately wrong",
+      },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBack(app)).toContain("appended");
+  });
+
+  test("with requireWritePreconditions on, omitting it is refused", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const plugin = mockPlugin({
+      app,
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    } as never);
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "no precondition given",
+      },
+      app,
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("requires a write precondition");
+    expect(await readBack(app)).toBe(ORIGINAL);
+  });
+
+  test("with the setting on, a correct expectation still writes", async () => {
+    setMockFile(FILE, ORIGINAL);
+    const app = mockApp();
+    const plugin = mockPlugin({
+      app,
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    } as never);
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: FILE,
+        operation: "replace",
+        targetType: "heading",
+        target: "A",
+        content: "allowed",
+        expectedContent: "what the human just wrote",
+      },
+      app,
+      plugin,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBack(app)).toContain("allowed");
+  });
+
+  test("guards a block replace too, not only headings", async () => {
+    const blockFile = "Notes/blk.md";
+    const original = "## S\n\nFirst paragraph.\n^my-block\n\nSecond.\n";
+    setMockFile(blockFile, original);
+    setMockMetadata(blockFile, {
+      blocks: { "my-block": { startLine: 2, endLine: 3 } },
+    });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: blockFile,
+        operation: "replace",
+        targetType: "block",
+        target: "my-block",
+        content: "rewritten",
+        expectedContent: "something that is not there",
+        createTargetIfMissing: false,
+      },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    const file = app.vault.getAbstractFileByPath(blockFile);
+    expect(await app.vault.read(file as never)).toBe(original);
   });
 });

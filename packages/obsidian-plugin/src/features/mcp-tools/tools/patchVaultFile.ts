@@ -6,6 +6,8 @@ import {
   applyPatch,
   type PatchArgs,
 } from "$/features/mcp-tools/services/patchHelpers";
+import type McpToolsPlugin from "$/main";
+import { resolveRequireWritePreconditions } from "$/features/mcp-tools/services/writePreconditionSetting";
 
 export const patchVaultFileSchema = type({
   name: '"patch_vault_file"',
@@ -28,6 +30,9 @@ export const patchVaultFileSchema = type({
     "allowRootHeadings?": type("boolean").describe(
       "Allows targeting an H2-or-deeper heading with no H1 parent in a file that has an H1 elsewhere (otherwise rejected when createTargetIfMissing=false). Default false.",
     ),
+    "expectedContent?": type("string").describe(
+      "For operation=replace only: the text you believe currently occupies the target, as read via get_vault_file. When it no longer matches, the patch is refused instead of overwriting a change you have not seen. Whitespace-insensitive. Ignored for append/prepend.",
+    ),
   },
 }).describe(
   "Patches a vault file relative to a heading, block reference, or frontmatter key. Unlike patch_active_file, operates on any file by vault-relative path.",
@@ -43,8 +48,15 @@ export type PatchVaultFileContext = {
     targetDelimiter?: string;
     createTargetIfMissing?: boolean;
     allowRootHeadings?: boolean;
+    expectedContent?: string;
   };
   app: App;
+  /**
+   * Absent in partial test fixtures, exactly as in getVaultFile's context.
+   * Without it the write-precondition setting resolves to its default (off),
+   * which is the behaviour every existing client already relies on.
+   */
+  plugin?: McpToolsPlugin;
 };
 
 export async function patchVaultFileHandler(
@@ -65,5 +77,9 @@ export async function patchVaultFileHandler(
   // the patch-specific fields (operation, targetType, target, content, …).
   const patchArgs = { ...ctx.arguments } as PatchArgs & { path?: string };
   delete patchArgs.path;
-  return await applyPatch(ctx.app, file, patchArgs);
+  // Resolved here rather than inside applyPatch: this read is async, and the
+  // compute it guards must stay synchronous inside vault.process.
+  return await applyPatch(ctx.app, file, patchArgs, {
+    requirePrecondition: await resolveRequireWritePreconditions(ctx.plugin),
+  });
 }

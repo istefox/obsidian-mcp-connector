@@ -7,6 +7,7 @@
 
 import type { App, TFile } from "obsidian";
 import { withVaultWriteLock } from "./vaultWriteLock";
+import { errorJson } from "./responseBuilders";
 
 export type PatchOperation = "append" | "prepend" | "replace";
 
@@ -572,7 +573,78 @@ export type PatchArgs = {
   targetDelimiter?: string;
   createTargetIfMissing?: boolean;
   allowRootHeadings?: boolean;
+  /**
+   * What the caller believes currently occupies the target, for
+   * `operation: "replace"` only. A mismatch refuses the write instead of
+   * destroying whatever is actually there (ADR-0019).
+   *
+   * Text rather than a hash on purpose: a model cannot digest bytes in its
+   * head, so a hash would have to be emitted by the server — which is the
+   * read-side work `get_vault_file` cannot carry without an `outputSchema`
+   * it must never declare. The caller already holds the text it read.
+   *
+   * Ignored on `append`/`prepend`: those are additive, so there is no
+   * authored text for them to overwrite.
+   */
+  expectedContent?: string;
 };
+
+/**
+ * Normalises text for precondition comparison: line endings to `\n`, then
+ * trailing whitespace stripped per line, then leading/trailing blank lines
+ * dropped.
+ *
+ * Every one of those is a correctness decision rather than leniency. A guard
+ * that fires because a model reproduced `\r\n` as `\n`, or dropped a trailing
+ * space it could not see, protects nothing — it teaches its caller to stop
+ * passing the argument, which is worse than not having the guard. What stays
+ * significant is what a reader would call a difference: the words, and the
+ * line structure between them.
+ */
+export function normalizeForPreconditionCompare(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/, ""))
+    .join("\n")
+    .replace(/^\n+/, "")
+    .replace(/\n+$/, "");
+}
+
+/**
+ * Decides whether a `replace` may proceed against the region it found.
+ *
+ * Returns `null` to proceed, or the refusal text. Kept pure and exported so
+ * the policy is testable without an App, a vault or a file.
+ *
+ * `require` is the vault-level setting: with it off, an absent
+ * `expectedContent` means today's behaviour exactly.
+ */
+export function checkReplacePrecondition(args: {
+  operation: PatchOperation;
+  expectedContent?: string;
+  actualRegion: string;
+  require: boolean;
+  targetLabel: string;
+}): string | null {
+  if (args.operation !== "replace") return null;
+  if (args.expectedContent === undefined) {
+    if (!args.require) return null;
+    return (
+      `Refusing to patch — this vault requires a write precondition and none was given. ` +
+      `Pass expectedContent with the text you believe currently occupies ${args.targetLabel}, ` +
+      `read via get_vault_file, so a change made since your read cannot be overwritten unnoticed.`
+    );
+  }
+  const expected = normalizeForPreconditionCompare(args.expectedContent);
+  const actual = normalizeForPreconditionCompare(args.actualRegion);
+  if (expected === actual) return null;
+  return (
+    `Refusing to patch — ${args.targetLabel} no longer matches expectedContent, so replacing it ` +
+    `would destroy a change you have not seen. Re-read the file with get_vault_file and decide again. ` +
+    `The most likely cause is the user editing the note or Obsidian Sync landing a change, not a bug.`
+  );
+}
 
 /**
  * Apply a patch operation (append/prepend/replace) to a vault file using the
@@ -624,6 +696,9 @@ export async function applyPatch(
   app: App,
   file: TFile,
   args: PatchArgs,
+  // Read from settings by the calling handler, which can await; this function
+  // and computePatchedContent below must stay synchronous inside vault.process.
+  options: { requirePrecondition?: boolean } = {},
 ): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -633,6 +708,7 @@ export async function applyPatch(
   // (see issue #71 — block in table is not indexed by metadataCache).
   const defaultCreate = args.targetType !== "block";
   const createIfMissing = args.createTargetIfMissing ?? defaultCreate;
+  const requirePrecondition = options.requirePrecondition ?? false;
 
   // Frontmatter/heading targets require a markdown file: processFrontMatter and
   // heading-section parsing both assume markdown shape, and Obsidian silently
@@ -663,6 +739,7 @@ export async function applyPatch(
   // mutation keeps the file untouched while letting us return a typed error.
   if (args.targetType === "frontmatter") {
     let rejection: string | null = null;
+    let rejectionCode: string | null = null;
     let valueChanged = false;
     await app.fileManager.processFrontMatter(file, (rawFm) => {
       const fm = rawFm as Record<string, unknown>;
@@ -676,6 +753,26 @@ export async function applyPatch(
           JSON.stringify(existing ?? null) !== JSON.stringify(next ?? null);
       };
       if (args.operation === "replace") {
+        // Same policy as the heading/block branches, against the value as it
+        // stands right now. `existing` is compared in its serialised form so a
+        // scalar and an array are both expressible as expectedContent.
+        const refusal = checkReplacePrecondition({
+          operation: args.operation,
+          expectedContent: args.expectedContent,
+          actualRegion:
+            existing === undefined || existing === null
+              ? ""
+              : typeof existing === "string"
+                ? existing
+                : JSON.stringify(existing),
+          require: requirePrecondition,
+          targetLabel: `frontmatter key "${args.target}"`,
+        });
+        if (refusal) {
+          rejection = refusal;
+          rejectionCode = "stale_precondition";
+          return;
+        }
         const plan = planFrontmatterReplace(
           existing,
           args.content,
@@ -715,10 +812,15 @@ export async function applyPatch(
       recordChange(next);
     });
     if (rejection !== null) {
-      return {
-        content: [{ type: "text", text: rejection }],
-        isError: true,
-      };
+      return rejectionCode !== null
+        ? errorJson(rejection, rejectionCode, {
+            targetType: args.targetType,
+            target: args.target,
+          })
+        : {
+            content: [{ type: "text", text: rejection }],
+            isError: true,
+          };
     }
     return patchResult(valueChanged);
   }
@@ -734,15 +836,18 @@ export async function applyPatch(
   // pipelines, rename_heading's multi-file apply). Error paths return
   // the input unchanged (content no-op) and surface the message after.
   let failureText: string | null = null;
+  let failureCode: string | null = null;
   let changed = false;
   await withVaultWriteLock(() =>
     app.vault.process(file, (rawContent) => {
       const outcome = computePatchedContent(app, file, rawContent, args, {
         targetDelimiter,
         createIfMissing,
+        requirePrecondition,
       });
       if (outcome.kind === "error") {
         failureText = outcome.text;
+        failureCode = outcome.errorCode ?? null;
         return rawContent;
       }
       changed = outcome.newContent !== rawContent;
@@ -750,7 +855,14 @@ export async function applyPatch(
     }),
   );
   if (failureText !== null) {
-    return { content: [{ type: "text", text: failureText }], isError: true };
+    // Structured only where a code was set, so every pre-existing error keeps
+    // the plain-text shape its tests and its callers already expect.
+    return failureCode !== null
+      ? errorJson(failureText, failureCode, {
+          targetType: args.targetType,
+          target: args.target,
+        })
+      : { content: [{ type: "text", text: failureText }], isError: true };
   }
   return patchResult(changed);
 }
@@ -758,7 +870,10 @@ export async function applyPatch(
 /** Outcome of the pure patch computation inside `vault.process`. */
 type PatchOutcome =
   | { kind: "ok"; newContent: string }
-  | { kind: "error"; text: string };
+  // `errorCode` promotes the failure from a prose string to a machine-readable
+  // one via errorJson. Only the precondition path sets it so far; every other
+  // error keeps the plain-text shape its callers and tests already expect.
+  | { kind: "error"; text: string; errorCode?: string };
 
 /**
  * Pure, synchronous core of `applyPatch`'s heading/block branches:
@@ -773,7 +888,11 @@ function computePatchedContent(
   file: TFile,
   rawContent: string,
   args: PatchArgs,
-  opts: { targetDelimiter: string; createIfMissing: boolean },
+  opts: {
+    targetDelimiter: string;
+    createIfMissing: boolean;
+    requirePrecondition: boolean;
+  },
 ): PatchOutcome {
   const { targetDelimiter, createIfMissing } = opts;
   const lines = rawContent.split("\n");
@@ -855,6 +974,23 @@ function computePatchedContent(
     const bodyEndsBlank = body === "" || body.endsWith("\n");
     let newLines: string[];
     if (args.operation === "replace") {
+      // Checked against the section body as resolved right here, inside
+      // vault.process — the same content that is about to be written back,
+      // so nothing can interleave between the check and the splice.
+      const refusal = checkReplacePrecondition({
+        operation: args.operation,
+        expectedContent: args.expectedContent,
+        actualRegion: lines.slice(headingLine + 1, sectionEnd).join("\n"),
+        require: opts.requirePrecondition,
+        targetLabel: `the section under heading "${args.target}"`,
+      });
+      if (refusal) {
+        return {
+          kind: "error",
+          text: refusal,
+          errorCode: "stale_precondition",
+        };
+      }
       const leadingSeparator = bodyStartsBlank ? [] : [""];
       const trailingSeparator = tailIsHeading && !bodyEndsBlank ? [""] : [];
       newLines = [
@@ -933,6 +1069,18 @@ function computePatchedContent(
   const body = normalizeAppendBody(args.content, args.operation);
   let newLines: string[];
   if (args.operation === "replace") {
+    const refusal = checkReplacePrecondition({
+      operation: args.operation,
+      expectedContent: args.expectedContent,
+      actualRegion: lines
+        .slice(blockPos.startLine, blockPos.endLine + 1)
+        .join("\n"),
+      require: opts.requirePrecondition,
+      targetLabel: `block "^${args.target}"`,
+    });
+    if (refusal) {
+      return { kind: "error", text: refusal, errorCode: "stale_precondition" };
+    }
     // Replace the block lines entirely (keeps the ^id marker on last line only
     // if the new content doesn't already include it — here we strip the old
     // marker and let the caller own the new content verbatim).

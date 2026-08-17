@@ -17,6 +17,21 @@ declare module "obsidian" {
        * (enforced at settings save via normalizeMaxTextOutputKB).
        */
       maxTextOutputKB?: number;
+      /**
+       * When true, `patch_vault_file` and `patch_active_file` REQUIRE an
+       * `expectedContent` argument for `operation: "replace"` and refuse
+       * the call without one. Undefined/false → the argument is honoured
+       * when passed and not demanded, which is today's behaviour exactly.
+       *
+       * Off by default on purpose, and that is a cost rather than a
+       * preference: a guard nobody is forced to pass protects the careful
+       * and not the default. Demanding it immediately would break every
+       * configured client and every distributed `.mcpb` at their first
+       * replace, which is the price this project already paid once with
+       * `outputSchema`. ADR-0019 phases it: opt in here now, default in
+       * the next major.
+       */
+      requireWritePreconditions?: boolean;
     };
   }
 }
@@ -28,6 +43,12 @@ declare module "obsidian" {
  * never hit it.
  */
 export const DEFAULT_MAX_TEXT_OUTPUT_KB = 100;
+
+/**
+ * Default for {@link McpToolsPluginSettings.mcpTools.requireWritePreconditions}.
+ * False, so nothing that works today stops working (ADR-0019).
+ */
+export const DEFAULT_REQUIRE_WRITE_PRECONDITIONS = false;
 
 /**
  * Allowed range for the user-configurable ceiling. The lower bound (1)
