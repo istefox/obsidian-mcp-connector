@@ -22,6 +22,7 @@
     "format:check": "prettier --check \"packages/obsidian-plugin/src/**/*.ts\" \"packages/shared/src/**/*.ts\"",
     "dev": "bun --filter '*' dev",
     "version": "bun scripts/version.ts",
+    "version:tag": "bun scripts/version.ts --tag",
     "release": "bun --filter '*' release",
     "zip": "bun --filter '*' zip"
   },

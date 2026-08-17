@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=33 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 6 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
+Updated: 2026-08-17 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
 
 ## Roadmap — 2.0
 
@@ -244,7 +244,9 @@ blank.
       `community-plugins.json` as `mcp-tools-istefox`.
       **`bun run version major` did NOT complete it, and cannot on this repo any more.** It made
       the version commit and the tag, then its `git push origin main` was refused by the ruleset.
-      Cut by hand around it; the procedure and the reason are `OMC-032`.
+      Cut by hand around it; the procedure and the reason are `OMC-032`, **which closed the same day
+      by rewriting the script into two phases — so this is the last release cut by hand, and the next
+      one is the first test of the replacement**.
       **The published `.mcpb` is the pre-ADR-0013 npx/mcp-remote bundle, not the pure-Node shim
       this project ships from the plugin.** Found by inspecting the asset after publishing, on a
       3,577 B size that did not fit a 38 KB shim. Shipping since 2026-07-15, so not a 2.0.0
@@ -267,19 +269,6 @@ blank.
 
 ## Next — measured gaps, actionable now
 
-- [ ] `OMC-032` **P2** `bun run version` cannot cut a release on this repo any more, and 2.0.0
-      was cut by hand around it. The script (`scripts/version.ts:54-58`) commits the three version
-      files, tags, then `git push -u origin main` — which the ruleset now refuses: *"Changes must
-      be made through a pull request"* plus a required `check-and-test`. Every earlier release tag
-      points at a version commit pushed straight to `main` (`1.0.1` → `e2ebb20`, single parent,
-      subject `1.0.1`), so the procedure worked when those were cut and the rules tightened after.
-      The failure is safe and leaves a recoverable state: the local commit and tag exist, nothing
-      reaches the remote, the tree stays clean. **The recovery used for 2.0.0, which is the shape
-      any fix should keep**: branch the version commit, PR it, merge with a **merge commit** so its
-      SHA survives, fast-forward `main`, then push the tag alone — a tag push is not subject to
-      branch protection, and it is what `release.yml` triggers on. A squash would orphan the tag,
-      which is why the method was not a preference on PR #457. Fix is either to teach the script
-      that path or to stop having it push, leaving the tag push as the one manual step <!-- src:session opened:2026-08-17 -->
 - [ ] `OMC-030` **P2** A vault verification can silently run against the wrong build, and one
       did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
       fresh `bun run build` in the repo changes nothing there until someone copies it across.
@@ -389,6 +378,53 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-032` `bun run version` could not cut a release and now can, in two commands with a human
+      gate between them. It used to end in `git push -u origin main`, which `main` refuses: a ruleset
+      requires a pull request and classic branch protection requires `check-and-test` and (since
+      today) `bridge-tests`. Every tag before 2.0.0 points at a version commit pushed straight to
+      `main` (`1.0.1` → `e2ebb20`, single parent, subject `1.0.1`), so the old shape worked when
+      those were cut and the rules tightened afterwards; 2.0.0 and 2.0.1 were both cut by hand
+      around the failure. **`bun run version <part>`** now preflights, bumps the three files, makes
+      `chore/release-<version>`, commits with the version as the subject, pushes the branch and opens
+      the PR through `gh` — falling back to printing the compare URL if `gh` is absent, since the
+      branch is already pushed by then and that is the part a human cannot redo in a second.
+      **`bun run version:tag`** tags `main` and pushes the tag, which is what `release.yml` triggers
+      on. Neither command can push `main`.
+      **The tag moved to phase two, and that is the substantive change rather than a reordering.**
+      Tagging before the push meant the tag pointed at a pre-merge commit, which is the entire reason
+      the manual recovery had to insist on a **merge commit** and why a squash would have orphaned
+      the tag. Tagging after the commit is on `main` means it points at whatever `main` actually has,
+      so **either merge method is now correct** and that constraint is gone. This deliberately
+      supersedes the procedure this entry used to record.
+      **A flaw in the new design, caught before it shipped:** phase two first read the version from
+      the working copy and compared it against `HEAD`, which on a clean tree — which the preflight
+      already insists on — is the same file, so the comparison could never fail. It now reads the
+      version from the **committed** `package.json` and checks that all three files agree with it at
+      the exact commit about to be tagged, which is the shape a partial merge or a hand-edit breaks.
+      Preflights: clean tree, on `main`, and new here, `main` identical to `origin/main` — a stale
+      local `main` would have shipped the wrong tree and nothing said so before. `FORCE=true` still
+      overrides the first two.
+      **`DRY_RUN=1` prints every mutating command and runs every read-only preflight for real**, and
+      it is the only end-to-end evidence available short of a real cut. Four guards demonstrated
+      against live state rather than asserted: a dirty tree refused; a non-`main` branch refused
+      naming the branch; the full prepare path printed its seven commands and wrote nothing
+      (`git status` empty afterwards); the tag phase refused with *"Tag 2.0.1 already exists
+      locally"*; and on a `HEAD` where only `package.json` had been bumped it refused naming both
+      disagreements at once, `manifest.json` and the missing `versions.json` key.
+      Serialisation is untouched on purpose (two spaces for `package.json`/`manifest.json`, a tab for
+      `versions.json`): the 2.0.1 bump had to replicate it by hand, so drift would surface as an
+      unrelated diff in a release commit. `bump()` and `verifyCommittedVersion()` are pure and tested
+      in `scripts/version.test.ts` (14 tests), mutation-checked — a `minor` that does not zero the
+      patch turns 1 red, dropping the `package.json` comparison turns 2 red. **The module needs its
+      `import.meta.main` guard to be importable at all**: without it, the test file's own import
+      would cut a release. A CI step (`bun test scripts/`) was added because CI runs `bun test`
+      inside each package and never at the root, so the new file would otherwise have run nowhere —
+      the same trap the Python bridge suite was in this morning.
+      **Two residual gaps, named rather than papered over.** Root `scripts/` is outside both
+      packages' `tsconfig.json`, so `bun run check` does not type-check `version.ts`; it was checked
+      by hand with `tsc --strict` (clean) and nothing keeps it that way. And **the real cut is
+      untested** — every dry run is a dry run, and the next release is the first true exercise of
+      this path <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-031` The `.mcpb` attached to every GitHub release was not the bundle this project
       ships, and is no longer attached at all. **The framing this entry opened with was wrong and
       is corrected here**: it said "two build paths produce a `.mcpb` and only one was migrated",

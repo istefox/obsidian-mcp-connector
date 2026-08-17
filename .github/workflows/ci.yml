@@ -57,6 +57,14 @@ jobs:
       - name: Build (bundle smoke)
         run: bun run build
 
+      # The two steps below cd into a package, so a test file at the REPO root
+      # runs in neither of them. scripts/version.test.ts is the first one, and
+      # this is the same trap the Python bridge suite sat in. The path filter
+      # also re-matches the two suites under packages/*/scripts/, which costs
+      # about a second and is not worth engineering around.
+      - name: Tests — root scripts
+        run: bun test scripts/
+
       - name: Tests — shared
         run: cd packages/shared && bun test
 
