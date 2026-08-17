@@ -1,9 +1,195 @@
-<!-- project-tasks: prefix=OMC lastId=33 -->
+<!-- project-tasks: prefix=OMC lastId=34 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
+Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 6 (P1: 0) · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
-## Roadmap — 2.0
+## Roadmap — after 2.0
+
+**2.0.0 and 2.0.1 both shipped 2026-08-17**, community scanner passed, all four release gates
+closed. The 2.0 roadmap is a record now and lives at the bottom of this file rather than the top —
+it was the first thing this file showed long after it stopped describing anything to do.
+
+**No next release is scheduled, and that is the accurate statement rather than an omission.** There
+is no 2.1 feature queued. Everything open is hygiene, verification discipline, or one design item
+nobody has committed to. The next release will most likely be a patch triggered by a bug report
+rather than by anything on this list, and planning as if a feature were coming would be inventing
+one.
+
+The open work sorts into three tracks. The tracks are not a sequence: nothing here blocks anything
+else here.
+
+### Track 1 — silent-failure debt. Would earn a patch
+
+Two items, the same shape: something is wrong and **nothing fails**, which is the class this repo
+keeps paying for (`outputSchema` on a polymorphic tool, the stale R-08 figure, the `.mcpb` that
+shipped npx for five releases).
+
+- `OMC-028` / `#466` **(b)** — `SmartSearchResult` duplicates `semantic-search`'s `SearchResult` field for
+  field instead of importing it. It compiles by structural coincidence, so a new required field on
+  `SearchResult` is silently dropped from the payload with no compile error. The ledger already
+  calls this "the one worth not leaving long".
+- `OMC-034` / `#467` — root `scripts/` is outside both packages' `tsconfig.json`, so `bun run check` type-checks
+  neither `version.ts` nor anything else there. Found 2026-08-17 while closing `OMC-032`.
+
+### Track 2 — verification and process. Ships nothing to a user
+
+Neither reaches a user; both cost real hours when they bite, and one already did.
+
+- `OMC-030` / `#468` — a vault verification can run against a stale build, and one did: the first `B3` run
+  failed all four assertions against an Aug 11 `main.js` and read as a defect in new code.
+- `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
+  mechanical fix and no issue: the defence is procedural and belongs in the habit.
+
+### Track 3 — design, unscheduled. Would earn a minor if it lands
+
+- `#445` — optional `expectedHash` / staleness across separate MCP calls, from @Madulone's
+  discussion #352. A brainstorm brief exists locally (`BRAINSTORM.md`, gitignored) and **contradicts
+  two of the issue's own statements**: post-#351 the three target tools are transformations
+  recomputed inside `vault.process`, so only `patch_vault_file`'s replace destroys authored text;
+  and constraint 1's opt-in makes the protection optional, which is not protection. Those two
+  corrections are not yet on the issue.
+- `#465` — the brief's declared gap: no ecosystem survey of how other MCP servers handle
+  read-then-write staleness. Informs #445's ADR, blocks nothing. Established while filing it: the
+  MCP SDK v2.0.0 defines no write-precondition mechanism at all.
+
+### Not on any track
+
+- `OMC-010` / `#416` — parked on an external trigger, see Parked below.
+- `OMC-027` — decided, not a defect. The MCP Apps empty state names the vault rather than the query
+  because the payload carries no query string. Kept as a record, not as work.
+
+## Tracking — ledger ↔ GitHub issues
+
+The two lists had drifted until the overlap was **one item out of nine**. Reconciled 2026-08-17; this
+section exists so the next drift is visible rather than rediscovered.
+
+| Ledger | Issue | State |
+|---|---|---|
+| `OMC-034` | `#467` | root `scripts/` outside every type check |
+| `OMC-030` | `#468` | verification against a stale build |
+| `OMC-028` | `#466` | structural duplicate + a catch that discards its error |
+| `OMC-010` | `#416` | both parked on the same external trigger |
+| `OMC-027` | — | ledger-only **on purpose**: decided, not a defect |
+| `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
+| — | `#445` | design, unscheduled. No ledger entry by choice: it is not committed work |
+| — | `#465` | research feeding `#445`'s ADR |
+| — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
+
+**Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
+ask about — bugs, feature work, research with a close condition. The ledger is for verification
+records, measured findings, decisions and process discipline, which is most of this file. An item
+that is genuinely both goes in both, and this table is where that is checked.
+
+**Two rules this table enforces.** When a release ships, close the issues it shipped — `#427` is the
+cautionary case. And a finding recorded inside a **closed** ledger entry is lost: `OMC-034` spent a
+day buried in `OMC-032`'s closure text before it became an entry and an issue of its own.
+
+## Open items — the entries the roadmap's tracks point at
+
+Two of these are deliberately **not** actionable and say so in their own text: `OMC-027` is a decided
+non-defect and `OMC-029` has no mechanical fix by design. They are kept as records. The section used
+to be titled "actionable now", which was false for both.
+
+- [ ] `OMC-034` **P2** #467 Root `scripts/` is type-checked by nothing. `bun run check` is
+      `bun --filter '*' check`, which runs `tsc --noEmit` inside each package, and there is no root
+      `tsconfig.json` — so `scripts/version.ts` (306 lines, the release cutter), its test file, and
+      anything else added there are outside every type check the gate runs.
+      Found 2026-08-17 while closing `OMC-032`, which is what put a substantial new TypeScript file in
+      that directory in the first place. It was checked by hand with `bunx tsc --noEmit --strict` and is clean, and nothing
+      keeps it that way. `bun test scripts/` does run its unit tests, so the gap is types only, which
+      is the half that catches a rename or a changed signature. Fix is a root `tsconfig.json` covering
+      `scripts/**` plus a step in `bun run check`; the cost is that `bun run check` gains a third tsc
+      invocation. **Worth doing before the next release**, because the file it protects is the one
+      that cuts releases and its git-orchestration half is covered by `DRY_RUN` rather than by types
+      <!-- src:session opened:2026-08-17 -->
+- [ ] `OMC-030` **P2** #468 A vault verification can silently run against the wrong build, and one
+      did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
+      fresh `bun run build` in the repo changes nothing there until someone copies it across.
+      The first `B3` run on 2026-08-16 failed all four of its assertions for exactly this
+      reason, and it read like a defect in freshly merged code. **The version string cannot
+      catch it**: repo and vault both report `1.0.1` until the 2.0 cut, so `serverInfo.version`
+      discriminates nothing. The `initialize` capabilities do — a build predating `e3dcd8c`
+      answers `prompts.listChanged: true` and carries no `resources` key at all. **So every
+      vault verification should read the capabilities first and pin which build answered**. `B3`
+      and `R-18` both did, once burned, and `A2` did too. Nothing open still has to, but the next vault verification will. Replacing the copy with the symlink would
+      fix it at the root but means deleting a directory holding `data.json` and `embeddings/`,
+      which is its own risk and its own decision. **Also unresolved, recorded rather than
+      explained**: in the 15:10 run `prompts/list` stayed frozen on its baseline and never saw
+      the probe at all, while at 21:44 the identical action worked. Either the probe was not
+      created where it was believed to be, or the instance was left in a bad state by swapping
+      `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
+      the probe before concluding anything about notifications <!-- src:session opened:2026-08-16 -->
+- [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
+      plan's task 6 step 2 specified that the empty state should name "the query"; the result
+      payload carries only `vaultName`, never the query string — both projections are called as
+      `(results, ctx.app.vault.getName())` — so the shipped empty state renders "No results
+      found in `<vault>`." instead. SPEC R-10 requires only "an explicit empty state for zero
+      results" and does not mention the query, so the requirement is met and the plan was
+      stricter than the SPEC on a detail the data cannot support. Decided, not a defect. A
+      follow-up would carry the query into the payload, touching the payload type, both
+      projections, both tools, the renderer and its tests. **Observed in production 2026-08-16
+      during `R-18`**: a zero-match query renders `No results found in Labs.` in Claude Desktop,
+      so this is now a measured behaviour rather than a read of the code <!-- src:session opened:2026-08-16 updated:2026-08-16 -->
+- [ ] `OMC-028` **P3** #466 Two MINOR findings from the OMC-016 gate 5.06 pass, surfaced and
+      deliberately left. **(a)** `assets/mcp-apps/searchResults.html` — `activate()`'s
+      `catch { revealPath(...) }` has no error binding and no `console.error`. It is only
+      reached when `canOpenLinks` is already true, so a throw from `app.openLink` there is a
+      genuine runtime failure being handled identically to the expected "no capability" branch;
+      the UI still degrades visibly, so this costs the diagnostic trail rather than
+      correctness. **(b)** `mcp-apps/services/searchResultsPayload.ts` — `SmartSearchResult`
+      duplicates `semantic-search`'s `SearchResult` field for field instead of importing it.
+      It compiles today by structural coincidence, so if `SearchResult` gains a required field
+      nothing here fails to compile and the new field is silently dropped from the payload.
+      **(b) is the one worth not leaving long**: silent divergence with no compile error is
+      exactly the failure this repo keeps paying for elsewhere <!-- src:session opened:2026-08-16 -->
+- [ ] `OMC-029` **P3** Measured figures written into comments are guarded by nothing. The
+      generated-asset drift tests compare **identity** — is `searchResultsAppSource.ts` what
+      the generator would produce from the shell and the bundle — and never the **content** of
+      a hand-typed measurement. R-08's `main.js` delta went stale exactly this way: it was
+      measured against task 4's stub page, survived unchanged through task 6's full view, and
+      three copies of a wrong number passed every gate until a reviewer rebuilt and compared.
+      There is no cheap mechanical fix (a test asserting a byte count would fail on every
+      unrelated change), so the standing defence is procedural and belongs in the habit, not in
+      CI: whenever a generated artifact changes, re-measure with a clean `bun run build` plus
+      `stat` and sweep the repo for the previous figures <!-- src:session opened:2026-08-16 -->
+
+## In Progress
+
+_none_
+
+## Parked — external trigger, nothing to do until it fires
+
+- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
+
+## Blocked / Decisions Needed
+
+_none_
+
+OMC-007 was the last entry here. It left on 2026-08-10 and closed the same day: what gated it was the `2026-07-28` lifecycle decision, OMC-008 made that decision additive, and the remaining work turned out to be one publish call. Nothing currently waits on a user decision or an external input.
+
+## Standing notes — true until something changes
+
+**Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
+`draft` suite, no `server-stateless`. Those live only on the repo's `main` (`0.2.0-alpha.10`) and
+must be run from source. Against the published suite we pass every scenario that applies to our
+surface; the failures are fixture-dependent (it expects the reference server's `test_*` tools and
+`test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
+`completion/complete` (that is #347, closed as not planned — this is the first visible cost of
+that call) and resource subscriptions.
+
+## Project Map
+
+- **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
+- **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
+- **Build & test**: `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge) and `bun test scripts/` for the root scripts. **`bun run check` does not reach root `scripts/`** — no root `tsconfig.json` exists, so `version.ts` is type-checked by nothing (`OMC-034`). `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
+- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
+- **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
+
+## 2.0 release record — Gates A–D, all closed 2026-08-17
+
+Kept whole, below the open work rather than above it. The per-gate entries are the verification
+record for 2.0: measurements, what was and was not exercised, and the traps found on the way. The
+target statement below is preserved as written at the time.
 
 Target: **MCP Apps as the headline, OMC-023 as what earns the major.**
 Semver alone would say 1.1.0 — the 45 commits since tag `1.0.1` break nothing. Two of them move
@@ -267,83 +453,6 @@ blank.
       An issue comment is `gh issue comment` as usual — #430 is an issue, #406 and #352 are
       discussions
 
-## Next — measured gaps, actionable now
-
-- [ ] `OMC-030` **P2** A vault verification can silently run against the wrong build, and one
-      did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
-      fresh `bun run build` in the repo changes nothing there until someone copies it across.
-      The first `B3` run on 2026-08-16 failed all four of its assertions for exactly this
-      reason, and it read like a defect in freshly merged code. **The version string cannot
-      catch it**: repo and vault both report `1.0.1` until the 2.0 cut, so `serverInfo.version`
-      discriminates nothing. The `initialize` capabilities do — a build predating `e3dcd8c`
-      answers `prompts.listChanged: true` and carries no `resources` key at all. **So every
-      vault verification should read the capabilities first and pin which build answered**. `B3`
-      and `R-18` both did, once burned, and `A2` did too. Nothing open still has to, but the next vault verification will. Replacing the copy with the symlink would
-      fix it at the root but means deleting a directory holding `data.json` and `embeddings/`,
-      which is its own risk and its own decision. **Also unresolved, recorded rather than
-      explained**: in the 15:10 run `prompts/list` stayed frozen on its baseline and never saw
-      the probe at all, while at 21:44 the identical action worked. Either the probe was not
-      created where it was believed to be, or the instance was left in a bad state by swapping
-      `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
-      the probe before concluding anything about notifications <!-- src:session opened:2026-08-16 -->
-- [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
-      plan's task 6 step 2 specified that the empty state should name "the query"; the result
-      payload carries only `vaultName`, never the query string — both projections are called as
-      `(results, ctx.app.vault.getName())` — so the shipped empty state renders "No results
-      found in `<vault>`." instead. SPEC R-10 requires only "an explicit empty state for zero
-      results" and does not mention the query, so the requirement is met and the plan was
-      stricter than the SPEC on a detail the data cannot support. Decided, not a defect. A
-      follow-up would carry the query into the payload, touching the payload type, both
-      projections, both tools, the renderer and its tests. **Observed in production 2026-08-16
-      during `R-18`**: a zero-match query renders `No results found in Labs.` in Claude Desktop,
-      so this is now a measured behaviour rather than a read of the code <!-- src:session opened:2026-08-16 updated:2026-08-16 -->
-- [ ] `OMC-028` **P3** Two MINOR findings from the OMC-016 gate 5.06 pass, surfaced and
-      deliberately left. **(a)** `assets/mcp-apps/searchResults.html` — `activate()`'s
-      `catch { revealPath(...) }` has no error binding and no `console.error`. It is only
-      reached when `canOpenLinks` is already true, so a throw from `app.openLink` there is a
-      genuine runtime failure being handled identically to the expected "no capability" branch;
-      the UI still degrades visibly, so this costs the diagnostic trail rather than
-      correctness. **(b)** `mcp-apps/services/searchResultsPayload.ts` — `SmartSearchResult`
-      duplicates `semantic-search`'s `SearchResult` field for field instead of importing it.
-      It compiles today by structural coincidence, so if `SearchResult` gains a required field
-      nothing here fails to compile and the new field is silently dropped from the payload.
-      **(b) is the one worth not leaving long**: silent divergence with no compile error is
-      exactly the failure this repo keeps paying for elsewhere <!-- src:session opened:2026-08-16 -->
-- [ ] `OMC-029` **P3** Measured figures written into comments are guarded by nothing. The
-      generated-asset drift tests compare **identity** — is `searchResultsAppSource.ts` what
-      the generator would produce from the shell and the bundle — and never the **content** of
-      a hand-typed measurement. R-08's `main.js` delta went stale exactly this way: it was
-      measured against task 4's stub page, survived unchanged through task 6's full view, and
-      three copies of a wrong number passed every gate until a reviewer rebuilt and compared.
-      There is no cheap mechanical fix (a test asserting a byte count would fail on every
-      unrelated change), so the standing defence is procedural and belongs in the habit, not in
-      CI: whenever a generated artifact changes, re-measure with a clean `bun run build` plus
-      `stat` and sweep the repo for the previous figures <!-- src:session opened:2026-08-16 -->
-
-## In Progress
-
-_none_
-
-## Parked — external trigger, nothing to do until it fires
-
-- [ ] `OMC-010` **P3** #416 MCP Tasks: watch item only, no client in the support matrix declares `io.modelcontextprotocol/tasks` yet. The MCP Apps half moved to OMC-016. Re-check the matrix when the tiering page's client matrix moves <!-- src:session opened:2026-08-05 updated:2026-08-07 -->
-
-## Blocked / Decisions Needed
-
-_none_
-
-OMC-007 was the last entry here. It left on 2026-08-10 and closed the same day: what gated it was the `2026-07-28` lifecycle decision, OMC-008 made that decision additive, and the remaining work turned out to be one publish call. Nothing currently waits on a user decision or an external input.
-
-## Standing notes — true until something changes
-
-**Conformance tooling note.** The published CLI (`0.1.16`) has no 2026 scenarios at all — no
-`draft` suite, no `server-stateless`. Those live only on the repo's `main` (`0.2.0-alpha.10`) and
-must be run from source. Against the published suite we pass every scenario that applies to our
-surface; the failures are fixture-dependent (it expects the reference server's `test_*` tools and
-`test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
-`completion/complete` (that is #347, closed as not planned — this is the first visible cost of
-that call) and resource subscriptions.
-
 ## Superseded premises — kept rather than deleted
 
 Both entries below were wrong in a way that mattered, and both are kept in the form ADR-0016 §8 uses: the falsified claim stays readable next to what replaced it, so the same reasoning does not get re-derived from scratch.
@@ -367,14 +476,6 @@ themselves (`sep-2575-request-meta-invalid-missing-meta`, `-missing-protocol-ver
 or missing `protocolVersion`/`clientCapabilities`. Requiring those is the 2026 lifecycle itself, so
 those three checks belong to OMC-008 and cannot move before it. The `-32602` branch OMC-018 did
 ship — `_meta` present but not an object — is ordinary shape validation the suite never exercises.
-
-## Project Map
-
-- **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
-- **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
-- **Build & test**: `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge). `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
-- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
-- **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
 ## Done
 
