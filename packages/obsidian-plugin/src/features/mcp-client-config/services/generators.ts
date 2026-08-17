@@ -51,10 +51,16 @@ export type ClaudeDesktopEntry = {
 
 /**
  * The canonical `npx mcp-remote` bridge invocation. Single source of
- * truth for every consumer of this shape — the Settings-tab copy
- * button (claudeDesktopConfig), the direct config writer
- * (claudeDesktop.ts), and the .mcpb manifest (mcpbGenerator.ts) — so a
- * future flag or header change cannot drift between them.
+ * truth for both consumers of this shape — the Settings-tab copy button
+ * (claudeDesktopConfig) and the direct config writer (claudeDesktop.ts)
+ * — so a future flag or header change cannot drift between them.
+ *
+ * It used to name a third consumer, the .mcpb manifest. That stopped
+ * being true when ADR-0013 replaced the bundle's npx entry with the
+ * pure-Node shim: `mcpbGenerator.ts` emits `command: "node"` against
+ * `server/index.js` and does not import this function at all. A comment
+ * claiming a coupling that no longer exists is worse here than no
+ * comment, since this one exists to promise there is no drift.
  */
 export function mcpRemoteInvocation(
   url: string,
