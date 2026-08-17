@@ -40,14 +40,17 @@ Neither reaches a user; both cost real hours when they bite, and one already did
 
 ### Track 3 — design, unscheduled. Would earn a minor if it lands
 
-- `#445` — optional `expectedHash` / staleness across separate MCP calls, from @Madulone's
-  discussion #352. A brainstorm brief exists locally (`BRAINSTORM.md`, gitignored) and **contradicts
-  two of the issue's own statements**: post-#351 the three target tools are transformations
-  recomputed inside `vault.process`, so only `patch_vault_file`'s replace destroys authored text;
-  and constraint 1's opt-in makes the protection optional, which is not protection. **Both
-  corrections are now on the issue** (2026-08-17), with the file:line evidence and addressed to
-  @Madulone, since #445 declares itself the spec for whoever prototypes it.
-- `#465` — **survey done 2026-08-17, findings on the issue.** Prior art exists: `hashfile-mcp`
+- `#445` — write preconditions across separate MCP calls, from @Madulone's discussion #352.
+  **Shape decided 2026-08-17 in `ADR-0019`; the work is not scheduled.** The ADR contradicts the
+  issue in three places, each measured rather than argued: the target set is two tools too wide
+  (post-#351 only `patch_vault_file`'s replace destroys authored text), the opt-in constraint means
+  the guard protects only clients that choose it, and the "cheapest option" a brainstorm had
+  recommended — re-verify the region with no new argument — **is not implementable**, because
+  `patch_vault_file`'s `target` is a location and never a state. Decided instead: an
+  `expectedContent` argument mirroring what `search_and_replace` already does structurally with
+  `pattern`, which needs no read-side token, no server state and no change to ADR-0016. Optional
+  now, required in the next major, with a settings flag as the early path.
+- `#465` — **survey done 2026-08-17, findings on the issue, closed once `ADR-0019` consumed them.** Prior art exists: `hashfile-mcp`
   (`file_hash` parameter, token in a text footer, whole-file plus per-line, refuses) and
   `stale-write-guard-fs` (a **tracked read** holding the view server-side, a typed `stale_view` deny
   carrying `recover: reacquire`, **mandatory not opt-in**, and it explicitly catches edits made
@@ -78,8 +81,8 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-010` | `#416` | both parked on the same external trigger |
 | `OMC-027` | — | ledger-only **on purpose**: decided, not a defect |
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
-| — | `#445` | design, unscheduled. No ledger entry by choice: it is not committed work |
-| — | `#465` | research feeding `#445`'s ADR |
+| — | `#445` | design; **`ADR-0019` decides the shape**, the work stays unscheduled. No ledger entry by choice: a decided shape is not committed work |
+| — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
@@ -165,7 +168,7 @@ that call) and resource subscriptions.
 - **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
 - **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
 - **Build & test**: `bun run check` is `tsc --noEmit && bun --filter '*' check` and now reaches **every** `.ts` in the repo — a root `tsconfig.json` covers `scripts/**`, and the plugin's `include` covers its own `scripts/**` (`OMC-034`). · `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge) and `bun test scripts/` for the root scripts. `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
-- **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
+- **Key ADRs**: ADR-0019 write preconditions across calls (decided, unscheduled) · ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
 - **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
 ## 2.0 release record — Gates A–D, all closed 2026-08-17
