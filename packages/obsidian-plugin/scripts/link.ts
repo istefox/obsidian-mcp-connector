@@ -4,8 +4,10 @@ import {
   mkdirSync,
   lstatSync,
   readlinkSync,
+  readdirSync,
+  readFileSync,
 } from "fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 /**
  * This development script creates a symlink to the plugin in the Obsidian vault's plugin directory. This allows you to
@@ -29,6 +31,44 @@ export type LinkDecision = {
   action: "create" | "ok" | "refuse";
   message: string;
 };
+
+/**
+ * Where the copied plugin directory should be moved to — **one level above
+ * `plugins/`**, never a sibling inside it.
+ *
+ * This is not tidiness. Obsidian enumerates every directory under `plugins/`
+ * and keys what it finds by the `id` in each `manifest.json`. A backup left
+ * beside the link declares the *same id*, so the two collide and the copy
+ * wins — the symlink is loaded over, silently, and the vault keeps running the
+ * old build with no error anywhere.
+ *
+ * Measured on 2026-08-17: with `<id>.copy-backup` next to the link, a freshly
+ * restarted Obsidian served `2.0.1`; moving that one directory out and
+ * restarting again served `2.1.1`, nothing else changed. The first version of
+ * this recovery told people to create exactly that collision.
+ */
+export function backupPathFor(targetPath: string): string {
+  const pluginsDir = dirname(targetPath);
+  return join(dirname(pluginsDir), `${basename(targetPath)}.copy-backup`);
+}
+
+/**
+ * Sibling plugin directories that declare the same id as the one being linked,
+ * and would therefore shadow it.
+ *
+ * Pure, and the caller does the reading — the same split as
+ * {@link decideLinkAction} and `inspectLinkTarget`. `linkDirName` is excluded
+ * because it is the link itself, which legitimately carries that id.
+ */
+export function findShadowingPlugins(
+  siblings: Array<{ name: string; id: string | null }>,
+  pluginId: string,
+  linkDirName: string,
+): string[] {
+  return siblings
+    .filter((s) => s.name !== linkDirName && s.id === pluginId)
+    .map((s) => s.name);
+}
 
 /**
  * What to do about the vault's plugin path, given what is actually there.
@@ -83,15 +123,22 @@ export function decideLinkAction(
           `  A build in this repo does not reach it, and nothing else says so: this is #468.\n` +
           `  Not touching it, because it holds your live \`data.json\` and \`embeddings/\`.\n` +
           `  Recovery, in full:\n` +
-          `    mv "${targetPath}" "${targetPath}.copy-backup"\n` +
+          `    mv "${targetPath}" "${backupPathFor(targetPath)}"\n` +
           `    <re-run this script>\n` +
-          `    cp "${targetPath}.copy-backup/data.json" "${repoRoot}/"\n` +
-          `    cp -R "${targetPath}.copy-backup/embeddings" "${repoRoot}/"\n` +
-          `  The last two steps are the ones that get skipped, and skipping them\n` +
-          `  loses your settings and your vector store: linking makes THIS repo the\n` +
-          `  plugin directory, so they have to end up here rather than staying in\n` +
-          `  the vault. Both paths are gitignored at the repo root.\n` +
-          `  Keep the backup until Obsidian has restarted and the settings look right.`,
+          `    cp "${backupPathFor(targetPath)}/data.json" "${repoRoot}/"\n` +
+          `    cp -R "${backupPathFor(targetPath)}/embeddings" "${repoRoot}/"\n` +
+          `  Two things about that sequence, both learned the hard way.\n` +
+          `  The backup goes OUTSIDE plugins/. Obsidian loads every directory in\n` +
+          `  there and keys them by the id in manifest.json, so a backup left\n` +
+          `  beside the link declares the same id, wins, and your vault silently\n` +
+          `  keeps running the old build.\n` +
+          `  And the two cp lines are the ones that get skipped: linking makes\n` +
+          `  THIS repo the plugin directory, so your settings and vector store\n` +
+          `  have to end up here rather than staying in the vault. Both paths are\n` +
+          `  gitignored at the repo root.\n` +
+          `  Quit Obsidian with Cmd+Q first — closing the window does not quit it,\n` +
+          `  and a running instance survives the move and keeps serving the old\n` +
+          `  code. Keep the backup until it has restarted and the settings look right.`,
       };
 
     case "file":
@@ -259,6 +306,42 @@ async function main() {
       process.exit(1);
     }
     if (icloud.kind === "allowed") console.warn(`\n! ${icloud.message}`);
+  }
+
+  // Runs on BOTH paths, unlike the iCloud question, and that is the point: a
+  // shadow over an already-correct link is not a hypothetical, it is the exact
+  // state this check was written from. `bun run link` reporting "Already
+  // linked" while Obsidian serves a different build is the same class of false
+  // success as #468's original "Symlink already exists."
+  const siblings = readdirSync(pluginsDirectoryPath).map((name) => {
+    try {
+      const m = JSON.parse(
+        readFileSync(join(pluginsDirectoryPath, name, "manifest.json"), "utf8"),
+      );
+      return { name, id: typeof m.id === "string" ? m.id : null };
+    } catch {
+      // Not a plugin directory, or unreadable. Obsidian ignores those too.
+      return { name, id: null };
+    }
+  });
+  const shadows = findShadowingPlugins(siblings, pluginName, pluginName);
+  if (shadows.length > 0) {
+    console.error(
+      `\n✗ Another directory in ${pluginsDirectoryPath} declares id "${pluginName}":\n` +
+        shadows.map((s) => `    ${s}`).join("\n") +
+        `\n  Obsidian keys plugins by that id, so one of them wins and it is not\n` +
+        `  necessarily the link. Measured: a backup left there served the OLD\n` +
+        `  build across a full restart, with no error anywhere.\n` +
+        `  Move it out of plugins/ — one level up is enough:\n` +
+        shadows
+          .map(
+            (s) =>
+              `    mv "${join(pluginsDirectoryPath, s)}" "${join(dirname(pluginsDirectoryPath), s)}"`,
+          )
+          .join("\n") +
+        `\n`,
+    );
+    process.exit(1);
   }
 
   console.log(decision.message);
