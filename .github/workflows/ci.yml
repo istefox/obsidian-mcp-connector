@@ -1,7 +1,9 @@
 name: CI
 
-# On-PR validation: typecheck + bundle build-smoke + tests across the
-# workspace, plus the stdlib Python suite for the Windows bridge. Runs on
+# On-PR validation, in two jobs. `check-and-test` (ubuntu) is typecheck +
+# bundle build-smoke + every test suite, the stdlib Python one for the Windows
+# bridge included; `bridge-tests` runs that Python suite a second time on
+# windows-latest, where its bug actually lived. Runs on
 # every push to main and on every PR targeting
 # main. The build step here is a smoke
 # check that catches a non-buildable bundle (e.g. Svelte/patch version
@@ -71,3 +73,39 @@ jobs:
 
       - name: .mcpb bundle smoke (both loaders, #412 regression guard)
         run: cd packages/obsidian-plugin && bun run test:mcpb
+
+  # The bridge suite ALSO runs on Windows, because that is the only OS its bug
+  # ever appeared on: Python opens sys.stdin/sys.stdout with the locale
+  # codepage there, so UTF-8 bytes arrive mangled (OMC-033, fixed in 2.0.1).
+  #
+  # What this leg proves and what it does not. The four ForceUtf8StdioTests
+  # assert the reconfigure CALL against a recording stream, deliberately, so
+  # they are platform-independent and a green Windows run does NOT prove that
+  # `ø` survives a real round-trip on a cp1252 console. What it does prove is
+  # that the suite executes on Windows at all — the interpreter, the discovery
+  # and every path assumption in it — which nothing checked before.
+  #
+  # A job rather than a step, unavoidably: `check-and-test` is ubuntu-latest,
+  # and one job has one runner. That means this is only an enforcement once
+  # `bridge-tests` is in main's required-status-checks list (classic branch
+  # protection, which carried `check-and-test` alone).
+  #
+  # Python is pinned rather than taken from the runner image on purpose: a
+  # required check must not go red for every PR because GitHub bumped its
+  # preinstalled interpreter. The cost is that only this one version is
+  # covered; the OS axis is what this job buys.
+  bridge-tests:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Tests — Windows bridge (Python, stdlib only)
+        run: python -m unittest discover -s scripts -v
