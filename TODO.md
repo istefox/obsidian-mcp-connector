@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=38 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -61,10 +61,9 @@ failure ("no compile error") was false, and the fix as planned would not have fi
 
 None of these reaches a user; they cost real hours when they bite, and two already have.
 
-- `OMC-030` / `#468` — a vault verification can run against a stale build, and one did: the first `B3` run
-  failed all four assertions against an Aug 11 `main.js` and read as a defect in new code. Down to
-  one open half — relinking the Labs vault, a human step. Its "unexplained" half turned out to be a
-  real defect and left as `OMC-038`.
+- `OMC-030` / `#468` — **closed 2026-08-17.** A vault verification can run against a stale build, and
+  one did. Both halves fixed in this repo rather than by habit, and the vault relinked; the closing
+  probe reproduced `OMC-038`'s window in production on the first attempt.
 - `OMC-038` / `#483` — **closed 2026-08-17**, the day it was split out. `prompts/list` cached a scan
   taken before the file was indexed and never re-checked, so a prompt could stay invisible for a
   whole session. Found by reading `OMC-030`'s "may have no close condition" half rather than
@@ -105,7 +104,7 @@ section exists so the next drift is visible rather than rediscovered.
 
 | Ledger | Issue | State |
 |---|---|---|
-| `OMC-030` | `#468` | verification against a stale build |
+| `OMC-030` | `#468` | **both closed 2026-08-17** — vault relinked, and the probe that closes it reproduced the `#483` window on the first try |
 | `OMC-034` | `#467` | **both closed 2026-08-17** — type-check coverage |
 | `OMC-028` | `#466` | **both closed 2026-08-17** — the projector now fails when `SearchResult` grows |
 | `OMC-010` | `#416` | both parked on the same external trigger |
@@ -133,66 +132,6 @@ Two of these are deliberately **not** actionable and say so in their own text: `
 non-defect and `OMC-029` has no mechanical fix by design. They are kept as records. The section used
 to be titled "actionable now", which was false for both.
 
-- [ ] `OMC-030` **P2** #468 A vault verification can silently run against the wrong build, and one
-      did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
-      fresh `bun run build` in the repo changes nothing there until someone copies it across.
-      The first `B3` run on 2026-08-16 failed all four of its assertions for exactly this
-      reason, and it read like a defect in freshly merged code. **The version string cannot
-      catch it**: repo and vault both report `1.0.1` until the 2.0 cut, so `serverInfo.version`
-      discriminates nothing. The `initialize` capabilities do — a build predating `e3dcd8c`
-      answers `prompts.listChanged: true` and carries no `resources` key at all. **So every
-      vault verification should read the capabilities first and pin which build answered**. `B3`
-      and `R-18` both did, once burned, and `A2` did too. Nothing open still has to, but the next vault verification will. Replacing the copy with the symlink would
-      fix it at the root but means deleting a directory holding `data.json` and `embeddings/`,
-      which is its own risk and its own decision. **Also unresolved, recorded rather than
-      explained**: in the 15:10 run `prompts/list` stayed frozen on its baseline and never saw
-      the probe at all, while at 21:44 the identical action worked. Either the probe was not
-      created where it was believed to be, or the instance was left in a bad state by swapping
-      `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
-      the probe before concluding anything about notifications
-      **UPDATE 2026-08-17 — the silent half is fixed, and its mechanism was in this repo, not in
-      the vault.** `scripts/link.ts` decided with `existsSync(targetPath)`, which is true for any
-      existing path including a plain directory, so running `bun run link` against a vault whose
-      plugin directory is a copy printed **"Symlink already exists."** and did nothing. The tool
-      whose only job is to guarantee the link claimed success in precisely the case where the link
-      was absent — not silence, an active false claim, and the reason this stayed invisible.
-      It now inspects with `lstat` and refuses: a copied directory is named as a copy, with
-      `data.json` and `embeddings/` cited as the reason it will not act and `mv` given as the
-      recovery step; a symlink pointing at a **different** checkout is refused too, which was
-      equally silent before and equally stale-making. It never deletes. A refusal exits non-zero,
-      which `main().catch(console.error)` previously made impossible.
-      Verified by running the real script against four scratch vaults (absent / copy / correct
-      link / foreign link → create, refuse, ok, refuse; exit 0/1/0/1), never against the Labs
-      vault. Mutation-checked both ways. `readlink` may return a **relative** path and is resolved
-      against the link's own directory, not the cwd — resolving against the cwd would refuse a
-      perfectly good link.
-      **UPDATE 2026-08-17 — the `prompts/list` mystery is not a mystery, and it is not about the
-      vault.** It is a defect in plugin code, split out as `OMC-038` / `#483` and fixed there:
-      `discoverPrompts` reads frontmatter out of `app.metadataCache`, which lags the vault, and the
-      memoized lister is keyed on an epoch only a **vault** event advances — so a list served inside
-      the indexing window omits the new prompt, caches that answer, and never re-checks, because
-      indexing is not a vault event. Both guesses recorded above were unnecessary. Neither is
-      refuted either: the mechanism reproduces the symptom exactly, nothing recovers what actually
-      happened at 15:10, and the standing rule to confirm `prompts/list` sees the probe costs
-      nothing and stays.
-      **UPDATE 2026-08-17 — the recovery `link.ts` prints was half of one, fixed in `2912174`.** It
-      named `mv` and stopped, and the two steps it skipped are the ones that lose data: the symlink
-      makes the **repo root** the plugin directory, so `data.json` and `embeddings/` have to be
-      copied *there*, not left behind in the vault. Both are gitignored at the root. Found by
-      compiling the sequence by hand for a real vault; verified by running what the script prints,
-      end to end, against a scratch vault.
-      **And the Labs vault turned out to be on iCloud Drive** (`~/Library/Mobile Documents/
-      com~apple~CloudDocs/Vaults/Labs`), which nothing in this repo recorded and which changes the
-      advice. Two claims, not one: *certain* — the link's target is outside the synced container, so
-      any other device on that vault finds a plugin folder it cannot resolve; *unverified* — whether
-      iCloud leaves the link itself alone, which nothing here has measured and for which this
-      machine has no precedent (no symlink exists anywhere in iCloud Drive, checked to depth 6).
-      `link.ts` now detects it on the **create** path only and refuses pending `ALLOW_ICLOUD=1`,
-      keeping the two claims separate in the message. The plugin directory is `mcp-tools-istefox`,
-      the manifest id — not `obsidian-mcp-tools`, which is what a hand-written recovery guessed.
-      **Still open, deliberately, and now this alone:** the Labs vault is still a copy, and moving
-      that directory is a human step this script asks for rather than performs
-      <!-- src:session opened:2026-08-16 updated:2026-08-17 -->
 - [ ] `OMC-027` **P3** MCP Apps empty state names the vault, not the query. The implementation
       plan's task 6 step 2 specified that the empty state should name "the query"; the result
       payload carries only `vaultName`, never the query string — both projections are called as
@@ -546,6 +485,85 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-030` **P2** #468 A vault verification can silently run against the wrong build, and one
+      did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
+      fresh `bun run build` in the repo changes nothing there until someone copies it across.
+      The first `B3` run on 2026-08-16 failed all four of its assertions for exactly this
+      reason, and it read like a defect in freshly merged code. **The version string cannot
+      catch it**: repo and vault both report `1.0.1` until the 2.0 cut, so `serverInfo.version`
+      discriminates nothing. The `initialize` capabilities do — a build predating `e3dcd8c`
+      answers `prompts.listChanged: true` and carries no `resources` key at all. **So every
+      vault verification should read the capabilities first and pin which build answered**. `B3`
+      and `R-18` both did, once burned, and `A2` did too. Nothing open still has to, but the next vault verification will. Replacing the copy with the symlink would
+      fix it at the root but means deleting a directory holding `data.json` and `embeddings/`,
+      which is its own risk and its own decision. **Also unresolved, recorded rather than
+      explained**: in the 15:10 run `prompts/list` stayed frozen on its baseline and never saw
+      the probe at all, while at 21:44 the identical action worked. Either the probe was not
+      created where it was believed to be, or the instance was left in a bad state by swapping
+      `main.js` under a running Obsidian. Until that is understood, confirm `prompts/list` sees
+      the probe before concluding anything about notifications
+      **UPDATE 2026-08-17 — the silent half is fixed, and its mechanism was in this repo, not in
+      the vault.** `scripts/link.ts` decided with `existsSync(targetPath)`, which is true for any
+      existing path including a plain directory, so running `bun run link` against a vault whose
+      plugin directory is a copy printed **"Symlink already exists."** and did nothing. The tool
+      whose only job is to guarantee the link claimed success in precisely the case where the link
+      was absent — not silence, an active false claim, and the reason this stayed invisible.
+      It now inspects with `lstat` and refuses: a copied directory is named as a copy, with
+      `data.json` and `embeddings/` cited as the reason it will not act and `mv` given as the
+      recovery step; a symlink pointing at a **different** checkout is refused too, which was
+      equally silent before and equally stale-making. It never deletes. A refusal exits non-zero,
+      which `main().catch(console.error)` previously made impossible.
+      Verified by running the real script against four scratch vaults (absent / copy / correct
+      link / foreign link → create, refuse, ok, refuse; exit 0/1/0/1), never against the Labs
+      vault. Mutation-checked both ways. `readlink` may return a **relative** path and is resolved
+      against the link's own directory, not the cwd — resolving against the cwd would refuse a
+      perfectly good link.
+      **UPDATE 2026-08-17 — the `prompts/list` mystery is not a mystery, and it is not about the
+      vault.** It is a defect in plugin code, split out as `OMC-038` / `#483` and fixed there:
+      `discoverPrompts` reads frontmatter out of `app.metadataCache`, which lags the vault, and the
+      memoized lister is keyed on an epoch only a **vault** event advances — so a list served inside
+      the indexing window omits the new prompt, caches that answer, and never re-checks, because
+      indexing is not a vault event. Both guesses recorded above were unnecessary. Neither is
+      refuted either: the mechanism reproduces the symptom exactly, nothing recovers what actually
+      happened at 15:10, and the standing rule to confirm `prompts/list` sees the probe costs
+      nothing and stays.
+      **UPDATE 2026-08-17 — the recovery `link.ts` prints was half of one, fixed in `2912174`.** It
+      named `mv` and stopped, and the two steps it skipped are the ones that lose data: the symlink
+      makes the **repo root** the plugin directory, so `data.json` and `embeddings/` have to be
+      copied *there*, not left behind in the vault. Both are gitignored at the root. Found by
+      compiling the sequence by hand for a real vault; verified by running what the script prints,
+      end to end, against a scratch vault.
+      **And the Labs vault turned out to be on iCloud Drive** (`~/Library/Mobile Documents/
+      com~apple~CloudDocs/Vaults/Labs`), which nothing in this repo recorded and which changes the
+      advice. Two claims, not one: *certain* — the link's target is outside the synced container, so
+      any other device on that vault finds a plugin folder it cannot resolve; *unverified* — whether
+      iCloud leaves the link itself alone, which nothing here has measured and for which this
+      machine has no precedent (no symlink exists anywhere in iCloud Drive, checked to depth 6).
+      `link.ts` now detects it on the **create** path only and refuses pending `ALLOW_ICLOUD=1`,
+      keeping the two claims separate in the message. The plugin directory is `mcp-tools-istefox`,
+      the manifest id — not `obsidian-mcp-tools`, which is what a hand-written recovery guessed.
+      **Was still open, deliberately, on this alone:** the Labs vault was still a copy, and moving
+      that directory stayed a human step this script asks for rather than performs.
+      **CLOSED 2026-08-17. The vault is relinked, and the probe this entry kept asking for finally
+      ran against it.** The plugin directory is `mcp-tools-istefox`, the manifest id, and the vault
+      is on **iCloud Drive** — neither fact was written down anywhere in this repo, and a
+      hand-compiled recovery guessed the directory name wrong. Both `link.ts` gaps that surfaced
+      while compiling it are fixed: the refusal printed `mv` and stopped, which is the half that
+      does not lose data (`2912174`), and it now refuses an iCloud target pending `ALLOW_ICLOUD=1`
+      (`6a91fec`).
+      After relinking: symlink to the repo root with `.copy-backup` intact, `data.json` (3178 bytes,
+      the size it had in the vault) and `embeddings/native-minilm-l6-v2` at the repo root, all six
+      settings slices present, one token, server answering on `livePort: 27200` with 405 on `GET`
+      and 401 unauthenticated. The `main.js` Obsidian loads went from 3011596 at 11:48 to 3015850 at
+      21:36 — **this entry measured live an hour before it was closed**, since the repo's own build
+      at 12:06 was already a third distinct artifact.
+      **The closing probe reproduced `OMC-038`'s window on the first attempt**, with no attempt to
+      race it: `prompts/list` immediately after creating `Prompts/probe-483.md` returned the baseline
+      without it, and the very next call had it. Before `d67bc38` that first answer was the one
+      served for the rest of the session. That is the 15:10 symptom of 2026-08-16 produced on
+      demand — which does not recover what happened that afternoon, but does retire the reading of
+      it as an exotic timing case beyond a normal client's reach. Probe deleted, list back to
+      baseline <!-- src:session opened:2026-08-16 closed:2026-08-17 -->
 - [x] `OMC-038` #483 `prompts/list` could return a list missing a prompt that demonstrably exists,
       and keep returning it for the whole session. Split out of `OMC-030`, whose text called this
       "recorded rather than explained" and "may not have a close condition". It has one.
