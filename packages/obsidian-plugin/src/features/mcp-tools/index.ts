@@ -227,7 +227,11 @@ export async function registerTools(
     appendToActiveFileHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(patchActiveFileSchema, async ({ arguments: args }) =>
-    patchActiveFileHandler({ arguments: args, app: ctx.app }),
+    patchActiveFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(deleteActiveFileSchema, async ({ arguments: args }) =>
     deleteActiveFileHandler({ arguments: args, app: ctx.app }),
@@ -256,7 +260,11 @@ export async function registerTools(
     appendToVaultFileHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(patchVaultFileSchema, async ({ arguments: args }) =>
-    patchVaultFileHandler({ arguments: args, app: ctx.app }),
+    patchVaultFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(deleteVaultFileSchema, async ({ arguments: args }) =>
     deleteVaultFileHandler({ arguments: args, app: ctx.app }),

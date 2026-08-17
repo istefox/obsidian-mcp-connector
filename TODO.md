@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=34 -->
+<!-- project-tasks: prefix=OMC lastId=35 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In review: 1 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -81,7 +81,7 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-010` | `#416` | both parked on the same external trigger |
 | `OMC-027` | — | ledger-only **on purpose**: decided, not a defect |
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
-| — | `#445` | design; **`ADR-0019` decides the shape**, the work stays unscheduled. No ledger entry by choice: a decided shape is not committed work |
+| `OMC-035` | `#445` | **`ADR-0019` decided it and it is implemented** — the ledger entry exists now because it became committed work, which is exactly when the table's rule says to create one |
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
@@ -465,6 +465,37 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-035` #445 Write preconditions across separate MCP calls. **Decided in `ADR-0019` and
+      implemented the same day**, after the shape had been recorded as unscheduled — the schedule
+      changed, not the design. `patch_vault_file` and `patch_active_file` accept an optional
+      `expectedContent` on `operation: "replace"`, compared against the region as resolved inside
+      `vault.process` (heading and block) or `processFrontMatter` (frontmatter), so nothing can
+      interleave between the check and the splice.
+      **Implementing it settled a question the ADR had not.** `patch_active_file`'s context type *is*
+      `PatchArgs` and it forwards the whole args object into the same `applyPatch`, so the guard
+      reached it whether or not anyone decided it should; leaving its schema alone would have meant a
+      client's `expectedContent` validated away while a vault with the flag on refused the call for
+      an argument that tool never advertised. Extended deliberately, and it follows the ADR's
+      reasoning more strongly than the original scope did: the active file is the one the user is
+      looking at, so it is the likeliest place for a replace to land on top of fresh human typing.
+      **Text and not a hash**, because a model cannot digest bytes in its head — a hash would have to
+      be emitted by the server, which is the read-side work `get_vault_file` cannot carry without an
+      `outputSchema` it must never declare. The caller already holds what it read.
+      Normalisation settled concretely: line endings, per-line trailing whitespace, then leading and
+      trailing blank lines. **Interior blank lines and leading indentation stay significant**, with a
+      test pinning it — a dropped paragraph break is a real edit, and forgiving it would forgive the
+      thing the guard exists to catch. An absent `expectedContent` and an empty one are different:
+      absent is unguarded, `""` expects an empty section. Refusal is `errorJson` with
+      `stale_precondition` carrying `targetType`/`target`, and it names the recovery step and the
+      likely cause (the user typing, or Sync) because that is the common case, not the rare one.
+      `requireWritePreconditions` joins the `mcpTools` slice with a checkbox; that section's save
+      moved from a hand-rolled load/spread/save to `SettingsStore.updateSlice` in the same change,
+      since a hand-rolled spread is where one field clobbers the other once a slice holds two.
+      **Mutation-checked both ways**: a `checkReplacePrecondition` that never refuses turns 7 tests
+      red, a no-op normaliser turns 6. Suite 1863 → 1882, full gate green.
+      **The honest cost stands**: opt-in protects the careful and not the default until the next
+      major flips it, and nothing here measures the real read-to-write window — if it is seconds, as
+      a pre-mortem suspected, this guards a case that rarely fires <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-034` #467 Root `scripts/` was type-checked by nothing, and **the gap was wider than the
       issue filed it as**. True as written: no root `tsconfig.json` existed and `bun run check` is
       `bun --filter '*' check`, which a filter over workspace packages cannot extend to the root. What
