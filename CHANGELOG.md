@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-08-17
+
 ### Fixed
 
 - **A prompt you have just created could stay invisible to your client for the rest of the session.** Add a note to `Prompts/`, ask the client for the list of prompts a moment later, and the new one could be missing — and stay missing, no matter how many times you asked, until you restarted Obsidian or happened to edit some other prompt note. The cause is a timing gap that lasted a fraction of a second and then became permanent. Obsidian tells the plugin that a file exists as soon as it appears, but it reads what is inside the file a little afterwards; a prompt is only a prompt once its frontmatter has been read. If your client asked for the list in that short gap, the answer it got was correct at that instant and wrong a moment later, and the plugin kept serving it, because it only knew to look again when a file was created, renamed, deleted or edited, and "finished reading a file" is none of those. The same gap could also announce that the list had changed and then hand back the old list, or lose the announcement entirely, which is why a missing prompt and a broken notification looked identical. The plugin now also listens for the moment a file becomes readable, which closes all of that. One more case goes with it, reachable without creating anything at all: a client that asks for the list while Obsidian is still opening the vault could be left with a short list, or an empty one, for as long as it stayed connected. (#483)
