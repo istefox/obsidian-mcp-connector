@@ -1,14 +1,39 @@
 <!-- project-tasks: prefix=OMC lastId=38 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.1.1** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
-**2.0.0, 2.0.1 and 2.1.0 all shipped 2026-08-17**, community scanner passed on 2.0.0, all four
-release gates closed. The 2.0 roadmap is a record now and lives at the bottom of this file rather
+**2.0.0, 2.0.1, 2.1.0 and 2.1.1 all shipped 2026-08-17** — four releases in one day, community
+scanner passed on 2.0.0, all four release gates closed. The 2.0 roadmap is a record now and lives at the bottom of this file rather
 than the top — it was the first thing this file showed long after it stopped describing anything to
 do.
+
+### 2.1.1, and the guard that proved itself on it
+
+Ships one thing that reaches a user: `OMC-038` / `#483`, the `prompts/list` freeze. Tag `2.1.1` →
+`b0a01e3`. Eight of the nine commits since `2.1.0` are scripts, docs and ledger and reach nobody,
+which is what made the version part obvious.
+
+**The `#476` CHANGELOG guard worked on its first real cut, and the evidence is a number.** Phase
+one's dry run listed **four** files — `package.json`, `manifest.json`, `versions.json`,
+`CHANGELOG.md` — against **three** at the `2.1.0` cut. Three was the defect; the missing fourth is
+the whole reason `#476` exists. The notes rode the release commit, exactly as the dirty-file
+allowance was designed to let them.
+
+**Post-publish check, on the downloaded artifact rather than on the workflow's word**: assets are
+`main.js` and `manifest.json` and nothing else (`OMC-031` confirmed on a published release for the
+second time), attestation verifies at exit 0, the manifest inside says `2.1.1`, and the bundle
+contains `metadataCache.on("changed")` once and `expectedContent` five times — the release carries
+the fix it claims and the 2.1.0 feature it inherited.
+
+**Cut with the vault verification still outstanding, deliberately and stated.** Those had been
+coupled in conversation and nothing made them coupled in fact: `#483` carries three regression
+tests that fail before and pass after, mutation-checked both ways, and 2.1.0's own residual risk
+(the write-preconditions checkbox) belongs to a release already shipped. Decoupling also improves
+the verification, since the vault now runs the **published** artifact rather than an intermediate
+build.
 
 ### 2.1.0, cut the same evening it was decided
 
@@ -626,7 +651,11 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
       fix. The indexing window reproducing on the first attempt is measured and stands; the list
       recovering on the next call is equally explained by a follow-up `modify` event on the old
       code. Redoing it: full quit of Obsidian, reopen, confirm `get_server_info` reports the repo's
-      version, and only then create the probe <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
+      version, and only then create the probe.
+      **Shipped in `2.1.1` before that verification ran**, deliberately: the two were coupled in
+      conversation and nothing made them coupled in fact. The downloaded artifact contains
+      `metadataCache.on("changed")` once, so the released bundle carries the fix; what is unverified
+      is its behaviour in a live vault, not its presence <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-037` #481 Any tag pushed to this repo published a release. `release.yml` triggered on
       `tags: ["*"]` with the job gated only on `github.ref_type == 'tag'`, and that job creates a
       draft and then promotes it with `gh release edit --draft=false`. So `git push origin <tag>`
