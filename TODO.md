@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=35 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In review: 1 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -16,8 +16,8 @@ rather than by anything on this list, and planning as if a feature were coming w
 one.
 
 The open work sorts into three tracks. The tracks are not a sequence: nothing here blocks anything
-else here. **Track 1 is empty as of 2026-08-17**; what is left ships nothing to a user, or is
-unscheduled design.
+else here. **Tracks 1 and 3 are both empty as of 2026-08-17.** Everything still open is Track 2:
+it ships nothing to a user.
 
 ### Track 1 — silent-failure debt. Cleared 2026-08-17
 
@@ -38,29 +38,22 @@ Neither reaches a user; both cost real hours when they bite, and one already did
 - `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
   mechanical fix and no issue: the defence is procedural and belongs in the habit.
 
-### Track 3 — design, unscheduled. Would earn a minor if it lands
+### Track 3 — design. Cleared 2026-08-17, same day it was written down
 
-- `#445` — write preconditions across separate MCP calls, from @Madulone's discussion #352.
-  **Shape decided 2026-08-17 in `ADR-0019`; the work is not scheduled.** The ADR contradicts the
-  issue in three places, each measured rather than argued: the target set is two tools too wide
-  (post-#351 only `patch_vault_file`'s replace destroys authored text), the opt-in constraint means
-  the guard protects only clients that choose it, and the "cheapest option" a brainstorm had
-  recommended — re-verify the region with no new argument — **is not implementable**, because
-  `patch_vault_file`'s `target` is a location and never a state. Decided instead: an
-  `expectedContent` argument mirroring what `search_and_replace` already does structurally with
-  `pattern`, which needs no read-side token, no server state and no change to ADR-0016. Optional
-  now, required in the next major, with a settings flag as the early path.
-- `#465` — **survey done 2026-08-17, findings on the issue, closed once `ADR-0019` consumed them.** Prior art exists: `hashfile-mcp`
-  (`file_hash` parameter, token in a text footer, whole-file plus per-line, refuses) and
-  `stale-write-guard-fs` (a **tracked read** holding the view server-side, a typed `stale_view` deny
-  carrying `recover: reacquire`, **mandatory not opt-in**, and it explicitly catches edits made
-  outside the tool surface). Two of the brainstorm's first-principles conclusions now have
-  independent support: opt-in is the wrong default, and a server-held view is an ordinary pattern
-  rather than an exotic one. **Nobody merges** — both refuse — so the pre-mortem's fear about
-  merging prose is neither confirmed nor refuted by anyone's shipped experience. **Nobody uses
-  `_meta`** for the token either, so #445's ADR has to say why it diverges. The spec side is now
-  checked from both ends: no SEP and no issue in `modelcontextprotocol/modelcontextprotocol` about
-  write preconditions, matching the SDK finding.
+`#445` and `#465` were filed here as unscheduled design and both closed within the day: the survey
+fed `ADR-0019`, the ADR was written, and `OMC-035` implemented it (`ffca69f`, PR #473). The track
+went from "would earn a minor if it lands" to merged without ever being scheduled, which is worth
+noticing rather than tidying away — the estimate was wrong by the width of the whole track.
+
+**It is on `main`, not in a release**, and this file's own `D5` entry is why that distinction is
+written out rather than assumed. No release is scheduled, so the earliest a user sees this is
+whenever the next one is cut.
+
+**One thing does not close with it.** The guard is off by default, so it protects the clients that
+opt in and nobody else until the next major flips `requireWritePreconditions`. That flip is a real
+piece of future work with no entry anywhere, on purpose: it belongs to the next major's own
+planning, not to a ledger item that would sit open for months. `ADR-0019` is where it is written
+down.
 
 ### Not on any track
 
@@ -81,7 +74,7 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-010` | `#416` | both parked on the same external trigger |
 | `OMC-027` | — | ledger-only **on purpose**: decided, not a defect |
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
-| `OMC-035` | `#445` | **`ADR-0019` decided it and it is implemented** — the ledger entry exists now because it became committed work, which is exactly when the table's rule says to create one |
+| `OMC-035` | `#445` | **both closed 2026-08-17** — `ADR-0019` decided it, `ffca69f` shipped it, the issue closed with what diverged from its own proposal |
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
@@ -433,6 +426,11 @@ blank.
       2.0.1 rather than after 2.0.0, so that @smollern's reply could say all three of his findings
       shipped instead of two of three. @Madulone's says plainly that the cross-call half is in
       neither release and that #445 is unscheduled, rather than implying a date.
+      **That reply went stale within hours**: `ADR-0019` and `OMC-035` merged the same day, so
+      @Madulone was told "unscheduled" about something that is now on `main`. A follow-up on #352
+      is owed, and it has to keep the same distinction the original made — merged, not released,
+      with no release scheduled. The cost of being precise about a date is correcting it when the
+      date moves.
       **Discussion comments cannot be written through REST.**
       `POST repos/{owner}/{repo}/discussions/{n}/comments` answers 404 even where the matching GET
       works; it takes the GraphQL `addDiscussionComment` mutation with the discussion's node id.
