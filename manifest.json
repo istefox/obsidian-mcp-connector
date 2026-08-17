@@ -1,7 +1,7 @@
 {
   "id": "mcp-tools-istefox",
   "name": "MCP Connector",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "minAppVersion": "1.7.2",
   "description": "Connect MCP-compatible clients (Claude Desktop, Claude Code, Cline) to your vault with semantic search, templates, file management and gated command execution.",
   "author": "Stefano Ferri",
