@@ -1,13 +1,41 @@
 <!-- project-tasks: prefix=OMC lastId=35 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.0.1** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 5 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
-**2.0.0 and 2.0.1 both shipped 2026-08-17**, community scanner passed, all four release gates
-closed. The 2.0 roadmap is a record now and lives at the bottom of this file rather than the top —
-it was the first thing this file showed long after it stopped describing anything to do.
+**2.0.0, 2.0.1 and 2.1.0 all shipped 2026-08-17**, community scanner passed on 2.0.0, all four
+release gates closed. The 2.0 roadmap is a record now and lives at the bottom of this file rather
+than the top — it was the first thing this file showed long after it stopped describing anything to
+do.
+
+### 2.1.0, cut the same evening it was decided
+
+Ships `OMC-035` (`expectedContent` on patch replace, `ADR-0019`) and the retirement of the
+release-attached `.mcpb` (`OMC-031`). Tag `2.1.0` → `a52ff30`. **This file said hours earlier that
+the next release would most likely be a patch triggered by a bug report; it was a minor triggered by
+a feature merged the same day.** Kept rather than corrected, because the prediction was the honest
+one at the time and being wrong about it is the information.
+
+**Four things the cut measured, none of which a test could have told us.**
+
+`version.ts`'s two-phase rewrite (`OMC-032`) ran for real for the first time, both phases under
+`DRY_RUN=1` first. It works, and phase one's clean-tree preflight means an in-flight edit has to be
+stashed around it.
+
+`OMC-031` is confirmed on a published release rather than only in CI: `2.1.0`'s assets are exactly
+`main.js` and `manifest.json`, and the notes carry the line pointing at the in-plugin export.
+
+**`version.ts` does not touch `CHANGELOG.md`, and nothing notices** — now `#476`. The released
+content would have stayed under `[Unreleased]` with every check green, since nothing in the gate or
+in `release.yml` reads that file. Caught by hand because the dry run listed three files.
+
+**No human verification ran before this cut, and that was a decision, not an oversight.** 2.0 held
+three; 2.1.0 held none. Weighed at the gate and taken deliberately: the feature is off by default,
+so a client that never sends `expectedContent` sees no change at all. The residual risk was named at
+the time and is unchanged — the settings checkbox is a Svelte component that `check:svelte`
+type-checks and no test covers, so nobody has looked at it in a running vault.
 
 **No next release is scheduled, and that is the accurate statement rather than an omission.** There
 is no 2.1 feature queued. Everything open is hygiene, verification discipline, or one design item
@@ -31,12 +59,16 @@ failure ("no compile error") was false, and the fix as planned would not have fi
 
 ### Track 2 — verification and process. Ships nothing to a user
 
-Neither reaches a user; both cost real hours when they bite, and one already did.
+None of these reaches a user; they cost real hours when they bite, and two already have.
 
 - `OMC-030` / `#468` — a vault verification can run against a stale build, and one did: the first `B3` run
   failed all four assertions against an Aug 11 `main.js` and read as a defect in new code.
 - `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
   mechanical fix and no issue: the defence is procedural and belongs in the habit.
+- `#476` — `version.ts` cuts a release without touching `CHANGELOG.md`. Found during the `2.1.0` cut
+  and issue-only for now, since nobody has committed to fixing it. The proposed answer is a refusal
+  at phase one when `[Unreleased]` is non-empty, rather than generating the heading: the prose under
+  it is written by a human anyway, and this repo's bias is to refuse rather than guess.
 
 ### Track 3 — design. Cleared 2026-08-17, same day it was written down
 
@@ -76,6 +108,7 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-029` | — | ledger-only **on purpose**: no actionable close condition, the defence is procedural |
 | `OMC-035` | `#445` | **both closed 2026-08-17** — `ADR-0019` decided it, `ffca69f` shipped it, the issue closed with what diverged from its own proposal |
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
+| — | `#476` | issue-only **for now**: found during the `2.1.0` cut, nobody has committed to fixing it, so no ledger id yet by this table's own rule |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
