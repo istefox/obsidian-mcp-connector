@@ -1,4 +1,4 @@
-<!-- project-tasks: prefix=OMC lastId=38 -->
+<!-- project-tasks: prefix=OMC lastId=39 -->
 # PROJECT TASKS
 
 Updated: 2026-08-17 · Shipped: **2.1.1** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
@@ -90,10 +90,13 @@ None of these reaches a user; they cost real hours when they bite, and two alrea
   one did. Both halves fixed in this repo rather than by habit, and the vault relinked. Then the
   closing verification ran against a stale build too, because a relink does not take effect until
   Obsidian is fully quit — see the entry, which now carries that as its own last measurement.
-- `OMC-038` / `#483` — **closed 2026-08-17**, the day it was split out. `prompts/list` cached a scan
-  taken before the file was indexed and never re-checked, so a prompt could stay invisible for a
-  whole session. Found by reading `OMC-030`'s "may have no close condition" half rather than
-  believing it.
+- `OMC-038` / `#483` — **closed 2026-08-17**, the day it was split out, shipped in `2.1.1` and
+  **verified in production on that build**. `prompts/list` cached a scan taken before the file was
+  indexed and never re-checked, so a prompt could stay invisible for a whole session. Found by
+  reading `OMC-030`'s "may have no close condition" half rather than believing it.
+- `OMC-039` — ledger-only. `link.ts`'s own recovery told you to put the backup where Obsidian would
+  load it instead of the symlink, so a relinked vault kept running the old build across a full
+  restart. Found by the verification above failing for a reason that was not the thing under test.
 - `OMC-029` — measured figures written into comments are guarded by nothing. Deliberately has **no**
   mechanical fix and no issue: the defence is procedural and belongs in the habit.
 - `OMC-036` / `#476` — **closed 2026-08-17**, same day it was filed. `version.ts` now refuses a cut
@@ -140,7 +143,8 @@ section exists so the next drift is visible rather than rediscovered.
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | `OMC-036` | `#476` | **both closed 2026-08-17** — the guard ships with the dirty-`CHANGELOG.md` allowance the issue's proposal turned out to need |
 | `OMC-037` | `#481` | **both closed 2026-08-17** — found while archiving a branch: any tag published a release |
-| `OMC-038` | `#483` | **both closed 2026-08-17** — split out of `OMC-030` once the "unexplained" half turned out to have a mechanism |
+| `OMC-038` | `#483` | **both closed 2026-08-17** — split out of `OMC-030` once the "unexplained" half turned out to have a mechanism; verified in production on `2.1.1` |
+| `OMC-039` | — | ledger-only **by design**: found and fixed in one session, nothing left for anyone to pick up |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
@@ -511,6 +515,33 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-039` `link.ts` told you to shadow your own symlink, and the vault ran the old build
+      across a full restart with nothing reporting it. The recovery printed for a copied plugin
+      directory moved it to `<plugins>/<id>.copy-backup` — a sibling of the link, **inside the one
+      directory Obsidian enumerates**. Obsidian keys plugins by the `id` in each `manifest.json`,
+      so the backup declared the same id as the link, the two collided, and the copy won.
+      **The same class of false success as `OMC-030`'s original "Symlink already exists.",
+      reintroduced by the fix for it**: `bun run link` reported `Already linked` throughout, which
+      was true about the filesystem and false about what Obsidian had loaded.
+      **Measured, not reasoned.** With `<id>.copy-backup` beside the link a freshly restarted
+      Obsidian served `2.0.1`; moving that one directory out and restarting served `2.1.1`, nothing
+      else changed. It also settled a question open since the relink and named as unresolved at the
+      time: **Obsidian does follow symlinks**. Shadowing was the whole story, and the competing
+      hypothesis is dead rather than merely unlikely.
+      Fixed in `9c8f2dd`. `backupPathFor` puts the backup one level above `plugins/` and the
+      refusal explains why; `findShadowingPlugins` refuses when any sibling declares the plugin's
+      id, on **both** paths including an already-correct link — a shadowed correct link is the state
+      this was written from and the one nothing reported. Both pure, caller does the I/O, the same
+      split as `decideLinkAction` and `decideICloudTarget`. The message also now says to quit with
+      Cmd+Q: a running instance survives the `mv` on its own file handles and keeps serving the old
+      code, which is what cost the first verification session.
+      **One test changed rather than disabled** — it asserted the old sibling path as a literal; the
+      property it guards is unchanged and now goes through `backupPathFor`, so the layout is stated
+      once instead of twice. That second hand-written copy is what let it go stale.
+      Verified by running the script in four states rather than reading it: collision with no link
+      refuses at exit 1 and prints the `mv`; that `mv` then links at exit 0; collision with a correct
+      link still refuses; the real Labs vault, healthy, reports `Already linked`
+      <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-030` **P2** #468 A vault verification can silently run against the wrong build, and one
       did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
       fresh `bun run build` in the repo changes nothing there until someone copies it across.
@@ -653,9 +684,22 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
       code. Redoing it: full quit of Obsidian, reopen, confirm `get_server_info` reports the repo's
       version, and only then create the probe.
       **Shipped in `2.1.1` before that verification ran**, deliberately: the two were coupled in
-      conversation and nothing made them coupled in fact. The downloaded artifact contains
-      `metadataCache.on("changed")` once, so the released bundle carries the fix; what is unverified
-      is its behaviour in a live vault, not its presence <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
+      conversation and nothing made them coupled in fact.
+      **VERIFIED IN PRODUCTION 2026-08-17, on the released `2.1.1`, identity pinned first.**
+      Baseline `[transclusion-check]`; create a prompt; `t+150ms` still `[transclusion-check]`, the
+      indexing window; `t+300ms` `[probe-483, transclusion-check]`. Identity pinned before the probe
+      existed, by two independent signals: `get_server_info` reporting `2.1.1` against the symlinked
+      manifest, and `patch_vault_file` publishing 9 properties including `expectedContent`, which
+      only an ADR-0019 build does.
+      **Scope of the claim.** The released build enters the window and leaves it in ~150ms. It does
+      not isolate which invalidation path unfroze it, because `2.1.1` holds both — and that
+      distinction only ever mattered for deciding which code was answering, which is now settled
+      directly instead of inferred. The old code's freeze is established by the three regression
+      tests. Two levels, neither claiming more than it measures.
+      **A startup-window measurement was tried first and returned a NON-RESULT**, recorded as such:
+      with one prompt file in the vault, indexing finishes before the first 200ms sample. It is the
+      sharper discriminator in principle and needs a vault big enough to sample
+      <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-037` #481 Any tag pushed to this repo published a release. `release.yml` triggered on
       `tags: ["*"]` with the job gated only on `github.ref_type == 'tag'`, and that job creates a
       draft and then promotes it with `gh release edit --draft=false`. So `git push origin <tag>`
