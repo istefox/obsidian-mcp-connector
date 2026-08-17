@@ -10,7 +10,11 @@
  * test process.
  */
 import { describe, expect, test } from "bun:test";
-import { decideLinkAction, type LinkTargetState } from "./link";
+import {
+  decideICloudTarget,
+  decideLinkAction,
+  type LinkTargetState,
+} from "./link";
 
 const REPO = "/Users/dev/Obsidian_MCP";
 const TARGET = "/vault/.obsidian/plugins/mcp-tools-istefox";
@@ -90,6 +94,14 @@ describe("decideLinkAction", () => {
     expect(decide({ kind: "file" }).action).toBe("refuse");
   });
 
+  test("the iCloud question does not reach the copied-directory refusal", () => {
+    // The two decisions are separate functions for exactly this reason: a
+    // `directory` is refused on a fact, and no environment variable may turn
+    // that into a link. If these ever merge, this is what notices.
+    expect(decide({ kind: "directory" }).action).toBe("refuse");
+    expect(decide({ kind: "file" }).action).toBe("refuse");
+  });
+
   test("every refusal names the path it is refusing", () => {
     const states: LinkTargetState[] = [
       { kind: "directory" },
@@ -99,5 +111,54 @@ describe("decideLinkAction", () => {
     for (const state of states) {
       expect(decide(state).message).toContain(TARGET);
     }
+  });
+});
+
+describe("decideICloudTarget", () => {
+  const DRIVE =
+    "/Users/dev/Library/Mobile Documents/com~apple~CloudDocs/Vaults/Labs/.obsidian/plugins/mcp-tools-istefox";
+  const APP_CONTAINER =
+    "/Users/dev/Library/Mobile Documents/iCloud~md~obsidian/Documents/Labs/.obsidian/plugins/mcp-tools-istefox";
+
+  test("an ordinary path is not iCloud", () => {
+    expect(decideICloudTarget(TARGET, REPO, false).kind).toBe("not-icloud");
+  });
+
+  test("a path merely containing the word icloud is not iCloud", () => {
+    // The marker is a real directory, not a word to grep for. `~/icloud-backup`
+    // is somebody's ordinary folder.
+    const d = decideICloudTarget("/Users/dev/icloud-backup/vault", REPO, false);
+    expect(d.kind).toBe("not-icloud");
+  });
+
+  test("iCloud Drive is blocked without ALLOW_ICLOUD", () => {
+    expect(decideICloudTarget(DRIVE, REPO, false).kind).toBe("blocked");
+  });
+
+  test("an iCloud app container counts too, not just the Drive", () => {
+    // Obsidian's own iOS container is a sibling of com~apple~CloudDocs under
+    // the same parent, and is synced the same way. Matching only the Drive
+    // would miss it.
+    expect(decideICloudTarget(APP_CONTAINER, REPO, false).kind).toBe("blocked");
+  });
+
+  test("ALLOW_ICLOUD proceeds, and still says the same two things", () => {
+    const d = decideICloudTarget(DRIVE, REPO, true);
+    expect(d.kind).toBe("allowed");
+    if (d.kind === "not-icloud") return;
+    expect(d.message).toContain("Certain:");
+    expect(d.message).toContain("NOT known:");
+  });
+
+  test("the block separates what is certain from what is not", () => {
+    // The whole point of the wording: the target being outside the synced
+    // container is a fact, iCloud's treatment of the link itself is not, and
+    // presenting them as one confident warning would be the error.
+    const d = decideICloudTarget(DRIVE, REPO, false);
+    if (d.kind === "not-icloud") throw new Error("expected a decision");
+    expect(d.message).toContain("Certain:");
+    expect(d.message).toContain("NOT known:");
+    expect(d.message).toContain(REPO);
+    expect(d.message).toContain("ALLOW_ICLOUD=1");
   });
 });
