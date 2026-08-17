@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=33 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 8 (P1: 1) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 4/5
+Updated: 2026-08-17 · Open: 7 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
 
 ## Roadmap — 2.0
 
@@ -253,40 +253,19 @@ blank.
 - [x] `D4` **Passed on the 2.0.0 release, 2026-08-17.** The Obsidian scanner runs **on the release, never before**. Known constraints that
       have already failed a release: no `eslint-disable` on `obsidianmd/*` rules, and
       non-plugin code stays out of `src/` because the scanner lints `src/**` only
-- [ ] `D5` Post-release: tell @smollern (#406), @ottopichlhoefer (#430) and @Madulone (#352)
-      that their work is in a release, not just on `main`
+- [x] `D5` Post-release: tell @smollern (#406), @ottopichlhoefer (#430) and @Madulone (#352)
+      that their work is in a release, not just on `main`. **All three posted 2026-08-17**, after
+      2.0.1 rather than after 2.0.0, so that @smollern's reply could say all three of his findings
+      shipped instead of two of three. @Madulone's says plainly that the cross-call half is in
+      neither release and that #445 is unscheduled, rather than implying a date.
+      **Discussion comments cannot be written through REST.**
+      `POST repos/{owner}/{repo}/discussions/{n}/comments` answers 404 even where the matching GET
+      works; it takes the GraphQL `addDiscussionComment` mutation with the discussion's node id.
+      An issue comment is `gh issue comment` as usual — #430 is an issue, #406 and #352 are
+      discussions
 
 ## Next — measured gaps, actionable now
 
-- [ ] `OMC-033` **P1** The Windows bridge still corrupts every non-ASCII path and body, and the
-      fix has been known and confirmed since 2026-07-26. @smollern root-caused it in discussion
-      #406 against a Danish vault: `scripts/obsidian_mcp_bridge.py` reads `sys.stdin` and writes
-      through `sys.stdout.write` (`main()` at :316-326, `write_message` at :216), both **text**
-      streams, so on Windows they use the locale codepage rather than UTF-8. Claude Desktop sends
-      UTF-8 down the pipe, so `ø` (`0xC3 0xB8`) is decoded as two cp1252 characters and arrives as
-      `Ã¸`; a path lookup then fails as "File not found", and a written alias lands corrupted in
-      the file. Re-sending a corrupted string doubles the corruption, which is what identified it
-      as a single reinterpretation at the stdio boundary. **He applied
-      `sys.stdin/sys.stdout.reconfigure(encoding="utf-8")` and confirmed it round-trips æ, ø, å, ü
-      and Japanese vault-wide. That change was never made here**: grepped 2026-08-17, the repo
-      contains no `reconfigure`, no `PYTHONUTF8` and no `PYTHONIOENCODING` anywhere. The two
-      `decode("utf-8")` calls at :189 and :200 are on the HTTP response body and do not touch the
-      stdio boundary. So 2.0.0 shipped with it, and #406's other two points did not: bug 2 needed
-      no code change (`set_note_property` was the right tool) and bug 3 is the six-field boolean
-      fix released in 2.0.0. **Do not tell @smollern his report is in a release until this is** —
-      two of three is not three. **Fixed on `main` 2026-08-17; this entry closes when 2.0.1
-      ships.** `force_utf8_stdio()` reconfigures `sys.stdin` and `sys.stdout` to UTF-8 and is
-      called as the first statement of `main()`, before a byte is read; `sys.stderr` is
-      deliberately left alone, so the diagnostic channel does not depend on the thing being
-      diagnosed. A stream with no `reconfigure`, or one that refuses, is skipped with a log line
-      rather than aborting the bridge — off Windows the default is already UTF-8. Four tests added
-      (`ForceUtf8StdioTests`), 28 → 32, and they assert the **call**, not the platform: a test that
-      merely round-tripped `ø` would pass with the fix deleted on every machine CI runs on.
-      Mutation-checked both ways — deleting the call from `main()` turns 1 red, reconfiguring to
-      `cp1252` instead turns 2 red. **Weakness to keep in view**: the bridge suite is stdlib
-      `unittest`, run by `python3 -m unittest discover -s scripts`, and is deliberately outside
-      `bun test` (issue #355) — so nothing in CI runs it, and this guard is a discipline rather
-      than an enforcement. Worth a CI step of its own <!-- src:session opened:2026-08-17 updated:2026-08-17 -->
 - [ ] `OMC-031` **P2** The `.mcpb` attached to every GitHub release is the pre-ADR-0013 bundle,
       and has been since 2026-07-15. Two build paths produce a `.mcpb` and only one was migrated.
       `generateMcpb()` (`features/mcp-client-config/services/mcpbGenerator.ts`), the plugin's
@@ -429,6 +408,35 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-033` The Windows bridge corrupted every non-ASCII path and body, and the
+      fix has been known and confirmed since 2026-07-26. @smollern root-caused it in discussion
+      #406 against a Danish vault: `scripts/obsidian_mcp_bridge.py` reads `sys.stdin` and writes
+      through `sys.stdout.write` (`main()` at :316-326, `write_message` at :216), both **text**
+      streams, so on Windows they use the locale codepage rather than UTF-8. Claude Desktop sends
+      UTF-8 down the pipe, so `ø` (`0xC3 0xB8`) is decoded as two cp1252 characters and arrives as
+      `Ã¸`; a path lookup then fails as "File not found", and a written alias lands corrupted in
+      the file. Re-sending a corrupted string doubles the corruption, which is what identified it
+      as a single reinterpretation at the stdio boundary. **He applied
+      `sys.stdin/sys.stdout.reconfigure(encoding="utf-8")` and confirmed it round-trips æ, ø, å, ü
+      and Japanese vault-wide. That change was never made here**: grepped 2026-08-17, the repo
+      contains no `reconfigure`, no `PYTHONUTF8` and no `PYTHONIOENCODING` anywhere. The two
+      `decode("utf-8")` calls at :189 and :200 are on the HTTP response body and do not touch the
+      stdio boundary. So 2.0.0 shipped with it, and #406's other two points did not: bug 2 needed
+      no code change (`set_note_property` was the right tool) and bug 3 is the six-field boolean
+      fix released in 2.0.0. **Do not tell @smollern his report is in a release until this is** —
+      two of three is not three. **Fixed on `main` 2026-08-17; this entry closes when 2.0.1
+      ships.** `force_utf8_stdio()` reconfigures `sys.stdin` and `sys.stdout` to UTF-8 and is
+      called as the first statement of `main()`, before a byte is read; `sys.stderr` is
+      deliberately left alone, so the diagnostic channel does not depend on the thing being
+      diagnosed. A stream with no `reconfigure`, or one that refuses, is skipped with a log line
+      rather than aborting the bridge — off Windows the default is already UTF-8. Four tests added
+      (`ForceUtf8StdioTests`), 28 → 32, and they assert the **call**, not the platform: a test that
+      merely round-tripped `ø` would pass with the fix deleted on every machine CI runs on.
+      Mutation-checked both ways — deleting the call from `main()` turns 1 red, reconfiguring to
+      `cp1252` instead turns 2 red. **Weakness to keep in view**: the bridge suite is stdlib
+      `unittest`, run by `python3 -m unittest discover -s scripts`, and is deliberately outside
+      `bun test` (issue #355) — so nothing in CI runs it, and this guard is a discipline rather
+      than an enforcement. Worth a CI step of its own <!-- src:session opened:2026-08-17 updated:2026-08-17 --> **Released in 2.0.1 (tag `2.0.1` → `60d6e6c`), 2026-08-17**, and @smollern told the same day (2026-08-17)
 - [x] `OMC-024` Per-token era counters. **Implemented, and verified in a vault on both of the checks that were holding it open.** `eraCountersByToken` now sits alongside `eraCounters` in the `mcpTransport` slice, keyed by token id, and each token row in the transport settings says which era it is served on. Additive rather than the migration this entry originally asked for, and the original framing was wrong: the counts already on disk predate the split and belong to no token, so attributing them would invent data and dropping them would damage ADR-0016 §8's trigger, which reads the vault-wide legacy total. `sum(byToken) <= eraCounters` holds by construction. A revoked token's bucket is pruned in the counter's own recipe; an absent or malformed `tokens` key prunes nothing, so a boot that writes before `ensureTokenStore` seeds the list cannot wipe the map. **Both remaining checks are now done, so this closes.** Two tokens on different eras with disagreeing rows against a global that exceeds their sum: `A1`, 2026-08-15. A pre-existing vault with no `eraCountersByToken` key: `A2`, 2026-08-16 — the key removed with the plugin stopped, the token row rendering with no era label at all, the global `Requests served` still reading from `eraCounters`, and the server answering normally; backup restored (2026-08-16)
 - [x] `OMC-016` #427 MCP Apps: a `ui://` resource surface for the two search tools, decided in `docs/architecture/ADR-0018-omc-016-mcp-apps-ui-resource.md`, SPEC archived at `docs/specs/omc-016-mcp-apps-ui-resource.spec.md`. `C1` the `resources` capability with every field explicit and `extensions: { "io.modelcontextprotocol/ui": … }` declared once at `buildMcpServer(tokenId)` for both eras; `C2` the `@modelcontextprotocol/ext-apps` handshake bundled from the view-side entry, `main.js` 2,649,591 → 3,011,578 B (+13.66%, trigger +20%); `C3` both search tools' rows riding the result's own `_meta`, `content` byte-identical to before. Merged as PR #454 (`e3dcd8c`), squashed, CI green, 1849 tests, conformance 26/28 baseline unmoved. **Closed 2026-08-16 by `R-18`**, which put the view in front of a human for the first time: it renders, and **Claude Desktop forwards the tool result's `_meta` to it**, so ADR-0018 Alternative D (`structuredContent`) never has to be built. Two things the run settled that no test could: the host refuses the `obsidian://` scheme, so the click degrades to revealing the vault-relative path — designed fallback, host policy, and it leaves the URL encoding untested by any means; and the theme follows a host switch with no reload. Full per-check measurements in `R-18` under Gate C (2026-08-16)
 - [x] `OMC-023` The server advertised a prompts capability it did not honour, on both protocol eras. ADR-0017 settled it three ways rather than two: modern declares `prompts: { listChanged: true }` and honours it, legacy declares `false`, because a POST-only transport with `GET /mcp` at 405 structurally cannot deliver a notification with no request in flight. Shipped 2026-08-15 (PR #450 decision, #452 code); `eraRouter.test.ts`'s full-body `initialize` pin reads `false`, and that assertion IS the record of what a major release moved. **Closed 2026-08-16 by `B3`**, the only thing it was still open on: a hand-built `subscriptions/listen` client against the Labs vault saw `notifications/prompts/list_changed` arrive on a prompt create and on a delete, carrying the ack's own subscription id; saw nothing for a body edit that changed no field a client can see, which is the case the list comparison exists for and the only place a per-event implementation would have failed; and saw a `toolsListChanged` bystander stay silent throughout, with its filter genuinely honored. The legacy half stayed structural rather than observational — `GET /mcp` is 405 and a live legacy `initialize` returns `prompts.listChanged: false`, so there is no stream for a notification to ride. Conformance stayed 26/28. Full measurements in `B3` under Gate B (2026-08-16)
