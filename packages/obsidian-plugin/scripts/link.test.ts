@@ -11,8 +11,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  backupPathFor,
   decideICloudTarget,
   decideLinkAction,
+  findShadowingPlugins,
   type LinkTargetState,
 } from "./link";
 
@@ -69,8 +71,14 @@ describe("decideLinkAction", () => {
     // Sourcing the copy from `targetPath` would read the symlink this script
     // is about to create — that is, the repo root — and copy a file onto
     // itself, or nothing at all.
+    //
+    // The literal was `${TARGET}.copy-backup/data.json` until the backup moved
+    // out of plugins/. The property under test is unchanged — source is the
+    // backup, never the live path — so it is asserted through `backupPathFor`
+    // rather than through a second hand-written copy of the layout, which is
+    // what made this assertion go stale in the first place.
     const { message } = decide({ kind: "directory" });
-    expect(message).toContain(`${TARGET}.copy-backup/data.json`);
+    expect(message).toContain(`${backupPathFor(TARGET)}/data.json`);
     expect(message).not.toMatch(/cp "[^"]*plugins\/mcp-tools-istefox\/data/);
   });
 
@@ -111,6 +119,74 @@ describe("decideLinkAction", () => {
     for (const state of states) {
       expect(decide(state).message).toContain(TARGET);
     }
+  });
+});
+
+describe("backupPathFor", () => {
+  test("the backup goes OUTSIDE plugins/, one level up", () => {
+    // The whole point, and the thing the first version of this message got
+    // wrong. A backup beside the link declares the same id in its manifest,
+    // Obsidian keys plugins by that id, and the copy wins — measured on
+    // 2026-08-17, where it served 2.0.1 across a full restart.
+    expect(backupPathFor(TARGET)).toBe(
+      "/vault/.obsidian/mcp-tools-istefox.copy-backup",
+    );
+  });
+
+  test("the backup is never a sibling of the link", () => {
+    const pluginsDir = TARGET.slice(0, TARGET.lastIndexOf("/"));
+    expect(backupPathFor(TARGET).startsWith(`${pluginsDir}/`)).toBe(false);
+  });
+
+  test("the directory refusal prints that path, not a sibling", () => {
+    const { message } = decide({ kind: "directory" });
+    expect(message).toContain(backupPathFor(TARGET));
+    // The old, shadowing form. Naming it keeps a future edit from drifting back.
+    expect(message).not.toContain(`${TARGET}.copy-backup`);
+  });
+});
+
+describe("findShadowingPlugins", () => {
+  const ID = "mcp-tools-istefox";
+
+  test("the link itself is not a shadow of itself", () => {
+    const s = [{ name: ID, id: ID }];
+    expect(findShadowingPlugins(s, ID, ID)).toEqual([]);
+  });
+
+  test("a backup left beside the link IS a shadow", () => {
+    const s = [
+      { name: ID, id: ID },
+      { name: `${ID}.copy-backup`, id: ID },
+    ];
+    expect(findShadowingPlugins(s, ID, ID)).toEqual([`${ID}.copy-backup`]);
+  });
+
+  test("it matches on the manifest id, not on the directory name", () => {
+    // The name can be anything; what collides is the id Obsidian keys on.
+    const s = [
+      { name: ID, id: ID },
+      { name: "an-unrelated-name", id: ID },
+      { name: "dataview", id: "dataview" },
+    ];
+    expect(findShadowingPlugins(s, ID, ID)).toEqual(["an-unrelated-name"]);
+  });
+
+  test("directories with no readable manifest are not shadows", () => {
+    const s = [
+      { name: ID, id: ID },
+      { name: "notes-backup", id: null },
+    ];
+    expect(findShadowingPlugins(s, ID, ID)).toEqual([]);
+  });
+
+  test("every colliding directory is reported, not just the first", () => {
+    const s = [
+      { name: ID, id: ID },
+      { name: `${ID}.copy-backup`, id: ID },
+      { name: `${ID}.old`, id: ID },
+    ];
+    expect(findShadowingPlugins(s, ID, ID)).toHaveLength(2);
   });
 });
 
