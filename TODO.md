@@ -1,4 +1,4 @@
-<!-- project-tasks: prefix=OMC lastId=36 -->
+<!-- project-tasks: prefix=OMC lastId=37 -->
 # PROJECT TASKS
 
 Updated: 2026-08-17 · Shipped: **2.1.0** · Open: 4 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
@@ -108,6 +108,7 @@ section exists so the next drift is visible rather than rediscovered.
 | `OMC-035` | `#445` | **both closed 2026-08-17** — `ADR-0019` decided it, `ffca69f` shipped it, the issue closed with what diverged from its own proposal |
 | — | `#465` | **survey done and consumed by `ADR-0019`** — closed 2026-08-17 |
 | `OMC-036` | `#476` | **both closed 2026-08-17** — the guard ships with the dirty-`CHANGELOG.md` allowance the issue's proposal turned out to need |
+| `OMC-037` | `#481` | **both closed 2026-08-17** — found while archiving a branch: any tag published a release |
 | — | `#427` | **closed 2026-08-17** — it had been open a week after 2.0.0 shipped and `R-18` verified it |
 
 **Which surface gets what.** An issue is for anything a contributor could hit, pick up, or reasonably
@@ -514,6 +515,33 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 ## Done
 
+- [x] `OMC-037` #481 Any tag pushed to this repo published a release. `release.yml` triggered on
+      `tags: ["*"]` with the job gated only on `github.ref_type == 'tag'`, and that job creates a
+      draft and then promotes it with `gh release edit --draft=false`. So `git push origin <tag>`
+      published a real release named after the tag, built from whatever commit it pointed at, with
+      nothing asking for confirmation.
+      **Found by nearly doing it.** Archiving the retired `spike/427-mcp-apps-ui-resource` branch,
+      the obvious move was a lightweight tag on `678afcf` so ADR-0018's and the OMC-016 spec's
+      citations of that SHA stay resolvable. That tag would have published a release built from
+      7 August code. Used `refs/archive/spike-427-mcp-apps-ui-resource` instead — a custom ref is
+      neither `refs/heads/*` nor `refs/tags/*`, so Actions never sees it and it shows up in neither
+      list. Verified after the push: no workflow ran and `2.1.0` is still the latest release.
+      **The fix is deliberately NOT the one the issue proposed, and the reason is the direction of
+      failure.** Narrowing the tag glob is the obvious move; GitHub's filter-pattern semantics are
+      not the shell's, the documented cheat sheet could not be retrieved to confirm them, and a
+      pattern that is too strict means a **real release silently never publishes**, discovered at
+      the next cut. So the trigger stays broad and the enforcement is the job's first step, in
+      bash, which fails the other way: a non-version tag gives a red run and no release, while every
+      version tag always reaches the job.
+      The guard runs before `checkout`, so nothing is fetched or built. `github.ref_name` is passed
+      through `env` rather than interpolated into the script, since a ref name is
+      attacker-influenceable text and `${{ }}` splices it in before bash sees it.
+      Verified by running the **literal** script extracted from the parsed YAML, not a paraphrase:
+      all **98** tags this repo has ever pushed are accepted, prereleases included
+      (`0.4.0-alpha.1`, `0.4.0-beta.3`), and `archive/spike-427-…`, `latest`, `nightly`,
+      `release-2.1.0`, `2.1` and `v2.1.0` are all refused. `v`-prefixed tags are refused on purpose:
+      this project has never used one, so adopting that scheme should fail loudly rather than
+      half-work.
 - [x] `OMC-036` #476 `version.ts` cuts a release without touching `CHANGELOG.md`. Found during the
       `2.1.0` cut, hours after that cut nearly shipped its own notes under `[Unreleased]` with every
       check green — nothing in the gate or in `release.yml` reads that file.

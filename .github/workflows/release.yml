@@ -1,5 +1,12 @@
 name: Release
 
+# The tag filter stays broad ON PURPOSE, and the enforcement lives in the first
+# step of the job instead (#481). Narrowing this glob would be the obvious fix
+# and is the wrong one: GitHub's filter-pattern semantics are not the shell's,
+# and a pattern that is too strict means a REAL release silently never publishes
+# — discovered at the next cut, which is worse than the problem being solved. A
+# bash guard fails in the safe direction: a non-version tag produces a red run
+# and no release, while every version tag always reaches the job.
 on:
   push:
     tags:
@@ -16,6 +23,32 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # FIRST, before checkout and before anything can be built or published.
+      # Every step below this one assumes the tag names a release; this is what
+      # makes that true (#481). Until it existed, `git push origin <any-tag>`
+      # published a real release named after that tag, built from whatever
+      # commit it pointed at, with no confirmation anywhere — the draft below
+      # exists only to attach assets and the last step promotes it.
+      #
+      # `ref_name` goes through `env`, never interpolated into the script: a ref
+      # name is attacker-influenceable text and `${{ }}` splices it in before
+      # bash ever sees it.
+      #
+      # The pattern was checked against all 98 tags this repo has ever pushed,
+      # prereleases included (`0.4.0-alpha.1`, `0.4.0-beta.3`); all 98 match.
+      # `v`-prefixed tags are refused because this project has never used one —
+      # adopting that scheme should fail loudly here rather than half-work.
+      - name: Refuse a tag that does not name a release
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Refusing to publish: the tag '$TAG' is not a release version (expected MAJOR.MINOR.PATCH, optionally -prerelease). Nothing was built and no release was created. Delete the tag if it was a mistake, or use a custom ref such as refs/archive/<name> for anything that is not a release."
+            exit 1
+          fi
+          echo "Tag '$TAG' names a release. Continuing."
+
       - uses: actions/checkout@v6
 
       - name: Setup Bun
