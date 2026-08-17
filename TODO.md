@@ -62,8 +62,9 @@ failure ("no compile error") was false, and the fix as planned would not have fi
 None of these reaches a user; they cost real hours when they bite, and two already have.
 
 - `OMC-030` / `#468` — **closed 2026-08-17.** A vault verification can run against a stale build, and
-  one did. Both halves fixed in this repo rather than by habit, and the vault relinked; the closing
-  probe reproduced `OMC-038`'s window in production on the first attempt.
+  one did. Both halves fixed in this repo rather than by habit, and the vault relinked. Then the
+  closing verification ran against a stale build too, because a relink does not take effect until
+  Obsidian is fully quit — see the entry, which now carries that as its own last measurement.
 - `OMC-038` / `#483` — **closed 2026-08-17**, the day it was split out. `prompts/list` cached a scan
   taken before the file was indexed and never re-checked, so a prompt could stay invisible for a
   whole session. Found by reading `OMC-030`'s "may have no close condition" half rather than
@@ -104,7 +105,7 @@ section exists so the next drift is visible rather than rediscovered.
 
 | Ledger | Issue | State |
 |---|---|---|
-| `OMC-030` | `#468` | **both closed 2026-08-17** — vault relinked, and the probe that closes it reproduced the `#483` window on the first try |
+| `OMC-030` | `#468` | **both closed 2026-08-17** — vault relinked; the probe cited at closing turned out to have run against the pre-relink build, corrected in the entry and on the issue |
 | `OMC-034` | `#467` | **both closed 2026-08-17** — type-check coverage |
 | `OMC-028` | `#466` | **both closed 2026-08-17** — the projector now fails when `SearchResult` grows |
 | `OMC-010` | `#416` | both parked on the same external trigger |
@@ -561,9 +562,29 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
       race it: `prompts/list` immediately after creating `Prompts/probe-483.md` returned the baseline
       without it, and the very next call had it. Before `d67bc38` that first answer was the one
       served for the rest of the session. That is the 15:10 symptom of 2026-08-16 produced on
-      demand — which does not recover what happened that afternoon, but does retire the reading of
-      it as an exotic timing case beyond a normal client's reach. Probe deleted, list back to
-      baseline <!-- src:session opened:2026-08-16 closed:2026-08-17 -->
+      demand. Probe deleted, list back to baseline.
+      **CORRECTION, same evening, and it is this entry's own subject landing on its own closure.**
+      That probe ran against the **pre-relink 2.0.1 build**. Obsidian had not reloaded the plugin:
+      moving the directory out from under a running instance does not disturb it, its file handles
+      survive the `mv`, and on macOS closing the window does not quit the app. So it kept serving
+      the old code out of the moved directory and kept writing to the moved `data.json`.
+      Three signals agree, none of which was consulted before the probe: `get_server_info` reported
+      `2.0.1` against a symlinked manifest of `2.1.0`; `patch_vault_file` published no
+      `expectedContent`, correct for 2.0.1 and wrong for 2.1.0; and an `activate_tool` write minutes
+      later landed in `.copy-backup/data.json` while the repo root's had not moved since the copy.
+      **What survives:** the relink itself, which is this entry's close condition — symlink to the
+      repo root, settings and vector store restored there, backup intact. And the indexing window
+      reproducing on the first attempt, which is measured and does not depend on which build
+      answered.
+      **What does not:** that the probe confirmed `OMC-038` in production. It does not. On the old
+      code an ordinary follow-up `modify` event on the new file advances the same epoch and produces
+      an identical pair of observations. Compatible was read as confirming. `OMC-038`'s production
+      verification is **outstanding**.
+      **The rule this entry already carried, sharpened by breaking it:** read the build identity
+      *before the first assertion*, not somewhere in the session — everything measured after an
+      unchecked build reads as evidence. And the rule was missing a clause: a relink does not take
+      effect until the plugin is reloaded, so the build check belongs after a full quit, never after
+      the `mv` <!-- src:session opened:2026-08-16 closed:2026-08-17 -->
 - [x] `OMC-038` #483 `prompts/list` could return a list missing a prompt that demonstrably exists,
       and keep returning it for the whole session. Split out of `OMC-030`, whose text called this
       "recorded rather than explained" and "may not have a close condition". It has one.
@@ -599,7 +620,13 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
       mutation-checked.
       **What is not claimed.** This reproduces the 15:10 symptom of 2026-08-16 exactly, but nothing
       recovers what happened that afternoon, so it is not proven to have been that run's cause.
-      `OMC-030`'s two guesses are unnecessary, not refuted <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
+      `OMC-030`'s two guesses are unnecessary, not refuted.
+      **Production verification is OUTSTANDING, and the attempt that claimed otherwise is corrected
+      in `OMC-030` above.** It ran against the pre-relink 2.0.1 build, which does not contain this
+      fix. The indexing window reproducing on the first attempt is measured and stands; the list
+      recovering on the next call is equally explained by a follow-up `modify` event on the old
+      code. Redoing it: full quit of Obsidian, reopen, confirm `get_server_info` reports the repo's
+      version, and only then create the probe <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-037` #481 Any tag pushed to this repo published a release. `release.yml` triggered on
       `tags: ["*"]` with the job gated only on `github.ref_type == 'tag'`, and that job creates a
       draft and then promotes it with `gh release edit --draft=false`. So `git push origin <tag>`
