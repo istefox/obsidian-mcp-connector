@@ -31,19 +31,10 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bun --filter '@obsidian-mcp-tools/obsidian-plugin' release
 
-      - name: Validate MCPB bundle
-        run: |
-          cd /tmp
-          mkdir mcpb-check && cd mcpb-check
-          unzip $GITHUB_WORKSPACE/obsidian-mcp-connector.mcpb
-          npx --yes @anthropic-ai/mcpb@latest validate manifest.json
-
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: |
-            main.js
-            obsidian-mcp-connector.mcpb
+          subject-path: main.js
 
       # Community-verified attestation recipe ordering
       # (forum.obsidian.md/t/114445): the attestation must exist BEFORE the
@@ -64,13 +55,16 @@ jobs:
           # hyphen, so prerelease resolves to false.
           prerelease: ${{ contains(github.ref_name, '-') }}
           # styles.css intentionally omitted — Svelte 5 inlines component CSS into main.js.
-          # NOTE: obsidian-mcp-connector.mcpb is a Claude Desktop extension (not a plugin zip).
+          # No .mcpb here, on purpose (ADR-0013, "Addendum (2.0.2)"): a bundle built by
+          # CI has no vault path and no token id to carry, so the only correct one is
+          # the per-token export from inside Obsidian. The body below says where.
           files: |
             main.js
             manifest.json
-            obsidian-mcp-connector.mcpb
           body: |
             ---
+            **Claude Desktop:** the `.mcpb` extension is exported from inside Obsidian — **Settings → MCP Connector → Access control**, then `.mcpb` on your token's row. It is not attached here: a bundle built by CI has no vault path and no token id to carry.
+
             ✨ This release includes attested build artifacts.
             📝 View attestation details in the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
 

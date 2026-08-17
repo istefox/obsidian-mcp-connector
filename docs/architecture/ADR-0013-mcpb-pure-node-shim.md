@@ -666,3 +666,55 @@ talk to a throwaway HTTP server bound to `127.0.0.1` standing in for the plugin'
 server; nothing leaves the loopback interface. Confirmed to fail when `isEntryPoint`'s body is
 reverted to the pre-1.0.1 `require.main === module` check: the built-in-Node step reports no
 response, the same silence a real user saw in #412, instead of green.
+
+## Addendum (2.0.2): the release page attached a second, unrelated `.mcpb`
+
+This decision moved the `.mcpb` off `npx mcp-remote`. It moved **one** of the two bundles this repo
+built. `scripts/build-mcpb.ts`, whose output is the asset attached to every GitHub release, kept
+emitting the pre-decision shape: a 3,576 B archive whose `manifest.json` carries
+`command: "npx"`, a `user_config` block prompting for a token and a port, and a seven-line
+`server/index.js` that spawns `npx -y mcp-remote`. Measured by downloading and unpacking the
+published `2.0.1` asset on 2026-08-17.
+
+**That divergence was a decision, not an oversight, and the record should say so.** Commit `3ea4ec3`
+(2026-06-20), the one that gave the in-plugin bundle its zero-prompt install, states it in its own
+message: *"The CI/GitHub release bundle keeps the `${user_config.token}` placeholder for public
+downloaders who supply their own token."* The reasoning holds. A bundle built on a CI runner has no
+vault path, no config-dir name and no token id, and `generateMcpb()` refuses an empty `tokenId` on
+purpose — an id-less bundle resolves `mcpTransport.bearerToken`, which tracks `tokens[0]`
+positionally, so revoking a client's token would silently re-point its bundle at the next one
+(ADR-0014 §11). There was no way for this decision to reach the release asset, and none was
+attempted.
+
+So the question was never why it was not migrated. It was whether the public-download,
+bring-your-own-token path is still worth serving, and three measurements answer no:
+
+- **Nothing documents it.** Every `.mcpb` instruction in `README.md` starts at the token's row in
+  **Access control**. No path in any document starts at the releases page.
+- **It asks for a transport this server refuses.** `mcp-remote` opens a GET SSE stream first, and
+  `GET /mcp` is `405` by design — measured live against a running vault on 2026-08-17 (`GET` → 405,
+  `POST` → 401, so the method rung, not auth, is what rejects it). `scripts/obsidian_mcp_bridge.py`
+  exists because of exactly this and says so in its docstring: mcp-remote hangs on `initialize`
+  because that stream never settles.
+- **Almost nobody took it.** 21 downloads against 3,971 for `main.js` on `1.0.1`; 4 against 629 on
+  `0.28.0`; 0 against 17 on `2.0.1`.
+
+A fourth cost is untested rather than measured: the Context above reproduced `npx` being absent from
+the `PATH` a GUI-launched Claude Desktop hands a spawned child. Whether Claude Desktop's own
+`mcp_config.command` resolution shares that failure was **not** verified, and no claim is made here
+that it does.
+
+**Decision.** `scripts/build-mcpb.ts` is deleted, `build:mcpb` is gone from the plugin's `release`
+script, and `release.yml` attaches `main.js` and `manifest.json` only — the attestation subject
+narrows to `main.js` and the `mcpb validate` step goes with it. The release body now names where the
+real bundle comes from, so the ~21 people per release who went looking find a sentence instead of a
+download. Published releases up to `2.0.1` are immutable and keep their asset.
+
+**What keeps it decided.** `mcpb-smoke.ts` gains check 0: it fails if any script in the plugin's
+`package.json` other than `test:mcpb` mentions `mcpb`, and if `release.yml` names a `*.mcpb`
+artifact outside a comment. The filename pattern (`[\w-]+\.mcpb`) rather than the bare extension is
+deliberate — the release body has to be able to say the word. It is a wiring check and not a proof: a
+bundle written by a differently-named script and published by some other mechanism would pass it. It
+covers both sites the real defect lived in, which is what five releases of silence argued for.
+Mutation-checked in both directions on 2026-08-17: re-adding `build:mcpb` turns it red, re-adding
+the asset to `files:` turns it red, and reverting either turns it green.

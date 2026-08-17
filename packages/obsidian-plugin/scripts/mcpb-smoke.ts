@@ -7,6 +7,11 @@
  * `data.json` stands in for the vault's plugin folder.
  *
  * Checks, in order:
+ *   0. `generateMcpb()` is the repo's ONLY wired-in `.mcpb` producer. It was
+ *      not: scripts/build-mcpb.ts emitted a separate npx/mcp-remote bundle
+ *      for the release page while this generator went pure-Node in ADR-0013,
+ *      and nothing failed, because nothing looked (OMC-031). See
+ *      ADR-0013, "Addendum (2.0.2)".
  *   1. the archive unzips and manifest.json parses;
  *   2. server/index.js is present and, after undoing the per-bundle
  *      placeholder substitution, matches scripts/connectorShim.js on disk
@@ -252,7 +257,82 @@ function assertAnswersInitialize(
   }
 }
 
+/**
+ * Check 0. Fails if anything other than `generateMcpb()` is wired in as a
+ * `.mcpb` producer.
+ *
+ * A source-wide grep is not usable here: eighteen files mention `.mcpb` in
+ * prose, log lines and config strings, so matching on the extension alone
+ * would be noise. What this reads instead are the two places the second
+ * producer was actually WIRED IN, which is what let it ship for five
+ * releases unnoticed:
+ *   - the plugin's own `release` script, which invoked `build:mcpb`;
+ *   - the release workflow's asset list, which attached its output.
+ *
+ * A wiring check, not a proof. A bundle written by a differently-named
+ * script and published by some other mechanism would pass this and still be
+ * wrong. It covers both sites the real defect lived in, and nothing further
+ * is claimed for it.
+ */
+function assertSingleMcpbProducer(repoRoot: string) {
+  const pluginPkgPath = join(
+    repoRoot,
+    "packages",
+    "obsidian-plugin",
+    "package.json",
+  );
+  const pkg = JSON.parse(readFileSync(pluginPkgPath, "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  // `test:mcpb` is this file. Every other script mentioning mcpb is a build.
+  const offenders = Object.entries(pkg.scripts ?? {}).filter(
+    ([name, command]) => name !== "test:mcpb" && command.includes("mcpb"),
+  );
+  if (offenders.length > 0) {
+    fail(
+      "a second .mcpb producer is wired into packages/obsidian-plugin/package.json",
+      offenders.map(([n, c]) => `  ${n}: ${c}`).join("\n") +
+        "\ngenerateMcpb() is the only correct producer — it bakes the vault path," +
+        " config dir and token id a bundle needs (ADR-0013, Addendum (2.0.2)).",
+    );
+  }
+
+  const releaseWorkflowPath = join(
+    repoRoot,
+    ".github",
+    "workflows",
+    "release.yml",
+  );
+  const releaseWorkflow = readFileSync(releaseWorkflowPath, "utf8");
+  // A FILENAME, not the extension: `[\w-]+\.mcpb` matches
+  // `obsidian-mcp-connector.mcpb` in an asset list or a build step, and does
+  // not match a bare `.mcpb` in prose. The release body legitimately mentions
+  // the extension — it is what tells a downloader where the bundle really
+  // comes from — and a guard that forbade saying the word would have to be
+  // worked around rather than satisfied. Comments are stripped as well, so a
+  // rationale may name the artifact without tripping this.
+  const wiredIn = releaseWorkflow
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  const attached = wiredIn.match(/[\w-]+\.mcpb/);
+  if (attached) {
+    fail(
+      `.github/workflows/release.yml wires in a .mcpb artifact (${attached[0]})`,
+      "The release page attaches main.js and manifest.json only. A bundle built" +
+        " by CI has no vault path and no token id, so it cannot be the pure-Node" +
+        " shim this project ships (ADR-0013, Addendum (2.0.2)).",
+    );
+  }
+}
+
 async function main() {
+  const repoRoot = join(import.meta.dir, "..", "..", "..");
+  assertSingleMcpbProducer(repoRoot);
+  console.log(
+    "  ok  generateMcpb() is the only .mcpb producer wired into the release path",
+  );
+
   const vaultDir = mkdtempSync(join(tmpdir(), "mcpb-smoke-vault-"));
   // realpath: on macOS, os.tmpdir() resolves through /var -> /private/var, a
   // symlink. Node's CJS loader resolves __filename through the real path, so

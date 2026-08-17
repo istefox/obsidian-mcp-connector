@@ -17,8 +17,7 @@
 		"dev": "bun --watch run bun.config.ts --watch",
 		"link": "bun scripts/link.ts",
 		"gen:mcp-app": "bun scripts/gen-mcp-app-source.ts",
-		"build:mcpb": "bun scripts/build-mcpb.ts",
-		"release": "bun run build && bun run zip && bun run build:mcpb",
+		"release": "bun run build && bun run zip",
 		"zip": "bun scripts/zip.ts",
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
 		"test:conformance": "bash scripts/conformance/run.sh"
