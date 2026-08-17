@@ -3,6 +3,12 @@
 All notable changes to **MCP Connector** (formerly `obsidian-mcp-tools`) are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **The releases page no longer carries a Claude Desktop `.mcpb` file, because the one it carried was not the one you want.** There are two ways a bundle can be made, and they are not interchangeable. The one you get by clicking **.mcpb** on your token's row in Obsidian has your vault's location and one specific token written inside it, which is why it installs with nothing to fill in, keeps working when you change the port or regenerate the secret, and stops working on purpose when you revoke that token. The one that was attached to each release could not contain any of that, because it was built by a machine that has never seen your vault: it asked you to paste a token and a port by hand, and it reached your vault through a helper it downloaded from the internet each time it started. That helper also begins by opening a kind of connection this plugin has never accepted, which is the same reason Windows users are pointed at the Python bridge instead. Around twenty people per release were downloading it, and nothing in the documentation ever sent them there. Releases up to and including 2.0.1 keep their attachment, since published releases cannot be edited. From now on the release page carries the plugin files and a line telling you where the extension actually comes from. If you installed the downloaded version and it has been working, nothing breaks today, but exporting a fresh one from the token row gives you the supported path.
+
 ## [2.0.1] — 2026-08-17
 
 ### Fixed

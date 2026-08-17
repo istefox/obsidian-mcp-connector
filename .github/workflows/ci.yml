@@ -1,7 +1,8 @@
 name: CI
 
 # On-PR validation: typecheck + bundle build-smoke + tests across the
-# workspace. Runs on every push to main and on every PR targeting
+# workspace, plus the stdlib Python suite for the Windows bridge. Runs on
+# every push to main and on every PR targeting
 # main. The build step here is a smoke
 # check that catches a non-buildable bundle (e.g. Svelte/patch version
 # drift — #150). release.yml stays separate (tag-triggered) and owns
@@ -59,6 +60,14 @@ jobs:
 
       - name: Tests — obsidian-plugin
         run: cd packages/obsidian-plugin && bun test
+
+      # A step in THIS job, not a job of its own: `check-and-test` is the only
+      # required status check on main, so a separate job would run and report
+      # while merging anyway — which is the very "discipline rather than
+      # enforcement" gap this closes (OMC-033). The bridge is stdlib-only, so
+      # the runner's own python3 is enough and there is nothing to install.
+      - name: Tests — Windows bridge (Python, stdlib only)
+        run: python3 -m unittest discover -s scripts -v
 
       - name: .mcpb bundle smoke (both loaders, #412 regression guard)
         run: cd packages/obsidian-plugin && bun run test:mcpb

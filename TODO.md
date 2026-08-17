@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=33 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 7 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
+Updated: 2026-08-17 · Open: 6 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 5/5
 
 ## Roadmap — 2.0
 
@@ -249,7 +249,8 @@ blank.
       this project ships from the plugin.** Found by inspecting the asset after publishing, on a
       3,577 B size that did not fit a 38 KB shim. Shipping since 2026-07-15, so not a 2.0.0
       regression; recorded as `OMC-031` rather than fixed here, and it is the one thing in this
-      release nothing in the gate speaks for
+      release nothing in the gate speaks for. **`OMC-031` closed it 2026-08-17 by retiring the
+      asset, and corrected this framing: the divergence was deliberate, not forgotten**
 - [x] `D4` **Passed on the 2.0.0 release, 2026-08-17.** The Obsidian scanner runs **on the release, never before**. Known constraints that
       have already failed a release: no `eslint-disable` on `obsidianmd/*` rules, and
       non-plugin code stays out of `src/` because the scanner lints `src/**` only
@@ -266,26 +267,6 @@ blank.
 
 ## Next — measured gaps, actionable now
 
-- [ ] `OMC-031` **P2** The `.mcpb` attached to every GitHub release is the pre-ADR-0013 bundle,
-      and has been since 2026-07-15. Two build paths produce a `.mcpb` and only one was migrated.
-      `generateMcpb()` (`features/mcp-client-config/services/mcpbGenerator.ts`), the plugin's
-      per-token export, ships the 38 KB pure-Node shim with vault path, config dir and token id
-      substituted in. `scripts/build-mcpb.ts`, which produces the **release asset**, still emits a
-      7-line `server/index.js` that spawns `npx -y mcp-remote` and takes the token and port from
-      Claude Desktop's `user_config`. Measured on the published 2.0.0 asset: 3,577 B,
-      `server/index.js` 376 B, `manifest.json` carrying a `user_config` block. It was last touched
-      **2026-06-20**; ADR-0013 landed **2026-07-15** as `fix(mcp-client-config): drop
-      npx/mcp-remote from .mcpb shim` and changed only the plugin-side generator. ADR-0013's
-      Neutral section keeps `npx mcp-remote` for the manual-JSON-config path **explicitly**, not
-      for a `.mcpb`, so the release asset contradicts the decision rather than being exempted by
-      it. **Not a 2.0.0 regression** — it predates it by five releases and the bundle does work
-      where `npx` and network are available. What it costs: third-party code back in the
-      connection path, a hard dependency on npx and the network, no token id so revocation
-      degrades differently, and **the #412 regression guard does not cover it** — `test:mcpb`
-      exercises `generateMcpb()` only, and `A2` verified the plugin-exported bundle, so nothing in
-      the gate or the verification record speaks for the artifact users actually download. Fix is
-      to build the release asset through the same generator, or to stop attaching one and point at
-      the token row; either way `test:mcpb` should assert against the release path too <!-- src:session opened:2026-08-17 -->
 - [ ] `OMC-032` **P2** `bun run version` cannot cut a release on this repo any more, and 2.0.0
       was cut by hand around it. The script (`scripts/version.ts:54-58`) commits the three version
       files, tags, then `git push -u origin main` — which the ruleset now refuses: *"Changes must
@@ -402,12 +383,46 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
 
 - **Entry point**: `packages/obsidian-plugin/src/main.ts` · shim `packages/obsidian-plugin/scripts/connectorShim.js`
 - **Modules**: `src/features/mcp-transport` (HTTP, tokens, registry) · `src/features/mcp-tools` · `src/features/mcp-client-config` (`.mcpb`, shim source) · `src/features/adaptive-tool-loading` · `src/features/prompts` · `src/features/semantic-search` · `packages/shared`
-- **Build & test**: `bun run build` · `bun run release` · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`. `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
+- **Build & test**: `bun run build` · `bun run release` (build + zip, **no `.mcpb`** — that is a per-token export from inside the plugin) · test-cmd `bun run check && bun test && bun run format:check`, plus `bun run check:svelte` and `bun run test:mcpb` from `packages/obsidian-plugin`, plus `python3 -m unittest discover -s scripts` for the Windows bridge (a step in CI's `check-and-test` since 2026-08-17, so it blocks a merge). `bun run test:conformance` is **not** in that gate: it runs nightly from `.github/workflows/conformance.yml`, so a hand run before merging a transport change is the only pre-merge conformance signal there is
 - **Key ADRs**: ADR-0013 pure-Node `.mcpb` shim · ADR-0014 per-client tool profiles · ADR-0015 `tools/list` stability invariant · ADR-0010 split registry disable states · ADR-0016 two protocol eras on one endpoint · ADR-0017 `prompts.listChanged` split by era
 - **Invariants**: transport is stateless and POST-only, `GET /mcp` is 405 by design · one endpoint serves both protocol eras, classified per request off a single body read, and a body carrying no `_meta` envelope claim is legacy · every settings write goes through `SettingsStore.updateSlice` under the process-wide mutex · a bearer token string never changes silently · the shim fails closed on an unknown token id · a polymorphic tool never declares an `outputSchema`
 
 ## Done
 
+- [x] `OMC-031` The `.mcpb` attached to every GitHub release was not the bundle this project
+      ships, and is no longer attached at all. **The framing this entry opened with was wrong and
+      is corrected here**: it said "two build paths produce a `.mcpb` and only one was migrated",
+      which reads as an oversight. Commit `3ea4ec3` (2026-06-20) states the split as a decision in
+      its own message — *"The CI/GitHub release bundle keeps the `${user_config.token}` placeholder
+      for public downloaders who supply their own token"* — and the reasoning holds: a CI build has
+      no vault path, no config dir and no token id, and `generateMcpb()` refuses an empty `tokenId`
+      on purpose, because an id-less bundle resolves `bearerToken`, which tracks `tokens[0]`
+      positionally, so a revocation would re-point the bundle at the next token (ADR-0014 §11).
+      ADR-0013 could not reach the release asset and never tried to. So the question was whether the
+      public-download, bring-your-own-token path is still worth serving, and three fresh
+      measurements (2026-08-17) say no. **Nothing documents it**: every `.mcpb` instruction in the
+      README starts at the token's row. **It opens a transport this server refuses**: `mcp-remote`
+      begins with a GET SSE stream, and against the live vault `GET /mcp` → **405** while
+      `POST /mcp` → **401**, so it is the method rung that rejects it, not auth — which is exactly
+      why `obsidian_mcp_bridge.py` exists and says so in its docstring. **Almost nobody took it**:
+      21 downloads against 3,971 for `main.js` on 1.0.1, 4/629 on 0.28.0, 0/17 on 2.0.1. A fourth
+      cost stays untested rather than measured, and is not claimed: ADR-0013's Context reproduced
+      `npx` missing from the `PATH` a GUI-launched Claude Desktop gives a spawned child, but whether
+      Claude Desktop's own `mcp_config.command` resolution shares that failure was never checked.
+      Shipped as: `scripts/build-mcpb.ts` deleted, `build:mcpb` gone from the plugin's `release`
+      script, `release.yml` attaching `main.js` + `manifest.json` only with the attestation subject
+      narrowed to `main.js` and the `mcpb validate` step removed, and a release-notes line naming
+      where the real bundle comes from. Published releases through 2.0.1 are immutable and keep
+      their asset; the README says so rather than pretending otherwise. **The guard is
+      `mcpb-smoke.ts` check 0**, which fails on any plugin script other than `test:mcpb` mentioning
+      `mcpb` and on `release.yml` naming a `*.mcpb` artifact outside a comment. It matches a
+      filename (`[\w-]+\.mcpb`), not the bare extension, because the release body has to be able to
+      say the word — a guard that forbade the word would be worked around instead of satisfied.
+      Wiring check, not proof: a differently-named script publishing by another mechanism passes it.
+      Mutation-checked both ways — re-adding `build:mcpb` red, re-adding the asset to `files:` red,
+      reverting either green. `bun run release` measured to exit 0, produce the plugin zip and leave
+      no `.mcpb` at the repo root. Recorded in ADR-0013, "Addendum (2.0.2)"
+      <!-- src:session opened:2026-08-17 closed:2026-08-17 -->
 - [x] `OMC-033` The Windows bridge corrupted every non-ASCII path and body, and the
       fix has been known and confirmed since 2026-07-26. @smollern root-caused it in discussion
       #406 against a Danish vault: `scripts/obsidian_mcp_bridge.py` reads `sys.stdin` and writes
@@ -436,7 +451,21 @@ ship — `_meta` present but not an object — is ordinary shape validation the 
       `cp1252` instead turns 2 red. **Weakness to keep in view**: the bridge suite is stdlib
       `unittest`, run by `python3 -m unittest discover -s scripts`, and is deliberately outside
       `bun test` (issue #355) — so nothing in CI runs it, and this guard is a discipline rather
-      than an enforcement. Worth a CI step of its own <!-- src:session opened:2026-08-17 updated:2026-08-17 --> **Released in 2.0.1 (tag `2.0.1` → `60d6e6c`), 2026-08-17**, and @smollern told the same day (2026-08-17)
+      than an enforcement. Worth a CI step of its own <!-- src:session opened:2026-08-17 updated:2026-08-17 --> **Released in 2.0.1 (tag `2.0.1` → `60d6e6c`), 2026-08-17**, and @smollern told the same day (2026-08-17).
+      **That weakness is closed, 2026-08-17, and closing it turned on a fact the entry did not
+      know.** `main` carries classic branch protection with exactly ONE required status check,
+      `check-and-test` (read from `repos/istefox/obsidian-mcp-connector/branches/main/protection`;
+      the three rulesets require a pull request and nothing else). So a new *job* would have run,
+      reported, and blocked nothing — it would have reproduced the same "discipline rather than
+      enforcement" gap in a new place. The suite therefore runs as a **step inside `check-and-test`**
+      (`.github/workflows/ci.yml`, `python3 -m unittest discover -s scripts -v`), where a red run
+      genuinely blocks the merge and no repository setting has to change for it to bite. Stdlib only,
+      so there is nothing to install and no `actions/setup-python`. **Still not covered:** the suite
+      runs on `ubuntu-latest` only, and the bug was Windows-only. The four tests assert the
+      `reconfigure` **call** against a recording stream rather than a round-trip, so they are
+      platform-independent by design and a Windows leg would prove they execute there, not that `ø`
+      survives. A `windows-latest` job would need adding to the required-checks list to be worth
+      anything, which is a repository-settings change and a separate decision
 - [x] `OMC-024` Per-token era counters. **Implemented, and verified in a vault on both of the checks that were holding it open.** `eraCountersByToken` now sits alongside `eraCounters` in the `mcpTransport` slice, keyed by token id, and each token row in the transport settings says which era it is served on. Additive rather than the migration this entry originally asked for, and the original framing was wrong: the counts already on disk predate the split and belong to no token, so attributing them would invent data and dropping them would damage ADR-0016 §8's trigger, which reads the vault-wide legacy total. `sum(byToken) <= eraCounters` holds by construction. A revoked token's bucket is pruned in the counter's own recipe; an absent or malformed `tokens` key prunes nothing, so a boot that writes before `ensureTokenStore` seeds the list cannot wipe the map. **Both remaining checks are now done, so this closes.** Two tokens on different eras with disagreeing rows against a global that exceeds their sum: `A1`, 2026-08-15. A pre-existing vault with no `eraCountersByToken` key: `A2`, 2026-08-16 — the key removed with the plugin stopped, the token row rendering with no era label at all, the global `Requests served` still reading from `eraCounters`, and the server answering normally; backup restored (2026-08-16)
 - [x] `OMC-016` #427 MCP Apps: a `ui://` resource surface for the two search tools, decided in `docs/architecture/ADR-0018-omc-016-mcp-apps-ui-resource.md`, SPEC archived at `docs/specs/omc-016-mcp-apps-ui-resource.spec.md`. `C1` the `resources` capability with every field explicit and `extensions: { "io.modelcontextprotocol/ui": … }` declared once at `buildMcpServer(tokenId)` for both eras; `C2` the `@modelcontextprotocol/ext-apps` handshake bundled from the view-side entry, `main.js` 2,649,591 → 3,011,578 B (+13.66%, trigger +20%); `C3` both search tools' rows riding the result's own `_meta`, `content` byte-identical to before. Merged as PR #454 (`e3dcd8c`), squashed, CI green, 1849 tests, conformance 26/28 baseline unmoved. **Closed 2026-08-16 by `R-18`**, which put the view in front of a human for the first time: it renders, and **Claude Desktop forwards the tool result's `_meta` to it**, so ADR-0018 Alternative D (`structuredContent`) never has to be built. Two things the run settled that no test could: the host refuses the `obsidian://` scheme, so the click degrades to revealing the vault-relative path — designed fallback, host policy, and it leaves the URL encoding untested by any means; and the theme follows a host switch with no reload. Full per-check measurements in `R-18` under Gate C (2026-08-16)
 - [x] `OMC-023` The server advertised a prompts capability it did not honour, on both protocol eras. ADR-0017 settled it three ways rather than two: modern declares `prompts: { listChanged: true }` and honours it, legacy declares `false`, because a POST-only transport with `GET /mcp` at 405 structurally cannot deliver a notification with no request in flight. Shipped 2026-08-15 (PR #450 decision, #452 code); `eraRouter.test.ts`'s full-body `initialize` pin reads `false`, and that assertion IS the record of what a major release moved. **Closed 2026-08-16 by `B3`**, the only thing it was still open on: a hand-built `subscriptions/listen` client against the Labs vault saw `notifications/prompts/list_changed` arrive on a prompt create and on a delete, carrying the ack's own subscription id; saw nothing for a body edit that changed no field a client can see, which is the case the list comparison exists for and the only place a per-event implementation would have failed; and saw a `toolsListChanged` bystander stay silent throughout, with its filter genuinely honored. The legacy half stayed structural rather than observational — `GET /mcp` is 405 and a live legacy `initialize` returns `prompts.listChanged: false`, so there is no stream for a notification to ride. Conformance stayed 26/28. Full measurements in `B3` under Gate B (2026-08-16)

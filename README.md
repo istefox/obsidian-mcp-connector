@@ -285,6 +285,8 @@ Claude Desktop speaks stdio, so it needs a bridge. The `.mcpb` extension is the 
 
 The bundle resolves that token's secret and the live port from the vault at connect time, so regenerating the secret or changing the port needs no re-export. Revoking the token fails it closed with an error asking for a fresh export, which is the point. A bundle exported before 1.0.0 predates the token id and follows whichever token is currently first, so re-export once after upgrading.
 
+**The releases page carries no `.mcpb`, and that is deliberate.** Every bundle has your vault's path, your config folder's name and one token's id written inside it, which is what lets it connect with nothing to fill in and fail closed when you revoke that token. A build made on a CI runner knows none of those, so the only place a correct bundle can come from is the button above. Releases up to and including 2.0.1 do have one attached; it takes a different route, asks you to paste a token and a port by hand, and depends on `npx` and a network fetch. Use the export instead.
+
 <details>
 <summary>Alternative: manual <code>mcp-remote</code> config</summary>
 
@@ -399,7 +401,7 @@ bun run check         # tsc --noEmit across packages (does NOT type-check .svelt
 bun test              # 1700+ unit tests, colocated
 bun run format:check  # CI enforces this; the other gates pass without it
 bun run build         # production bundle
-bun run release       # build + zip + .mcpb
+bun run release       # build + zip (no .mcpb — that is a per-token export from the plugin)
 ```
 
 Full gate before calling anything done: `bun run check && bun test && bun run format:check`.
