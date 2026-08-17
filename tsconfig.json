@@ -1,0 +1,27 @@
+{
+  // Covers the repository-root `scripts/` directory, which belongs to no
+  // workspace package and was therefore type-checked by nothing: `bun run
+  // check` is `bun --filter '*' check`, and a filter over workspace packages
+  // cannot reach the root. `scripts/version.ts` — the script that cuts
+  // releases — sat here unchecked (#467).
+  //
+  // Root `check` runs this before the per-package ones: it is two files, so
+  // the cheapest check fails first.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    // These scripts run under Bun, not in the plugin's renderer: Bun.file,
+    // Bun.argv, import.meta.main and the `$` shell tag all come from here.
+    "types": ["bun"],
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["node_modules", "packages"]
+}

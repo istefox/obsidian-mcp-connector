@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "bun --filter '@obsidian-mcp-tools/obsidian-plugin' build",
-    "check": "bun --filter '*' check",
+    "check": "tsc --noEmit && bun --filter '*' check",
     "format": "prettier --write \"packages/obsidian-plugin/src/**/*.ts\" \"packages/shared/src/**/*.ts\"",
     "format:check": "prettier --check \"packages/obsidian-plugin/src/**/*.ts\" \"packages/shared/src/**/*.ts\"",
     "dev": "bun --filter '*' dev",
