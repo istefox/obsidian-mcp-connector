@@ -1,7 +1,7 @@
-<!-- project-tasks: prefix=OMC lastId=30 -->
+<!-- project-tasks: prefix=OMC lastId=32 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 2/5
+Updated: 2026-08-17 · Open: 7 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 3/5
 
 ## Roadmap — 2.0
 
@@ -236,10 +236,20 @@ blank.
       requires it. **Confirmed 2026-08-17, by inspection rather than assumption**: the only
       Obsidian APIs newly referenced in `src/` across `1.0.1..HEAD` are `app.vault.adapter` and
       `app.vault.getName`, both long predating 1.7.2. Manifest still reads `1.7.2`
-- [ ] `D3` `bun run version major`. From there `release.yml` does the rest: build, `.mcpb`
-      validation, upload of `main.js` + `manifest.json` + `.mcpb`, publish. No PR against
-      `obsidian-releases` — the plugin is already in `community-plugins.json` as
-      `mcp-tools-istefox`
+- [x] `D3` **2.0.0 is released, 2026-08-17.** Tag `2.0.0` → `0698be2`, `release.yml` run
+      `32010559398` green on every step (build, `.mcpb` validation, attestation, create, publish),
+      release published 08:29:36Z with three assets. `main.js` on the release is **3,011,578 B**,
+      byte-identical to the local build, so the release bundle is the one that was measured and
+      verified. No PR against `obsidian-releases` — the plugin is already in
+      `community-plugins.json` as `mcp-tools-istefox`.
+      **`bun run version major` did NOT complete it, and cannot on this repo any more.** It made
+      the version commit and the tag, then its `git push origin main` was refused by the ruleset.
+      Cut by hand around it; the procedure and the reason are `OMC-032`.
+      **The published `.mcpb` is the pre-ADR-0013 npx/mcp-remote bundle, not the pure-Node shim
+      this project ships from the plugin.** Found by inspecting the asset after publishing, on a
+      3,577 B size that did not fit a 38 KB shim. Shipping since 2026-07-15, so not a 2.0.0
+      regression; recorded as `OMC-031` rather than fixed here, and it is the one thing in this
+      release nothing in the gate speaks for
 - [ ] `D4` The Obsidian scanner runs **on the release, never before**. Known constraints that
       have already failed a release: no `eslint-disable` on `obsidianmd/*` rules, and
       non-plugin code stays out of `src/` because the scanner lints `src/**` only
@@ -248,6 +258,39 @@ blank.
 
 ## Next — measured gaps, actionable now
 
+- [ ] `OMC-031` **P2** The `.mcpb` attached to every GitHub release is the pre-ADR-0013 bundle,
+      and has been since 2026-07-15. Two build paths produce a `.mcpb` and only one was migrated.
+      `generateMcpb()` (`features/mcp-client-config/services/mcpbGenerator.ts`), the plugin's
+      per-token export, ships the 38 KB pure-Node shim with vault path, config dir and token id
+      substituted in. `scripts/build-mcpb.ts`, which produces the **release asset**, still emits a
+      7-line `server/index.js` that spawns `npx -y mcp-remote` and takes the token and port from
+      Claude Desktop's `user_config`. Measured on the published 2.0.0 asset: 3,577 B,
+      `server/index.js` 376 B, `manifest.json` carrying a `user_config` block. It was last touched
+      **2026-06-20**; ADR-0013 landed **2026-07-15** as `fix(mcp-client-config): drop
+      npx/mcp-remote from .mcpb shim` and changed only the plugin-side generator. ADR-0013's
+      Neutral section keeps `npx mcp-remote` for the manual-JSON-config path **explicitly**, not
+      for a `.mcpb`, so the release asset contradicts the decision rather than being exempted by
+      it. **Not a 2.0.0 regression** — it predates it by five releases and the bundle does work
+      where `npx` and network are available. What it costs: third-party code back in the
+      connection path, a hard dependency on npx and the network, no token id so revocation
+      degrades differently, and **the #412 regression guard does not cover it** — `test:mcpb`
+      exercises `generateMcpb()` only, and `A2` verified the plugin-exported bundle, so nothing in
+      the gate or the verification record speaks for the artifact users actually download. Fix is
+      to build the release asset through the same generator, or to stop attaching one and point at
+      the token row; either way `test:mcpb` should assert against the release path too <!-- src:session opened:2026-08-17 -->
+- [ ] `OMC-032` **P2** `bun run version` cannot cut a release on this repo any more, and 2.0.0
+      was cut by hand around it. The script (`scripts/version.ts:54-58`) commits the three version
+      files, tags, then `git push -u origin main` — which the ruleset now refuses: *"Changes must
+      be made through a pull request"* plus a required `check-and-test`. Every earlier release tag
+      points at a version commit pushed straight to `main` (`1.0.1` → `e2ebb20`, single parent,
+      subject `1.0.1`), so the procedure worked when those were cut and the rules tightened after.
+      The failure is safe and leaves a recoverable state: the local commit and tag exist, nothing
+      reaches the remote, the tree stays clean. **The recovery used for 2.0.0, which is the shape
+      any fix should keep**: branch the version commit, PR it, merge with a **merge commit** so its
+      SHA survives, fast-forward `main`, then push the tag alone — a tag push is not subject to
+      branch protection, and it is what `release.yml` triggers on. A squash would orphan the tag,
+      which is why the method was not a preference on PR #457. Fix is either to teach the script
+      that path or to stop having it push, leaving the tag push as the one manual step <!-- src:session opened:2026-08-17 -->
 - [ ] `OMC-030` **P2** A vault verification can silently run against the wrong build, and one
       did. The Labs vault carries a hand-copied `main.js`, not a `scripts/link.ts` symlink, so a
       fresh `bun run build` in the repo changes nothing there until someone copies it across.
