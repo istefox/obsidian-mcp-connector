@@ -1,5 +1,10 @@
 import { describe, expect, test, beforeEach, mock } from "bun:test";
-import { mockApp, resetMockVault, fireMockVaultEvent } from "$/test-setup";
+import {
+  mockApp,
+  resetMockVault,
+  fireMockVaultEvent,
+  fireMockMetadataEvent,
+} from "$/test-setup";
 import { createVaultWatcher } from "./vaultWatcher";
 
 beforeEach(() => {
@@ -67,6 +72,29 @@ describe("createVaultWatcher", () => {
     expect(notifier).toHaveBeenCalledTimes(1);
   });
 
+  // The metadata cache is a second emitter, and the only one that says a file
+  // has become READABLE (#483). It is fired separately from the vault on
+  // purpose: the gap between the two is the defect these guard.
+  test("notifier called when a Prompts/ md file finishes indexing", () => {
+    const notifier = mock(() => {});
+    const app = mockApp();
+    createVaultWatcher(app, notifier);
+    fireMockMetadataEvent("changed", makeFile("Prompts/foo.md"));
+    expect(notifier).toHaveBeenCalledTimes(1);
+  });
+
+  test("notifier not called when a file outside Prompts/ finishes indexing", () => {
+    const notifier = mock(() => {});
+    const app = mockApp();
+    createVaultWatcher(app, notifier);
+    // Every indexed file in the vault reaches this listener, so the filter is
+    // the whole cost story: a large vault re-indexing must not re-scan prompts
+    // once per file.
+    fireMockMetadataEvent("changed", makeFile("Notes/foo.md"));
+    fireMockMetadataEvent("changed", makeFile("Prompts/sub/foo.md"));
+    expect(notifier).not.toHaveBeenCalled();
+  });
+
   test("stop() prevents subsequent events from calling notifier", () => {
     const notifier = mock(() => {});
     const app = mockApp();
@@ -75,6 +103,9 @@ describe("createVaultWatcher", () => {
     fireMockVaultEvent("create", makeFile("Prompts/foo.md"));
     fireMockVaultEvent("delete", makeFile("Prompts/foo.md"));
     fireMockVaultEvent("rename", makeFile("Prompts/foo.md"), "Notes/foo.md");
+    // The metadata listener is registered on a different emitter, so it needs
+    // its own `offref` and would survive a `stop()` that forgot it.
+    fireMockMetadataEvent("changed", makeFile("Prompts/foo.md"));
     expect(notifier).not.toHaveBeenCalled();
   });
 });
