@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=30 -->
 # PROJECT TASKS
 
-Updated: 2026-08-16 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 0/3
+Updated: 2026-08-17 · Open: 5 (P1: 0) · In progress: 0 · Gate A: 4/4 · Gate B: 3/3 · Gate C: 4/4 · Gate D: 2/5
 
 ## Roadmap — 2.0
 
@@ -220,10 +220,22 @@ blank.
 
 ### Gate D — the cut
 
-- [ ] `D1` CHANGELOG entry for 2.0, in the user-facing register 1.0.0 and 1.0.1 already use:
-      what changes for someone using the plugin, not what changed in the code
-- [ ] `D2` Confirm `minAppVersion` stays `1.7.2`. Raising it strands users and nothing in 2.0
-      requires it
+- [x] `D1` CHANGELOG entry for 2.0, in the user-facing register 1.0.0 and 1.0.1 already use:
+      what changes for someone using the plugin, not what changed in the code. **Written
+      2026-08-17** as `## [2.0.0] — 2026-08-17`: three Added (the MCP Apps search view, the
+      additive `2026-07-28` era, the per-token request counters), one Changed (the
+      `prompts.listChanged` retraction, which the entry states outright is why the number is 2.0
+      rather than 1.1.0), four Fixed (#444 booleans, #430 auto provider, #419 cross-client
+      staleness, #437 protocol-version error body). Derived from the 8 user-visible commits in
+      `1.0.1..HEAD`; the other 22 are docs, CI and internal cleanups and are deliberately absent.
+      **The MCP Apps entry does not promise the click opens the note** — `R-18` measured Claude
+      Desktop declining the `obsidian://` scheme, so the entry says the client decides and
+      describes the path-revealing fallback. A CHANGELOG must not promise what a verification
+      disproved
+- [x] `D2` Confirm `minAppVersion` stays `1.7.2`. Raising it strands users and nothing in 2.0
+      requires it. **Confirmed 2026-08-17, by inspection rather than assumption**: the only
+      Obsidian APIs newly referenced in `src/` across `1.0.1..HEAD` are `app.vault.adapter` and
+      `app.vault.getName`, both long predating 1.7.2. Manifest still reads `1.7.2`
 - [ ] `D3` `bun run version major`. From there `release.yml` does the rest: build, `.mcpb`
       validation, upload of `main.js` + `manifest.json` + `.mcpb`, publish. No PR against
       `obsidian-releases` — the plugin is already in `community-plugins.json` as
