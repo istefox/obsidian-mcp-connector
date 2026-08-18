@@ -3,6 +3,9 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/istefox/obsidian-mcp-connector?display_name=tag)](https://github.com/istefox/obsidian-mcp-connector/releases/latest)
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
 [![License](https://img.shields.io/github/license/istefox/obsidian-mcp-connector)](LICENSE)
+[![Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=%23483699&label=downloads&query=%24%5B%22mcp-tools-istefox%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=mcp-tools-istefox)
+[![Stars](https://img.shields.io/github/stars/istefox/obsidian-mcp-connector)](https://github.com/istefox/obsidian-mcp-connector/stargazers)
+[![Forks](https://img.shields.io/github/forks/istefox/obsidian-mcp-connector)](https://github.com/istefox/obsidian-mcp-connector/forks)
 
 Your Obsidian vault, exposed to AI clients over the [Model Context Protocol](https://modelcontextprotocol.io). The MCP server runs **inside Obsidian**, on loopback, with no binary to download and no cloud round-trip. Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf and VS Code all connect to the same endpoint.
 
