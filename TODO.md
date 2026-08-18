@@ -1,7 +1,7 @@
 <!-- project-tasks: prefix=OMC lastId=39 -->
 # PROJECT TASKS
 
-Updated: 2026-08-17 · Shipped: **2.1.1** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
+Updated: 2026-08-18 · Shipped: **2.1.1** · Open: 3 (P1: 0) · In review: 0 · In progress: 0 · Next release: none scheduled · Open items with no GitHub issue: 2 (both by design)
 
 ## Roadmap — after 2.0
 
@@ -207,6 +207,27 @@ surface; the failures are fixture-dependent (it expects the reference server's `
 `test://` resources) or optional capabilities we chose not to implement: `logging/setLevel`,
 `completion/complete` (that is #347, closed as not planned — this is the first visible cost of
 that call) and resource subscriptions.
+
+**MCP feature lifecycle, read live 2026-08-18. Four deprecations, none of which this plugin uses.**
+`2026-07-28` is still the current revision: `/specification/versioning` names it as such, and
+`/specification/draft/changelog` is an empty page whose only line is "Changes since the most recent
+release will accumulate here", so no successor is being drafted in public. What did land with
+`2026-07-28` is a formal feature lifecycle (SEP-2596) — Active, Deprecated, Removed, a twelve-month
+minimum window and a registry at `/specification/2026-07-28/deprecated`. Four things entered
+Deprecated: **Roots, Sampling and Logging** (SEP-2577), the **HTTP+SSE transport** (deprecated since
+`2025-03-26`, now reclassified under the policy), `includeContext`'s `"thisServer"` and
+`"allServers"`, and **OAuth Dynamic Client Registration** (RFC 7591) in favour of Client ID Metadata
+Documents. **Measured against this codebase, the exposure is zero.** `buildMcpServer` declares
+`tools`, `prompts`, `resources` and the `io.modelcontextprotocol/ui` extension and nothing else; a
+grep across every non-test, non-generated `.ts` finds no `roots`, no `includeContext` and no OAuth,
+and both `logging` and `sampling` hits are ordinary English in comments (`logger.error`, "non-ASCII
+sampling failure"). HTTP+SSE was never served here — `GET /mcp` is a deliberate 405. The conformance
+note above ages well because of this: `logging/setLevel`, recorded there as an optional capability
+we chose not to implement (#347, closed not-planned), is now a capability the specification itself
+is retiring. Nothing to do and no watch condition worth setting — a removal cannot land before
+2027-07-28 at the earliest, and it would remove features this plugin does not serve. Installed
+packages were checked in the same pass and are all at latest: `@modelcontextprotocol/core`,
+`/server` and `/node` at `2.0.0`, `sdk` at `1.30.0`, `ext-apps` at `1.7.5`.
 
 ## Project Map
 
