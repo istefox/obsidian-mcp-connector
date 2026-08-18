@@ -208,6 +208,7 @@ docs/deep-refactor/
 # Local dev tool version pin (mise/asdf) — not required for contributors
 mise.toml
 handoff*.md
+TODO.md
 .claude/.triage-fix-last-*.json
 .remember/
 CLAUDE.md.bak-*
