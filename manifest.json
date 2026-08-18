@@ -3,7 +3,7 @@
   "name": "MCP Connector",
   "version": "2.1.1",
   "minAppVersion": "1.7.2",
-  "description": "Connect MCP-compatible clients (Claude Desktop, Claude Code, Cline) to your vault with semantic search, templates, file management and gated command execution.",
+  "description": "Expose your vault to Claude and any MCP client over the Model Context Protocol. Runs inside Obsidian, with on-device semantic search.",
   "author": "Stefano Ferri",
   "authorUrl": "https://github.com/istefox",
   "isDesktopOnly": true
