@@ -5,12 +5,13 @@
   "description": "Expose your vault to Claude and any MCP client over the Model Context Protocol. Runs inside Obsidian, with on-device semantic search.",
   "tags": [
     "obsidian",
-    "plugin",
-    "semantic search",
-    "templates",
-    "file management",
+    "obsidian-plugin",
     "mcp",
-    "model context protocol"
+    "model-context-protocol",
+    "claude",
+    "semantic-search",
+    "local-first",
+    "ai-tools"
   ],
   "workspaces": [
     "packages/*"
