@@ -132,6 +132,16 @@ export interface PathPolicy {
   readonly isEmpty: boolean;
   /** True when `path` is inside any excluded folder. */
   isExcluded(path: string): boolean;
+  /**
+   * True when any excluded folder is at, or beneath, `path`.
+   *
+   * The question a recursive delete has to ask. `isExcluded` answers
+   * "may I touch this?"; a recursive operation on an ancestor never
+   * touches the excluded path directly and would still destroy it, so it
+   * has to ask the other direction as well. Passing `""` means the vault
+   * root, which contains everything.
+   */
+  containsExcluded(path: string): boolean;
 }
 
 /** A policy that excludes nothing. */
@@ -139,6 +149,7 @@ export const EMPTY_POLICY: PathPolicy = Object.freeze({
   folders: Object.freeze([]) as readonly string[],
   isEmpty: true,
   isExcluded: () => false,
+  containsExcluded: () => false,
 });
 
 /**
@@ -159,6 +170,7 @@ export const DENY_ALL_POLICY: PathPolicy = Object.freeze({
   folders: Object.freeze([]) as readonly string[],
   isEmpty: false,
   isExcluded: () => true,
+  containsExcluded: () => true,
 });
 
 /**
@@ -181,6 +193,18 @@ export function compilePolicy(raw: unknown): PathPolicy {
       const candidate = toNfc(path);
       for (const folder of frozen) {
         if (isUnderFolder(candidate, folder)) return true;
+      }
+      return false;
+    },
+    containsExcluded(path: string): boolean {
+      if (typeof path !== "string") return false;
+      // The vault root contains every excluded folder by definition, and
+      // it is the one path that is not a prefix of anything under the
+      // `folder + "/"` rule.
+      if (path === "") return true;
+      const candidate = toNfc(path);
+      for (const folder of frozen) {
+        if (isUnderFolder(folder, candidate)) return true;
       }
       return false;
     },

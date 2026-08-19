@@ -242,6 +242,41 @@ describe("compilePolicy", () => {
     expect(policy.isExcluded("")).toBe(false);
   });
 
+  // The question a recursive delete asks. Getting this wrong destroys
+  // exactly the material the feature exists to protect.
+  test("containsExcluded looks the other way down the tree", () => {
+    const policy = compilePolicy(["Journal/Therapy"]);
+    // An ancestor contains it: deleting Journal recursively would take
+    // Therapy with it.
+    expect(policy.containsExcluded("Journal")).toBe(true);
+    expect(policy.containsExcluded("")).toBe(true);
+    // The folder itself counts.
+    expect(policy.containsExcluded("Journal/Therapy")).toBe(true);
+    // A descendant does not: nothing excluded lives below it.
+    expect(policy.containsExcluded("Journal/Therapy/2026")).toBe(false);
+    // An unrelated sibling does not.
+    expect(policy.containsExcluded("Journal/Public")).toBe(false);
+    expect(policy.containsExcluded("Finances")).toBe(false);
+  });
+
+  test("containsExcluded does not match a mere prefix sibling", () => {
+    const policy = compilePolicy(["JournalArchive/Therapy"]);
+    expect(policy.containsExcluded("Journal")).toBe(false);
+  });
+
+  test("containsExcluded folds Unicode like isExcluded does", () => {
+    expect(
+      compilePolicy([`${CAFE_NFC}/Notes`]).containsExcluded(CAFE_NFD),
+    ).toBe(true);
+  });
+
+  test("an inert policy contains nothing, a deny-all policy contains everything", () => {
+    expect(EMPTY_POLICY.containsExcluded("")).toBe(false);
+    expect(EMPTY_POLICY.containsExcluded("Journal")).toBe(false);
+    expect(DENY_ALL_POLICY.containsExcluded("Journal")).toBe(true);
+    expect(DENY_ALL_POLICY.containsExcluded("")).toBe(true);
+  });
+
   test("compiling is pure — two policies from one input agree", () => {
     const raw = ["Therapy", "Finances"];
     const a = compilePolicy(raw);
