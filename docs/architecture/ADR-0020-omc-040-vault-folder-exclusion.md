@@ -240,16 +240,22 @@ crash between them leave policy-without-consent, the exact state the gate exists
 (`settingsLock.ts`), and awaiting a dialog inside it would freeze every settings write in the
 plugin for as long as the modal is open.
 
-**D13 — Matching is case-sensitive, and the UI carries the mitigation.** Case-insensitive matching
-would be the safer direction on macOS and a lie on a case-sensitive vault, where `Journal/` and
-`journal/` are genuinely two folders and excluding one silently loses the other. The string matched
-against is `TFile.path`, exactly what Obsidian stores, and the settings picker supplies it verbatim
-from `Vault.getAllFolders()`, so a mismatch is only reachable by hand-typing.
+**D13 — Matching is case-sensitive, and the stale-entry marker is what makes that safe.** The
+string matched against is `TFile.path`, exactly what Obsidian stores, and the settings picker
+supplies it verbatim from `Vault.getAllFolders()`.
 
-**The picker and the stale-entry marker are therefore part of the security design, not polish.** An
-entry naming no existing folder renders separately with an explanation and is **never
-auto-removed**. If those two affordances are cut for scope, the feature ships a lie: `journal/therapy`
-looks protected and is not.
+Which way each option fails is worth stating plainly, because the intuitive summary is wrong.
+Case-insensitive matching only ever hides *more*, so it cannot leave a folder exposed; its cost is
+over-hiding, and on a case-sensitive vault it makes "hide `Journal` but not `journal`"
+inexpressible. Case-sensitive matching has the sharper failure: on macOS, where the filesystem is
+usually case-insensitive, a user who hand-types `journal` while the folder is `Journal` gets no
+protection at all, and the settings page lists the entry as though it were working.
+
+That failure is accepted only because it is **visible**. An entry naming no existing folder renders
+separately, marked as not found in this vault, and is **never auto-removed** — and a case typo is
+precisely the case that marker catches, since `journal` is not in `getAllFolders()`. The picker and
+the marker are therefore part of the security design, not polish. Cut either one for scope and the
+feature ships a lie: `journal/therapy` looks protected and is not.
 
 **D14 — This ADR does not reopen ADR-0018 Alternative J.** That alternative was declined because a
 vault-content policy model did not exist. One exists now, and it is enforced on the `App` handed to
@@ -406,11 +412,12 @@ instinctive move, which is why the test asserts the literal string and carries a
 Strictly safer on macOS and Windows, where the filesystem usually is. Matching more than asked is
 the benign direction for an exclusion.
 
-**Rejected.** On a case-sensitive vault — Linux, and iOS-synced vaults — `Journal/` and `journal/`
-are two different folders, and a user who excludes one would silently lose the other while believing
-both were covered. That is a hidden folder the user thinks is protected, which is worse than a
-folder they can see is not. §D13 takes the strict reading and moves the mitigation into the UI,
-where a typo is visible rather than silently absorbed.
+**Rejected, and not because it is unsafe.** It is the safer direction: matching more than asked
+never leaves a folder exposed. It is rejected because it over-hides and removes expressiveness — on
+a case-sensitive vault `Journal/` and `journal/` can be two genuinely different folders, and a
+case-insensitive rule makes "hide one but not the other" impossible to state. §D13 takes the strict
+reading, names the sharper failure it thereby accepts, and puts the mitigation in the UI, where a
+case typo surfaces as an entry that resolves to nothing.
 
 ---
 
