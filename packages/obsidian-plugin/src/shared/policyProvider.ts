@@ -134,3 +134,24 @@ export class PathPolicyProvider {
     return this.storage.getStore() ?? this.vaultWidePolicy;
   }
 }
+
+/**
+ * One provider per plugin instance, created on first use.
+ *
+ * A `WeakMap` rather than a field on `McpToolsPlugin`: `shared/` must not
+ * import the plugin class (the barrel already pulls in `src/main`, which
+ * is why `settingsStore` takes a structural `PluginDataLike` instead).
+ * Keying by the plugin object gives every composition root the same
+ * provider without any of them having to thread it through a signature,
+ * and a test's throwaway plugin gets its own.
+ */
+const providers = new WeakMap<object, PathPolicyProvider>();
+
+export function pathPolicyFor(plugin: PluginDataLike): PathPolicyProvider {
+  let provider = providers.get(plugin);
+  if (!provider) {
+    provider = new PathPolicyProvider(plugin);
+    providers.set(plugin, provider);
+  }
+  return provider;
+}
