@@ -1177,3 +1177,98 @@ describe("dispatch() boolean argument coercion (#444)", () => {
     expect(seen).toEqual([undefined]);
   });
 });
+
+describe("dispatch() — folder-exclusion refusal (ADR-0020 D9)", () => {
+  /**
+   * The registry is handed a resolved map, name to reason, exactly as it
+   * is handed a resolved ToolScope. It never learns which tools are
+   * unfilterable — that join belongs to the composition root, because
+   * mcp-transport does not import mcp-tools.
+   */
+  const REFUSED = new Map([["alpha", "It reaches the vault another way."]]);
+
+  test("a refused tool never runs, and the handler is not reached", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      { ...fakeContext, refusedTools: REFUSED },
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("alpha-ok");
+  });
+
+  test("the refusal states the reason and names who can lift it", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      { ...fakeContext, refusedTools: REFUSED },
+    );
+    const text = JSON.stringify(result);
+    expect(text).toContain("disabled while folders are hidden from MCP");
+    expect(text).toContain("It reaches the vault another way.");
+    expect(text).toContain("vault owner");
+  });
+
+  // D8's accepted disclosure: the refusal says a policy exists, and says
+  // nothing about which folders or how many.
+  test("the refusal names no folder and no count", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      { ...fakeContext, refusedTools: REFUSED },
+    );
+    const text = JSON.stringify(result);
+    expect(text).not.toMatch(/Therapy|Journal|Finances/);
+    expect(text).not.toMatch(/\b\d+ folders?\b/);
+  });
+
+  test("a tool that is not in the map runs normally", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "beta", arguments: {} },
+      { ...fakeContext, refusedTools: REFUSED },
+    );
+    expect(result.isError).toBeUndefined();
+    expect(JSON.stringify(result)).toContain("beta-ok");
+  });
+
+  test("with no map at all, nothing is refused", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      fakeContext,
+    );
+    expect(JSON.stringify(result)).toContain("alpha-ok");
+  });
+
+  // Ordering. b1 names the vault owner AND the exact setting to change,
+  // so it is the more actionable of the two and must win.
+  test("an allowlisted-out tool gets the allowlist message, not this one", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const scope = {
+      id: "token-1",
+      active: new Set<string>(),
+      allowed: new Set(["beta"]),
+    };
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: {} },
+      { ...fakeContext, scope, refusedTools: REFUSED },
+    );
+    const text = JSON.stringify(result);
+    expect(text).toContain("allowed-tools list");
+    expect(text).not.toContain("folders are hidden");
+  });
+
+  // The refusal sits before schema.assert, keeping the property every
+  // other branch here has: gates run before validation.
+  test("a refused tool is refused even with invalid arguments", async () => {
+    const { tools } = buildRegistryWithTwoTools();
+    const result = await tools.dispatch(
+      { name: "alpha", arguments: { bogus: 1 } },
+      { ...fakeContext, refusedTools: REFUSED },
+    );
+    expect(JSON.stringify(result)).toContain(
+      "disabled while folders are hidden",
+    );
+  });
+});

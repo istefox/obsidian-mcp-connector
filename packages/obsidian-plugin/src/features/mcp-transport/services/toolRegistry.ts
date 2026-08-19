@@ -32,6 +32,17 @@ interface HandlerContext {
    * policy without a second plumbing path.
    */
   scope?: ToolScope;
+  /**
+   * Tools refused for this request because a folder-exclusion policy is
+   * in force, mapped to the reason each cannot be constrained
+   * (ADR-0020 §D9). Absent means no policy, or none of these tools.
+   *
+   * A resolved decision, exactly like `scope` above: the registry is
+   * handed the answer rather than the inputs. mcp-transport does not
+   * import mcp-tools — the composition root owns that join, which is
+   * why the tool names and their reasons never appear in this file.
+   */
+  refusedTools?: ReadonlyMap<string, string>;
 }
 
 /** One `tools/list` entry, as served on the wire. */
@@ -585,6 +596,35 @@ export class ToolRegistryClass<
         handler &&
         isActiveFor(this.isServed(schema), params.name, scope)
       ) {
+        // (a0) Registered, active, and refused anyway: a folder-exclusion
+        // policy is in force and this tool reaches vault content by a
+        // route the guarded App cannot follow (ADR-0020 §D9). Before
+        // `schema.assert`, keeping the gates-run-before-validation
+        // property every other branch here has.
+        //
+        // A tool that is BOTH allowlisted-out and unfilterable never gets
+        // here — the enclosing condition already failed, so b1 answers
+        // it, which is right: b1 names the vault owner, and its remedy is
+        // the more specific of the two.
+        //
+        // This refusal does reveal that a policy exists. It reveals no
+        // folder name and no count, and ADR-0020 §D8 accepts that
+        // deliberately: the threat model is "the agent must not read the
+        // folder", not "the agent must not know a policy exists". Do not
+        // make the path-taking refusals informative to match — those must
+        // stay indistinguishable from a path that never existed.
+        const refusalReason = context.refusedTools?.get(params.name);
+        if (refusalReason !== undefined) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Tool '${params.name}' is disabled while folders are hidden from MCP. ${refusalReason} Ask the vault owner to clear the hidden-folder list in the plugin's settings.`,
+              },
+            ],
+            isError: true,
+          };
+        }
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),
         );

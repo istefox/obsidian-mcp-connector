@@ -3,6 +3,11 @@ import { composeToolRegistry } from "./composeToolRegistry";
 import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
 import { mockApp, mockPlugin, resetMockVault, setMockFile } from "$/test-setup";
 import type McpToolsPlugin from "$/main";
+import {
+  DENY_ALL_POLICY,
+  EMPTY_POLICY,
+  compilePolicy,
+} from "$/shared/pathPolicy";
 
 /**
  * Proves the enforcement seam is actually IN the path, not merely
@@ -27,13 +32,17 @@ function pluginWithFolders(folders?: string[]): McpToolsPlugin {
 }
 
 async function buildRegistry(folders?: string[]) {
-  const { toolRegistry } = await composeToolRegistry({
+  const { toolRegistry } = await compose(folders);
+  return toolRegistry;
+}
+
+async function compose(folders?: string[]) {
+  return composeToolRegistry({
     app: mockApp(),
     plugin: pluginWithFolders(folders),
     pluginVersion: "0.0.0-test",
     session: new SessionPromotions(),
   });
-  return toolRegistry;
 }
 
 /** Dispatch a tool the way the transport does, and flatten the result. */
@@ -121,5 +130,64 @@ describe("composeToolRegistry — the seam is wired", () => {
     });
     const out = await call(registry, "list_vault_files", { directory: "" });
     expect(out).not.toContain("Therapy/new.md");
+  });
+});
+
+describe("composeToolRegistry — which tools a policy refuses", () => {
+  // The composition root owns this join because it is the only module
+  // that legitimately knows both features. mcp-transport never imports
+  // mcp-tools, so the registry is handed the answer, not the inputs.
+  test("no policy in force refuses nothing", async () => {
+    const { refusedToolsFor } = await compose();
+    expect(refusedToolsFor(EMPTY_POLICY)).toBeUndefined();
+  });
+
+  test("a configured folder refuses exactly the three unfilterable tools", async () => {
+    const { refusedToolsFor } = await compose(["Therapy"]);
+    const refused = refusedToolsFor(compilePolicy(["Therapy"]));
+    expect([...(refused?.keys() ?? [])].sort()).toEqual([
+      "execute_dataview_query",
+      "execute_obsidian_command",
+      "execute_template",
+    ]);
+  });
+
+  test("every refusal carries a reason, so the message can say why", async () => {
+    const { refusedToolsFor } = await compose(["Therapy"]);
+    const refused = refusedToolsFor(compilePolicy(["Therapy"]));
+    for (const [name, reason] of refused ?? []) {
+      expect(reason.length).toBeGreaterThan(30);
+      expect(reason).not.toContain(name);
+    }
+  });
+
+  test("list_bookmarks is never refused", async () => {
+    const { refusedToolsFor } = await compose(["Therapy"]);
+    expect(
+      refusedToolsFor(compilePolicy(["Therapy"]))?.has("list_bookmarks"),
+    ).toBe(false);
+  });
+
+  // The pre-first-read posture refuses everything, so it must refuse
+  // these too — a list-based check would leave all three live at exactly
+  // the moment nothing is known.
+  test("the deny-all posture refuses them as well", async () => {
+    const { refusedToolsFor } = await compose();
+    expect(refusedToolsFor(DENY_ALL_POLICY)?.size).toBe(3);
+  });
+
+  // End to end through the real registry, with the map the transport
+  // would supply.
+  test("a refused tool does not execute through the composed registry", async () => {
+    const { toolRegistry, refusedToolsFor } = await compose(["Therapy"]);
+    const policy = compilePolicy(["Therapy"]);
+    const result = await toolRegistry.dispatch(
+      { name: "execute_dataview_query", arguments: { query: "LIST" } } as never,
+      { server: {} as never, refusedTools: refusedToolsFor(policy) },
+    );
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain(
+      "disabled while folders are hidden",
+    );
   });
 });

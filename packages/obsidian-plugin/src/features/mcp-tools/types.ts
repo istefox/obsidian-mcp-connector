@@ -130,10 +130,31 @@ export const EXCLUDED_FOLDERS_CONSENT_VERSION = 1;
  * strings and filter like anything else, and only `search` items are
  * opaque — those hold the user's own query, not results.
  */
+export const UNFILTERABLE_TOOL_REFUSALS: ReadonlyMap<string, string> = new Map([
+  [
+    "execute_obsidian_command",
+    "It runs an arbitrary Obsidian command, which can touch any file in the vault. " +
+      "It takes a command id rather than a path, so there is nothing for a path filter to inspect.",
+  ],
+  [
+    "execute_dataview_query",
+    "It hands the query to Dataview, which reads across the whole vault through its own index. " +
+      "Filtering the query text would not be a filter.",
+  ],
+  [
+    "execute_template",
+    "It runs a Templater template, whose JavaScript reaches the vault through Templater " +
+      "rather than through this plugin.",
+  ],
+]);
+
+/**
+ * The same three names, for callers that only need the list. Derived
+ * rather than written twice, so the settings warning and the dispatch
+ * refusal can never disagree about which tools are affected.
+ */
 export const UNFILTERABLE_TOOL_NAMES: readonly string[] = [
-  "execute_obsidian_command",
-  "execute_dataview_query",
-  "execute_template",
+  ...UNFILTERABLE_TOOL_REFUSALS.keys(),
 ];
 
 /**

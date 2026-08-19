@@ -25,6 +25,11 @@ import {
 import { wireSearchResultsApp } from "$/features/mcp-apps";
 import { createGuardedApp, isGuardedApp } from "$/shared/guardedApp";
 import { pathPolicyFor } from "$/shared/policyProvider";
+import type { PathPolicy } from "$/shared/pathPolicy";
+import {
+  UNFILTERABLE_TOOL_REFUSALS,
+  shouldDisableUnfilterableTools,
+} from "$/features/mcp-tools/types";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
 import type { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
@@ -70,6 +75,19 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
   toolRegistry: ToolRegistry;
   promptRegistry: PromptRegistry;
   resourceRegistry: ResourceRegistry;
+  /**
+   * Which tools this request must refuse, given the policy in force
+   * (ADR-0020 §D9). Returned as a function rather than a value because
+   * the policy is per request.
+   *
+   * It lives here because this is the only module that legitimately
+   * knows both features: `mcp-transport` does not import `mcp-tools`,
+   * and the registry is handed the resolved answer the same way it is
+   * handed a resolved `ToolScope`.
+   */
+  refusedToolsFor: (
+    policy: PathPolicy,
+  ) => ReadonlyMap<string, string> | undefined;
 }> {
   const toolRegistry = new ToolRegistryClass();
   const promptRegistry = new PromptRegistryClass();
@@ -160,5 +178,13 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
 
   wireSearchResultsApp(toolRegistry, resourceRegistry);
 
-  return { toolRegistry, promptRegistry, resourceRegistry };
+  return {
+    toolRegistry,
+    promptRegistry,
+    resourceRegistry,
+    refusedToolsFor: (activePolicy) =>
+      shouldDisableUnfilterableTools(activePolicy)
+        ? UNFILTERABLE_TOOL_REFUSALS
+        : undefined,
+  };
 }
