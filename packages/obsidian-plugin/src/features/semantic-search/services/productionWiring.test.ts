@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { isIndexableFile, probeAndWipeStaleStores } from "./productionWiring";
+import {
+  isIndexableFile,
+  probeAndWipeStaleStores,
+  purgeExcludedFromStores,
+} from "./productionWiring";
 import { createEmbeddingStoreRegistry } from "./storeRegistry";
-import { FORMAT_VERSION, type VaultAdapter } from "./store";
+import {
+  FORMAT_VERSION,
+  type EmbeddingRecord,
+  type VaultAdapter,
+} from "./store";
+import { compilePolicy, EMPTY_POLICY } from "$/shared/pathPolicy";
 import { TFile } from "obsidian";
 
 /** In-memory adapter tracking text + binary files and remove() calls. */
@@ -180,5 +189,87 @@ describe("isIndexableFile", () => {
   test("rejects something that is not a TFile", () => {
     expect(isIndexableFile({ path: "x.md", extension: "md" })).toBe(false);
     expect(isIndexableFile(null)).toBe(false);
+  });
+});
+
+describe("purgeExcludedFromStores", () => {
+  const DIMS = {
+    "native-minilm-l6-v2": 384,
+    "embedding-gemma-300m": 768,
+    "multilingual-e5-base": 768,
+  } as const;
+
+  function rec(filePath: string, dim: number): EmbeddingRecord {
+    return {
+      chunkId: `${filePath}#0`,
+      filePath,
+      offset: 0,
+      heading: "Session notes",
+      contentHash: "deadbeefdeadbeef",
+      vector: new Float32Array(dim),
+    };
+  }
+
+  /** Seed a real store for `key` with one record per path, flushed. */
+  async function seed(
+    registry: ReturnType<typeof createEmbeddingStoreRegistry>,
+    key: keyof typeof DIMS,
+    paths: string[],
+  ) {
+    const store = registry.storeFor(key, DIMS[key]);
+    await store.init();
+    await store.upsert(paths.map((p) => rec(p, DIMS[key])));
+    await store.flush();
+    return store;
+  }
+
+  test("purges every provider store, not only the active one", async () => {
+    const mem = memAdapter();
+    const registry = createEmbeddingStoreRegistry(mem.adapter, BASE);
+    const native = await seed(registry, "native-minilm-l6-v2", [
+      "Journal/a.md",
+      "Notes/b.md",
+    ]);
+    const gemma = await seed(registry, "embedding-gemma-300m", [
+      "Journal/c.md",
+    ]);
+
+    // A store the user switched away from still holds paths and
+    // headings. "Hidden unless you switch back to last month's
+    // provider" is not a policy (ADR-0020 D15).
+    const removed = await purgeExcludedFromStores(
+      registry,
+      compilePolicy(["Journal"]),
+    );
+
+    expect(removed).toBe(2);
+    expect(native.hasRecords("Journal/a.md")).toBe(false);
+    expect(native.hasRecords("Notes/b.md")).toBe(true);
+    expect(gemma.hasRecords("Journal/c.md")).toBe(false);
+  });
+
+  test("an empty policy purges nothing", async () => {
+    const mem = memAdapter();
+    const registry = createEmbeddingStoreRegistry(mem.adapter, BASE);
+    const native = await seed(registry, "native-minilm-l6-v2", [
+      "Journal/a.md",
+    ]);
+
+    expect(await purgeExcludedFromStores(registry, EMPTY_POLICY)).toBe(0);
+    expect(native.hasRecords("Journal/a.md")).toBe(true);
+  });
+
+  test("never initializes a store this vault has never used", async () => {
+    const mem = memAdapter();
+    const registry = createEmbeddingStoreRegistry(mem.adapter, BASE);
+
+    expect(
+      await purgeExcludedFromStores(registry, compilePolicy(["Journal"])),
+    ).toBe(0);
+    // A store that inits writes a dirty sentinel and a segment pair on
+    // its first flush. Nothing on disk means nothing was loaded — the
+    // point of probing before touching a provider's bin.
+    expect(mem.files.size).toBe(0);
+    expect(mem.bins.size).toBe(0);
   });
 });

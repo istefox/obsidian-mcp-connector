@@ -92,6 +92,35 @@
     return modal.waitForDecision();
   }
 
+  // The semantic index is the one copy of the vault that does not pass
+  // through the enforcement seam: it stores `filePath` and `heading` in
+  // the clear, so a folder hidden after it was indexed stays readable on
+  // disk until the embeddings are purged. That makes this part of
+  // applying the change, not a follow-up chore (ADR-0020 D15).
+  //
+  // Awaited so a failure lands as a Notice next to the click rather than
+  // in a log, and run AFTER the write so a purge failure can never leave
+  // the list unsaved. Un-hiding a folder goes through here too: the
+  // purge itself is then a no-op, but the refresh it performs is what
+  // tells the indexer the folder is admissible again.
+  async function syncSemanticIndex(): Promise<void> {
+    const purge = plugin.semanticSearchState?.purgeExcludedFolders;
+    if (!purge) return;
+    try {
+      const removed = await purge();
+      if (removed > 0) {
+        new Notice(
+          `Removed ${removed} note${removed > 1 ? "s" : ""} from the semantic search index.`,
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(
+        `Hidden folders saved, but the semantic search index could not be purged: ${message}. Rebuild it from Semantic Search settings.`,
+      );
+    }
+  }
+
   async function addFolder(): Promise<void> {
     draftError = "";
     const entry = normalizeFolderEntry(draft);
@@ -154,6 +183,7 @@
       // hidden that a failed write never hid.
       applySlice(next);
       draft = "";
+      await syncSemanticIndex();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to save hidden folders: ${message}`);
@@ -180,6 +210,7 @@
         },
       )) as McpToolsSlice;
       applySlice(next);
+      await syncSemanticIndex();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to save hidden folders: ${message}`);

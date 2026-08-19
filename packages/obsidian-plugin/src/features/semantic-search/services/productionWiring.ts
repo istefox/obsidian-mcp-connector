@@ -11,6 +11,8 @@ import type McpToolsPlugin from "$/main";
 import { logger } from "$/shared/logger";
 import { SettingsStore } from "$/shared/settingsStore";
 import { createExclusionFilter } from "$/shared/isUserIgnored";
+import { pathPolicyFor } from "$/shared/policyProvider";
+import type { PathPolicy } from "$/shared/pathPolicy";
 import {
   setup as semanticSearchSetup,
   createModelDownloader,
@@ -39,6 +41,10 @@ import {
   type VaultLike,
 } from "./indexer";
 import { makeChunkerForProvider } from "./chunker";
+import {
+  guardChooserWithPolicy,
+  guardProviderWithPolicy,
+} from "./policyGuardedProvider";
 import type { ExcerptResolver } from "./nativeProvider";
 
 /**
@@ -97,12 +103,29 @@ export async function wireSemanticSearch(
     },
   };
 
-  // Honour `Files & Links → Excluded files`: files the user has
-  // excluded never enter any embedding store, in both the full
-  // rebuild and the live event listener (RFC #238). Built once here
-  // where `app.metadataCache` is in scope and injected into every
-  // indexer below.
-  const ssIsExcluded = createExclusionFilter(plugin.app);
+  // Two independent exclusion lists, unioned (ADR-0020 §Consequences):
+  // Obsidian's own `Files & Links → Excluded files` (RFC #238) and this
+  // plugin's hidden-folder policy. Neither derives from the other, and a
+  // file named by either never enters any embedding store — in the full
+  // rebuild and in the live event listener alike. Built once here where
+  // `app.metadataCache` is in scope, and injected into every indexer
+  // below.
+  //
+  // The indexer is the one policy consumer that runs outside a request
+  // scope, so it reads the vault-wide policy — which starts at deny-all
+  // until the first successful settings read (ADR-0020 §D7). For a read
+  // that posture is a safe refusal; for the index it would be a silent
+  // wipe, every file skipped and the store rebuilt empty. This one
+  // resolving read, before any indexer exists, is what keeps fail-closed
+  // from meaning fail-destructive. A *later* read failure is harmless:
+  // the provider retains the last policy it resolved.
+  const policyProvider = pathPolicyFor(plugin);
+  await policyProvider.refresh();
+  const isUserIgnored = createExclusionFilter(plugin.app);
+  // Read per call, never captured: the list can change between two files
+  // of the same rebuild.
+  const ssIsExcluded = (path: string): boolean =>
+    isUserIgnored(path) || policyProvider.current().isExcluded(path);
 
   const ssExcerpt: ExcerptResolver = async (path, offset, maxLen) => {
     const f = plugin.app.vault.getAbstractFileByPath(path);
@@ -198,6 +221,17 @@ export async function wireSemanticSearch(
     // DLC readiness came from the probe pass above (no store init);
     // the settings UI uses these counts while stores are still lazy.
     state.probedCounts = probedCounts;
+
+    // Enforce the hidden-folder policy on every provider this state will
+    // ever hold. The chooser is wrapped as well as the instance setup
+    // already built from it, because the settings UI re-runs the chooser
+    // on a provider swap and would otherwise install an unguarded
+    // provider (see policyGuardedProvider's header).
+    const policySource = () => policyProvider.current();
+    if (state.chooser) {
+      state.chooser = guardChooserWithPolicy(state.chooser, policySource);
+    }
+    state.provider = guardProviderWithPolicy(state.provider, policySource);
 
     // Native indexer — lazy start on first search tool call.
     // The chunker tracks the provider's effective max-input-tokens
@@ -402,6 +436,18 @@ export async function wireSemanticSearch(
       });
     }
 
+    // Purge hook for the hidden-folder settings UI (ADR-0020 §D15).
+    // Deliberately NOT subscribed to a settings event: the UI awaits
+    // this, so a failed purge surfaces where the user just clicked
+    // rather than in a log nobody reads.
+    state.purgeExcludedFolders = async () => {
+      // Refresh first. The UI has just written the list, and this is
+      // also what brings the vault-wide policy — the one the indexer
+      // reads — up to date for every file indexed from here on.
+      const policy = await policyProvider.refresh();
+      return purgeExcludedFromStores(registry, policy);
+    };
+
     state.teardown = async () => {
       if (indexerStarted) {
         try {
@@ -452,6 +498,38 @@ const PROVIDER_DIMS = {
   "embedding-gemma-300m": 768,
   "multilingual-e5-base": 768,
 } as const satisfies Record<ProviderKey, number>;
+
+/**
+ * Drop every embedding under a hidden folder, across every provider
+ * store, and return how many paths were removed (ADR-0020 §D15).
+ *
+ * Extracted from the settings hook for the same reason
+ * `probeAndWipeStaleStores` is: it is the destructive half, and it is
+ * worth testing against an in-memory adapter rather than only through a
+ * live plugin.
+ *
+ * Every provider is swept, not just the active one. A store the user
+ * switched away from keeps its records, and "the folder is hidden unless
+ * you switch back to the provider you used last month" is not a policy.
+ * Smart Connections is the one index this cannot reach — it is
+ * third-party and gets filtered at query time instead.
+ */
+export async function purgeExcludedFromStores(
+  registry: EmbeddingStoreRegistry,
+  policy: PathPolicy,
+): Promise<number> {
+  if (policy.isEmpty) return 0;
+  let removed = 0;
+  for (const key of ALL_PROVIDER_KEYS) {
+    const store = registry.storeFor(key, PROVIDER_DIMS[key]);
+    // Skip a store that is empty in memory AND absent on disk: probing
+    // is a sidecar read, while initializing would pull the whole bin of
+    // a provider this vault may never have used.
+    if (store.size() === 0 && (await store.probe()) === null) continue;
+    removed += await store.purge((path) => policy.isExcluded(path));
+  }
+  return removed;
+}
 
 /**
  * Probe each provider's store via its cheap metadata sidecar (never the

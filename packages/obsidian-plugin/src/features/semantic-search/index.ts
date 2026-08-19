@@ -167,6 +167,17 @@ export type SemanticSearchState = {
    * subscribed indexer on plugin unload.
    */
   dlcIndexers?: Map<string, SemanticIndexer> | null;
+  /**
+   * Drop every embedding whose file now sits under a hidden folder, in
+   * every provider store, and return how many paths were removed.
+   *
+   * Called by the MCP-tools settings UI right after the hidden-folder
+   * list is written. Required, not housekeeping: the stores keep
+   * `filePath` and `heading` in the clear, so a folder excluded after it
+   * was indexed stays readable on disk until this runs (ADR-0020 §D15).
+   * Wired by production setup; absent in tests and early lifecycle.
+   */
+  purgeExcludedFolders?: (() => Promise<number>) | null;
   teardown: () => Promise<void>;
 };
 
