@@ -298,6 +298,25 @@ must hold even for a tool every other layer permits — including the always-act
 take no paths today, so layer 0 does not bite them; the ladder still says so, or a future
 path-taking meta-tool silently inherits an exemption.
 
+**D17 — A recursive operation on an *ancestor* is refused, and refused differently from an excluded
+path.** `delete_vault_directory` bottoms out in `app.vault.adapter.rmdir(path, recursive)`
+(`deleteVaultDirectory.ts:52-58`), below Obsidian, with no per-descendant hook. With `Journal/Therapy`
+excluded, `rmdir("Journal", true)` destroys the protected subtree while never naming it. Checking
+`isExcluded` on the argument does not catch this: the argument is not excluded.
+
+The policy therefore answers a second question — `containsExcluded(path)`, true when any excluded
+folder sits at or beneath `path` — and the guarded adapter refuses on it.
+
+The refusal cannot be the ENOENT of §D3. `Journal` demonstrably exists and the client can list it,
+so claiming it is absent is a contradiction the client can see, and a contradiction is a louder
+signal than the refusal it was meant to hide. It is `EPERM`, which the tool already maps to
+"permission denied" and which a real vault produces for real reasons.
+
+**This is a disclosed inference channel, accepted rather than solved.** A client that deletes a
+folder, is refused, and then lists it empty can infer that something it may not touch lives there.
+It learns no name, no count and no content. The alternative is deleting the user's therapy notes,
+so it is not a close call — but it is recorded here rather than left for someone to discover.
+
 ---
 
 ## Alternatives considered
@@ -457,6 +476,8 @@ case typo surfaces as an entry that resolves to nothing.
 - **Performance costs to measure, not assume**: a proxy hop per property access in per-file loops,
   and an O(E) filtered copy of `resolvedLinks` that `get_backlinks` reads twice. The link copy is
   memoised on a resolve epoch; both are benchmarked before shipping.
+- **A refused recursive delete is an inference channel** (§D17): a client can learn that something
+  untouchable lives under a folder, though never what.
 - **The downgrade gap cannot be closed** (§D15, Alternative G).
 
 ### Neutral
