@@ -925,3 +925,107 @@ describe("embedding store — probe() and meta sidecar", () => {
     expect(spy.writes).toEqual([]);
   });
 });
+
+describe("embedding store — purge", () => {
+  const A = "/p/embeddings.bin";
+  const I = "/p/embeddings.index.json";
+  const M = "/p/mtimes.json";
+
+  function makeOn(adapter: VaultAdapter) {
+    return createEmbeddingStore({
+      adapter,
+      binPath: A,
+      indexPath: I,
+      vectorDim: DIM,
+    });
+  }
+
+  function rec(chunkId: string, filePath: string): EmbeddingRecord {
+    return makeRecord({ chunkId, filePath });
+  }
+
+  test("removes every record under an excluded folder and keeps the rest", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([
+      rec("j0", "Journal/a.md"),
+      rec("j1", "Journal/deep/b.md"),
+      rec("n0", "Notes/c.md"),
+      // Prefix boundary: `Journalism` is a different folder.
+      rec("i0", "Journalism/d.md"),
+    ]);
+
+    const removed = await store.purge((p) => p.startsWith("Journal/"));
+
+    // The count is paths, not chunks — it is what the settings UI shows.
+    expect(removed).toBe(2);
+    expect(store.size()).toBe(2);
+    expect(store.hasRecords("Notes/c.md")).toBe(true);
+    expect(store.hasRecords("Journalism/d.md")).toBe(true);
+    expect(store.hasRecords("Journal/a.md")).toBe(false);
+  });
+
+  test("purged paths do not come back on reload", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec("j0", "Journal/a.md"), rec("n0", "Notes/c.md")]);
+    await store.flush();
+
+    await store.purge((p) => p.startsWith("Journal/"));
+
+    // Purge flushes itself. Leaving that to the caller would mean the
+    // records were gone from memory and still on disk — exactly the
+    // exposure the purge exists to close.
+    const reloaded = makeOn(mem.adapter);
+    await reloaded.init();
+    expect(reloaded.hasRecords("Journal/a.md")).toBe(false);
+    expect(reloaded.hasRecords("Notes/c.md")).toBe(true);
+  });
+
+  test("drops the mtime too, so un-hiding re-indexes the file", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec("j0", "Journal/a.md")]);
+    store.setMtime("Journal/a.md", 111);
+    await store.flush();
+
+    await store.purge((p) => p.startsWith("Journal/"));
+
+    // A retained mtime would make the next rebuild skip the file as
+    // unchanged, and the folder would stay unindexed forever once the
+    // user un-hides it.
+    expect(store.mtimeFor("Journal/a.md")).toBeUndefined();
+    expect(
+      (JSON.parse(mem.files.get(M) ?? "{}") as Record<string, number>)[
+        "Journal/a.md"
+      ],
+    ).toBeUndefined();
+  });
+
+  test("reaches a path that holds an mtime and no records", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    // An empty note chunks to nothing but is still recorded as indexed.
+    store.setMtime("Journal/empty.md", 222);
+    await store.flush();
+
+    expect(await store.purge((p) => p.startsWith("Journal/"))).toBe(1);
+    expect(store.mtimeFor("Journal/empty.md")).toBeUndefined();
+  });
+
+  test("returns 0 and writes nothing when nothing matches", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec("n0", "Notes/c.md")]);
+    await store.flush();
+    const before = new Map(mem.files);
+
+    expect(await store.purge(() => false)).toBe(0);
+    expect([...mem.files.keys()].sort()).toEqual([...before.keys()].sort());
+  });
+});

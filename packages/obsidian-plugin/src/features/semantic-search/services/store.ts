@@ -58,6 +58,21 @@ export interface EmbeddingStore {
   size(): number;
   upsert(records: EmbeddingRecord[]): Promise<void>;
   delete(filePath: string): Promise<void>;
+  /**
+   * Drop every indexed path the predicate rejects, and flush.
+   *
+   * Exists for the hidden-folder policy (ADR-0020 §D15): `filePath` and
+   * `heading` are stored in the clear, so a folder excluded after it was
+   * indexed leaves its structure readable on disk until this runs. The
+   * predicate is passed in rather than a folder list because the two
+   * exclusion sources — Obsidian's own list and this plugin's policy —
+   * are separate decisions and only the caller knows which one it is
+   * acting on.
+   *
+   * Returns how many paths were removed, so the caller can stay silent
+   * when there was nothing to remove.
+   */
+  purge(isExcluded: (filePath: string) => boolean): Promise<number>;
   /** O(chunks-in-file) lookup via secondary index. Use instead of scan()+filter for per-path access. */
   recordsFor(filePath: string): Iterable<EmbeddingRecord>;
   /** O(1): true when the path has at least one record. */
@@ -506,6 +521,31 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     }
     this.fileIndex.delete(filePath);
     this.dirtySegments.add(segmentOfPath(filePath));
+  }
+
+  async purge(isExcluded: (filePath: string) => boolean): Promise<number> {
+    if (!this.initialized) await this.init();
+    // Both maps, not just `fileIndex`: a file that chunked to nothing
+    // (an empty note) holds an mtime and no records, and leaving that
+    // mtime behind would make the next rebuild skip the file for good
+    // once the folder is un-excluded again.
+    const doomed = new Set<string>();
+    for (const filePath of this.fileIndex.keys()) {
+      if (isExcluded(filePath)) doomed.add(filePath);
+    }
+    for (const filePath of this.fileMtimes.keys()) {
+      if (isExcluded(filePath)) doomed.add(filePath);
+    }
+    if (doomed.size === 0) return 0;
+
+    for (const filePath of doomed) {
+      await this.delete(filePath);
+    }
+    // Flushed here rather than left to the caller: the whole point is
+    // that the paths stop being on disk, and a purge that only reached
+    // memory would be undone by the next reload.
+    await this.flush();
+    return doomed.size;
   }
 
   recordsFor(filePath: string): Iterable<EmbeddingRecord> {
