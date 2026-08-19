@@ -142,6 +142,26 @@ export const EMPTY_POLICY: PathPolicy = Object.freeze({
 });
 
 /**
+ * A policy that excludes everything.
+ *
+ * This is the state before the settings have been read even once
+ * (ADR-0020 §D7). It exists because the alternative — assume nothing is
+ * excluded until proven otherwise — discloses the contents of a folder
+ * the user asked to hide whenever a read is slow or fails, silently and
+ * irreversibly. Denying everything instead makes the vault look empty to
+ * MCP clients: loud, obvious, and it heals on the next successful read.
+ *
+ * `folders` is empty because nothing was named. `isEmpty` is false
+ * because the policy is emphatically not inert, and no consumer may
+ * treat it as such.
+ */
+export const DENY_ALL_POLICY: PathPolicy = Object.freeze({
+  folders: Object.freeze([]) as readonly string[],
+  isEmpty: false,
+  isExcluded: () => true,
+});
+
+/**
  * Compile raw settings data into a policy. Total: any shape of input
  * yields a usable policy, never a throw, because the input can be
  * whatever `data.json` happens to hold.

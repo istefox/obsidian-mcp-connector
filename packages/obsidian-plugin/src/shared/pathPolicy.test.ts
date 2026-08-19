@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DENY_ALL_POLICY,
   EMPTY_POLICY,
   MAX_POLICY_FOLDERS,
   compilePolicy,
@@ -185,6 +186,16 @@ describe("compilePolicy", () => {
     expect(EMPTY_POLICY.isEmpty).toBe(true);
     expect(EMPTY_POLICY.isExcluded("Therapy/a.md")).toBe(false);
     expect(Object.isFrozen(EMPTY_POLICY)).toBe(true);
+  });
+
+  // The pre-first-read state (ADR-0020 D7). isEmpty is false on purpose:
+  // it is emphatically not inert, and no consumer may treat it as such.
+  test("DENY_ALL_POLICY refuses everything and is not inert", () => {
+    expect(DENY_ALL_POLICY.isExcluded("Public/a.md")).toBe(true);
+    expect(DENY_ALL_POLICY.isExcluded("")).toBe(true);
+    expect(DENY_ALL_POLICY.isEmpty).toBe(false);
+    expect(DENY_ALL_POLICY.folders).toEqual([]);
+    expect(Object.isFrozen(DENY_ALL_POLICY)).toBe(true);
   });
 
   test("a populated policy reports its canonical folders and is frozen", () => {
