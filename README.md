@@ -352,6 +352,32 @@ Native HTTP transport. **Copy config for Claude Code**, then paste into `~/.clau
 
 **Copy config for streamable-http clients** produces the generic payload these accept. Check each client's docs for the file location and wrapping keys.
 
+### Codex
+
+Codex connects through one shared local Node.js broker at `127.0.0.1:27206`.
+The broker reads the current vault port and selected token from the plugin's `data.json` for every request.
+Port changes and token regeneration do not require a Codex config change or another broker process.
+
+1. On a token row, tick **Enable Codex connection for this vault**.
+2. Click **Install Codex config…** to preview and approve a one-time edit, or click **Copy Codex config** and paste the snippet yourself.
+3. Keep this vault open, then restart Codex after the initial config change.
+
+The installer uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
+Otherwise, it uses `~/.codex/config.toml` only when the `~/.codex` directory exists.
+It shows the exact path and whether it will add or replace `[mcp_servers.obsidian_<vault>]` before asking for confirmation.
+Replacing an entry also removes its old nested transport settings while preserving per-tool approval settings.
+The installer creates a timestamped backup, writes atomically, verifies the result, and restores the previous file if verification fails.
+It aborts if the file changes after the preview.
+It refuses ambiguous entries and config files that it cannot edit conservatively.
+Use the copy action when Codex uses a project config or a custom home that Obsidian cannot locate.
+
+The broker credential remains in `config.toml` and the plugin's `data.json`.
+The vault token remains only in `data.json` and is added when the broker forwards a request to the vault.
+Both services bind to localhost.
+Disabling the connection removes the vault's live broker registration but leaves the one-time Codex entry unchanged.
+The broker exits after no vault has an open control connection for 30 seconds.
+Node.js is required at runtime, but Bun is not.
+
 ### Verifying
 
 Your client should list the tools your token's profile allows, plus any prompts tagged `#mcp-tools-prompt`. For request-level inspection without a model in the loop:
