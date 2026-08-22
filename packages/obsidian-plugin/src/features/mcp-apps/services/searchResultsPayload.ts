@@ -157,5 +157,5 @@ export function withSearchResultsPayload<
   return {
     ...result,
     _meta: { ...result._meta, [SEARCH_RESULTS_PAYLOAD_KEY]: payload },
-  } as T & { isError?: true };
+  };
 }
