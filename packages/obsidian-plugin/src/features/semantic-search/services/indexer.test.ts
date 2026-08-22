@@ -517,6 +517,7 @@ function wrapStoreWithFlushSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     mtimeFor: (path) => store.mtimeFor(path),
     setMtime: (path, mtime) => store.setMtime(path, mtime),
     probe: () => store.probe(),
+    purge: (isExcluded) => store.purge(isExcluded),
     upsert: (records) => store.upsert(records),
     delete: (path) => store.delete(path),
     close: () => store.close(),
@@ -1125,6 +1126,7 @@ function wrapStoreWithWriteSpy(store: Awaited<ReturnType<typeof makeStore>>): {
     mtimeFor: (path) => store.mtimeFor(path),
     setMtime: (path, mtime) => store.setMtime(path, mtime),
     probe: () => store.probe(),
+    purge: (isExcluded) => store.purge(isExcluded),
     upsert: (records) => {
       upserts++;
       return store.upsert(records);

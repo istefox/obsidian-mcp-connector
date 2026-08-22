@@ -382,6 +382,7 @@ On the built-in-Node path Claude Desktop does not write the connector's own stde
 - **Tokens are local.** Generated per install, stored in the vault's `data.json`, revealed only on demand in settings, up to 10 per vault.
 - **Vault access is Obsidian's.** Every read and write goes through `app.vault`, under Obsidian's own permission model. Concurrent writes go through `Vault.process()` plus a process-wide write mutex, so two MCP writes to one file cannot lose an update.
 - **Command execution is opt-in** and per vault.
+- **Folders can be hidden from every tool at once.** Settings → MCP Connector → Hidden folders removes a folder from reads, writes, listings, the link graph, tag counts and prompts, vault-wide, and makes it behave exactly like a folder that does not exist — never a distinguishable "access denied". It is a guardrail against a client wandering somewhere it shouldn't, not encryption: see [SECURITY.md](SECURITY.md#content-folder-exclusion-omc-040) for what it does and does not cover.
 
 Report vulnerabilities through [SECURITY.md](SECURITY.md), never in a public issue.
 

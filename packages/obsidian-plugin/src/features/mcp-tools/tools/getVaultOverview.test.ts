@@ -9,8 +9,11 @@ import {
   setMockActiveFile,
   setMockFile,
   setMockIgnored,
+  setMockMetadata,
   setMockTags,
 } from "$/test-setup";
+import { createGuardedApp } from "$/shared/guardedApp";
+import { compilePolicy } from "$/shared/pathPolicy";
 
 beforeEach(() => resetMockVault());
 
@@ -116,5 +119,29 @@ describe("get_vault_overview tool", () => {
     const parsed = JSON.parse((result.content[0] as { text: string }).text);
     expect(parsed.recentFiles).toHaveLength(1);
     expect(parsed.recentFiles[0].path).toBe("a.md");
+  });
+
+  // ADR-0020 D10: topTags goes through the same getTagCounts rebuild as
+  // list_tags, so a tag confined to an excluded folder must be absent
+  // from the overview too, not present with count 0.
+  test("topTags omits a tag confined to an excluded folder", async () => {
+    setMockFile("Secret/canary.md", "secret body");
+    setMockMetadata("Secret/canary.md", {
+      tags: [{ tag: "#canary-secret" }],
+    });
+    setMockFile("Public/note.md", "public body");
+    setMockMetadata("Public/note.md", { tags: [{ tag: "#project" }] });
+
+    const guarded = createGuardedApp(mockApp(), () =>
+      compilePolicy(["Secret"]),
+    );
+    const result = await getVaultOverviewHandler({
+      arguments: {},
+      app: guarded,
+    });
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    const tags = parsed.topTags.map((t: { tag: string }) => t.tag);
+    expect(tags).not.toContain("#canary-secret");
+    expect(tags).toContain("#project");
   });
 });

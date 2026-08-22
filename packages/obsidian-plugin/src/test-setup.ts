@@ -1038,6 +1038,16 @@ export function mockApp(): App {
       Array.from(_mockState.files.keys())
         .map((p) => fileFromPath(p))
         .filter((f): f is MockTFile => f !== null) as unknown as ApiTFile[],
+    // `Vault.getAllFolders` is real API (obsidian.d.ts, @since 1.6.6) and
+    // this plugin's minAppVersion is 1.7.2, so the settings folder
+    // picker depends on it. Modelled here because the mock predates it.
+    getAllFolders: (includeRoot = false): ApiTFolder[] => {
+      const paths = Array.from(_mockState.folders).sort();
+      const all = includeRoot ? ["", ...paths] : paths;
+      return all
+        .map((p) => (p === "" ? new MockTFolder("", "") : folderFromPath(p)))
+        .filter((f): f is MockTFolder => f !== null) as unknown as ApiTFolder[];
+    },
     getMarkdownFiles: (): ApiTFile[] =>
       Array.from(_mockState.files.keys())
         .filter((p) => p.endsWith(".md"))

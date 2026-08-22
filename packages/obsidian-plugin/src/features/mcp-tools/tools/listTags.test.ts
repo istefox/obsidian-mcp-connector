@@ -1,6 +1,14 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { listTagsHandler, listTagsSchema } from "./listTags";
-import { mockApp, resetMockVault, setMockTags } from "$/test-setup";
+import {
+  mockApp,
+  resetMockVault,
+  setMockFile,
+  setMockMetadata,
+  setMockTags,
+} from "$/test-setup";
+import { createGuardedApp } from "$/shared/guardedApp";
+import { EMPTY_POLICY, compilePolicy } from "$/shared/pathPolicy";
 
 beforeEach(() => resetMockVault());
 
@@ -155,5 +163,39 @@ describe("list_tags tool", () => {
     const data = JSON.parse(r.content[0].text as string);
     expect(data.tags).toHaveLength(2);
     expect(data.truncated).toBeUndefined();
+  });
+});
+
+// ADR-0020 D10: an empty exclusion policy must not change output at all;
+// a non-empty one must rebuild from the guarded file list rather than
+// serve unfiltered native counts.
+describe("list_tags tool — folder-exclusion policy (ADR-0020 D10)", () => {
+  const SECRET = "Secret/canary.md";
+  const PUBLIC = "Public/note.md";
+
+  beforeEach(() => {
+    setMockTags({ "#project": 5, "#daily": 12 });
+    setMockFile(SECRET, "secret body");
+    setMockMetadata(SECRET, { tags: [{ tag: "#canary-secret" }] });
+    setMockFile(PUBLIC, "public body");
+    setMockMetadata(PUBLIC, { tags: [{ tag: "#project" }] });
+  });
+
+  test("an empty policy is byte-identical to the unguarded call", async () => {
+    const guarded = createGuardedApp(mockApp(), () => EMPTY_POLICY);
+    const plain = await listTagsHandler({ arguments: {}, app: mockApp() });
+    const withPolicy = await listTagsHandler({ arguments: {}, app: guarded });
+    expect(withPolicy.content[0].text).toBe(plain.content[0].text);
+  });
+
+  test("a tag that appears only inside an excluded folder is absent, not zero-count", async () => {
+    const guarded = createGuardedApp(mockApp(), () =>
+      compilePolicy(["Secret"]),
+    );
+    const r = await listTagsHandler({ arguments: {}, app: guarded });
+    const data = JSON.parse(r.content[0].text as string);
+    const tags = data.tags.map((t: { tag: string }) => t.tag);
+    expect(tags).not.toContain("#canary-secret");
+    expect(tags).toContain("#project");
   });
 });

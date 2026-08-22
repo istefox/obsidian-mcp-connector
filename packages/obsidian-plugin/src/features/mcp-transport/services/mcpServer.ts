@@ -25,6 +25,7 @@ import { readPolicy } from "$/features/adaptive-tool-loading/tokenPolicyStore";
 import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolScope";
 import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
 import { composeToolRegistry } from "$/composeToolRegistry";
+import { pathPolicyFor } from "$/shared/policyProvider";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
 import {
   flush as flushEraCounters,
@@ -167,10 +168,17 @@ export async function createMcpService(
     toolRegistry: registry,
     promptRegistry,
     resourceRegistry,
+    refusedToolsFor,
   } = await composeToolRegistry({
     ...config,
     session,
   });
+
+  // ADR-0020 §D11. The guarded App reads the policy in force for the
+  // call it is serving, so every dispatch point has to establish that
+  // scope — and re-read the settings, so a folder added in the settings
+  // UI applies to the very next request rather than after a restart.
+  const pathPolicy = pathPolicyFor(config.plugin);
 
   const resolveScope = async (tokenId: string): Promise<ToolScope> => {
     const policy = await readPolicy(config.plugin, tokenId);
@@ -270,11 +278,15 @@ export async function createMcpService(
       // handler. activate_tool uses it so its tools/list_changed carries
       // this call's relatedRequestId and is flushed on the POST response
       // stream (which is SSE for activate_tool — see below).
-      const result = await registry.dispatch(request.params, {
-        server,
-        sendNotification: ctx.mcpReq.notify,
-        scope,
-      });
+      const policy = await pathPolicy.refresh();
+      const result = await pathPolicy.runWith(policy, () =>
+        registry.dispatch(request.params, {
+          server,
+          sendNotification: ctx.mcpReq.notify,
+          scope,
+          refusedTools: refusedToolsFor(policy),
+        }),
+      );
       // Record the call for frequency-based promotion (meta-tools and
       // adaptive-inactive calls are excluded — the latter did not
       // execute, see ADR-0011).
@@ -296,9 +308,19 @@ export async function createMcpService(
       }
       return asCallToolResult(result);
     });
-    server.server.setRequestHandler("prompts/list", promptRegistry.list);
-    server.server.setRequestHandler("prompts/get", (req) =>
-      promptRegistry.dispatch(req.params),
+    // The prompts registry never goes through toolRegistry.dispatch, so
+    // it establishes its own policy scope. `expandEmbeds` transcludes
+    // arbitrary `![[...]]` targets vault-wide and would otherwise read
+    // straight past an exclusion (ADR-0020 §D1).
+    server.server.setRequestHandler("prompts/list", async () =>
+      pathPolicy.runWith(await pathPolicy.refresh(), () =>
+        promptRegistry.list(),
+      ),
+    );
+    server.server.setRequestHandler("prompts/get", async (req) =>
+      pathPolicy.runWith(await pathPolicy.refresh(), () =>
+        promptRegistry.dispatch(req.params),
+      ),
     );
     // Declaring `resources` above makes the SDK register all three
     // resource handlers and installs its own resources/templates/list,

@@ -23,6 +23,13 @@ import {
   type ResourceRegistry,
 } from "$/features/mcp-transport/services/resourceRegistry";
 import { wireSearchResultsApp } from "$/features/mcp-apps";
+import { createGuardedApp, isGuardedApp } from "$/shared/guardedApp";
+import { pathPolicyFor } from "$/shared/policyProvider";
+import type { PathPolicy } from "$/shared/pathPolicy";
+import {
+  UNFILTERABLE_TOOL_REFUSALS,
+  shouldDisableUnfilterableTools,
+} from "$/features/mcp-tools/types";
 import { registerTools } from "$/features/mcp-tools";
 import { applyDisabledToolsFilter } from "$/features/tool-toggle";
 import type { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
@@ -68,13 +75,44 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
   toolRegistry: ToolRegistry;
   promptRegistry: PromptRegistry;
   resourceRegistry: ResourceRegistry;
+  /**
+   * Which tools this request must refuse, given the policy in force
+   * (ADR-0020 §D9). Returned as a function rather than a value because
+   * the policy is per request.
+   *
+   * It lives here because this is the only module that legitimately
+   * knows both features: `mcp-transport` does not import `mcp-tools`,
+   * and the registry is handed the resolved answer the same way it is
+   * handed a resolved `ToolScope`.
+   */
+  refusedToolsFor: (
+    policy: PathPolicy,
+  ) => ReadonlyMap<string, string> | undefined;
 }> {
   const toolRegistry = new ToolRegistryClass();
   const promptRegistry = new PromptRegistryClass();
   const resourceRegistry = new ResourceRegistryClass();
 
+  // ADR-0020 D1: every tool handler receives its App from the single
+  // `ctx.app` below, so guarding it here covers the whole tool surface —
+  // including a tool written later, whose author need not know this
+  // exists. D7's bootstrap read happens first, so the server never
+  // serves a request under the pre-read deny-all posture.
+  const policy = pathPolicyFor(config.plugin);
+  await policy.refresh();
+  const app = createGuardedApp(config.app, () => policy.current());
+
+  // Tripwire, not a formality: if a refactor ever routes the raw App
+  // through here again, this fails at startup instead of silently
+  // serving every excluded folder.
+  if (!isGuardedApp(app)) {
+    throw new Error(
+      "composeToolRegistry: refusing to register tools against an unguarded App (ADR-0020 D1).",
+    );
+  }
+
   await registerTools(toolRegistry, {
-    app: config.app,
+    app,
     plugin: config.plugin,
     pluginVersion: config.pluginVersion,
   });
@@ -140,5 +178,13 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
 
   wireSearchResultsApp(toolRegistry, resourceRegistry);
 
-  return { toolRegistry, promptRegistry, resourceRegistry };
+  return {
+    toolRegistry,
+    promptRegistry,
+    resourceRegistry,
+    refusedToolsFor: (activePolicy) =>
+      shouldDisableUnfilterableTools(activePolicy)
+        ? UNFILTERABLE_TOOL_REFUSALS
+        : undefined,
+  };
 }

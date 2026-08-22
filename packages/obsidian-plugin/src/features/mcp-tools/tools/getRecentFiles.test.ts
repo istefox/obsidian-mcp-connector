@@ -1,10 +1,7 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import { type } from "arktype";
-import {
-  _resetMissingIsUserIgnoredWarning,
-  getRecentFilesHandler,
-  getRecentFilesSchema,
-} from "./getRecentFiles";
+import { getRecentFilesHandler, getRecentFilesSchema } from "./getRecentFiles";
+import { _resetIsUserIgnoredWarning } from "$/shared/isUserIgnored";
 import {
   mockApp,
   resetMockVault,
@@ -15,9 +12,10 @@ import {
 
 beforeEach(() => {
   resetMockVault();
-  // The one-shot warning flag in `getRecentFiles.ts` persists at module
-  // scope across tests; reset it so each test exercises a clean state.
-  _resetMissingIsUserIgnoredWarning();
+  // The one-shot warning flag in `shared/isUserIgnored.ts` persists at
+  // module scope across tests; reset it so each test exercises a clean
+  // state.
+  _resetIsUserIgnoredWarning();
 });
 
 describe("get_recent_files tool", () => {

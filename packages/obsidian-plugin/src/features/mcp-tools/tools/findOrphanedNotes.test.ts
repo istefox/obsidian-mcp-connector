@@ -63,6 +63,21 @@ describe("find_orphaned_notes tool", () => {
     expect(paths).not.toContain("templates/t.md");
   });
 
+  // A leading slash used to survive normalisation (only the trailing one was
+  // stripped), so `["/custom"]` matched nothing — no real path starts with
+  // `/`. Now shared with ADR-0020's matcher, which strips it.
+  test("exclude_folders tolerates a leading slash", async () => {
+    setMockFile("custom/n.md", "");
+    const r = await findOrphanedNotesHandler({
+      arguments: { exclude_folders: ["/custom"] },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    const paths = data.orphaned_notes.map((n: { path: string }) => n.path);
+    expect(paths).not.toContain("custom/n.md");
+    expect(data.excluded_folders).toContain("custom");
+  });
+
   test("returns mtime and size per orphan entry", async () => {
     setMockFile("solo.md", "hello world");
     setMockFileStat("solo.md", { mtime: 12345 });

@@ -21,6 +21,8 @@ import {
 } from "./features/semantic-search";
 import { wireSemanticSearch } from "./features/semantic-search/services/productionWiring";
 import { loadSmartSearchAPI } from "./shared";
+import { createGuardedApp, isGuardedApp } from "./shared/guardedApp";
+import { pathPolicyFor } from "./shared/policyProvider";
 import { logger } from "./shared/logger";
 
 export default class McpToolsPlugin extends Plugin {
@@ -72,9 +74,22 @@ export default class McpToolsPlugin extends Plugin {
     const mcpResult = await mcpTransportSetup(this);
     if (mcpResult.success) {
       this.mcpTransportState = mcpResult.state;
+      // ADR-0020 D1: prompts are a separate registry that never reaches
+      // toolRegistry.dispatch, so this is the second and last place the
+      // guarded App has to be installed. `expandEmbeds` transcludes
+      // arbitrary `![[...]]` targets vault-wide and would otherwise read
+      // straight through an exclusion.
+      const promptsApp = createGuardedApp(this.app, () =>
+        pathPolicyFor(this).current(),
+      );
+      if (!isGuardedApp(promptsApp)) {
+        throw new Error(
+          "onload: refusing to wire prompts against an unguarded App (ADR-0020 D1).",
+        );
+      }
       const promptsResult = await promptsSetup(
         mcpResult.state.mcp.promptRegistry,
-        this.app,
+        promptsApp,
         {
           // ADR-0017: the prompts feature decides WHEN the list changed, the
           // transport owns HOW it is published. Wiring it here rather than

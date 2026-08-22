@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { App, TFile } from "obsidian";
-import { logger } from "$/shared/logger";
+import { createExclusionFilter } from "$/shared/isUserIgnored";
 
 export const getRecentFilesSchema = type({
   name: '"get_recent_files"',
@@ -19,55 +19,29 @@ export type GetRecentFilesContext = {
   app: App;
 };
 
-// Module-scope flag for the one-shot warning when Obsidian's runtime
-// `isUserIgnored` accessor cannot be found. If the API ever gets
-// renamed or removed in a future Obsidian release, this surfaces the
-// regression in the plugin log on first call (rather than silently
-// returning user-ignored entries in `files` and `totalFiles`). Reset
-// helper is exported for tests; production callers should not touch
-// it.
-let _warnedMissingIsUserIgnored = false;
-
-/** @internal — test-only reset of the one-shot warning flag. */
-export function _resetMissingIsUserIgnoredWarning(): void {
-  _warnedMissingIsUserIgnored = false;
-}
-
 /**
  * Returns every visible (non-`isUserIgnored`) markdown file in the vault,
  * sorted by `mtime` descending with a locale-pinned `path` ascending
  * tiebreaker. Unsliced — callers apply their own limit. Exported so
- * get_vault_overview reuses the same exclusion + sort instead of
- * duplicating the one-shot missing-API warning below (a second copy
- * would need its own module flag and could double-fire the warning).
+ * get_vault_overview reuses the same exclusion + sort rather than
+ * growing a third copy of either.
  */
 export function getSortedVisibleMarkdownFiles(app: App): TFile[] {
-  // `MetadataCache.isUserIgnored(path)` is part of Obsidian's runtime API
-  // but is not surfaced by the bundled `obsidian.d.ts`. The cast through
-  // `unknown` keeps us aligned with the codebase pattern used for other
-  // metadata-cache accessors (see listTags.ts:30). Treated as optional so
-  // tests that do not stub it keep working.
-  const isUserIgnored = (
-    app.metadataCache as unknown as {
-      isUserIgnored?: (path: string) => boolean;
-    }
-  ).isUserIgnored?.bind(app.metadataCache);
-
-  if (!isUserIgnored && !_warnedMissingIsUserIgnored) {
-    _warnedMissingIsUserIgnored = true;
-    // One-shot per process. If Obsidian renames or drops the runtime
-    // accessor, the filter degrades to "no exclusion applied" — this
-    // warn makes the regression observable in the log instead of
-    // silently surfacing user-ignored entries to the agent.
-    logger.warn(
-      "get_recent_files: app.metadataCache.isUserIgnored is unavailable — `Files & Links → Excluded files` filtering disabled for this session. If you see this in production, the Obsidian runtime API may have changed.",
-    );
-  }
-
-  const allMarkdown = app.vault.getMarkdownFiles();
-  const visible = isUserIgnored
-    ? allMarkdown.filter((f: TFile) => !isUserIgnored(f.path))
-    : allMarkdown;
+  // The shared primitive, not a second copy of it. This function used to
+  // hand-roll the `isUserIgnored` lookup, its own one-shot warning and
+  // its own module flag — identical in behaviour to
+  // `createExclusionFilter` and free to drift from it, which is exactly
+  // what ADR-0020 found while mapping the exclusion surface.
+  //
+  // Note what this filter is NOT. It honours Obsidian's own
+  // `Files & Links → Excluded files`, which stays independent of the
+  // hidden-folder policy (ADR-0020 §D4): the policy is enforced above
+  // this function, on the guarded `App` that `app.vault` here already
+  // is, and deliberately does not also apply `isUserIgnored`.
+  const isUserIgnored = createExclusionFilter(app);
+  const visible = app.vault
+    .getMarkdownFiles()
+    .filter((f: TFile) => !isUserIgnored(f.path));
 
   // Pinned locale + sensitivity for cross-platform deterministic order
   // on the tiebreaker (matches the contract used by `list_tags` /
@@ -77,7 +51,7 @@ export function getSortedVisibleMarkdownFiles(app: App): TFile[] {
   const comparePath = (a: string, b: string): number =>
     a.localeCompare(b, "en", { sensitivity: "variant" });
 
-  return visible.slice().sort((a, b) => {
+  return visible.sort((a, b) => {
     // Primary: mtime descending (most-recent first).
     if (b.stat.mtime !== a.stat.mtime) return b.stat.mtime - a.stat.mtime;
     // Secondary: path ascending. `Array.prototype.sort` stability is
