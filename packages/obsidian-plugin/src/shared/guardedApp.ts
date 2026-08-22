@@ -119,7 +119,10 @@ function guardObject<T extends object>(
   const allowed = new Set([...passthrough, ...UNIVERSAL_PASSTHROUGH]);
   return new Proxy(raw, {
     get(target, prop) {
-      if (typeof prop === "symbol") return Reflect.get(target, prop, target);
+      if (typeof prop === "symbol") {
+        const value: unknown = Reflect.get(target, prop, target);
+        return value;
+      }
       if (Object.prototype.hasOwnProperty.call(guards, prop)) {
         return guards[prop];
       }
@@ -514,7 +517,8 @@ function guardMetadataCache(raw: object, policy: PolicySource): object {
           )[prop],
         );
       }
-      return Reflect.get(target, prop);
+      const value: unknown = Reflect.get(target, prop);
+      return value;
     },
   });
 }
