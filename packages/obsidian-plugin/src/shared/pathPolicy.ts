@@ -146,7 +146,7 @@ export interface PathPolicy {
 
 /** A policy that excludes nothing. */
 export const EMPTY_POLICY: PathPolicy = Object.freeze({
-  folders: Object.freeze([]) as readonly string[],
+  folders: Object.freeze([]),
   isEmpty: true,
   isExcluded: () => false,
   containsExcluded: () => false,
@@ -167,7 +167,7 @@ export const EMPTY_POLICY: PathPolicy = Object.freeze({
  * treat it as such.
  */
 export const DENY_ALL_POLICY: PathPolicy = Object.freeze({
-  folders: Object.freeze([]) as readonly string[],
+  folders: Object.freeze([]),
   isEmpty: false,
   isExcluded: () => true,
   containsExcluded: () => true,
@@ -182,7 +182,7 @@ export function compilePolicy(raw: unknown): PathPolicy {
   const folders = normalizeFolderList(raw);
   if (folders.length === 0) return EMPTY_POLICY;
 
-  const frozen = Object.freeze(folders.slice()) as readonly string[];
+  const frozen = Object.freeze(folders.slice());
   return Object.freeze({
     folders: frozen,
     isEmpty: false,
