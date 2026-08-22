@@ -146,10 +146,13 @@ export async function setup(
     // looks like a change.
     let lastNotified = canonical(await discoverPrompts(app));
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: number | null = null;
     const stopNotifier = (): void => {
       if (timer !== null) {
-        clearTimeout(timer);
+        // window.clearTimeout (not the bare global): Obsidian popout-window
+        // compatibility, and the plugin runs in the renderer where window is
+        // always present.
+        window.clearTimeout(timer);
         timer = null;
       }
     };
@@ -166,7 +169,10 @@ export async function setup(
       // On the legacy era there is nothing to schedule at all.
       if (!notifyPromptsChanged) return;
       stopNotifier();
-      timer = setTimeout(() => {
+      // window.setTimeout (not the bare global): Obsidian popout-window
+      // compatibility, and the plugin runs in the renderer where window is
+      // always present.
+      timer = window.setTimeout(() => {
         timer = null;
         void (async () => {
           try {
