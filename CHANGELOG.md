@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.2.2] — 2026-08-22
+
+### Fixed
+
+- **Patched 13 dependency vulnerabilities**, including `hono` (bundled into the transport server, so this reaches every user), `@hono/node-server`, and transitive vulnerabilities in `brace-expansion`, `adm-zip`, and `sharp` (image/zip handling pulled in by the semantic-search dependency chain). None of these had a known exploit path specific to this plugin's usage; patched proactively rather than in response to an incident.
+- **Cleaned up several TypeScript patterns the community plugin review flagged**: redundant type assertions, two spots returning an untyped value from a `Proxy` handler, and a file that used the bare `setTimeout`/`clearTimeout` instead of `window.setTimeout`/`window.clearTimeout` (needed for correct behavior in an Obsidian popout window). No behavior change.
+
 ## [2.2.1] — 2026-08-22
 
 ### Fixed

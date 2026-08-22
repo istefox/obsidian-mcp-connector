@@ -1,7 +1,7 @@
 {
   "id": "mcp-tools-istefox",
   "name": "MCP Connector",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "minAppVersion": "1.7.2",
   "description": "Expose your vault to Claude and any MCP client over the Model Context Protocol, with on-device semantic search.",
   "author": "Stefano Ferri",
