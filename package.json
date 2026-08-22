@@ -36,7 +36,9 @@
     "path-to-regexp": "^8.4.2",
     "protobufjs": "^7.6.5",
     "qs": "^6.15.2",
-    "tmp": "^0.2.7"
+    "tmp": "^0.2.7",
+    "adm-zip": "^0.6.0",
+    "sharp": "^0.35.0"
   },
   "dependencies": {
     "caniuse-lite": "^1.0.30001797",
