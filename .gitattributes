@@ -1,0 +1,11 @@
+# Force LF on checkout regardless of the checking-out machine's OS or
+# `core.autocrlf`. Without this, a Windows checkout (GitHub Actions'
+# windows-latest included) converts every text file's real newlines to
+# CRLF, while a generated-source-matches-its-source drift test (the
+# connectorShim / mcp-app / discovery-broker pattern) compares a freshly
+# read file against a baked string constant that is immune to the
+# conversion (its newlines are escaped `\n` sequences inside a JSON string
+# literal, not raw bytes). The two diverge only on Windows, and only when
+# a `bun test` drift check actually runs there — which nothing in this
+# repo's CI did until the discovery-broker job (PR #500) became the first.
+* text=auto eol=lf
