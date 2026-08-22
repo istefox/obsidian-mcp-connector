@@ -16,6 +16,7 @@
 		"check:svelte": "svelte-check --tsconfig ./tsconfig.json",
 		"dev": "bun --watch run bun.config.ts --watch",
 		"link": "bun scripts/link.ts",
+		"gen:discovery-broker": "bun scripts/gen-discovery-broker-source.ts",
 		"gen:mcp-app": "bun scripts/gen-mcp-app-source.ts",
 		"release": "bun run build && bun run zip",
 		"zip": "bun scripts/zip.ts",

@@ -9,7 +9,7 @@ const path = require("path");
 const BROKER_NAME = "obsidian-mcp-discovery-broker";
 const BROKER_VERSION = 1;
 const DEFAULT_PORT = 27206;
-const IDLE_EXIT_MS = 30_000;
+const IDLE_EXIT_MS = 10_000;
 const SWEEP_INTERVAL_MS = 5_000;
 const ROUTE_PATTERN =
   /^\/v1\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/mcp$/i;

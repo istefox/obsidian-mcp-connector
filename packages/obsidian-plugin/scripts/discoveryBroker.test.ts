@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createRequire } from "module";
+import { spawn, spawnSync } from "child_process";
 import fsp from "fs/promises";
 import http from "http";
 import os from "os";
@@ -9,6 +10,7 @@ const require = createRequire(import.meta.url);
 const broker = require("./discoveryBroker.js") as {
   BROKER_NAME: string;
   BROKER_VERSION: number;
+  IDLE_EXIT_MS: number;
   parseRegistration(value: unknown): unknown;
   parseTransportFile(
     raw: string,
@@ -24,6 +26,11 @@ const broker = require("./discoveryBroker.js") as {
 
 const routeId = "123e4567-e89b-42d3-a456-426614174000";
 const clientToken = "stable-client-token";
+const nodeCommand = process.platform === "win32" ? "node.exe" : "node";
+const systemNodeTest =
+  spawnSync(nodeCommand, ["--version"], { stdio: "ignore" }).status === 0
+    ? test
+    : test.skip;
 let tempDir = "";
 const servers: http.Server[] = [];
 const controls: Array<{ close(): Promise<void> }> = [];
@@ -163,6 +170,10 @@ afterEach(async () => {
 });
 
 describe("discovery broker parsing", () => {
+  test("uses a ten-second idle window", () => {
+    expect(broker.IDLE_EXIT_MS).toBe(10_000);
+  });
+
   test("validates registrations and resolves only the selected token", () => {
     const registration = {
       version: broker.BROKER_VERSION,
@@ -192,6 +203,50 @@ describe("discovery broker parsing", () => {
     );
     expect(parsed).toEqual({ port: 27203, token: "b-secret" });
   });
+});
+
+systemNodeTest("the broker source starts under system Node.js", async () => {
+  const reservation = http.createServer();
+  const port = await listen(reservation);
+  await close(reservation);
+  const scriptPath = path.join(tempDir, "discoveryBroker.js");
+  await fsp.copyFile(
+    path.join(import.meta.dir, "discoveryBroker.js"),
+    scriptPath,
+  );
+  const child = spawn(
+    nodeCommand,
+    [scriptPath, "--root", tempDir, "--port", String(port)],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk) => (stderr += chunk));
+  try {
+    let healthy = false;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        const response = await request(port, {
+          path: "/_obsidian_mcp_broker/health",
+        });
+        if (response.status === 200) {
+          healthy = true;
+          break;
+        }
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    expect(healthy, stderr).toBe(true);
+  } finally {
+    if (child.exitCode === null) {
+      const exited = new Promise<void>((resolve) =>
+        child.once("exit", () => resolve()),
+      );
+      child.kill();
+      await exited;
+    }
+  }
 });
 
 test("one stable route discovers changed vault ports and tokens on every request", async () => {

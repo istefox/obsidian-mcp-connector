@@ -168,7 +168,7 @@ describe("explicit Codex config installer", () => {
     );
   });
 
-  test("refuses ambiguous duplicate entries and multiline strings", async () => {
+  test("refuses ambiguous duplicate entries", async () => {
     await fsp.writeFile(
       configPath,
       "[mcp_servers.obsidian_neonhades2]\nurl = 'a'\n[mcp_servers.obsidian_neonhades2]\nurl = 'b'\n",
@@ -187,19 +187,101 @@ describe("explicit Codex config installer", () => {
       inspectCodexInstall(connection, { configPath }),
     ).rejects.toThrow(/ambiguous/);
 
-    await fsp.writeFile(
-      configPath,
-      'instructions = """long\ntext"""\n',
-      "utf8",
-    );
-    await expect(
-      inspectCodexInstall(connection, { configPath }),
-    ).rejects.toThrow(/multiline string/);
-
     await fsp.rm(configPath);
     await fsp.mkdir(configPath);
     await expect(
       inspectCodexInstall(connection, { configPath }),
     ).rejects.toThrow(/not a regular file/);
+  });
+
+  test("allows unrelated multiline strings and ignores headers inside them", async () => {
+    const previous = [
+      'instructions = """',
+      "Keep this apparent table as instruction text:",
+      "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://not-a-table"',
+      '"""',
+      "literal_instructions = '''",
+      "[mcp_servers.also_not_a_table]",
+      "'''",
+      "",
+      "[mcp_servers.other]",
+      'command = "other"',
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.action).toBe("add");
+    await installCodexConfig(connection, { configPath });
+
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written).toContain(previous.trimEnd());
+    expect(Bun.TOML.parse(written)).toBeDefined();
+  });
+
+  test("refuses a multiline string inside the entry being replaced", async () => {
+    await fsp.writeFile(
+      configPath,
+      [
+        "[mcp_servers.obsidian_neonhades2]",
+        'instructions = """',
+        "Do not discard this text.",
+        '"""',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await expect(
+      inspectCodexInstall(connection, { configPath }),
+    ).rejects.toThrow(/multiline string in 'obsidian_neonhades2'/);
+  });
+
+  test("recovers a stale legacy lock before installing", async () => {
+    const lockPath = `${configPath}.obsidian-mcp.lock`;
+    await fsp.writeFile(configPath, 'model = "gpt-5"\n', "utf8");
+    await fsp.writeFile(lockPath, "legacy-lock-id", "utf8");
+    const staleTime = new Date(Date.now() - 60_000);
+    await fsp.utimes(lockPath, staleTime, staleTime);
+
+    await installCodexConfig(connection, { configPath });
+
+    expect(await fsp.stat(lockPath).catch(() => null)).toBeNull();
+    expect(
+      Bun.TOML.parse(await fsp.readFile(configPath, "utf8")),
+    ).toBeDefined();
+  });
+
+  test("waits for a fresh lock instead of deleting it", async () => {
+    const lockPath = `${configPath}.obsidian-mcp.lock`;
+    const owner = JSON.stringify({
+      version: 1,
+      lockId: "another-writer",
+      createdAt: new Date().toISOString(),
+    });
+    await fsp.writeFile(lockPath, owner, "utf8");
+    let ownerStillHeldLock = false;
+    const release = new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        void (async () => {
+          try {
+            ownerStillHeldLock =
+              (await fsp.readFile(lockPath, "utf8")) === owner;
+            await fsp.rm(lockPath);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        })();
+      }, 100);
+    });
+
+    await Promise.all([
+      installCodexConfig(connection, { configPath }),
+      release,
+    ]);
+
+    expect(ownerStillHeldLock).toBe(true);
   });
 });

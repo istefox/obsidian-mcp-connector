@@ -13,7 +13,7 @@ const source = readFileSync(srcPath, "utf8");
 const header = [
   "// AUTO-GENERATED — do not edit by hand.",
   "// Source: packages/obsidian-plugin/scripts/discoveryBroker.js",
-  "// Regenerate: bun run packages/obsidian-plugin/scripts/gen-discovery-broker-source.ts",
+  "// Regenerate: cd packages/obsidian-plugin && bun run gen:discovery-broker",
 ].join("\n");
 const raw = `${header}\nexport const DISCOVERY_BROKER_SOURCE = ${JSON.stringify(source)};\n`;
 const config = await prettier.resolveConfig(outPath);

@@ -5,6 +5,7 @@ import path from "path";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
+const LOCK_STALE_MS = 30_000;
 
 export type CodexConnection = {
   vaultName: string;
@@ -197,6 +198,7 @@ async function assertSafeConfigPath(configPath: string): Promise<void> {
 }
 
 type Header = { start: number; parts: string[]; array: boolean };
+type MultilineStringRange = { start: number; end: number };
 
 function parseDottedKey(value: string): string[] | null {
   const parts: string[] = [];
@@ -227,30 +229,113 @@ function parseDottedKey(value: string): string[] | null {
   return parts;
 }
 
-function findHeaders(raw: string): Header[] {
-  if (raw.includes("'''") || raw.includes('\"\"\"')) {
-    throw new Error(
-      "Codex config contains a multiline string, so the installer cannot edit it safely. Copy the snippet instead.",
-    );
+function findClosingDelimiter(
+  text: string,
+  delimiter: "'''" | '\"\"\"',
+  start: number,
+): number {
+  let cursor = start;
+  while (cursor < text.length) {
+    const found = text.indexOf(delimiter, cursor);
+    if (found === -1) return -1;
+    if (delimiter === "'''") return found;
+    let backslashes = 0;
+    for (let index = found - 1; index >= 0 && text[index] === "\\"; index -= 1)
+      backslashes += 1;
+    if (backslashes % 2 === 0) return found;
+    cursor = found + delimiter.length;
   }
+  return -1;
+}
+
+function findMultilineStart(
+  text: string,
+): { delimiter: "'''" | '\"\"\"'; start: number; end: number } | null {
+  let quote: "'" | '\"' | null = null;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote === '\"') {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '\"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (character === "#") return null;
+    const delimiter = text.slice(index, index + 3);
+    if (delimiter === "'''" || delimiter === '\"\"\"') {
+      return {
+        delimiter,
+        start: index,
+        end: findClosingDelimiter(text, delimiter, index + 3),
+      };
+    }
+    if (character === "'" || character === '\"') quote = character;
+  }
+  return null;
+}
+
+function scanTomlStructure(raw: string): {
+  headers: Header[];
+  multilineStrings: MultilineStringRange[];
+} {
   const headers: Header[] = [];
+  const multilineStrings: MultilineStringRange[] = [];
   const lines = [...raw.matchAll(/^.*(?:\r?\n|$)/gm)].filter(
     (match) => match[0].length > 0,
   );
+  let multiline: { delimiter: "'''" | '\"\"\"'; start: number } | null = null;
   for (const line of lines) {
     const rawLine = line[0].replace(/\r?\n$/, "");
-    const text =
-      line.index === 0 && rawLine.startsWith("\uFEFF")
-        ? rawLine.slice(1)
-        : rawLine;
-    if (!/^\s*\[/.test(text)) continue;
-    const match = /^\s*(\[\[|\[)([^\]\r\n]+)(\]\]|\])\s*(?:#.*)?$/.exec(text);
-    if (!match || (match[1] === "[[") !== (match[3] === "]]")) continue;
-    const parts = parseDottedKey(match[2]);
-    if (!parts) continue;
-    headers.push({ start: line.index!, parts, array: match[1] === "[[" });
+    if (multiline) {
+      const end = findClosingDelimiter(rawLine, multiline.delimiter, 0);
+      if (end !== -1) {
+        multilineStrings.push({
+          start: multiline.start,
+          end: line.index! + end + multiline.delimiter.length,
+        });
+        multiline = null;
+      }
+      continue;
+    }
+    const textOffset = line.index === 0 && rawLine.startsWith("\uFEFF") ? 1 : 0;
+    const text = rawLine.slice(textOffset);
+    if (/^\s*\[/.test(text)) {
+      const match = /^\s*(\[\[|\[)([^\]\r\n]+)(\]\]|\])\s*(?:#.*)?$/.exec(text);
+      if (match && (match[1] === "[[") === (match[3] === "]]")) {
+        const parts = parseDottedKey(match[2]);
+        if (parts) {
+          headers.push({
+            start: line.index!,
+            parts,
+            array: match[1] === "[[",
+          });
+          continue;
+        }
+      }
+    }
+    const opening = findMultilineStart(text);
+    if (!opening) continue;
+    const start = line.index! + textOffset + opening.start;
+    if (opening.end === -1) {
+      multiline = { delimiter: opening.delimiter, start };
+    } else {
+      multilineStrings.push({
+        start,
+        end: line.index! + textOffset + opening.end + opening.delimiter.length,
+      });
+    }
   }
-  return headers;
+  if (multiline) {
+    throw new Error(
+      "Codex config contains an unterminated multiline string. Copy the snippet instead.",
+    );
+  }
+  return { headers, multilineStrings };
 }
 
 function planEntryEdit(
@@ -260,7 +345,7 @@ function planEntryEdit(
 ): { action: CodexInstallPreview["action"]; content: string } {
   const newline = raw.includes("\r\n") ? "\r\n" : "\n";
   const normalizedSnippet = snippet.replace(/\n/g, newline);
-  const headers = findHeaders(raw);
+  const { headers, multilineStrings } = scanTomlStructure(raw);
   const owned = headers.filter(
     (header) =>
       header.parts[0] === "mcp_servers" && header.parts[1] === serverId,
@@ -311,6 +396,17 @@ function planEntryEdit(
       end: headers[index + 1]?.start ?? raw.length,
     };
   });
+  if (
+    multilineStrings.some((string) =>
+      ranges.some(
+        (range) => string.start < range.end && string.end > range.start,
+      ),
+    )
+  ) {
+    throw new Error(
+      `Codex config contains a multiline string in '${serverId}', so the installer cannot replace that entry safely. Copy the snippet instead.`,
+    );
+  }
   let content = "";
   let cursor = 0;
   let inserted = false;
@@ -384,12 +480,17 @@ async function withConfigLock<T>(
   const lockPath = `${configPath}.obsidian-mcp.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   const lockId = randomUUID();
+  const lockContent = JSON.stringify({
+    version: 1,
+    lockId,
+    createdAt: new Date().toISOString(),
+  });
   let handle: fsp.FileHandle | undefined;
   while (!handle) {
     try {
       const candidate = await fsp.open(lockPath, "wx", 0o600);
       try {
-        await candidate.writeFile(lockId, "utf8");
+        await candidate.writeFile(lockContent, "utf8");
         handle = candidate;
       } catch (error) {
         await candidate.close();
@@ -398,6 +499,7 @@ async function withConfigLock<T>(
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await removeStaleConfigLock(lockPath)) continue;
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting to update ${configPath}.`);
       }
@@ -409,11 +511,32 @@ async function withConfigLock<T>(
   } finally {
     await handle.close();
     try {
-      if ((await fsp.readFile(lockPath, "utf8")) === lockId) {
+      if ((await fsp.readFile(lockPath, "utf8")) === lockContent) {
         await fsp.rm(lockPath, { force: true });
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+  }
+}
+
+async function removeStaleConfigLock(lockPath: string): Promise<boolean> {
+  let observed: string;
+  let modifiedAt: number;
+  try {
+    observed = await fsp.readFile(lockPath, "utf8");
+    modifiedAt = (await fsp.stat(lockPath)).mtimeMs;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  if (Date.now() - modifiedAt < LOCK_STALE_MS) return false;
+  try {
+    if ((await fsp.readFile(lockPath, "utf8")) !== observed) return false;
+    await fsp.rm(lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
   }
 }
