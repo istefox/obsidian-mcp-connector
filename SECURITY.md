@@ -45,6 +45,21 @@ The 0.4.x line runs the MCP server **in-process inside the Obsidian plugin**. Im
 
 **Transport is not encrypted.** This is intentional: the listener is loopback-only, so no on-the-wire attacker can observe the traffic. Adding TLS to a `127.0.0.1` listener would require the plugin to manage a self-signed cert — strictly worse UX for no incremental security against the relevant threat models. If your threat model includes a malicious local process running on the same machine and reading raw kernel sockets, MCP transport security is not the right layer to address that.
 
+### Codex discovery broker
+
+The optional Codex integration starts one detached Node.js broker on `127.0.0.1:27206`.
+The broker can remain running for up to ten seconds after the final vault closes.
+[ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) documents its process lifecycle and Node.js prerequisite.
+
+The broker's static health response does not authenticate the process that owns port `27206`.
+A process that binds the port first and returns the expected response can receive the raw broker credential, route ID, and lease ID from a later registration request.
+The broker credential grants access only to its matching route while that vault has an active control connection, but the fixed port makes the listener easier to target than the vault's default port range.
+
+This port-owner trust is accepted under the existing local-process threat model.
+A per-launch secret would authenticate only the plugin registration and would remain readable to a process running as the same operating-system user.
+It would not authenticate the broker to Codex, which sends its configured bearer credential to whichever process owns the fixed port.
+The project therefore does not present a registration-only challenge as complete mitigation.
+
 ### Authorization (`execute_obsidian_command`)
 
 Most tools are vault file/search operations whose authorization is the Bearer token + the user's expectation that the AI client they connected has full vault access. The exception is `execute_obsidian_command`, which can run **any** registered Obsidian command (core or plugin), including potentially destructive ones (delete file, close vault, run external scripts via plugins, etc.).

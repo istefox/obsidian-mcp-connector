@@ -1,9 +1,10 @@
 name: CI
 
-# On-PR validation, in two jobs. `check-and-test` (ubuntu) is typecheck +
+# On-PR validation. `check-and-test` (ubuntu) is typecheck +
 # bundle build-smoke + every test suite, the stdlib Python one for the Windows
 # bridge included; `bridge-tests` runs that Python suite a second time on
-# windows-latest, where its bug actually lived. Runs on
+# windows-latest, where its bug actually lived; `discovery-broker-tests` runs
+# the broker's focused contract on all three desktop operating systems. Runs on
 # every push to main and on every PR targeting
 # main. The build step here is a smoke
 # check that catches a non-buildable bundle (e.g. Svelte/patch version
@@ -117,3 +118,33 @@ jobs:
 
       - name: Tests — Windows bridge (Python, stdlib only)
         run: python -m unittest discover -s scripts -v
+
+  # The discovery broker owns files, sockets, and a detached Node.js process.
+  # Run its focused contract on every supported desktop operating system.
+  discovery-broker-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Tests — discovery broker
+        run: bun test packages/obsidian-plugin/scripts/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexConfig.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/nodeDetect.test.ts
