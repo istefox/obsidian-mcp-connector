@@ -8,6 +8,8 @@ import {
   setMockMetadata,
 } from "$/test-setup";
 import { PromptRegistryClass } from "$/features/mcp-transport/services/promptRegistry";
+import { createGuardedApp } from "$/shared/guardedApp";
+import { compilePolicy } from "$/shared/pathPolicy";
 import { setup, teardown } from "./index";
 
 beforeEach(() => {
@@ -230,6 +232,48 @@ describe("prompts feature setup", () => {
     if (result.success) {
       expect(() => teardown(result.state)).not.toThrow();
     }
+  });
+
+  // ADR-0020 D3: a prompt file hidden by the folder-exclusion policy must
+  // throw the exact same message a genuinely nonexistent prompt would —
+  // otherwise the error itself would confirm the folder exists.
+  test("a prompt inside an excluded folder throws the same message as a genuinely missing one", async () => {
+    setMockFile(
+      "Prompts/hidden.md",
+      ["---", "tags: [mcp-tools-prompt]", "---", "", "Body"].join("\n"),
+    );
+    setMockMetadata("Prompts/hidden.md", {
+      frontmatter: { tags: ["mcp-tools-prompt"] },
+    });
+
+    const registry = new PromptRegistryClass();
+    const app = createGuardedApp(mockApp(), () => compilePolicy(["Prompts"]));
+    const result = await setup(registry, app);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    let hiddenMessage: string | undefined;
+    try {
+      await registry.dispatch({ name: "hidden" });
+    } catch (e) {
+      hiddenMessage = (e as Error).message;
+    }
+    let missingMessage: string | undefined;
+    try {
+      await registry.dispatch({ name: "genuinely-missing" });
+    } catch (e) {
+      missingMessage = (e as Error).message;
+    }
+
+    expect(hiddenMessage).toBe("Prompt not found: hidden");
+    expect(missingMessage).toBe("Prompt not found: genuinely-missing");
+    // Same shape, only the echoed name differs — the caller already knew
+    // the name it asked for.
+    expect(hiddenMessage?.replace("hidden", "<N>")).toBe(
+      missingMessage?.replace("genuinely-missing", "<N>"),
+    );
+
+    teardown(result.state);
   });
 });
 

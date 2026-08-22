@@ -9,6 +9,8 @@ import {
   setMockModifyFail,
   setMockReadMutation,
 } from "$/test-setup";
+import { createGuardedApp } from "$/shared/guardedApp";
+import { compilePolicy } from "$/shared/pathPolicy";
 
 beforeEach(() => resetMockVault());
 
@@ -300,6 +302,40 @@ describe("rename_heading tool", () => {
     const back = mockApp().vault.getAbstractFileByPath("back.md");
     expect(await mockApp().vault.read(back as never)).toBe(
       "Ref [[source#Old]].",
+    );
+  });
+
+  test("ADR-0020: a backlinker inside an excluded folder is skipped, not read or written", async () => {
+    setMockFile("source.md", "## Old heading\nbody");
+    setMockFile("Secret/back.md", "See [[source#Old heading]] please.");
+    setMockFile("back2.md", "See [[source#Old heading]] too.");
+    setMockMetadata("source.md", {
+      headings: [{ heading: "Old heading", level: 2, line: 0 }],
+    });
+    setMockResolvedLinks("Secret/back.md", { "source.md": 1 });
+    setMockResolvedLinks("back2.md", { "source.md": 1 });
+
+    const app = createGuardedApp(mockApp(), () => compilePolicy(["Secret"]));
+    const r = await renameHeadingHandler({
+      arguments: {
+        path: "source.md",
+        from: { text: "Old heading" },
+        to: "New heading",
+      },
+      app,
+    });
+    expect(r.isError).toBeUndefined();
+    const payload = JSON.parse(r.content[0].text);
+    expect(payload.ok).toBe(true);
+    // Only the public backlinker is rewritten — the excluded one is never
+    // discovered, so it is absent from both the file list and the count.
+    expect(payload.updatedFiles.sort()).toEqual(["back2.md", "source.md"]);
+    expect(payload.linkRewriteCount).toBe(1);
+
+    // Byte-identical: not read, not written.
+    const back = mockApp().vault.getAbstractFileByPath("Secret/back.md");
+    expect(await mockApp().vault.read(back as never)).toBe(
+      "See [[source#Old heading]] please.",
     );
   });
 });

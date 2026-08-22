@@ -479,9 +479,15 @@ function guardMetadataCache(raw: object, policy: PolicySource): object {
           ).isUserIgnored?.(path) ?? false),
 
     // Tag counts carry no file attribution, so honouring an exclusion is
-    // a rebuild rather than a filter — see `guardedTagCounts`, which
-    // needs the vault and therefore lives at the App level.
+    // a rebuild rather than a filter — see `getTagCounts` in
+    // `listTags.ts`, which needs the vault and therefore lives at the App
+    // level, not here. With nothing excluded there is nothing to rebuild
+    // for, so the native call is passed straight through and output stays
+    // byte-identical to pre-feature behaviour (ADR-0020 D10).
     getTags: () => {
+      if (policy().isEmpty) {
+        return call<[], Record<string, number>>("getTags")();
+      }
       throw new Error(
         "Guarded metadataCache: getTags() cannot honour a folder exclusion — " +
           "its counts carry no file attribution. Use getTagCounts(app), which " +

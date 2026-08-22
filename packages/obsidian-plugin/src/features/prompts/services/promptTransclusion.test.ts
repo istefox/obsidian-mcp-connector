@@ -10,6 +10,8 @@ import {
   parseEmbeds,
   MAX_EMBED_DEPTH,
 } from "./promptTransclusion";
+import { createGuardedApp } from "$/shared/guardedApp";
+import { compilePolicy } from "$/shared/pathPolicy";
 
 beforeEach(() => {
   resetMockVault();
@@ -120,6 +122,22 @@ describe("expandEmbeds", () => {
     const out = await expandEmbeds(mockApp(), "Prompts/p.md", "![[missing]]");
     expect(out).toContain("![[missing]]");
     expect(out).toContain("not expanded (not found)");
+  });
+
+  test("keeps an embed into an excluded folder verbatim with the SAME marker as a missing one (ADR-0020 D8)", async () => {
+    setMockFile("Secret/canary.md", "Secret body.");
+    const app = createGuardedApp(mockApp(), () => compilePolicy(["Secret"]));
+    const out = await expandEmbeds(
+      app,
+      "Prompts/p.md",
+      "![[Secret/canary.md]]",
+    );
+    // A distinct "excluded" reason string is forbidden here: it would
+    // confirm the folder exists, which is exactly what D8 hides. The
+    // marker must read identically to the genuinely-missing case above.
+    expect(out).toBe(
+      "![[Secret/canary.md]] <!-- prompt-transclusion: not expanded (not found) -->",
+    );
   });
 
   test("keeps a non-markdown embed verbatim with a marker", async () => {

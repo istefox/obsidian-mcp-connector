@@ -20,6 +20,33 @@ export type ListTagsContext = {
 };
 
 /**
+ * One file's tags, inline and frontmatter, each occurrence listed
+ * separately (never deduped) and each normalised to carry the leading
+ * `#`, matching `MetadataCache.getTags()`'s key format. Mirrors the
+ * counting logic in `getFilesByTag.ts` — `getAllTags()` would dedupe to
+ * a binary present/absent per file, losing the occurrence count.
+ */
+function tagOccurrencesInFile(cache: unknown): string[] {
+  const out: string[] = [];
+  const inline = (cache as { tags?: Array<{ tag: string }> })?.tags ?? [];
+  for (const t of inline) {
+    const raw = t.tag ?? "";
+    out.push(raw.startsWith("#") ? raw : `#${raw}`);
+  }
+  const fmTags = (cache as { frontmatter?: Record<string, unknown> })
+    ?.frontmatter?.tags;
+  if (Array.isArray(fmTags)) {
+    for (const t of fmTags) {
+      if (typeof t !== "string") continue;
+      out.push(t.startsWith("#") ? t : `#${t}`);
+    }
+  } else if (typeof fmTags === "string") {
+    out.push(fmTags.startsWith("#") ? fmTags : `#${fmTags}`);
+  }
+  return out;
+}
+
+/**
  * `MetadataCache.getTags()` returns a `Record<string, number>` keyed by
  * tag (with the leading `#`), value = aggregated count across the vault.
  * The signature is part of Obsidian's public API but the cast through
@@ -27,14 +54,35 @@ export type ListTagsContext = {
  * metadata-cache accessors that the bundled `obsidian.d.ts` does not
  * surface directly (see listObsidianCommands.ts). Exported so other
  * tools (get_vault_overview) can reuse the same lookup, unsorted.
+ *
+ * A guarded `App` under a non-empty exclusion policy makes `getTags()`
+ * throw rather than return unfiltered counts, because tag counts carry
+ * no file attribution to filter by (ADR-0020 D10). That throw is the
+ * rebuild signal: fall back to counting occurrences from the guarded,
+ * already-filtered file list, so an excluded file's tags are absent
+ * rather than merely uncounted. With nothing excluded (or an unguarded
+ * `App`), the native call above already succeeded and this branch never
+ * runs — output stays byte-identical to pre-feature behaviour.
  */
 export function getTagCounts(app: App): Array<{ tag: string; count: number }> {
-  const tagCounts = (
-    app.metadataCache as unknown as {
-      getTags: () => Record<string, number>;
+  try {
+    const tagCounts = (
+      app.metadataCache as unknown as {
+        getTags: () => Record<string, number>;
+      }
+    ).getTags();
+    return Object.entries(tagCounts).map(([tag, count]) => ({ tag, count }));
+  } catch {
+    const counts = new Map<string, number>();
+    for (const file of app.vault.getMarkdownFiles()) {
+      const cache = app.metadataCache.getFileCache(file);
+      if (!cache) continue;
+      for (const tag of tagOccurrencesInFile(cache)) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
     }
-  ).getTags();
-  return Object.entries(tagCounts).map(([tag, count]) => ({ tag, count }));
+    return Array.from(counts, ([tag, count]) => ({ tag, count }));
+  }
 }
 
 export async function listTagsHandler(
