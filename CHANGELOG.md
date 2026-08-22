@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **You can now hide entire folders from every MCP tool at once, not just from search.** Before this, excluding a folder from `search_vault_smart`'s results still left it fully readable through `get_vault_file`, `list_vault_files`, `search_vault_simple`, and everything else — a filter on search hits was never an access control, and a Discussion pointed that out directly: therapy notes and financial details deserve better than "the assistant probably won't search for them." A new **Settings → MCP Connector → Hidden folders** list now reaches the whole tool surface at once, including tools written after this shipped: a hidden folder's files are unreachable for reads, writes, listings, the link graph, tag counts and prompt discovery, and behave exactly as if they did not exist — never a distinguishable "access denied", since a denial that reads differently from "not found" would itself confirm the folder is there. Three tools that reach vault content by a path this cannot filter — `execute_obsidian_command`, `execute_dataview_query`, `execute_template` — are disabled outright while any folder is hidden, and say so. A consent dialog on the first folder you add spells out what this protects and, just as importantly, what it does not: it is not encryption, it does not un-send anything already sent, and an older plugin build keeps the list but does not enforce it. Matching is exact and case-sensitive, and a folder name that matches nothing gets its own dashed warning in settings rather than silently protecting nothing. Full design: [ADR-0020](docs/architecture/ADR-0020-omc-040-vault-folder-exclusion.md). (#499, reported via Discussion #493)
+
+### Changed
+
+- **`find_broken_links` and `find_orphaned_notes` now tolerate a leading slash in `exclude_folders`.** Both tools stripped a *trailing* slash before matching but left a leading one alone, so `exclude_folders: ["/templates"]` silently matched nothing — no real vault path begins with `/` — and the folder was scanned as if it had never been named. They now share the same folder-normalisation the hidden-folders feature above uses, so a leading slash, a stray backslash, or a doubled slash is cleaned up the same way. `["templates"]` and `["/templates"]` now behave identically.
+
 ## [2.1.1] — 2026-08-17
 
 ### Fixed

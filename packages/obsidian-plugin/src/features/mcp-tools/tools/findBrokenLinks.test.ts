@@ -110,6 +110,23 @@ describe("find_broken_links tool", () => {
     expect(sources).not.toContain("custom-exclude/n.md");
   });
 
+  // A leading slash used to survive normalisation (only the trailing one was
+  // stripped), so `["/custom-exclude"]` matched nothing — no real path
+  // starts with `/`. Now shared with ADR-0020's matcher, which strips it.
+  test("exclude_folders tolerates a leading slash", async () => {
+    setMockFile("custom-exclude/n.md", "");
+    setMockMetadata("custom-exclude/n.md", {
+      links: [{ link: "AlsoBroken", line: 1 }],
+    });
+    const r = await findBrokenLinksHandler({
+      arguments: { exclude_folders: ["/custom-exclude"] },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(0);
+    expect(data.excluded_folders).toContain("custom-exclude");
+  });
+
   test("reports scanned_files count", async () => {
     setMockFile("a.md", "");
     setMockFile("b.md", "");

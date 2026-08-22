@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
+import { isUnderFolder, normalizeFolderEntry } from "$/shared/pathPolicy";
 
 export const findBrokenLinksSchema = type({
   name: '"find_broken_links"',
@@ -44,12 +45,17 @@ export async function findBrokenLinksHandler(
   ctx: FindBrokenLinksContext,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   const rawExcludes = ctx.arguments.exclude_folders ?? DEFAULT_EXCLUDE;
-  // Normalise: strip trailing slash for consistent prefix-match.
-  const excludes = rawExcludes.map((e) => e.replace(/\/+$/, ""));
+  // Shared with ADR-0020's vault-wide policy: strips a leading slash (a
+  // pasted "/templates" used to match nothing, since no real path starts
+  // with "/"), backslashes, repeated slashes and traversal segments, not
+  // only the trailing slash this used to handle alone.
+  const excludes = rawExcludes
+    .map(normalizeFolderEntry)
+    .filter((e): e is string => e !== undefined);
   const scope = ctx.arguments.scope?.map((s) => s.replace(/\/+$/, ""));
 
   const isExcluded = (path: string): boolean =>
-    excludes.some((ex) => path === ex || path.startsWith(ex + "/"));
+    excludes.some((ex) => isUnderFolder(path, ex));
 
   const inScope = (path: string): boolean =>
     scope === undefined ||

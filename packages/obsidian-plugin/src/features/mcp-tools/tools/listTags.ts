@@ -11,7 +11,7 @@ export const listTagsSchema = type({
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
-  "Lists all tags used across the vault with their usage counts. Aggregates both inline `#tags` and frontmatter tags via Obsidian's metadata cache. Useful for discovering content categories, finding related notes, and understanding vault organization. Always read-only.",
+  "Lists all tags used across the vault with their usage counts. Aggregates both inline `#tags` and frontmatter tags via Obsidian's metadata cache. Useful for discovering content categories, finding related notes, and understanding vault organization. If the vault owner has hidden any folders (Settings → MCP Connector → Hidden folders), a tag used only inside a hidden folder is absent from this list entirely rather than shown with a lower count. Always read-only.",
 );
 
 export type ListTagsContext = {
