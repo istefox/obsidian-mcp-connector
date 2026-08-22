@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-08-22
+
+### Fixed
+
+- **The community plugin listing's automated review flagged the plugin description.** It named "Obsidian" in a description shown inside Obsidian's own plugin browser, which the reviewer correctly calls redundant. Reworded, no functional change.
+
 ## [2.2.0] — 2026-08-22
 
 ### Added
