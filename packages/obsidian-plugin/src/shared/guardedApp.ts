@@ -129,7 +129,7 @@ function guardObject<T extends object>(
         );
       }
       if (allowed.has(prop)) {
-        const value = Reflect.get(target, prop, target);
+        const value: unknown = Reflect.get(target, prop, target);
         return typeof value === "function"
           ? (value as (...a: unknown[]) => unknown).bind(target)
           : value;
@@ -141,7 +141,7 @@ function guardObject<T extends object>(
           `and ADR-0020 D2.`,
       );
     },
-  }) as T;
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -651,7 +651,7 @@ export function createGuardedApp(app: App, policySource: PolicySource): App {
         case "fileManager":
           return fileManager;
         default: {
-          const value = Reflect.get(target, prop, target);
+          const value: unknown = Reflect.get(target, prop, target);
           return typeof value === "function"
             ? (value as (...a: unknown[]) => unknown).bind(target)
             : value;
