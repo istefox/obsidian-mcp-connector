@@ -1,6 +1,6 @@
 {
   "name": "mcp-tools-for-obsidian",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "description": "Expose your vault to Claude and any MCP client over the Model Context Protocol. Runs inside Obsidian, with on-device semantic search.",
   "tags": [
