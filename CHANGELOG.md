@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-08-23
+
+### Fixed
+
+- **Cleaned up TypeScript patterns the community plugin review flagged in `2.3.0`'s new Codex broker code.** Unnecessary escaped quotes and non-null assertions, bare `setTimeout`/`clearTimeout` instead of `window.setTimeout`/`window.clearTimeout` (needed for correct behavior in an Obsidian popout window), and unsafe `JSON.parse` results typed as `unknown` with a proper narrowing check. One of these is a genuine (if narrow) correctness fix: a lock-cleanup step could throw and mask the real error a caller was trying to report; it now logs the cleanup failure instead of hiding the original error behind it. No user-visible behavior change otherwise.
+
 ## [2.3.0] — 2026-08-23
 
 ### Added
