@@ -266,12 +266,12 @@ async function startRuntime(
 
   function waitToReconnect(): Promise<void> {
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         cancelReconnectDelay = null;
         resolve();
       }, reconnectMs);
       cancelReconnectDelay = () => {
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         cancelReconnectDelay = null;
         resolve();
       };
@@ -410,8 +410,10 @@ async function removeOwnedRegistration(
   leaseId: string,
 ): Promise<void> {
   try {
-    const value = JSON.parse(await fsp.readFile(registrationPath, "utf8"));
-    if (value?.leaseId === leaseId)
+    const value: unknown = JSON.parse(
+      await fsp.readFile(registrationPath, "utf8"),
+    );
+    if (isRecord(value) && value.leaseId === leaseId)
       await fsp.rm(registrationPath, { force: true });
   } catch (error) {
     if (
@@ -440,9 +442,10 @@ async function probeBroker(port: number): Promise<ProbeResult> {
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
           try {
-            const value = JSON.parse(body);
+            const value: unknown = JSON.parse(body);
             resolve(
               res.statusCode === 200 &&
+                isRecord(value) &&
                 value.name === BROKER_NAME &&
                 value.version === DISCOVERY_PROTOCOL_VERSION
                 ? "healthy"
@@ -495,8 +498,9 @@ async function ensureBroker(rootDir: string, port: number): Promise<void> {
   child.unref();
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    if (spawnError) throw spawnError;
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    const failure = spawnError;
+    if (failure) throw failure;
     const result = await probeBroker(port);
     if (result === "healthy") return;
     if (result === "occupied") break;

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
+import { logger } from "$/shared/logger";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
@@ -231,7 +232,7 @@ function parseDottedKey(value: string): string[] | null {
 
 function findClosingDelimiter(
   text: string,
-  delimiter: "'''" | '\"\"\"',
+  delimiter: "'''" | '"""',
   start: number,
 ): number {
   let cursor = start;
@@ -250,15 +251,15 @@ function findClosingDelimiter(
 
 function findMultilineStart(
   text: string,
-): { delimiter: "'''" | '\"\"\"'; start: number; end: number } | null {
-  let quote: "'" | '\"' | null = null;
+): { delimiter: "'''" | '"""'; start: number; end: number } | null {
+  let quote: "'" | '"' | null = null;
   let escaped = false;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
-    if (quote === '\"') {
+    if (quote === '"') {
       if (escaped) escaped = false;
       else if (character === "\\") escaped = true;
-      else if (character === '\"') quote = null;
+      else if (character === '"') quote = null;
       continue;
     }
     if (quote === "'") {
@@ -267,14 +268,14 @@ function findMultilineStart(
     }
     if (character === "#") return null;
     const delimiter = text.slice(index, index + 3);
-    if (delimiter === "'''" || delimiter === '\"\"\"') {
+    if (delimiter === "'''" || delimiter === '"""') {
       return {
         delimiter,
         start: index,
         end: findClosingDelimiter(text, delimiter, index + 3),
       };
     }
-    if (character === "'" || character === '\"') quote = character;
+    if (character === "'" || character === '"') quote = character;
   }
   return null;
 }
@@ -288,7 +289,7 @@ function scanTomlStructure(raw: string): {
   const lines = [...raw.matchAll(/^.*(?:\r?\n|$)/gm)].filter(
     (match) => match[0].length > 0,
   );
-  let multiline: { delimiter: "'''" | '\"\"\"'; start: number } | null = null;
+  let multiline: { delimiter: "'''" | '"""'; start: number } | null = null;
   for (const line of lines) {
     const rawLine = line[0].replace(/\r?\n$/, "");
     if (multiline) {
@@ -296,7 +297,7 @@ function scanTomlStructure(raw: string): {
       if (end !== -1) {
         multilineStrings.push({
           start: multiline.start,
-          end: line.index! + end + multiline.delimiter.length,
+          end: line.index + end + multiline.delimiter.length,
         });
         multiline = null;
       }
@@ -310,7 +311,7 @@ function scanTomlStructure(raw: string): {
         const parts = parseDottedKey(match[2]);
         if (parts) {
           headers.push({
-            start: line.index!,
+            start: line.index,
             parts,
             array: match[1] === "[[",
           });
@@ -320,13 +321,13 @@ function scanTomlStructure(raw: string): {
     }
     const opening = findMultilineStart(text);
     if (!opening) continue;
-    const start = line.index! + textOffset + opening.start;
+    const start = line.index + textOffset + opening.start;
     if (opening.end === -1) {
       multiline = { delimiter: opening.delimiter, start };
     } else {
       multilineStrings.push({
         start,
-        end: line.index! + textOffset + opening.end + opening.delimiter.length,
+        end: line.index + textOffset + opening.end + opening.delimiter.length,
       });
     }
   }
@@ -503,7 +504,7 @@ async function withConfigLock<T>(
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting to update ${configPath}.`);
       }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+      await new Promise((resolve) => window.setTimeout(resolve, LOCK_RETRY_MS));
     }
   }
   try {
@@ -515,7 +516,9 @@ async function withConfigLock<T>(
         await fsp.rm(lockPath, { force: true });
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn("Failed to remove config lock", { error: String(error) });
+      }
     }
   }
 }
