@@ -41,6 +41,30 @@ export {
 } from "./services/autoWrite";
 
 export {
+  codexConfigSnippet,
+  codexServerId,
+  inspectCodexInstall,
+  installCodexConfig,
+  locateCodexConfig,
+  type CodexConfigLocation,
+  type CodexConnection,
+  type CodexInstallPreview,
+  type CodexInstallResult,
+} from "./services/codexConfig";
+
+export {
+  DISCOVERY_BROKER_PORT,
+  DISCOVERY_PROTOCOL_VERSION,
+  disableCodexDiscovery,
+  enableCodexDiscovery,
+  getCodexConnection,
+  releaseCodexDiscoveryOwner,
+  resolveCodexDiscoveryOwner,
+  startCodexDiscovery,
+  type DiscoveryRuntime,
+} from "./services/discoveryBroker";
+
+export {
   clearNodeDetectCache,
   detectBrew,
   detectNode,

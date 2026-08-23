@@ -28,10 +28,18 @@
   } from "$/features/mcp-transport/constants";
   import {
     applyAutoWrite,
+    codexConfigSnippet,
     CopyConfigMenu,
     detectNode,
+    disableCodexDiscovery,
+    enableCodexDiscovery,
+    getCodexConnection,
+    inspectCodexInstall,
+    installCodexConfig,
     releaseAutoWriteOwner,
+    releaseCodexDiscoveryOwner,
     resolveAutoWriteOwner,
+    resolveCodexDiscoveryOwner,
     setAutoWriteOwner,
     type NodeDetectResult,
   } from "$/features/mcp-client-config";
@@ -66,6 +74,7 @@
    * could only mean one of them silently losing.
    */
   let autoWriteOwner: string | null = null;
+  let codexDiscoveryOwner: string | null = null;
 
   /**
    * Node presence, detected once for the whole list. A `.mcpb` runs
@@ -165,6 +174,7 @@
     // Read after the token list, never before: resolving the owner
     // validates it against that list and can rewrite it.
     autoWriteOwner = await resolveAutoWriteOwner(plugin);
+    codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
     syncMirror();
   }
 
@@ -273,7 +283,9 @@
       new Notice(
         autoWriteResult.applied
           ? "Secret regenerated and Claude Desktop config updated."
-          : "Secret regenerated. Update the client configured with this token.",
+          : codexDiscoveryOwner === token.id
+            ? "Secret regenerated. The Codex connection will use it on the next request."
+            : "Secret regenerated. Update the client configured with this token.",
       );
     } catch (err) {
       noticeFailure("regenerating the token", err);
@@ -295,16 +307,32 @@
       // Before refreshTokens: that call re-resolves the owner, and the
       // release has to be the thing that clears it rather than a
       // validation failure that leaves the config entry behind.
-      const released = await releaseAutoWriteOwner(plugin, token.id);
+      const [released, codexRelease] = await Promise.all([
+        releaseAutoWriteOwner(plugin, token.id),
+        releaseCodexDiscoveryOwner(
+          plugin,
+          token.id,
+          plugin.codexDiscoveryState,
+        )
+          .then((released) => ({ released }))
+          .catch((error) => ({
+            released: false,
+            error: error instanceof Error ? error.message : String(error),
+          })),
+      ]);
+      if (codexRelease.released) plugin.codexDiscoveryState = undefined;
       await refreshTokens();
-      if (released.error) {
+      const cleanupError =
+        released.error ??
+        ("error" in codexRelease ? codexRelease.error : undefined);
+      if (cleanupError) {
         new Notice(
-          `Token "${token.label}" revoked, but its Claude Desktop entry could not be removed: ${released.error}`,
+          `Token "${token.label}" revoked, but a managed client entry could not be removed: ${cleanupError}`,
         );
       } else {
         new Notice(
-          released.released
-            ? `Token "${token.label}" revoked and removed from claude_desktop_config.json.`
+          released.released || codexRelease.released
+            ? `Token "${token.label}" revoked and removed from managed client access.`
             : `Token "${token.label}" revoked.`,
         );
       }
@@ -450,6 +478,78 @@
       noticeFailure("changing the Claude Desktop sync", err);
       // Re-read rather than assume the flip landed.
       autoWriteOwner = await resolveAutoWriteOwner(plugin);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handleToggleCodexDiscovery(
+    token: TokenRecord,
+    checked: boolean,
+  ): Promise<void> {
+    if (busy) return;
+    busy = true;
+    try {
+      if (!checked) {
+        await disableCodexDiscovery(plugin, plugin.codexDiscoveryState);
+        plugin.codexDiscoveryState = undefined;
+        codexDiscoveryOwner = null;
+        new Notice("Codex connection disabled. The installed config entry was left unchanged.");
+        return;
+      }
+
+      await plugin.codexDiscoveryState?.stop();
+      plugin.codexDiscoveryState = await enableCodexDiscovery(plugin, token.id);
+      codexDiscoveryOwner = token.id;
+      new Notice(`The Codex connection now uses "${token.label}". Install or copy the config once.`);
+    } catch (err) {
+      noticeFailure("changing the Codex connection", err);
+      codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function connectionSnippet(): Promise<string> {
+    const connection = await getCodexConnection(plugin);
+    if (!connection)
+      throw new Error("Enable the Codex connection for this vault first.");
+    return codexConfigSnippet(connection);
+  }
+
+  async function handleCopyCodexConfig(): Promise<void> {
+    try {
+      await copyToClipboard(await connectionSnippet());
+    } catch (err) {
+      noticeFailure("copying the Codex config", err);
+    }
+  }
+
+  async function handleInstallCodexConfig(): Promise<void> {
+    if (busy) return;
+    busy = true;
+    try {
+      const connection = await getCodexConnection(plugin);
+      if (!connection)
+        throw new Error("Enable the Codex connection for this vault first.");
+      const preview = await inspectCodexInstall(connection);
+      if (preview.action === "unchanged") {
+        new Notice(`Codex config is already installed at ${preview.configPath}.`);
+        return;
+      }
+      const action = preview.action === "add" ? "Add" : "Replace";
+      const confirmed = confirm(
+        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " and its transport-specific nested tables" : ""}\n\nA timestamped backup will be created before an existing file is changed.`,
+      );
+      if (!confirmed) return;
+      const result = await installCodexConfig(connection, {
+        expectedRevision: preview.revision,
+      });
+      new Notice(
+        `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. Restart Codex once.`,
+      );
+    } catch (err) {
+      noticeFailure("installing the Codex config", err);
     } finally {
       busy = false;
     }
@@ -623,17 +723,54 @@
             Keep <code>claude_desktop_config.json</code> in sync with this
             token
           </label>
+          <label class="token-autowrite">
+            <input
+              type="checkbox"
+              checked={codexDiscoveryOwner === token.id}
+              disabled={busy || mcpbDisabled}
+              on:change={(event) =>
+                void handleToggleCodexDiscovery(
+                  token,
+                  event.currentTarget.checked,
+                )}
+            />
+            Enable Codex connection for this vault
+          </label>
+          {#if codexDiscoveryOwner === token.id}
+            <div class="token-actions">
+              <button
+                type="button"
+                on:click={() => void handleCopyCodexConfig()}
+                disabled={busy}
+              >
+                Copy Codex config
+              </button>
+              <button
+                type="button"
+                on:click={() => void handleInstallCodexConfig()}
+                disabled={busy}
+              >
+                Install Codex config…
+              </button>
+            </div>
+          {/if}
         </li>
       {/each}
     </ul>
 
     {#if mcpbDisabled}
       <p class="token-hint">
-        Node.js was not found on PATH, so <strong>.mcpb</strong> export is
-        disabled — a bundle runs under <code>node</code>. See
+        Node.js was not found on PATH, so <strong>.mcpb</strong> export and
+        the Codex connection is disabled — both run under <code>node</code>. See
         <em>Claude Desktop integration</em> below to install it.
       </p>
     {/if}
+    <p class="token-hint">
+      Codex connects through the shared local broker using the selected token
+      and this vault's current port. This checkbox does not edit
+      <code>config.toml</code>. Use one of the configuration actions after
+      enabling it.
+    </p>
   {/if}
 
   <div class="setting-item">

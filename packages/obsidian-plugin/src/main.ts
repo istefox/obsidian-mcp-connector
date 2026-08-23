@@ -2,6 +2,10 @@ import { Notice, Plugin } from "obsidian";
 import type { Subscription } from "rxjs";
 import { type SmartConnections } from "shared";
 import { checkCommandPermission as runCommandPermissionCheck } from "./features/command-permissions/services/checkCommandPermission";
+import {
+  startCodexDiscovery,
+  type DiscoveryRuntime,
+} from "./features/mcp-client-config/services/discoveryBroker";
 import { SettingsStore } from "./shared/settingsStore";
 import { setup as setupCore } from "./features/core";
 import {
@@ -27,6 +31,8 @@ import { logger } from "./shared/logger";
 
 export default class McpToolsPlugin extends Plugin {
   mcpTransportState?: McpTransportState;
+
+  codexDiscoveryState?: DiscoveryRuntime;
 
   promptsState?: PromptsFeatureState;
 
@@ -74,6 +80,14 @@ export default class McpToolsPlugin extends Plugin {
     const mcpResult = await mcpTransportSetup(this);
     if (mcpResult.success) {
       this.mcpTransportState = mcpResult.state;
+      try {
+        this.codexDiscoveryState =
+          (await startCodexDiscovery(this)) ?? undefined;
+      } catch (error) {
+        logger.warn("Codex discovery failed during startup", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       // ADR-0020 D1: prompts are a separate registry that never reaches
       // toolRegistry.dispatch, so this is the second and last place the
       // guarded App has to be installed. `expandEmbeds` transcludes
@@ -177,6 +191,10 @@ export default class McpToolsPlugin extends Plugin {
     if (this.promptsState) {
       promptsTeardown(this.promptsState);
       this.promptsState = undefined;
+    }
+    if (this.codexDiscoveryState) {
+      await this.codexDiscoveryState.stop();
+      this.codexDiscoveryState = undefined;
     }
     if (this.mcpTransportState) {
       await mcpTransportTeardown(this.mcpTransportState);

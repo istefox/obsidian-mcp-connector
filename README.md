@@ -352,6 +352,35 @@ Native HTTP transport. **Copy config for Claude Code**, then paste into `~/.clau
 
 **Copy config for streamable-http clients** produces the generic payload these accept. Check each client's docs for the file location and wrapping keys.
 
+### Codex
+
+Codex connects through one shared local Node.js broker at `127.0.0.1:27206`.
+The broker reads the current vault port and selected token from the plugin's `data.json` for every request.
+Port changes and token regeneration do not require a Codex config change or another broker process.
+
+1. On a token row, tick **Enable Codex connection for this vault**.
+2. Click **Install Codex config…** to preview and approve a one-time edit, or click **Copy Codex config** and paste the snippet yourself.
+3. Keep this vault open, then restart Codex after the initial config change.
+
+The installer uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
+Otherwise, it uses `~/.codex/config.toml` only when the `~/.codex` directory exists.
+It shows the exact path and whether it will add or replace `[mcp_servers.obsidian_<vault>]` before asking for confirmation.
+Replacing an entry also removes its old nested transport settings while preserving per-tool approval settings.
+The installer creates a timestamped backup, writes atomically, verifies the result, and restores the previous file if verification fails.
+It aborts if the file changes after the preview.
+It permits unrelated multiline strings but refuses ambiguous entries and target entries that it cannot replace conservatively.
+Use the copy action when Codex uses a project config or a custom home that Obsidian cannot locate.
+
+The broker credential remains in `config.toml` and the plugin's `data.json`.
+The vault token remains only in `data.json` and is added when the broker forwards a request to the vault.
+Both services bind to localhost.
+Disabling the connection removes the vault's live broker registration but leaves the one-time Codex entry unchanged.
+The broker exits after no vault has an open control connection for 10 seconds.
+Codex discovery supports desktop Windows, macOS, and Linux installations where Obsidian can execute a system Node.js installation.
+If Node.js is unavailable, the optional connection remains disabled and the rest of the plugin continues to run.
+Bun is not required at runtime.
+See [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) for the detached-process lifecycle and accepted local port-owner risk.
+
 ### Verifying
 
 Your client should list the tools your token's profile allows, plus any prompts tagged `#mcp-tools-prompt`. For request-level inspection without a model in the loop:
@@ -380,6 +409,7 @@ On the built-in-Node path Claude Desktop does not write the connector's own stde
 - **Loopback only.** The bind address is hardcoded to `127.0.0.1`, on the first free port in 27200-27205 unless you pin one. Bearer auth is required on every request, and a miss is a bare 401 that reveals nothing about which tokens exist.
 - **No binary.** Nothing prebuilt is downloaded or executed.
 - **Tokens are local.** Generated per install, stored in the vault's `data.json`, revealed only on demand in settings, up to 10 per vault.
+- **The Codex broker trusts the local port owner.** A process that binds `127.0.0.1:27206` and returns the expected health response can impersonate the broker. A per-launch registration secret would not authenticate the broker to Codex, so [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) records this as an accepted local-process risk instead of claiming partial hardening solves it.
 - **Vault access is Obsidian's.** Every read and write goes through `app.vault`, under Obsidian's own permission model. Concurrent writes go through `Vault.process()` plus a process-wide write mutex, so two MCP writes to one file cannot lose an update.
 - **Command execution is opt-in** and per vault.
 - **Folders can be hidden from every tool at once.** Settings → MCP Connector → Hidden folders removes a folder from reads, writes, listings, the link graph, tag counts and prompts, vault-wide, and makes it behave exactly like a folder that does not exist — never a distinguishable "access denied". It is a guardrail against a client wandering somewhere it shouldn't, not encryption: see [SECURITY.md](SECURITY.md#content-folder-exclusion-omc-040) for what it does and does not cover.
