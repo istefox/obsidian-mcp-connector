@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-08-23
+
+### Added
+
+- **OpenAI Codex can now connect to your vault as an MCP client**, alongside Claude Desktop and any generic HTTP MCP client. Codex does not manage one MCP process per task the way Claude does, so this adds an opt-in shared local discovery broker: a single Node.js process that every enabled vault registers with, and that Codex talks to on one stable local port. The broker forwards each authorized request to the right vault's own MCP server using its current port and token, so rotating a token or restarting Obsidian never requires touching Codex's own configuration. Settings provides two explicit actions, copying a ready-to-paste `config.toml` entry or previewing and approving a one-time installation into the located Codex configuration; the installer never runs automatically, and it backs up, writes atomically, and rolls back on a failed verification. Codex support stays disabled until you enable it for a vault. Full design and the accepted local-process trust trade-offs: [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md). (#500, contributed by @Neonsy)
+
 ## [2.2.2] — 2026-08-22
 
 ### Fixed
