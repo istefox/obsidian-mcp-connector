@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.3.2] — 2026-08-24
+
+### Security
+
+- **`search_vault`'s Dataview query mode could read files inside a folder you'd hidden.** The `2.2.0` folder-exclusion feature (Settings → MCP Connector → Hidden folders) disables three tools outright because they reach vault content in ways no path filter can cover: `execute_obsidian_command`, `execute_dataview_query`, `execute_template`. `search_vault`'s `dataview` query mode (the tool's default) uses the exact same route around the filter but was missing from that list, so it stayed active and returned results from hidden folders. `search_vault`'s JsonLogic mode was never affected. Reported by a community member testing the folder-exclusion feature; fixed the same day by adding `search_vault` to the disabled set. If you rely on hidden folders and use `search_vault`, update as soon as convenient.
+
 ## [2.3.1] — 2026-08-23
 
 ### Fixed
