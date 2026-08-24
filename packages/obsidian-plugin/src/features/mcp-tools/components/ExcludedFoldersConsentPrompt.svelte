@@ -63,7 +63,7 @@
     every client and every token.
   </p>
 
-  <h3>What you give up: three tools stop working</h3>
+  <h3>What you give up: four tools stop working</h3>
   <p>While at least one folder is hidden, these are disabled for all clients.</p>
   <ul class="tool-list">
     <li>
@@ -80,6 +80,11 @@
       <code>execute_template</code> runs a Templater template, whose
       JavaScript reaches the vault through Templater rather than through
       this plugin.
+    </li>
+    <li>
+      <code>search_vault</code> can also hand its query to Dataview, the
+      same way <code>execute_dataview_query</code> does, so it is disabled
+      wholesale rather than only in that mode.
     </li>
   </ul>
   <p class="muted">

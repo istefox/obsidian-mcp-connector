@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { composeToolRegistry } from "$/composeToolRegistry";
 import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
+import { UNFILTERABLE_TOOL_NAMES } from "$/features/mcp-tools/types";
 import {
   mockApp,
   mockPlugin,
+  resetMockDataview,
   resetMockVault,
+  setMockDataviewQueryImpl,
+  setMockDataviewState,
   setMockFile,
   setMockMetadata,
   setMockTags,
@@ -36,6 +40,22 @@ const NEEDLES = [SECRET_BODY_MARKER, SECRET_TAG, SECRET_HEADING, SECRET_FILE];
 
 /** Meta-tools carry no vault content, so they cannot leak by construction. */
 const META_TOOLS = new Set(["tool_catalog", "activate_tool", "activate_tools"]);
+
+/**
+ * `execute_obsidian_command`, `execute_dataview_query`, `execute_template` and
+ * `search_vault` reach vault content through a route the guarded `App` cannot
+ * follow (arbitrary in-process code, Dataview's own index, Templater's raw
+ * `app`) — that is exactly why `UNFILTERABLE_TOOL_REFUSALS` disables them at
+ * dispatch, a separate layer this file's `call()` helper does not exercise
+ * (it never passes `refusedTools`). Calling one of them directly here, armed
+ * with a Dataview mock that can actually answer, is expected to "leak" the
+ * canary every time regardless of policy — that is not a regression, it is
+ * the reason the refusal layer exists. `composeToolRegistry.test.ts` proves
+ * that layer instead. Skipped here so this sweep stays a signal for tools
+ * that were SUPPOSED to be filterable and forgot to route through the
+ * guarded App, not permanent noise from the four that structurally can't be.
+ */
+const UNFILTERABLE_TOOLS = new Set(UNFILTERABLE_TOOL_NAMES);
 
 function pluginWithFolders(folders?: string[]): McpToolsPlugin {
   return mockPlugin({
@@ -158,6 +178,15 @@ const CANARY_ARGS: Record<string, Record<string, unknown>> = {
   activate_tools: { names: ["get_vault_file"] },
 };
 
+/**
+ * Arms the Dataview mock so `search_vault` (dataview mode, the schema
+ * default) and `execute_dataview_query` genuinely reach the canary instead
+ * of short-circuiting on `dataview_not_installed` (default mock state is
+ * `"absent"`). Without this, both calls returned an install error before
+ * ever touching the vault, and the sweep below could not have caught the
+ * `search_vault` bypass Discussion #493 reported — a "not installed" error
+ * can't leak, no matter what the policy does.
+ */
 function seedVault(): void {
   resetMockVault();
   setMockFile(SECRET_FILE, SECRET_BODY);
@@ -167,6 +196,11 @@ function seedVault(): void {
   });
   setMockTags({ [`#${SECRET_TAG}`]: 1 });
   setMockFile(PUBLIC_FILE, PUBLIC_BODY);
+  setMockDataviewState("ready");
+  setMockDataviewQueryImpl(() => ({
+    successful: true,
+    value: { type: "list", values: [SECRET_FILE, SECRET_BODY_MARKER] },
+  }));
 }
 
 /**
@@ -199,6 +233,10 @@ beforeEach(() => {
   seedVault();
 });
 
+afterEach(() => {
+  resetMockDataview();
+});
+
 describe("registry-wide folder-exclusion sweep (ADR-0020 T13)", () => {
   test("no registered tool leaks a canary sentinel through an excluded folder", async () => {
     const { toolRegistry } = await compose([SECRET_DIR]);
@@ -210,7 +248,7 @@ describe("registry-wide folder-exclusion sweep (ADR-0020 T13)", () => {
 
     const violations: Array<{ tool: string; leakedFragment: string }> = [];
     for (const { name } of toolRegistry.list().tools) {
-      if (META_TOOLS.has(name)) continue;
+      if (META_TOOLS.has(name) || UNFILTERABLE_TOOLS.has(name)) continue;
       const args = CANARY_ARGS[name] ?? {};
       const supplied = flattenStrings(args);
       const out = await call(toolRegistry, name, args);
@@ -258,13 +296,18 @@ describe("registry-wide folder-exclusion sweep (ADR-0020 T13)", () => {
       }
     }
 
-    // Measured empirically at authoring time: 10 tools leak genuinely once
-    // no policy is in force (list_vault_files, get_vault_file,
-    // get_vault_files, get_files_by_tag, get_recent_files,
-    // get_vault_file_partial, find_orphaned_notes, search_and_replace,
-    // get_note_outline, search_vault_simple). Asserting a conservative
-    // floor below that measured count so a future minor refactor doesn't
-    // make this test flaky over a one- or two-tool swing.
+    // Measured empirically at authoring time: 10 tools leak genuinely once no
+    // policy is in force (list_vault_files, get_vault_file, get_vault_files,
+    // get_files_by_tag, get_recent_files, get_vault_file_partial,
+    // find_orphaned_notes, search_and_replace, get_note_outline,
+    // search_vault_simple). Re-measured 2026-08-24 once the Dataview mock
+    // was armed (Discussion #493's `search_vault` bypass): 14, adding
+    // `execute_dataview_query`, `search_vault`, `get_vault_overview` and
+    // `list_tags` — the first two were previously invisible to this probe
+    // because the mock's default "absent" state made every Dataview call
+    // return an install error before it could leak anything. Asserting a
+    // conservative floor below either measured count so a future minor
+    // refactor doesn't make this test flaky over a one- or two-tool swing.
     expect(leakingTools.size).toBeGreaterThanOrEqual(5);
   });
 

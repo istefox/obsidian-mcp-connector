@@ -82,7 +82,7 @@ describe("shouldDisableUnfilterableTools", () => {
 
   // The reason this takes a policy and not the folder list. Under
   // deny-all the list is empty while everything is refused, so a
-  // list-based check would leave all three enabled at exactly the moment
+  // list-based check would leave all four enabled at exactly the moment
   // nothing is known.
   test("the pre-first-read posture disables them too", () => {
     expect(shouldDisableUnfilterableTools(DENY_ALL_POLICY)).toBe(true);
@@ -91,17 +91,18 @@ describe("shouldDisableUnfilterableTools", () => {
 });
 
 describe("the unfilterable set", () => {
-  test("names exactly the three tools ADR-0020 D9 lists", () => {
+  test("names exactly the four tools ADR-0020 D9 lists", () => {
     expect([...UNFILTERABLE_TOOL_NAMES].sort()).toEqual([
       "execute_dataview_query",
       "execute_obsidian_command",
       "execute_template",
+      "search_vault",
     ]);
   });
 
   // Without this, a typo in the set above passes every other assertion
   // in this file and silently disables nothing — which would mean the
-  // three tools stay live while the user believes a folder is hidden.
+  // four tools stay live while the user believes a folder is hidden.
   test("every name in it is a tool the registry actually registers", async () => {
     const registry = new ToolRegistryClass();
     await registerTools(registry, {

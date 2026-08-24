@@ -142,13 +142,14 @@ describe("composeToolRegistry — which tools a policy refuses", () => {
     expect(refusedToolsFor(EMPTY_POLICY)).toBeUndefined();
   });
 
-  test("a configured folder refuses exactly the three unfilterable tools", async () => {
+  test("a configured folder refuses exactly the four unfilterable tools", async () => {
     const { refusedToolsFor } = await compose(["Therapy"]);
     const refused = refusedToolsFor(compilePolicy(["Therapy"]));
     expect([...(refused?.keys() ?? [])].sort()).toEqual([
       "execute_dataview_query",
       "execute_obsidian_command",
       "execute_template",
+      "search_vault",
     ]);
   });
 
@@ -169,11 +170,11 @@ describe("composeToolRegistry — which tools a policy refuses", () => {
   });
 
   // The pre-first-read posture refuses everything, so it must refuse
-  // these too — a list-based check would leave all three live at exactly
+  // these too — a list-based check would leave all four live at exactly
   // the moment nothing is known.
   test("the deny-all posture refuses them as well", async () => {
     const { refusedToolsFor } = await compose();
-    expect(refusedToolsFor(DENY_ALL_POLICY)?.size).toBe(3);
+    expect(refusedToolsFor(DENY_ALL_POLICY)?.size).toBe(4);
   });
 
   // End to end through the real registry, with the map the transport

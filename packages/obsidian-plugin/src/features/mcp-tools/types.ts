@@ -118,13 +118,13 @@ export const EXCLUDED_FOLDERS_CONSENT_VERSION = 1;
 
 /**
  * The tools no path policy can constrain, disabled while any folder is
- * hidden (ADR-0020 D9).
+ * hidden (ADR-0020 D9, amended after Discussion #493's 2026-08-24 report).
  *
  * Each reaches vault content by a route the guarded `App` cannot follow:
  * `execute_obsidian_command` runs arbitrary registered code from an
- * opaque id, `execute_dataview_query` hands the whole query to
- * Dataview's own index, and `execute_template` runs Templater JS against
- * Templater's raw `app`.
+ * opaque id, `execute_dataview_query` and `search_vault`'s `dataview`
+ * mode both hand the whole query to Dataview's own index, and
+ * `execute_template` runs Templater JS against Templater's raw `app`.
  *
  * `list_bookmarks` is deliberately NOT here: its items carry `path`
  * strings and filter like anything else, and only `search` items are
@@ -146,10 +146,17 @@ export const UNFILTERABLE_TOOL_REFUSALS: ReadonlyMap<string, string> = new Map([
     "It runs a Templater template, whose JavaScript reaches the vault through Templater " +
       "rather than through this plugin.",
   ],
+  [
+    "search_vault",
+    "Its `dataview` query mode hands the query to Dataview, which reads across the whole vault " +
+      "through its own index — the same reason `execute_dataview_query` is refused. Its " +
+      "`jsonlogic` mode is filterable on its own, but this tool is refused wholesale because the " +
+      "policy can't tell which mode a call will use before it runs.",
+  ],
 ]);
 
 /**
- * The same three names, for callers that only need the list. Derived
+ * The same four names, for callers that only need the list. Derived
  * rather than written twice, so the settings warning and the dispatch
  * refusal can never disagree about which tools are affected.
  */
