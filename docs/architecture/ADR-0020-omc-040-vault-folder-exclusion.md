@@ -181,11 +181,12 @@ The same rule forbids a hidden-item count anywhere. Tools that report totals mus
 filtered set, which they do automatically because the facade filters at source. An
 "N results hidden" affordance is a disclosure and must never be added.
 
-**D9 — Three tools are disabled while the exclusion list is non-empty.**
-`execute_obsidian_command`, `execute_dataview_query` and `execute_template`. Each reaches vault
-content by a route the facade cannot follow: arbitrary in-process code from an opaque id,
-Dataview's own index, and Templater JS holding Templater's raw `app`. Without this, "that folder is
-unreachable" is false the moment a client calls the first of them.
+**D9 — Four tools are disabled while the exclusion list is non-empty.**
+`execute_obsidian_command`, `execute_dataview_query`, `execute_template` and (amended
+2026-08-24, see below) `search_vault`. Each reaches vault content by a route the facade cannot
+follow: arbitrary in-process code from an opaque id, Dataview's own index, Templater JS holding
+Templater's raw `app`, and (for `search_vault`'s `dataview` mode) Dataview's own index again.
+Without this, "that folder is unreachable" is false the moment a client calls the first of them.
 
 The refusal is a fourth branch in `dispatch` (`toolRegistry.ts`), placed **inside** the
 `isActiveFor` block at `:583-587` and **before** `schema.assert` at `:588-590`, preserving the
@@ -466,7 +467,7 @@ case typo surfaces as an entry that resolves to nothing.
   end-to-end check in a real vault is part of the definition of done, permanently, not once.
 - **`list_tags` and `get_vault_overview` change behaviour** for users with a non-empty list, by an
   amount bounded but not eliminated by §D10's parity test.
-- **Three tools stop working** while any folder is hidden. For a user who lives in Dataview or
+- **Four tools stop working** while any folder is hidden. For a user who lives in Dataview or
   Templater this is a real loss, disclosed at the consent gate rather than discovered later.
 - **`rename_heading` no longer rewrites links inside excluded folders**, so a rename leaves stale
   links there. This is the correct trade — a heading rename must not silently edit a therapy note —
@@ -496,6 +497,31 @@ case typo surfaces as an entry that resolves to nothing.
 - Obsidian's own excluded-files list and this one remain independent, both applying where each is
   already honoured. Neither derives from the other, and the new seam deliberately does **not** also
   apply `isUserIgnored` — that would produce exactly the retroactive change §D4 refused.
+
+---
+
+## Amendments
+
+### 2026-08-24 — `search_vault` was missing from D9's unfilterable set
+
+@James-North-IC reported in Discussion #493 that `search_vault` with a Dataview (`dataview`
+mode, the tool's default `queryType`) returned results from a folder that had been hidden since
+`2.2.0`. Root cause: `search_vault.ts` imports and calls the exact same
+`executeDataviewQueryHandler` as the standalone `execute_dataview_query` tool — the same route
+around the guarded `App` that D9 already named as unfilterable — but only `execute_dataview_query`
+was ever added to `UNFILTERABLE_TOOL_NAMES`. `search_vault`'s `jsonlogic` mode is filterable (it
+calls `ctx.app.vault.getMarkdownFiles()`, which the facade covers), but the refusal mechanism gates
+by tool name before arguments are inspected, so `search_vault` is refused wholesale rather than only
+in `dataview` mode — the same "fail direction is the safe one" trade-off already made for the other
+three tools. D9 above is corrected to name four tools rather than three.
+
+This is exactly the failure mode the "Negative" section above named in advance ("a facade with a
+hole is a silent hole") — measured, not merely predicted. The registry-wide leak sweep in
+`exclusionPolicy.test.ts` had covered `search_vault` since it was written, but the test double for
+Dataview defaulted to "not installed," so neither `search_vault` nor `execute_dataview_query` ever
+reached a live query in that test — a "not installed" error can't leak, no matter what the policy
+does. Fixed alongside the production code so the sweep can no longer report a false negative for
+this route.
 
 ---
 
