@@ -251,10 +251,18 @@ export async function registerTools(
     getVaultFilesHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(createVaultFileSchema, async ({ arguments: args }) =>
-    createVaultFileHandler({ arguments: args, app: ctx.app }),
+    createVaultFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(createVaultBinaryFileSchema, async ({ arguments: args }) =>
-    createVaultBinaryFileHandler({ arguments: args, app: ctx.app }),
+    createVaultBinaryFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(appendToVaultFileSchema, async ({ arguments: args }) =>
     appendToVaultFileHandler({ arguments: args, app: ctx.app }),

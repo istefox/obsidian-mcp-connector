@@ -53,8 +53,14 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_vault_files: READ_ONLY,
   get_vault_file_partial: READ_ONLY,
   // Overwrites when the path already exists (documented behavior).
+  // idempotentHint describes the default (no-precondition) path only: with
+  // expectedContent set, or requireWritePreconditions on, a repeated call
+  // against stale content refuses rather than repeating the effect
+  // (ADR-0022).
   create_vault_file: { ...DESTRUCTIVE, idempotentHint: true },
   // Same overwrite semantics as create_vault_file, for binary content.
+  // Same idempotentHint caveat as above, via overwrite instead of
+  // expectedContent (ADR-0022).
   create_vault_binary_file: { ...DESTRUCTIVE, idempotentHint: true },
   append_to_vault_file: SAFE_WRITE,
   patch_vault_file: DESTRUCTIVE,
