@@ -442,11 +442,15 @@
       <div class="setting-item-name">Require a write precondition</div>
       <div class="setting-item-description">
         When on, patch_vault_file and patch_active_file refuse a
-        <code>replace</code> unless the caller states the text it expects to
-        overwrite, so an edit you made after the assistant last read the note
-        cannot be silently replaced. Off by default, because a client that
-        does not send it will start getting refusals for that one operation.
-        Appending and prepending are never affected.
+        <code>replace</code>, and create_vault_file and
+        create_vault_binary_file refuse to overwrite an existing file,
+        unless the caller states what it expects to overwrite (the text it
+        believes is there, or an explicit confirmation), so an edit you made
+        after the assistant last read the note cannot be silently replaced.
+        Off by default, because a client that does not send that will start
+        getting refusals for those operations. Appending, prepending, and
+        creating a brand-new file at a path that does not yet exist are
+        never affected.
       </div>
     </div>
     <div class="setting-item-control">

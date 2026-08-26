@@ -7,6 +7,7 @@ import {
 import {
   getMockFolders,
   mockApp,
+  mockPlugin,
   resetMockVault,
   setMockFile,
   setMockFolder,
@@ -92,5 +93,130 @@ describe("create_vault_binary_file tool", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/not valid base64/i);
+  });
+});
+
+describe("create_vault_binary_file — overwrite write precondition (ADR-0022)", () => {
+  const FILE = "Images/precond.png";
+
+  async function readBackBytes(
+    app: ReturnType<typeof mockApp>,
+  ): Promise<string> {
+    const file = app.vault.getAbstractFileByPath(FILE);
+    const bytes = await app.vault.readBinary(file as never);
+    return new TextDecoder().decode(bytes);
+  }
+
+  function expectStalePrecondition(
+    result: {
+      content: Array<{ type: "text"; text: string }>;
+      isError?: boolean;
+    },
+    path: string = FILE,
+  ): void {
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text) as {
+      error: string;
+      errorCode: string;
+      path: string;
+    };
+    expect(parsed.errorCode).toBe("stale_precondition");
+    expect(parsed.path).toBe(path);
+  }
+
+  test("path does not exist, overwrite absent: creates regardless of the toggle", async () => {
+    const app = mockApp();
+    const result = await createVaultBinaryFileHandler({
+      arguments: { path: FILE, content: b64("bytes") },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBackBytes(app)).toBe("bytes");
+  });
+
+  test("path exists, overwrite absent, toggle off: overwrites (unchanged)", async () => {
+    setMockFile(FILE, "OLD");
+    const app = mockApp();
+    const result = await createVaultBinaryFileHandler({
+      arguments: { path: FILE, content: b64("NEW") },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBackBytes(app)).toBe("NEW");
+  });
+
+  test("path exists, overwrite absent, toggle on: refused, content byte-identical after", async () => {
+    setMockFile(FILE, "OLD");
+    const app = mockApp();
+    const plugin = mockPlugin({
+      app,
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    } as never);
+    const result = await createVaultBinaryFileHandler({
+      arguments: { path: FILE, content: b64("NEW") },
+      app,
+      plugin,
+    });
+    expectStalePrecondition(result);
+    expect(result.content[0].text).toContain("requires a write precondition");
+    expect(await readBackBytes(app)).toBe("OLD");
+  });
+
+  test("path exists, overwrite: true: overwrites regardless of the toggle", async () => {
+    setMockFile(FILE, "OLD");
+    const app = mockApp();
+    const plugin = mockPlugin({
+      app,
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    } as never);
+    const result = await createVaultBinaryFileHandler({
+      arguments: { path: FILE, content: b64("NEW"), overwrite: true },
+      app,
+      plugin,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(await readBackBytes(app)).toBe("NEW");
+  });
+
+  test("path exists, overwrite: false: refused regardless of the toggle, content byte-identical after", async () => {
+    setMockFile(FILE, "OLD");
+    const app = mockApp();
+    const result = await createVaultBinaryFileHandler({
+      arguments: { path: FILE, content: b64("NEW"), overwrite: false },
+      app,
+    });
+    expectStalePrecondition(result);
+    expect(await readBackBytes(app)).toBe("OLD");
+  });
+
+  // Regression guard for the independent TOCTOU bug this ADR fixes: unlike
+  // every other vault-writing tool, this handler never acquired the vault
+  // write lock at all before ADR-0022. Two concurrent calls to the same NEW
+  // path are serialized by withVaultWriteLock in acquisition order, so by
+  // the time the second call's exists-check runs, the first call's create
+  // has already landed — overwrite: false on the second then correctly
+  // refuses it instead of racing past the check to a second unconditional
+  // create.
+  test("two concurrent writes to the same new path are serialized by the write lock", async () => {
+    const app = mockApp();
+    const [first, second] = await Promise.all([
+      createVaultBinaryFileHandler({
+        arguments: { path: "race.png", content: b64("first") },
+        app,
+      }),
+      createVaultBinaryFileHandler({
+        arguments: {
+          path: "race.png",
+          content: b64("second"),
+          overwrite: false,
+        },
+        app,
+      }),
+    ]);
+    expect(first.isError).toBeUndefined();
+    expectStalePrecondition(second, "race.png");
+    const file = app.vault.getAbstractFileByPath("race.png");
+    const bytes = await app.vault.readBinary(file as never);
+    expect(new TextDecoder().decode(bytes)).toBe("first");
   });
 });
