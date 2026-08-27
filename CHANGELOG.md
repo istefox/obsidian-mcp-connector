@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-08-27
+
 ### Added
 
 - **`create_vault_file` can now be stopped from overwriting an existing note with a partial rewrite.** It gains an optional `expectedContent`: the whole current content of the file, as the assistant last read it. When it no longer matches, the write is refused instead of quietly replacing the file — the failure mode reported was an assistant sending only the addition it meant to make (a backlink, a date) as the *entire* new content, turning an 18KB note into a four-line stub with no warning. Nothing changes for a call that omits it, or for a path that does not exist yet. `create_vault_binary_file` gains the equivalent guard as a plain `overwrite: true` confirmation instead — binary bytes have no meaningful diff to compare, so the risk there is a wrong path, not stale content. Both are also covered by the existing **Settings → MCP Connector → MCP Tools** "Require a write precondition" switch: with it on, overwriting an existing file through either tool now requires the guard, same as it already required `expectedContent` on `patch_vault_file`'s `replace` — if you already enabled that switch, this is a behavior change for these two tools. Reasoning, including the whole-file comparison's known limitation with a concurrent unrelated edit, is in `docs/architecture/ADR-0022-write-preconditions-create-tools.md`. Reported by @aardvarkpaul. (#517)
