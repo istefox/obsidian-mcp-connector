@@ -3,6 +3,7 @@ import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { isSmartConnectionsAvailable } from "$/features/semantic-search/services/providerFactory";
+import { pendingStoreKeyFor } from "$/features/semantic-search";
 import { createExclusionFilter } from "$/shared/isUserIgnored";
 import {
   projectSmartSearchResults,
@@ -270,11 +271,19 @@ export async function searchVaultSmartHandler(
   // background and subscribes to vault events for incremental
   // updates. Subsequent calls are no-ops. Skipped under Smart
   // Connections (#99) and DLC providers (embedding-gemma,
-  // multilingual-e5-base) — DLC providers use their own indexer
+  // multilingual-e5-base, remote) — DLC providers use their own indexer
   // started by startRebuildFor, not the native MiniLM indexer.
+  //
+  // "remote" counts as DLC only while it is actually configured. An
+  // incomplete remote block (no server, no model, or no detected vector
+  // width) means the chooser has fallen back to the native provider, so
+  // the native index is the one serving this query and must still be
+  // allowed to build.
   const usingDlcProvider =
     settings?.provider === "embedding-gemma" ||
-    settings?.provider === "multilingual-e5-base";
+    settings?.provider === "multilingual-e5-base" ||
+    (settings?.provider === "remote" &&
+      pendingStoreKeyFor(settings) !== undefined);
   if (!usingSmartConnections && !usingDlcProvider) {
     state.startIndexerIfNeeded?.();
 

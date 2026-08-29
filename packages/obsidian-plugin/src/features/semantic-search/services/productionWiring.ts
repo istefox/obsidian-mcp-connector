@@ -41,6 +41,18 @@ import {
   EMBEDDING_GEMMA_BACKEND,
 } from "./embeddingGemmaProvider";
 import { createMultilingualE5Provider } from "./multilingualE5Provider";
+import {
+  createRemoteEmbeddingProvider,
+  probeRemoteDimensions,
+} from "./remoteEmbeddingProvider";
+import {
+  mergeRemoteSettings,
+  remoteProviderKey,
+  resolveRemoteConfig,
+  type EmbeddingProvider,
+  type RemoteEmbeddingSettings,
+  type SemanticSearchSettings,
+} from "../types";
 import { detectNonAsciiRatio } from "./langDetect";
 import type { VaultAdapter } from "./store";
 import { FORMAT_VERSION, SEGMENT_COUNT } from "./store";
@@ -182,8 +194,109 @@ export async function wireSemanticSearch(
   // session. Stores init lazily on first indexer/search use.
   const embeddingsBaseDir = `${pluginDir}/embeddings`;
   const registry = createEmbeddingStoreRegistry(ssAdapter, embeddingsBaseDir);
+
+  // Construction-time read: toggling `unloadModelWhenIdle` takes effect
+  // at the next plugin reload (the settings UI says so). The same read
+  // supplies the remote block, which has to be resolved *before* the
+  // stale-store probe so the remote store is probed in the same pass.
+  const semanticPrefs = ((await new SettingsStore(plugin).readSlice(
+    "semanticSearch",
+  )) ?? {}) as {
+    unloadModelWhenIdle?: boolean;
+    provider?: string;
+    remote?: RemoteEmbeddingSettings;
+  };
+
+  // Every non-native embedding provider, keyed by store directory. The
+  // two bundled DLC models are added below once their downloaders
+  // exist; the remote one is added (and replaced) by `installRemote`.
+  // One mutable object rather than a fresh literal because the chooser,
+  // the DLC indexer builder and the rebuild hook all close over it and
+  // must see a re-pointed remote server without being rebuilt.
+  const embeddingProviders: Record<string, EmbeddingProvider> = {};
+
+  // Mutable across the plugin's lifetime: `configureRemote` (below)
+  // rewrites it when the user re-points the server, and the chooser
+  // reads the key back through a closure so the swap needs no reload.
+  // A holder object rather than two `let`s so TypeScript stops
+  // narrowing them to `null` for the rest of the function.
+  const active: { key: string | null; provider: EmbeddingProvider | null } = {
+    key: null,
+    provider: null,
+  };
+  /** `active` as a sweep argument, for the store-scanning helpers. */
+  const activeRemoteStores = (): ExtraStore[] =>
+    active.key && active.provider
+      ? [{ key: active.key, dims: active.provider.dimensions }]
+      : [];
+
+  const installRemote = (
+    remote: RemoteEmbeddingSettings | undefined,
+  ): string | null => {
+    const cfg = resolveRemoteConfig(remote);
+    if (!cfg) {
+      active.key = null;
+      active.provider = null;
+      return null;
+    }
+    const key = remoteProviderKey(cfg.model, cfg.dimensions);
+    // Rebuilt unconditionally, because settings that do not change the
+    // key (the query instruction, batch size, timeout) still change how
+    // the provider behaves. The store and its indexer are keyed on
+    // model+width, so they survive that.
+    active.provider = createRemoteEmbeddingProvider(key, cfg);
+    active.key = key;
+    embeddingProviders[key] = active.provider;
+    return key;
+  };
+
+  // Width discovery at load. Only when the user has actually selected
+  // the remote provider and no width is cached — this is a network call
+  // on the startup path, so it is short-timeout, best-effort, and never
+  // fatal: a server that is not up yet leaves the chooser on native and
+  // the settings UI explains why.
+  if (semanticPrefs.provider === "remote") {
+    const merged = mergeRemoteSettings(semanticPrefs.remote);
+    if (merged.baseUrl && merged.model && merged.dimensions <= 0) {
+      try {
+        const dimensions = await probeRemoteDimensions(merged, {
+          timeoutMs: 8_000,
+        });
+        // Cache it so subsequent loads cost nothing, and so the store
+        // key is stable across restarts of the inference server.
+        await new SettingsStore(plugin).updateSlice(
+          "semanticSearch",
+          (current) => ({
+            ...(current as object),
+            remote: { ...(semanticPrefs.remote ?? {}), dimensions },
+          }),
+        );
+        semanticPrefs.remote = { ...(semanticPrefs.remote ?? {}), dimensions };
+        logger.info("semantic-search: remote embedding width detected", {
+          model: merged.model,
+          dimensions,
+        });
+      } catch (err) {
+        logger.warn(
+          "semantic-search: could not reach the remote embedding server at load",
+          {
+            baseUrl: merged.baseUrl,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    }
+  }
+
+  installRemote(semanticPrefs.remote);
+
   const { staleKeys: staleProviderKeys, probedCounts } =
-    await probeAndWipeStaleStores(registry, ssAdapter, embeddingsBaseDir);
+    await probeAndWipeStaleStores(
+      registry,
+      ssAdapter,
+      embeddingsBaseDir,
+      activeRemoteStores(),
+    );
 
   if (staleProviderKeys.length > 0) {
     const wipedCount = staleProviderKeys.length;
@@ -213,11 +326,6 @@ export async function wireSemanticSearch(
   const nativeDownloader = createModelDownloader({
     innerFactory: pipelineFactory,
   });
-  // Construction-time read: toggling the setting takes effect at
-  // the next plugin reload (the settings UI says so).
-  const semanticPrefs = ((await new SettingsStore(plugin).readSlice(
-    "semanticSearch",
-  )) ?? {}) as { unloadModelWhenIdle?: boolean };
   const embedder = createEmbedder({
     pipelineFactory: nativeDownloader.factory,
     maxInputTokens: NATIVE_MAX_INPUT_TOKENS,
@@ -247,10 +355,8 @@ export async function wireSemanticSearch(
   });
   const e5Provider = createMultilingualE5Provider(e5Downloader.factory);
 
-  const embeddingProviders = {
-    "embedding-gemma-300m": gemmaProvider,
-    "multilingual-e5-base": e5Provider,
-  };
+  embeddingProviders["embedding-gemma-300m"] = gemmaProvider;
+  embeddingProviders["multilingual-e5-base"] = e5Provider;
 
   const semanticResult = await semanticSearchSetup(plugin, {
     factoryDeps: {
@@ -260,6 +366,7 @@ export async function wireSemanticSearch(
       excerptResolver: ssExcerpt,
       registry,
       embeddingProviders,
+      getRemoteProviderKey: () => active.key,
     },
   });
 
@@ -371,7 +478,10 @@ export async function wireSemanticSearch(
           if (
             ratio > 0.3 &&
             state.settings.provider !== "embedding-gemma" &&
-            state.settings.provider !== "multilingual-e5-base"
+            state.settings.provider !== "multilingual-e5-base" &&
+            // Already a model of the user's choosing, and in practice
+            // a multilingual one: the suggestion would point backwards.
+            state.settings.provider !== "remote"
           ) {
             state.autoSuggestProvider = "embedding-gemma-300m";
           }
@@ -385,12 +495,27 @@ export async function wireSemanticSearch(
     // registry providerKey. Declared once here and reused by both the
     // auto-subscribe block below and the post-migration auto-rebuild
     // trigger further down.
-    const settingToRegistryKey: Partial<Record<string, ProviderKey>> = {
-      native: "native-minilm-l6-v2",
-      auto: "native-minilm-l6-v2",
-      "embedding-gemma": "embedding-gemma-300m",
-      "multilingual-e5-base": "multilingual-e5-base",
-      // "smart-connections" has no local store — no rebuild needed.
+    //
+    // A function rather than a literal because "remote" resolves to a
+    // key derived from the live remote config, which can change while
+    // the plugin is loaded.
+    const settingToRegistryKey = (
+      setting: string,
+    ): ProviderKey | string | undefined => {
+      switch (setting) {
+        case "native":
+        case "auto":
+          return "native-minilm-l6-v2";
+        case "embedding-gemma":
+          return "embedding-gemma-300m";
+        case "multilingual-e5-base":
+          return "multilingual-e5-base";
+        case "remote":
+          return active.key ?? undefined;
+        // "smart-connections" has no local store — no rebuild needed.
+        default:
+          return undefined;
+      }
     };
 
     // Persistent DLC indexers — created on first rebuild or at
@@ -401,9 +526,7 @@ export async function wireSemanticSearch(
 
     // Helper: build a fresh DLC indexer for a providerKey. Pure
     // construction — does not start / subscribe. Caller decides.
-    const buildDlcIndexer = (
-      providerKey: keyof typeof embeddingProviders,
-    ): SemanticIndexer | null => {
+    const buildDlcIndexer = (providerKey: string): SemanticIndexer | null => {
       const ep = embeddingProviders[providerKey];
       if (!ep) return null;
       const dlcStore = registry.storeFor(providerKey, ep.dimensions);
@@ -437,15 +560,14 @@ export async function wireSemanticSearch(
       if (closed || _rebuildingProviders.has(providerKey)) return;
       _rebuildingProviders.add(providerKey);
       _rebuildErrors.delete(providerKey);
-      const epKey = providerKey as keyof typeof embeddingProviders;
-      const ep = embeddingProviders[epKey];
+      const ep = embeddingProviders[providerKey];
       if (!ep) {
         _rebuildingProviders.delete(providerKey);
         return;
       }
 
       const existing = state.dlcIndexers?.get(providerKey);
-      const dlcIndexer = existing ?? buildDlcIndexer(epKey);
+      const dlcIndexer = existing ?? buildDlcIndexer(providerKey);
       if (!dlcIndexer) {
         _rebuildingProviders.delete(providerKey);
         return;
@@ -503,9 +625,7 @@ export async function wireSemanticSearch(
     // build left partial is completed. Deferred to onLayoutReady to
     // match the same vault-scan-ready guarantee as the migration
     // auto-trigger below.
-    const _autoSubscribeDlc = (
-      providerKey: keyof typeof embeddingProviders,
-    ): void => {
+    const _autoSubscribeDlc = (providerKey: string): void => {
       if (state.dlcIndexers?.has(providerKey)) return;
       const dlcIndexer = buildDlcIndexer(providerKey);
       if (!dlcIndexer) return;
@@ -524,13 +644,14 @@ export async function wireSemanticSearch(
     for (const key of [
       "embedding-gemma-300m",
       "multilingual-e5-base",
-    ] as const) {
+      ...(active.key ? [active.key] : []),
+    ]) {
       // Auto-subscribe only when the provider is currently active AND
       // its store is ready (probe pass found a current store with
       // records). Inactive providers stay dormant — the user can
       // switch into them, which routes through startRebuildFor and
       // lazily starts the indexer at that point.
-      const isActive = settingToRegistryKey[state.settings.provider] === key;
+      const isActive = settingToRegistryKey(state.settings.provider) === key;
       if (isActive && registry.isReady(key)) {
         _autoSubscribeDlc(key);
       }
@@ -542,7 +663,7 @@ export async function wireSemanticSearch(
     // during onload() — Obsidian's vault scan is still in flight.
     // Firing earlier silently produces a 0-chunk rebuild and the .then()
     // flush writes an empty store.
-    const activeRegistryKey = settingToRegistryKey[state.settings.provider];
+    const activeRegistryKey = settingToRegistryKey(state.settings.provider);
     if (activeRegistryKey && staleProviderKeys.includes(activeRegistryKey)) {
       plugin.app.workspace.onLayoutReady(() => {
         if (activeRegistryKey === "native-minilm-l6-v2") {
@@ -562,8 +683,27 @@ export async function wireSemanticSearch(
       // also what brings the vault-wide policy — the one the indexer
       // reads — up to date for every file indexed from here on.
       const policy = await policyProvider.refresh();
-      return purgeExcludedFromStores(registry, policy);
+      return purgeExcludedFromStores(registry, policy, activeRemoteStores());
     };
+
+    /**
+     * Re-point the remote provider from a freshly saved settings block.
+     *
+     * The settings UI calls this before `applySettings`, so by the time
+     * the chooser runs, `getRemoteProviderKey()` already returns the new
+     * key and `embeddingProviders` already holds the matching instance.
+     * Without it, configuring a server would need an Obsidian reload
+     * before search could use it.
+     *
+     * Note what this deliberately does NOT do: it never touches an
+     * existing store or indexer. A changed model or width produces a
+     * different key, so the old store stays on disk untouched and the
+     * new one starts empty — `applySettings` then sees an unready store
+     * and shows the rebuild banner rather than searching a store that
+     * does not exist yet.
+     */
+    state.configureRemote = (next: SemanticSearchSettings): string | null =>
+      installRemote(next.remote);
 
     state.teardown = async () => {
       closed = true;
@@ -631,12 +771,27 @@ export async function wireSemanticSearch(
   return undefined;
 }
 
-/** Vector dimensions per provider key. */
+/** Vector dimensions per bundled provider key. */
 const PROVIDER_DIMS = {
   "native-minilm-l6-v2": 384,
   "embedding-gemma-300m": 768,
   "multilingual-e5-base": 768,
 } as const satisfies Record<ProviderKey, number>;
+
+/**
+ * A store to sweep that is not one of the compile-time-known providers
+ * — today that means the configured remote model, whose key and width
+ * are only known at runtime.
+ */
+export type ExtraStore = { key: string; dims: number };
+
+/** Bundled providers plus whatever runtime stores the caller names. */
+function storesToSweep(extra: readonly ExtraStore[]): ExtraStore[] {
+  return [
+    ...ALL_PROVIDER_KEYS.map((key) => ({ key, dims: PROVIDER_DIMS[key] })),
+    ...extra,
+  ];
+}
 
 /**
  * Drop every embedding under a hidden folder, across every provider
@@ -656,11 +811,12 @@ const PROVIDER_DIMS = {
 export async function purgeExcludedFromStores(
   registry: EmbeddingStoreRegistry,
   policy: PathPolicy,
+  extra: readonly ExtraStore[] = [],
 ): Promise<number> {
   if (policy.isEmpty) return 0;
   let removed = 0;
-  for (const key of ALL_PROVIDER_KEYS) {
-    const store = registry.storeFor(key, PROVIDER_DIMS[key]);
+  for (const { key, dims } of storesToSweep(extra)) {
+    const store = registry.storeFor(key, dims);
     // Skip a store that is empty in memory AND absent on disk: probing
     // is a sidecar read, while initializing would pull the whole bin of
     // a provider this vault may never have used.
@@ -683,14 +839,15 @@ export async function probeAndWipeStaleStores(
   registry: EmbeddingStoreRegistry,
   adapter: VaultAdapter,
   baseDir: string,
+  extra: readonly ExtraStore[] = [],
 ): Promise<{
-  staleKeys: ProviderKey[];
-  probedCounts: Partial<Record<ProviderKey, number>>;
+  staleKeys: string[];
+  probedCounts: Partial<Record<string, number>>;
 }> {
-  const staleKeys: ProviderKey[] = [];
-  const probedCounts: Partial<Record<ProviderKey, number>> = {};
-  for (const key of ALL_PROVIDER_KEYS) {
-    const probed = await registry.storeFor(key, PROVIDER_DIMS[key]).probe();
+  const staleKeys: string[] = [];
+  const probedCounts: Partial<Record<string, number>> = {};
+  for (const { key, dims } of storesToSweep(extra)) {
+    const probed = await registry.storeFor(key, dims).probe();
     if (!probed) continue;
     // Older layout, or vectors an earlier build of this provider made.
     if (
