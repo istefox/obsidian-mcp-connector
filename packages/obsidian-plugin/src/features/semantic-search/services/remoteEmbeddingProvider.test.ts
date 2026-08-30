@@ -4,6 +4,7 @@ import {
   createRemoteEmbeddingProvider,
   listRemoteModels,
   normalizeInPlace,
+  packBatches,
   parseEmbeddingsResponse,
   probeRemoteDimensions,
   resolveEndpoint,
@@ -361,5 +362,96 @@ describe("listRemoteModels", () => {
     expect(
       await listRemoteModels({ baseUrl: "http://x", apiKey: "" }, { get }),
     ).toEqual([]);
+  });
+});
+
+describe("oversized-input guards", () => {
+  test("packBatches bounds a request by count and by total size", () => {
+    // Count is the binding limit when items are small.
+    expect(packBatches(["a", "b", "c"], 2, 1000)).toEqual([["a", "b"], ["c"]]);
+    // Size is the binding limit when they are not.
+    expect(packBatches(["aaaa", "bbbb", "cc"], 8, 8)).toEqual([
+      ["aaaa", "bbbb"],
+      ["cc"],
+    ]);
+  });
+
+  test("packBatches sends an over-budget item alone rather than dropping it", () => {
+    expect(packBatches(["x", "y".repeat(50), "z"], 8, 10)).toEqual([
+      ["x"],
+      ["y".repeat(50)],
+      ["z"],
+    ]);
+  });
+
+  test("a whole-file code fence is truncated instead of taking the server down", async () => {
+    // The real shape: מפתחות/עניני דיומא.md is one 387-line dataviewjs
+    // fence, ~19.8k chars, which the chunker keeps atomic.
+    const dashboard = "```dataviewjs\n" + "dv.list(x);\n".repeat(1800) + "```";
+    expect(dashboard.length).toBeGreaterThan(19000);
+
+    const { post, calls } = recordingPost([{ body: vectorsBody([[1, 0, 0]]) }]);
+    const provider = createRemoteEmbeddingProvider(
+      "k",
+      cfg({ maxInputChars: 6000 }),
+      { post },
+    );
+
+    await provider.embed([dashboard], "document");
+
+    const sent = (calls[0].input as string[])[0];
+    expect(sent.length).toBe(6000);
+    expect(sent).toBe(dashboard.slice(0, 6000));
+  });
+
+  test("ordinary chunks are never touched by the ceiling", async () => {
+    const prose = "מעשה הגברא ומצב החפץ. ".repeat(60); // ~1.3k chars
+    const { post, calls } = recordingPost([{ body: vectorsBody([[1, 0, 0]]) }]);
+    const provider = createRemoteEmbeddingProvider("k", cfg(), { post });
+
+    await provider.embed([prose], "document");
+    expect((calls[0].input as string[])[0]).toBe(prose);
+  });
+
+  test("truncation happens before prompting, so the instruction survives", async () => {
+    const long = "z".repeat(9000);
+    const { post, calls } = recordingPost([{ body: vectorsBody([[1, 0, 0]]) }]);
+    const provider = createRemoteEmbeddingProvider(
+      "k",
+      cfg({ maxInputChars: 100, queryInstruction: "Find notes" }),
+      { post },
+    );
+
+    await provider.embed([long], "query");
+    const sent = (calls[0].input as string[])[0];
+    expect(sent.startsWith("Instruct: Find notes\nQuery: ")).toBe(true);
+    expect(sent.endsWith("z".repeat(100))).toBe(true);
+  });
+
+  test("a batch of legal-but-large chunks is split across requests", async () => {
+    const chunk = "w".repeat(3000);
+    const { post, calls } = recordingPost([
+      {
+        body: vectorsBody([
+          [1, 0, 0],
+          [1, 0, 0],
+        ]),
+      },
+      {
+        body: vectorsBody([
+          [1, 0, 0],
+          [1, 0, 0],
+        ]),
+      },
+    ]);
+    const provider = createRemoteEmbeddingProvider(
+      "k",
+      cfg({ batchSize: 8, maxRequestChars: 6000 }),
+      { post },
+    );
+
+    await provider.embed([chunk, chunk, chunk, chunk], "document");
+    expect(calls).toHaveLength(2);
+    expect((calls[0].input as string[]).length).toBe(2);
   });
 });

@@ -104,6 +104,20 @@ export const remoteEmbeddingSettingsSchema = type({
   "batchSize?": "number",
   /** Per-request timeout. A 1.7B embedder on a busy GPU is not fast. */
   "timeoutMs?": "number",
+  /**
+   * Hard ceiling on the characters sent for one text. The chunker keeps
+   * an oversized code fence atomic rather than splitting mid-fence, so a
+   * note that is one long ```dataviewjs``` block arrives as a single
+   * chunk many times the chunk budget. The bundled ONNX providers
+   * truncate such input at the tokenizer; a remote server does not, and
+   * a long enough sequence exhausts VRAM and drops the model.
+   */
+  "maxInputChars?": "number",
+  /**
+   * Hard ceiling on the characters in one HTTP request. Bounds the case
+   * where several individually-legal chunks land in the same batch.
+   */
+  "maxRequestChars?": "number",
 });
 
 export type RemoteEmbeddingSettings =
@@ -134,6 +148,12 @@ export const DEFAULT_REMOTE_SETTINGS: Required<RemoteEmbeddingSettings> = {
   maxInputTokens: 512,
   batchSize: 8,
   timeoutMs: 120_000,
+  // Comfortably above any chunk the 512-token budget produces (~3.5k
+  // chars of prose), so ordinary content is never touched; low enough
+  // that a whole-file code fence cannot reach a length that costs more
+  // VRAM than the card has.
+  maxInputChars: 6_000,
+  maxRequestChars: 24_000,
 };
 
 export const DEFAULT_SEMANTIC_SETTINGS: SemanticSearchSettings = {
@@ -163,6 +183,8 @@ export type RemoteEmbeddingConfig = {
   maxInputTokens: number;
   batchSize: number;
   timeoutMs: number;
+  maxInputChars: number;
+  maxRequestChars: number;
 };
 
 /**
@@ -184,6 +206,8 @@ export function mergeRemoteSettings(
     maxInputTokens: clampInt(m.maxInputTokens, 64, 8192, 512),
     batchSize: clampInt(m.batchSize, 1, 128, 8),
     timeoutMs: clampInt(m.timeoutMs, 1_000, 600_000, 120_000),
+    maxInputChars: clampInt(m.maxInputChars, 500, 200_000, 6_000),
+    maxRequestChars: clampInt(m.maxRequestChars, 500, 1_000_000, 24_000),
   };
 }
 

@@ -300,6 +300,43 @@ export function applyRolePrompt(
   return `Instruct: ${instr}\nQuery: ${text}`;
 }
 
+/**
+ * Pack texts into requests bounded by BOTH a count and a total size.
+ *
+ * `batchSize` alone is not a bound on the work a request asks for: eight
+ * chunks of wildly different lengths are eight very different requests,
+ * and it is the total sequence length across the batch that decides
+ * whether the server's KV cache fits in VRAM. An item longer than the
+ * budget still goes out alone rather than being dropped — clamping to
+ * `maxInputChars` happens before this, so a lone oversized item is
+ * already as small as it is going to get.
+ *
+ * Exported for tests.
+ */
+export function packBatches(
+  texts: string[],
+  maxCount: number,
+  maxChars: number,
+): string[][] {
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let size = 0;
+  for (const t of texts) {
+    if (
+      current.length > 0 &&
+      (current.length >= maxCount || size + t.length > maxChars)
+    ) {
+      batches.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(t);
+    size += t.length;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
 export type RemoteProviderDeps = {
   post?: HttpPost;
   get?: HttpGet;
@@ -382,15 +419,40 @@ class RemoteEmbeddingProviderImpl implements EmbeddingProvider {
     role: "document" | "query",
   ): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    const prompted = texts.map((t) =>
-      applyRolePrompt(t, role, this.cfg.queryInstruction),
-    );
+
+    // Clamp BEFORE prompting so the instruction prefix is never what
+    // gets cut. The chunker's atomic-code-fence rule (see chunker.ts)
+    // can hand us a chunk many times the chunk budget — a note that is
+    // one long ```dataviewjs``` block arrives whole — and a sequence
+    // that long exhausts the server's VRAM and takes the model down
+    // with it. The bundled ONNX providers truncate at the tokenizer and
+    // never see this; a remote server has no such contract, so the
+    // ceiling has to be enforced here.
+    let clamped = 0;
+    const prompted = texts.map((t) => {
+      const body =
+        t.length > this.cfg.maxInputChars
+          ? (clamped++, t.slice(0, this.cfg.maxInputChars))
+          : t;
+      return applyRolePrompt(body, role, this.cfg.queryInstruction);
+    });
+    if (clamped > 0) {
+      logger.warn("remote embeddings: truncated oversized input", {
+        providerKey: this.providerKey,
+        count: clamped,
+        maxInputChars: this.cfg.maxInputChars,
+        longest: Math.max(...texts.map((t) => t.length)),
+      });
+    }
 
     const out: Float32Array[] = [];
     // Sequential batches on purpose: the server is one GPU. Parallel
     // requests do not make it finish sooner and do make it OOM.
-    for (let i = 0; i < prompted.length; i += this.cfg.batchSize) {
-      const batch = prompted.slice(i, i + this.cfg.batchSize);
+    for (const batch of packBatches(
+      prompted,
+      this.cfg.batchSize,
+      this.cfg.maxRequestChars,
+    )) {
       const vectors = await this.embedBatch(batch);
       for (const v of vectors) {
         if (v.length !== this.dimensions) {

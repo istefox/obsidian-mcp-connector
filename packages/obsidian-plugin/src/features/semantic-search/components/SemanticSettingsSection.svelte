@@ -551,6 +551,43 @@
         index afterwards.
       </p>
 
+      <div class="field-row">
+        <label class="field narrow">
+          <span class="field-label">Max chars per text</span>
+          <input
+            type="number"
+            min="500"
+            max="200000"
+            step="500"
+            value={remote.maxInputChars}
+            on:change={(e) =>
+              persistRemote({
+                maxInputChars: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+        <label class="field narrow">
+          <span class="field-label">Max chars per request</span>
+          <input
+            type="number"
+            min="500"
+            max="1000000"
+            step="1000"
+            value={remote.maxRequestChars}
+            on:change={(e) =>
+              persistRemote({
+                maxRequestChars: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+      </div>
+      <p class="hint block">
+        Safety ceilings for the server, not quality settings. A note that is
+        one long code block reaches the chunker as a single oversized chunk;
+        sending it whole can exhaust GPU memory and drop the model. Lower
+        these if a large model crashes mid-rebuild.
+      </p>
+
       <div class="status">
         <span>
           {#if remote.dimensions > 0}
