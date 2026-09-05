@@ -3,11 +3,13 @@ import {
   toNodeHandler,
 } from "@modelcontextprotocol/node";
 import {
+  CLIENT_CAPABILITIES_META_KEY,
   createMcpHandler,
   McpServer,
   type AuthInfo,
   type CallToolResult,
   type ListToolsResult,
+  type RequestMetaEnvelope,
 } from "@modelcontextprotocol/server";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { type App } from "obsidian";
@@ -58,6 +60,44 @@ import {
  */
 const asListToolsResult = (value: unknown) => value as ListToolsResult;
 const asCallToolResult = (value: unknown) => value as CallToolResult;
+
+/** The MCP Apps extension a client declares to say it can render a `ui://` view. */
+const UI_EXTENSION_KEY = "io.modelcontextprotocol/ui";
+
+/**
+ * Whether THIS request's client declared `io.modelcontextprotocol/ui`
+ * support (R-09, ADR-0023 D9), or `undefined` when the request carries no
+ * per-request capability envelope at all.
+ *
+ * `undefined` is the legacy era and is NOT the same answer as `false`: that
+ * transport is stateless and POST-only, so `initialize`'s capability state
+ * never survives to a later request and there is no signal to gate on. The
+ * callers downstream keep attaching the payload unconditionally on
+ * `undefined`, and only a declared non-support withholds it.
+ *
+ * `envelope` is typed `Partial<RequestMetaEnvelope>` by the SDK, and that
+ * type is declared as `{}` in the installed build — a deliberately neutral
+ * shape it never indexes for us. The one narrow cast to a keyed record is
+ * therefore confined here, at the boundary, in the same class as
+ * `asCallToolResult` above; nothing else in the codebase reads the
+ * envelope. `CLIENT_CAPABILITIES_META_KEY` is imported rather than
+ * spelled out, so an SDK rename breaks the build instead of silently
+ * reading an absent key and downgrading every modern client to "no UI".
+ */
+function declaresUiExtension(
+  envelope: Partial<RequestMetaEnvelope> | undefined,
+): boolean | undefined {
+  if (envelope === undefined) return undefined;
+  const capabilities = (envelope as Record<string, unknown>)[
+    CLIENT_CAPABILITIES_META_KEY
+  ];
+  if (typeof capabilities !== "object" || capabilities === null) {
+    return undefined;
+  }
+  const extensions = (capabilities as { extensions?: unknown }).extensions;
+  if (typeof extensions !== "object" || extensions === null) return false;
+  return UI_EXTENSION_KEY in extensions;
+}
 
 /**
  * Server-level conventions, stated once instead of once per tool
@@ -320,6 +360,13 @@ export async function createMcpService(
           sendNotification: ctx.mcpReq.notify,
           scope,
           refusedTools: refusedToolsFor(policy),
+          // Read off the SAME per-request ctx that already supplies
+          // `notify` above, from the envelope the SDK lifts for the modern
+          // era (R-09, ADR-0023 D9). A legacy-classified request never
+          // reaches this leg with an envelope, so this stays `undefined`
+          // there — which the search tools read as "no signal" and keep
+          // attaching on, not as "no support".
+          hasUiCapability: declaresUiExtension(ctx.mcpReq.envelope),
         }),
       );
       // Record the call for frequency-based promotion (meta-tools and

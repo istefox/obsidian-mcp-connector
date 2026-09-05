@@ -41,15 +41,18 @@ export const DEFAULT_POLICY: TokenPolicy = {
 /**
  * What a genuinely NEW token resolves to (R-11, ADR-0023 D11) — distinct
  * from {@link DEFAULT_POLICY}, which keeps its "all" degrade-to-prior-
- * behaviour meaning for the three structural fallback sites that are not
- * this role (legacy-mirror recompute, `promotedFor`/`setPromoted`).
+ * behaviour meaning for the structural fallback sites that are not this
+ * role (legacy-mirror recompute, `updateTokenPolicy`'s patch base,
+ * `promotedFor`/`setPromoted`).
  *
- * TESTER STUB (task 7, dispatched ahead of the coder per ADR-0049): this
- * declaration exists only so `tokenPolicyStore.test.ts` compiles against
- * the shape ADR-0023 D11 specifies. It is intentionally NOT yet adopted
- * at either of the two sites D11 names (`readPolicy`'s fallback here, and
- * `tokenStore.ts`'s `withPolicyFor` non-seed branch) — that wiring, and
- * the final ownership of this export, belongs to the coder.
+ * Adopted at exactly TWO sites, and nowhere else:
+ * - {@link readPolicy}'s fallback — a live token with no entry;
+ * - `tokenStore.withPolicyFor`'s non-seed branch — seeding a genuinely
+ *   new token.
+ *
+ * Widening it past those two breaks ADR-0014's mirror guarantee: the
+ * legacy mirror is the only policy a downgraded 0.28.x build reads, so
+ * `adaptive` reaching it silently narrows an existing user's surface.
  */
 export const NEW_TOKEN_POLICY: TokenPolicy = {
   profile: "adaptive",
@@ -99,6 +102,16 @@ function readNames(value: unknown): string[] {
 /** A fresh, mutable copy — callers own the arrays they get back. */
 export function defaultPolicy(): TokenPolicy {
   return { ...DEFAULT_POLICY, promoted: [], allowed: null };
+}
+
+/**
+ * A fresh, mutable copy of {@link NEW_TOKEN_POLICY} — same ownership
+ * contract as {@link defaultPolicy}. Deliberately a separate factory:
+ * the two constants coincided until R-11 and must not be reachable
+ * through one another.
+ */
+export function newTokenPolicy(): TokenPolicy {
+  return { ...NEW_TOKEN_POLICY, promoted: [], allowed: null };
 }
 
 /**
@@ -180,8 +193,14 @@ function tokenIdsIn(raw: Record<string, unknown>): string[] {
 }
 
 /**
- * The policy in force for `tokenId`, or {@link DEFAULT_POLICY} when it
+ * The policy in force for `tokenId`, or {@link NEW_TOKEN_POLICY} when it
  * has no entry (or the slice does not exist yet).
+ *
+ * The fallback is the new-token role, not the degrade-to-prior-behaviour
+ * one (ADR-0023 D11): a token id never seen in `profiles` is a client
+ * that has never been configured, and `adaptive` is what it should get.
+ * A missing entry still resolves to a well-formed policy and never to a
+ * lockout, which is the invariant that actually mattered here.
  */
 export async function readPolicy(
   plugin: PluginDataLike,
@@ -189,7 +208,7 @@ export async function readPolicy(
 ): Promise<TokenPolicy> {
   const slice = await new SettingsStore(plugin).readSlice(SLICE);
   const profiles = normalizeProfiles(isRecord(slice) ? slice.profiles : {});
-  return profiles[tokenId] ?? defaultPolicy();
+  return profiles[tokenId] ?? newTokenPolicy();
 }
 
 /**

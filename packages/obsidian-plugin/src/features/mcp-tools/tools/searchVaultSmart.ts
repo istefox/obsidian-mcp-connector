@@ -57,9 +57,9 @@ export type SearchVaultSmartContext = {
    * legacy era (no per-request signal exists there) and in partial test
    * fixtures / non-HTTP call sites.
    *
-   * TESTER STUB (task 8): declared so tests compile; NOT yet consulted by
-   * `searchVaultSmartHandler`, which still calls `withSearchResultsPayload`
-   * unconditionally. Gating the call on this field is the coder's job.
+   * Only an explicit `false` withholds the payload. `undefined` must never
+   * be read as "declared: false" — the legacy era's unconditional attach
+   * depends on that distinction.
    */
   hasUiCapability?: boolean;
 };
@@ -278,8 +278,15 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
+  const result = successText(JSON.stringify({ results }));
+  // Same rule as `search_vault_simple` (R-09, ADR-0023 D9): only a
+  // declared NON-support withholds the payload. `undefined` means "no
+  // signal" — the legacy era, and every caller predating this field — and
+  // keeps attaching. Every `isError` return above short-circuits before
+  // reaching here, so the error branch still carries no key on either era.
+  if (ctx.hasUiCapability === false) return result;
   return withSearchResultsPayload(
-    successText(JSON.stringify({ results })),
+    result,
     projectSmartSearchResults(results, ctx.app.vault.getName()),
   );
 }

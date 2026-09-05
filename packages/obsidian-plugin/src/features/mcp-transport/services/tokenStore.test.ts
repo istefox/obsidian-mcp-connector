@@ -770,8 +770,12 @@ describe("revokeToken", () => {
     const toolLoading = data.toolLoading as {
       profiles: Record<string, unknown>;
     };
+    // `adaptive` since R-11 (ADR-0023 D11): the non-seed branch is the
+    // new-token role and now seeds NEW_TOKEN_POLICY. What this test
+    // asserts is unchanged — the survivor gets its OWN fresh policy, not
+    // the revoked token's `core`/`["x"]`.
     expect(toolLoading.profiles.claude).toEqual({
-      profile: "all",
+      profile: "adaptive",
       promoted: [],
       allowed: null,
     });
@@ -815,8 +819,11 @@ describe("revokeToken", () => {
     const toolLoading = getData().toolLoading as {
       profiles: Record<string, unknown>;
     };
+    // `adaptive` since R-11 (ADR-0023 D11), same reason as above: the
+    // point being pinned is that the survivor does NOT come out as
+    // `core`/`["x"]`, which is the revoked token's policy.
     expect(toolLoading.profiles.claude).toEqual({
-      profile: "all",
+      profile: "adaptive",
       promoted: [],
       allowed: null,
     });

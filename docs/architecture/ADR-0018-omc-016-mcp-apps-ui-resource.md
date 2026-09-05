@@ -183,6 +183,20 @@ that broke `get_vault_file` in 0.27.2–0.27.6.
 legible non-list state anyway (zero results, provider not ready), and a tool that stamps a
 results payload it does not have would be lying in a machine-readable field.
 
+**D5 (amended by ADR-0023 D9) — on the success branch the attach is now conditional, and only
+on the modern era.** A 2026-07-28 request carries its client's capabilities in every request's
+`_meta` envelope (`io.modelcontextprotocol/clientCapabilities`), so the payload is attached only
+when that client declares the `io.modelcontextprotocol/ui` extension: a client that cannot render
+the view no longer pays for a payload on every search result. The legacy era keeps attaching
+**unconditionally**, and this asymmetry is structural rather than an omission — that transport is
+stateless and POST-only, `initialize`'s capability state never survives to a later request, so
+there is no per-request signal to gate on and inventing a heuristic for one would silently
+withhold a renderable payload from a client that could have used it (ADR-0023 D9).
+
+The rule above is unchanged and still runs first: `isError` short-circuits before the capability
+check, so no error result carries the key on either era. "No signal" (`undefined`, the legacy era
+and every non-HTTP caller) is not "declared no support" (`false`) — only the latter withholds.
+
 **D6 — The payload is a flat, capped row list, and the vault name travels in it.**
 
 ```

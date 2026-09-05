@@ -56,12 +56,9 @@ interface HandlerContext {
    * "no signal", and the legacy era's unconditional attach depends on that
    * distinction.
    *
-   * TESTER STUB (task 8, dispatched ahead of the coder per ADR-0049): this
-   * field is declared so the modernEra.test.ts / searchVaultSimple.test.ts
-   * / searchVaultSmart.test.ts tests below compile and fail for the right
-   * reason. It is NOT yet populated at the mcpServer.ts dispatch call site
-   * and NOT yet threaded into the two search tools' handlers — that
-   * wiring, and the final field name/shape, belongs to the coder.
+   * Populated at the `tools/call` dispatch site in mcpServer.ts and read by
+   * `search_vault_simple` / `search_vault_smart`, the only two tools that
+   * carry a `ui://` payload. Every other tool ignores it.
    */
   hasUiCapability?: boolean;
 }

@@ -46,9 +46,9 @@ export type SearchVaultSimpleContext = {
    * per-request signal exists there) and in partial test fixtures / non-HTTP
    * call sites.
    *
-   * TESTER STUB (task 8): declared so tests compile; NOT yet consulted by
-   * `searchVaultSimpleHandler`, which still calls `withSearchResultsPayload`
-   * unconditionally. Gating the call on this field is the coder's job.
+   * Only an explicit `false` withholds the payload. `undefined` must never
+   * be read as "declared: false" — the legacy era's unconditional attach
+   * depends on that distinction.
    */
   hasUiCapability?: boolean;
 };
@@ -158,8 +158,14 @@ export async function searchVaultSimpleHandler(
     }
   }
 
+  const result = successText(JSON.stringify({ results }));
+  // `=== false` and not `!ctx.hasUiCapability`: only an explicit, declared
+  // NON-support withholds the payload (R-09, ADR-0023 D9). `undefined` is
+  // "no signal" — the legacy era, which is stateless and POST-only and
+  // therefore cannot have one — and keeps attaching unconditionally.
+  if (ctx.hasUiCapability === false) return result;
   return withSearchResultsPayload(
-    successText(JSON.stringify({ results })),
+    result,
     projectSimpleSearchResults(results, ctx.app.vault.getName()),
   );
 }

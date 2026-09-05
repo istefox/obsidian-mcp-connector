@@ -1112,20 +1112,20 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
     ).toBeDefined();
   });
 
-  // NOTE for the coder (R-09, ADR-0023 D9): this test's `VALID_ENVELOPE`
-  // declares `clientCapabilities: {}` — no `io.modelcontextprotocol/ui`
-  // extension. Once R-09's gating ships, a modern request with THIS
-  // envelope must STOP getting the payload (see the new describe block
-  // below, which is the mirror of this exact request with the extension
-  // added). This test's own assertion — payload defined — will then start
-  // failing and MUST be updated: either point it at an envelope that
-  // declares the extension, or move its intent into the new R-09 describe
-  // block below and repurpose this one to prove the encode-seam survival
-  // (serverInfo stamping) with a UI-declaring envelope. Not changed here:
-  // task 8's brief did not name this test for update, and R-09's own
-  // gating is not implemented yet, so today this assertion is still
-  // correct — flagging it rather than pre-emptively rewriting avoids
-  // masking a different regression under this same edit.
+  // R-09 (ADR-0023 D9) resolved the note that stood here: this test's
+  // subject is R-06 — the payload key SURVIVING the 2026 encode seam —
+  // which is only observable on a request that gets a payload at all. Under
+  // gating that now means a UI-declaring envelope, so the envelope moved
+  // and the assertions did not. The mirror case (a modern request WITHOUT
+  // the extension gets no payload) is owned by the R-09 describe block
+  // below, which is where that claim belongs.
+  const UI_ENVELOPE = {
+    ...VALID_ENVELOPE,
+    "io.modelcontextprotocol/clientCapabilities": {
+      extensions: { "io.modelcontextprotocol/ui": {} },
+    },
+  };
+
   test("modern: the same key survives the 2026 encode seam, alongside the seam's own stamped _meta fields", async () => {
     setMockFile("a.md", "one hit here");
     const server = await startService();
@@ -1139,7 +1139,7 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
         params: {
           name: "search_vault_simple",
           arguments: { query: "hit" },
-          _meta: VALID_ENVELOPE,
+          _meta: UI_ENVELOPE,
         },
       },
       { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
