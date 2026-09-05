@@ -114,13 +114,52 @@ afterEach(async () => {
   }
 });
 
+/**
+ * The `toolLoading` slice pinning the `default` token — the id
+ * `staticTokenProvider` hands out — to `profile: "all"`.
+ *
+ * A bare `mockPlugin()` seeds no `toolLoading` slice, so its token resolves
+ * through `readPolicy`'s missing-entry fallback. R-11 (ADR-0023 D11) moved
+ * that fallback from `DEFAULT_POLICY` ("all") to `NEW_TOKEN_POLICY`
+ * ("adaptive"), which narrows the surface to
+ * `ALWAYS_ACTIVE_TOOLS ∪ CORE_SET ∪ promoted` and drops non-core tools such
+ * as `search_vault_smart`. The era-routing cases in this file are about which
+ * transport answers, not about policy, so they pin the profile instead of
+ * inheriting whatever the ambient default happens to be. `test-setup.ts`'s
+ * shared `mockPlugin()` is deliberately left alone: `tokenPolicyStore.test.ts`
+ * exercises that very fallback against the bare default.
+ */
+const ALL_PROFILE_TOOL_LOADING = {
+  profile: "all",
+  promoted: [],
+  counters: {},
+  profiles: {
+    default: { profile: "all", promoted: [], allowed: null },
+  },
+} as const;
+
+/** A plugin backed by {@link ALL_PROFILE_TOOL_LOADING}, plus any extra
+ * overrides a caller needs (e.g. a seeded `semanticSearchState`). */
+function makeAllProfilePlugin(overrides: Record<string, unknown> = {}) {
+  let store: Record<string, unknown> = {
+    toolLoading: { ...ALL_PROFILE_TOOL_LOADING },
+  };
+  return mockPlugin({
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+    ...overrides,
+  } as never);
+}
+
 /** Boot a service + HTTP server behind a single static token, the same
  * idiom `mcpServer.test.ts` and `eraRouter.test.ts` use. */
 async function startService(): Promise<RunningServer> {
   const { startHttpServer } = await import("./httpServer");
   const svc = await createMcpService({
     app: mockApp(),
-    plugin: mockPlugin(),
+    plugin: makeAllProfilePlugin(),
     pluginVersion: "0.4.0-alpha.1",
     serverName: "mcp-connector",
   });
@@ -739,8 +778,12 @@ describe("search_vault_smart's notifications/progress rides the modern path's ow
   // (#344): `nativeIndexBuildInProgress: true` is the sole gate the
   // handler checks before it computes a progress percentage and pushes
   // it, independent of provider.isReady().
+  // The `profile: "all"` pin comes from `makeAllProfilePlugin` for the reason
+  // documented there: `search_vault_smart` is not in CORE_SET, so under R-11's
+  // `adaptive` default this tool would not be callable at all and the progress
+  // frames this test is about would never be produced.
   function buildingSemanticPlugin() {
-    return mockPlugin({
+    return makeAllProfilePlugin({
       semanticSearchState: {
         provider: { isReady: () => true, search: async () => [] },
         settings: { provider: "native", indexingMode: "live" },
@@ -748,7 +791,7 @@ describe("search_vault_smart's notifications/progress rides the modern path's ow
         nativeIndexBuildInProgress: true,
         nativeIndexBuildStartedAt: Date.now() - 1_000,
       },
-    } as never);
+    });
   }
 
   async function bootBuildingServer(): Promise<RunningServer> {
