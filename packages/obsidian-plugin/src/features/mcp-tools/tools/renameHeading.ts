@@ -30,7 +30,7 @@ export const renameHeadingSchema = type({
     ),
   },
 }).describe(
-  "Renames a heading in a vault file and rewrites every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault to keep link integrity. Two-phase commit: dry-run plan first, then apply atomically. Fails loud on missing heading, multi-match ambiguity, or destination collision. Frontmatter aliases are not rewritten.",
+  "Renames a heading in a vault file and rewrites every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault to keep link integrity. Two-phase commit: dry-run plan first, then apply atomically. Fails loud on missing heading, multi-match ambiguity, or destination collision. Frontmatter aliases are not rewritten. Backlinks inside hidden folders are left untouched and uncounted.",
 );
 
 export type RenameHeadingContext = {

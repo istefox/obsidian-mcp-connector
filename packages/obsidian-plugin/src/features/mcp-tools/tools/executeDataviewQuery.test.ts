@@ -180,6 +180,66 @@ describe("execute_dataview_query", () => {
     });
   });
 
+  describe("toJSON-bearing values are not walked (R-03 regression: DateTime/Duration corruption)", () => {
+    // Synthetic stand-in for Dataview's luxon-based DateTime/Duration: a
+    // plain object whose OWN enumerable fields are internal representation
+    // detail, and whose `toJSON()` is the only correct serialisation.
+    function makeDateTimeLike(iso: string) {
+      return {
+        // Internal fields a naive Object.entries walk would otherwise emit
+        // instead of the ISO string.
+        year: 2026,
+        month: 5,
+        day: 22,
+        toJSON() {
+          return iso;
+        },
+      };
+    }
+
+    test("a toJSON-bearing value nested inside a TABLE cell serialises via toJSON(), not its enumerable fields", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "mtime"],
+          values: [
+            ["Notes/A.md", makeDateTimeLike("2026-05-22T00:00:00.000Z")],
+          ],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.mtime FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([["Notes/A.md", "2026-05-22T00:00:00.000Z"]]);
+    });
+
+    test("a plain nested object with no toJSON and no Link shape still flattens recursively, unchanged", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "meta"],
+          values: [["Notes/A.md", { status: "open", nested: { count: 2 } }]],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.meta FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([
+        ["Notes/A.md", { status: "open", nested: { count: 2 } }],
+      ]);
+    });
+  });
+
   describe("query failure (Dataview returns successful:false)", () => {
     test("errorCode dataview_query_failed surfaces Dataview's error verbatim", async () => {
       setMockDataviewState("ready");

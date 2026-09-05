@@ -536,21 +536,30 @@ describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
     );
   });
 
-  // R-11 regression guard (ADR-0023 D11): `promotedFor`/`setPromoted`
-  // (toolLoadingManager.ts:36, :52) are structural fallbacks for a
-  // missing profiles entry, NOT new-token defaults — D11 explicitly
-  // leaves them untouched. Exercised through the public mutators, since
-  // both helpers are module-private. "As before" means: they read/write
-  // through `defaultPolicy()` (profile "all"), never NEW_TOKEN_POLICY.
-  test("activateTool against a token with no profiles entry starts from the 'all'-shaped default, not NEW_TOKEN_POLICY (R-11 regression guard)", async () => {
+  // R-11 seeding-gap fix, SECOND round (ADR-0023 D11 revisited):
+  // `promotedFor`/`setPromoted` (toolLoadingManager.ts) now resolve ANY
+  // missing profiles entry via `newTokenPolicy()` ("adaptive"),
+  // unconditionally — including for the CURRENT mirror token. A first
+  // version of this fix special-cased the mirror (kept it "all"-shaped),
+  // reasoning that `tokenStore.withPolicyFor` always seeds it before this
+  // module can be reached. That reasoning broke: `tokenStore.ts`'s
+  // `revokeToken` recomputes `ctx.mirrorId` against the POST-revoke token
+  // list WITHOUT reseeding anything (only `withPolicyFor`, run at
+  // `ensureTokenStore` time, ever seeds an entry), so a genuinely new,
+  // never-configured token can become `tokens[0]` purely by outliving an
+  // older one that was revoked — see the dedicated mirror-reassignment
+  // test below. Exercised through the public mutators, since both
+  // helpers are module-private.
+  test("activateTool against a token with no profiles entry seeds the 'adaptive'-shaped NEW_TOKEN_POLICY, not 'all'", async () => {
     const plugin = makePlugin({
       ...TWO_TOKEN_FIXTURE,
       toolLoading: {
         profile: "all",
         promoted: [],
         counters: {},
-        // `claude` has NO profiles entry at all — the exact missing-entry
-        // shape promotedFor/setPromoted must degrade from.
+        // `claude` (tokens[1], NOT the mirror) has NO profiles entry at
+        // all — the exact missing-entry shape promotedFor/setPromoted
+        // must degrade from.
         profiles: {
           default: { profile: "all", promoted: [], allowed: null },
         },
@@ -571,11 +580,139 @@ describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
         { profile: string; promoted: string[]; allowed: string[] | null }
       >;
     };
-    // setPromoted's missing-entry branch must seed the SAME shape
-    // defaultPolicy() always has (profile "all"), not adaptive.
+    // setPromoted's missing-entry branch, for a non-mirror token, must
+    // seed the NEW_TOKEN_POLICY shape (profile "adaptive"), not "all".
     expect(toolLoading.profiles.claude).toEqual({
-      profile: "all",
+      profile: "adaptive",
       promoted: ["search_and_replace"],
+      allowed: null,
+    });
+  });
+
+  // Still-true property kept under test now that the mirror special case is
+  // gone: a token that ALREADY has a seeded entry (any profile, not just
+  // "all") is never clobbered by activateTool — only `promoted` changes.
+  test("activateTool preserves an already-seeded token's existing profile and allowed ceiling", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+          claude: {
+            profile: "core",
+            promoted: [],
+            allowed: ["get_active_file"],
+          },
+        },
+      },
+    });
+
+    await mgr.activateTool("search_and_replace", ALL_NAMES, plugin, "claude");
+
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "core",
+      promoted: ["search_and_replace"],
+      allowed: ["get_active_file"],
+    });
+  });
+
+  // The actual second-round finding: `ctx.mirrorId` is `tokens[0]` by
+  // POSITION, not by identity, so revoking the original mirror can promote
+  // a never-configured token into the mirror slot. This fixture models the
+  // state immediately AFTER that revoke: only the never-configured token
+  // ("claude") is left, and it is now tokens[0] — the mirror — with no
+  // profiles entry of its own.
+  test("a never-configured token that becomes the mirror via revoke still gets adaptive, not all", async () => {
+    const plugin = makePlugin({
+      mcpTransport: {
+        bearerToken: "b".repeat(43),
+        tokens: [
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        // Legacy mirror fields left over from the revoked original token —
+        // exactly what a stale downgrade-compatible mirror looks like.
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {},
+      },
+    });
+
+    // No tokenId passed: resolves through ctx.mirrorId, which is now "claude".
+    const outcome = await mgr.activateTool(
+      "search_and_replace",
+      ALL_NAMES,
+      plugin,
+    );
+
+    expect(outcome).toBe("activated");
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "adaptive",
+      promoted: ["search_and_replace"],
+      allowed: null,
+    });
+  });
+
+  test("deactivateTool and resetAll against a non-mirror token with no profiles entry seed the same 'adaptive' shape, for consistency", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    await mgr.deactivateTool("search_and_replace", plugin, "claude");
+
+    const afterDeactivate = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(afterDeactivate.profiles.claude).toEqual({
+      profile: "adaptive",
+      promoted: [],
+      allowed: null,
+    });
+
+    await mgr.resetAll(plugin, "claude");
+
+    const afterReset = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(afterReset.profiles.claude).toEqual({
+      profile: "adaptive",
+      promoted: [],
       allowed: null,
     });
   });
@@ -611,6 +748,40 @@ describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
     expect(toolLoading.counters).toEqual({}); // global reset
     expect(toolLoading.profiles.default.promoted).toEqual([]);
     expect(toolLoading.profiles.claude.promoted).toEqual(["get_active_file"]); // untouched by another token's reset
+  });
+
+  test("auto-promotion also creates an entry for a live, never-configured token once the shared counter crosses threshold", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "adaptive",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "adaptive", promoted: [], allowed: null },
+          // "claude" deliberately has NO entry at all.
+        },
+      },
+    });
+
+    for (let i = 0; i < PROMOTION_THRESHOLD; i++) {
+      await mgr.recordCall("search_and_replace", plugin);
+    }
+
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(toolLoading.profiles.default.promoted).toContain(
+      "search_and_replace",
+    );
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "adaptive",
+      promoted: ["search_and_replace"],
+      allowed: null,
+    });
   });
 });
 

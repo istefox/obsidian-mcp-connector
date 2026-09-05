@@ -95,7 +95,21 @@ function isDataviewLink(value: object): value is { path: string } {
  * structured `dataview_query_failed` before this pass existed, and silently
  * emitting a truncated-but-valid result instead would be a behaviour change
  * nobody asked for.
+ *
+ * An object that defines its own `toJSON()` (luxon's `DateTime`/`Duration`,
+ * which Dataview returns for date/duration values) is returned as-is,
+ * untouched, rather than walked: the generic `Object.entries` walk below
+ * rebuilds a fresh plain record from a value's OWN enumerable fields, which
+ * silently discards both its prototype and its `toJSON`, so `JSON.stringify`
+ * can no longer call it — the exact serialisation `JSON.stringify(value)`
+ * used before this pass existed. The `isDataviewLink` check must stay
+ * ordered FIRST: a Link is expected to flatten to its path even if some
+ * future Dataview version gives it a `toJSON`.
  */
+function hasToJSON(obj: object): boolean {
+  return typeof (obj as { toJSON?: unknown }).toJSON === "function";
+}
+
 function flattenDataviewLinks(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || typeof value !== "object") return value;
   const obj = value as object;
@@ -103,6 +117,7 @@ function flattenDataviewLinks(value: unknown, seen: WeakSet<object>): unknown {
     throw new TypeError("Converting circular structure to JSON");
   }
   if (isDataviewLink(obj)) return obj.path;
+  if (hasToJSON(obj)) return obj;
   seen.add(obj);
   try {
     if (Array.isArray(obj)) {

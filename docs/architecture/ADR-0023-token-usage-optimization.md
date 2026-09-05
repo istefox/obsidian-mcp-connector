@@ -20,7 +20,7 @@ Measured 2026-09-05 against `main` (`b9ddacd`) and the Labs vault. These numbers
 from the interview session, restated here, not re-derived by this ADR**:
 
 | Surface | Size | Est. tokens |
-|---|---|---|
+| --- | --- | --- |
 | Full `tools/list` (49 tools, profile `all`) | 43.4 KB | ~10.9k |
 | Live `tools/list`, profile `adaptive` (18 tools) | 15.0 KB | ~3.7k |
 | `tool_catalog` response (49 entries) | 7.4 KB | ~1.9k |
@@ -29,6 +29,39 @@ from the interview session, restated here, not re-derived by this ADR**:
 
 Composition of the full `tools/list`: descriptions 13.1 KB, `inputSchema` 23.7 KB (of which 12.6 KB
 is parameter descriptions spread over 139 params), annotations 2.8 KB.
+
+**Re-measurement, 2026-09-05, against the shipped build (Task 9, R-12/R-13).** Same methodology
+(bytes/4 estimator), Labs vault, over the live server on `feat/token-usage-optimization-for-mcp-tool-su`.
+`tool_catalog`'s actual entry count and `tools/list`'s actual `all`-profile tool count are both **52**
+at this build, not 49. The interview-session baseline's 49 was already stale against `main`
+(`b9ddacd`) before this chain touched anything: three tools landed on `main` from unrelated work
+between the interview session and this measurement, so the 49 → 52 denominator change is not an
+effect of this chain and is not comparable as one. The byte/token deltas below are still a valid
+"before vs. after this chain" comparison — they are not attributable to the tool-count drift, they
+just happen to be measured against a denominator that also moved for a separate reason. The
+`adaptive` profile stays at 18 tools, matching the baseline exactly (new tools ship inactive by
+default under R-11, so they don't reach this row).
+
+| Surface | Size | Est. tokens | vs. baseline |
+| --- | --- | --- | --- |
+| Full `tools/list` (52 tools, profile `all`) | 43.0 KB | ~10.7k | -0.4 KB / -0.2k (49-tool baseline; +3 unrelated tools since) |
+| Live `tools/list`, profile `adaptive` (18 tools) | 14.1 KB | ~3.5k | -0.9 KB / -0.2k (-6%) |
+| `tool_catalog` response (52 entries) | 7.0 KB | ~1.7k | -0.4 KB / -0.2k (49-entry baseline; +3 unrelated entries since) |
+
+This chain's own effect (D6's schema-shape fix, D8's annotation/constraint slimming, and Task 6's
+description shortening + `instructions` addition) is smaller in bytes than shown: part of the -0.4
+KB is this chain's work, part is offset by the 3 unrelated tools' own schemas and descriptions
+adding bytes of their own. The measurement isolates neither share; it only confirms the combined,
+as-shipped total did not regress. This is the combined figure R-12 asked for: `instructions` is
+never credited alone (see the R-10-alone risk note below).
+
+**R-13 confirmed live**, same session: `search_vault_simple("the")` against a vault file with more
+than 5 matches (`03 Risorse/prompts/ricerca-caratteristiche-antivibranti.md`) returns exactly 5
+entries under `matches` for that file plus `"moreMatches": true`, and no result anywhere in the
+payload carries `match.start`/`match.end` — R-01/R-02 confirmed on the shipped build, not just in
+unit tests. `tools/list` and `tool_catalog` were inspected live over HTTP (not only measured for
+size) and match the shipped shape: `instructions` present on `initialize`, `_meta.ui` extension
+capability declared, 2026-07-28-era `server/discover` untouched by this chain.
 
 Two facts shape everything below.
 
@@ -176,6 +209,26 @@ honest position is that D6 removes a credible contributing factor. If #508 survi
 was not the cause and the investigation continues elsewhere. Either outcome is recorded in this ADR
 and on the issue. #508 is **not** closed on the strength of the shape change alone.
 
+**Outcome, recorded 2026-09-05 after D6 shipped (Task 4).** Direct measurement on the merged code:
+the raw ArkType schema for `dry_run` still emits `{"anyOf":[{"type":"boolean"}],"description":"..."}`
+before normalization; `normalizeInputSchema` (D6) now unwraps it to
+`{"type":"boolean","description":"..."}`, confirmed against a scratch fixture exercising the same
+code path `search_and_replace`'s registration goes through. This confirms D6's fix is real and
+applied to `dry_run` specifically.
+
+No in-house repro of the intermittent rejection itself was produced or attempted against a live
+client (Claude Desktop / the `.mcpb` bridge) — the reporter's own investigation (see the issue
+thread) already ran direct schema/validator checks, boolean coercion, and 5,000 concurrent calls
+without reproducing it, and concluded the failing request's raw bytes are needed to go further.
+Nothing in this task's scope changes that: the wrapper shape is fixed, but the report is
+intermittent and a static shape fix does not by itself explain intermittent behavior. Per this
+section's own criterion, **#508 is not closed.** The issue remains open, still waiting on the
+reporter to supply the exact bytes of a failing request (MCP Inspector or Claude Desktop
+`mcp*.log`) per the maintainer's last comment — no re-ping, this ADR update alone does not obligate
+one. If the reporter later confirms resolution on a build containing this fix, close #508
+referencing this section; if the reporter reproduces it again on this build, that rules the wrapper
+out entirely and the investigation continues elsewhere.
+
 #### D8 — Reduce annotation and constraint verbosity (R-08)
 
 Omit annotation fields whose value equals the MCP spec default. Simplify the base64 pattern
@@ -267,7 +320,7 @@ design.** `DEFAULT_POLICY` is not a single-purpose constant. It reads as "the de
 token", but at design time it serves **five** call sites in three semantically different roles:
 
 | Site | Role | Must it change? |
-|---|---|---|
+| --- | --- | --- |
 | `tokenPolicyStore.ts:173` (`readPolicy`) | a live token with no entry | **Yes** — this is R-11's target |
 | `tokenStore.ts:169` (`withPolicyFor`, non-seed branch) | seeding a genuinely new token | **Yes** — R-11's target |
 | `tokenPolicyStore.ts:226` (`updateToolLoading`, mirror recompute) | legacy-mirror fallback | **No** |
@@ -296,6 +349,31 @@ R-11 is exactly the change that separates them.
 
 `resolveToolScope.ts` needs **no change**. It receives an already-resolved `TokenPolicy` and never
 consults a default. Naming it as a touch point is right for reading, wrong for editing.
+
+**Post-review correction (2026-09-05): the table's "No" verdict for `toolLoadingManager.ts`'s
+`promotedFor`/`setPromoted` was itself wrong, and has been superseded.** That verdict reasoned by analogy with
+`tokenPolicyStore.ts:226`'s legacy-mirror fallback, treating "is this mirror-adjacent" as one
+question with one answer. It isn't. `tokenPolicyStore.ts:226` writes the LEGACY GLOBAL
+`toolLoading.profile`/`promoted` fields a downgraded 0.28.x build reads as its only policy source,
+so it must keep degrading to `all` — that part of the table still holds. But `toolLoadingManager.ts`'s
+`promotedFor`/`setPromoted` don't write those legacy fields at all; they read and write a specific
+token's `profiles[id]` entry. A first implementation of R-11 special-cased them by "is `target` the
+current mirror" (`defaultPolicy()` if so, `newTokenPolicy()` otherwise), reasoning that the mirror
+token is the one plausibly migrated from legacy globals and so deserves the conservative default.
+Review (both the `reviewer` subagent and, independently, a Codex second-opinion pass, per this
+chain's Gate 5) found this wrong: "is currently the mirror" is a **positional** fact
+(`tokens[0]`), not a stable proxy for "was legitimately seeded from legacy globals" — `tokenStore.ts`'s
+`revokeToken` recomputes `ctx.mirrorId` against the post-revoke token list without reseeding
+anything, so a genuinely new, never-configured token can become the mirror purely by outliving an
+older one that was revoked, and would then wrongly get `all`. The corrected rule: a missing
+`profiles[target]` entry in `toolLoadingManager.ts` always resolves to `newTokenPolicy()`, mirror or
+not. By the time either mutator runs, the token that was actually migrated from 0.28.2 globals is
+guaranteed to already have a real entry (seeded once, at `ensureTokenStore` time, by
+`tokenStore.withPolicyFor`) — so this fallback is never legitimately reached for it, and reaching it
+at all means either a genuinely new token (which must get `adaptive` under R-11 regardless of mirror
+status) or a corrupted/hand-edited record, for which `adaptive` is also the safer failure direction
+(recoverable via `activate_tool`; an accidental widening to `all` is not). The table's bottom two
+rows should now read "No, but not for the reason given — see this note" rather than a bare "No".
 
 ### Deferred
 

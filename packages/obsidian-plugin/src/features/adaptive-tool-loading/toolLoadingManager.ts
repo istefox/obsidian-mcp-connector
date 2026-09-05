@@ -8,8 +8,8 @@ import {
   PROMOTION_THRESHOLD,
 } from "./constants";
 import {
-  defaultPolicy,
   mergeState,
+  newTokenPolicy,
   updateToolLoading,
   type MirrorContext,
   type ToolLoadingState,
@@ -33,12 +33,40 @@ function targetOf(
   return tokenId ?? ctx.mirrorId;
 }
 
+/**
+ * A missing `profiles[target]` entry always resolves to {@link
+ * newTokenPolicy} (profile "adaptive"), never `defaultPolicy()` — including
+ * when `target` is the CURRENT mirror token. "Is currently the mirror" is
+ * not a stable proxy for "was legitimately seeded from legacy globals":
+ * `tokenStore.ts`'s `revokeToken` recomputes `ctx.mirrorId` against the
+ * POST-revoke token list without reseeding anything (only
+ * `tokenStore.withPolicyFor`, run at `ensureTokenStore` time before the HTTP
+ * listener binds, ever seeds an entry), so a genuinely new, never-configured
+ * token can become `tokens[0]` purely by outliving an older one that was
+ * revoked. By the time any mutator in this file runs, the token that was
+ * ACTUALLY migrated from 0.28.2 globals is guaranteed to already have an
+ * entry, so this fallback is never legitimately reached for it. Reaching it
+ * at all means either a genuinely new token (which must get `adaptive`,
+ * mirror or not — that is R-11, ADR-0023 D11) or a corrupted/hand-edited
+ * record; `adaptive` is also the safer failure direction for the latter,
+ * since an accidental narrowing is recoverable via `activate_tool` and an
+ * accidental widening is not.
+ *
+ * `tokenPolicyStore.ts`'s OWN mirror recompute
+ * (`next.profiles[ctx.mirrorId] ?? defaultPolicy()` inside
+ * `updateToolLoading`) is a DIFFERENT site and must stay `defaultPolicy()`
+ * -shaped: it writes the LEGACY GLOBAL `toolLoading.profile`/`promoted`
+ * fields that a downgraded 0.28.x build reads as its only policy, so it has
+ * to keep degrading to "all". Do not merge the two, and do not reintroduce
+ * a mirror special case here — it has now been tried and removed twice.
+ */
 function promotedFor(state: ToolLoadingState, target: string | null): string[] {
   return target === null
     ? state.promoted
-    : (state.profiles[target] ?? defaultPolicy()).promoted;
+    : (state.profiles[target] ?? newTokenPolicy()).promoted;
 }
 
+/** See {@link promotedFor} for why a missing entry seeds from newTokenPolicy(). */
 function setPromoted(
   state: ToolLoadingState,
   target: string | null,
@@ -49,7 +77,7 @@ function setPromoted(
     return;
   }
   state.profiles[target] = {
-    ...(state.profiles[target] ?? defaultPolicy()),
+    ...(state.profiles[target] ?? newTokenPolicy()),
     promoted,
   };
 }
@@ -207,8 +235,7 @@ export class ToolLoadingManager {
           }
           // Counters are global but promotion is per token: every
           // adaptive token crosses the same shared threshold and gets
-          // the tool in ITS list, in this one write. A token with no
-          // policy entry resolves to `all` and is never promoted into.
+          // the tool in ITS list, in this one write.
           if (ctx.tokenIds.length === 0) {
             if (state.profile === "adaptive") {
               // Past the threshold the tool STAYS past it, so every later
@@ -224,6 +251,19 @@ export class ToolLoadingManager {
             if (policy.profile !== "adaptive") continue;
             if (!policy.promoted.includes(toolName)) widened = true;
             setPromoted(state, id, union(policy.promoted, toolName));
+          }
+          // A live token with NO `profiles` entry at all resolves to
+          // `adaptive` too, via `readPolicy`'s newTokenPolicy() fallback —
+          // invisible to the loop above, which only iterates entries that
+          // already exist. Left alone, such a token's experience silently
+          // diverges from an already-touched adaptive token's: it is still
+          // reachable by calling `activate_tool` manually, but never gets
+          // auto-promoted. Create its entry here, matching the same
+          // resolution `setPromoted`'s own fallback now uses.
+          for (const id of ctx.tokenIds) {
+            if (id in state.profiles) continue;
+            widened = true;
+            setPromoted(state, id, [toolName]);
           }
         }
         return state;
