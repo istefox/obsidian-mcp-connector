@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_POLICY,
+  NEW_TOKEN_POLICY,
   readPolicy,
   updateToolLoading,
 } from "./tokenPolicyStore";
@@ -33,7 +34,13 @@ const TWO_TOKEN_FIXTURE = {
 };
 
 describe("readPolicy", () => {
-  test("returns DEFAULT_POLICY for a token with no profiles entry (R-14)", async () => {
+  // Updated for R-11 (ADR-0023 D11): a live token with no `profiles` entry
+  // is the new-token role, which now resolves to NEW_TOKEN_POLICY
+  // (`adaptive`), not DEFAULT_POLICY (`all`). The intent survives —
+  // a missing entry resolves to a well-formed policy, never a lockout —
+  // only the expected value changes. FAILING today: readPolicy still
+  // falls back to `defaultPolicy()` at tokenPolicyStore.ts:173.
+  test("returns NEW_TOKEN_POLICY for a token with no profiles entry (R-11, orphaned-token shape)", async () => {
     const plugin = makePlugin({
       ...TWO_TOKEN_FIXTURE,
       toolLoading: { profile: "all", promoted: [], counters: {}, profiles: {} },
@@ -41,15 +48,40 @@ describe("readPolicy", () => {
 
     const policy = await readPolicy(plugin, "claude");
 
-    expect(policy).toEqual(DEFAULT_POLICY);
+    expect(policy).toEqual(NEW_TOKEN_POLICY);
   });
 
-  test("returns DEFAULT_POLICY when the toolLoading slice is missing entirely (R-14)", async () => {
+  test("returns NEW_TOKEN_POLICY when the toolLoading slice is missing entirely (R-11)", async () => {
     const plugin = makePlugin({ ...TWO_TOKEN_FIXTURE });
 
     const policy = await readPolicy(plugin, "default");
 
+    expect(policy).toEqual(NEW_TOKEN_POLICY);
+  });
+
+  // R-11 regression guard: an EXISTING token whose entry already reads
+  // "all" must still resolve to "all" after the NEW_TOKEN_POLICY change —
+  // only the ABSENT-entry fallback moves, a seeded entry is untouched.
+  // This must already pass once D11 ships; it is written to fail loudly
+  // if a future change ever widens the new-default fallback to also
+  // override a seeded "all" entry.
+  test("an existing token whose entry reads 'all' still resolves to 'all' (R-11 regression guard)", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          claude: { profile: "all", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    const policy = await readPolicy(plugin, "claude");
+
     expect(policy).toEqual(DEFAULT_POLICY);
+    expect(policy.profile).toBe("all");
   });
 });
 
@@ -207,6 +239,48 @@ describe("updateToolLoading", () => {
       state.profiles.claude = {
         profile: "adaptive",
         promoted: ["search_vault"],
+        allowed: null,
+      };
+      return state;
+    });
+
+    const toolLoading = plugin._store().toolLoading as {
+      profile: string;
+      promoted: string[];
+    };
+    expect(toolLoading.profile).toBe("all");
+    expect(toolLoading.promoted).toEqual([]);
+  });
+
+  // R-11 downgrade guarantee (ADR-0023 D11): the legacy-mirror recompute
+  // site (tokenPolicyStore.ts:226) MUST stay on DEFAULT_POLICY
+  // (`defaultPolicy()`), never NEW_TOKEN_POLICY. If the mirror token's
+  // entry is momentarily absent when the recipe runs, the mirror written
+  // for a downgraded 0.28.x build must still read "all" — flipping this
+  // site would burn "adaptive" into `toolLoading.profile`, silently
+  // narrowing an existing user's surface on downgrade. This must keep
+  // passing after R-11 ships; it guards against widening the
+  // NEW_TOKEN_POLICY adoption beyond the two sites D11 names.
+  test("legacy mirror stays 'all' when the mirror token's entry is momentarily absent (R-11 downgrade guarantee)", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        // `default` (tokens[0], the mirror token) has NO profiles entry —
+        // the exact "momentarily absent" shape the mirror recompute must
+        // degrade from, not upgrade from.
+        profiles: {},
+      },
+    });
+
+    // An unrelated mutation on a DIFFERENT token still forces the mirror
+    // recompute to run against the (still-missing) mirror entry.
+    await updateToolLoading(plugin, (state) => {
+      state.profiles.claude = {
+        profile: "core",
+        promoted: [],
         allowed: null,
       };
       return state;

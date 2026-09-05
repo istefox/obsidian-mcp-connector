@@ -1112,6 +1112,20 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
     ).toBeDefined();
   });
 
+  // NOTE for the coder (R-09, ADR-0023 D9): this test's `VALID_ENVELOPE`
+  // declares `clientCapabilities: {}` — no `io.modelcontextprotocol/ui`
+  // extension. Once R-09's gating ships, a modern request with THIS
+  // envelope must STOP getting the payload (see the new describe block
+  // below, which is the mirror of this exact request with the extension
+  // added). This test's own assertion — payload defined — will then start
+  // failing and MUST be updated: either point it at an envelope that
+  // declares the extension, or move its intent into the new R-09 describe
+  // block below and repurpose this one to prove the encode-seam survival
+  // (serverInfo stamping) with a UI-declaring envelope. Not changed here:
+  // task 8's brief did not name this test for update, and R-09's own
+  // gating is not implemented yet, so today this assertion is still
+  // correct — flagging it rather than pre-emptively rewriting avoids
+  // masking a different regression under this same edit.
   test("modern: the same key survives the 2026 encode seam, alongside the seam's own stamped _meta fields", async () => {
     setMockFile("a.md", "one hit here");
     const server = await startService();
@@ -1152,5 +1166,120 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
     expect(
       body.result?._meta?.["io.modelcontextprotocol/serverInfo"],
     ).toBeDefined();
+  });
+});
+
+/**
+ * R-09 (ADR-0023 D9): gate the search-results `_meta` payload on the
+ * modern era's declared `io.modelcontextprotocol/ui` extension support.
+ * Real end-to-end coverage through the actual transport — `classifyEra`,
+ * the SDK's `serveModern` capability lift (`ctx.mcpReq.envelope`), and
+ * `mcpServer.ts`'s dispatch call site — not a mock of any of those layers.
+ *
+ * FAILING today (both gating cases): the payload is attached unconditionally
+ * regardless of the declared envelope, exactly as R-06's tests above already
+ * demonstrate with a NON-declaring envelope.
+ */
+describe("search_vault_simple — _meta payload gated on the modern era's declared UI capability (R-09, ADR-0023 D9)", () => {
+  const UI_CAPABLE_ENVELOPE = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {
+      extensions: { "io.modelcontextprotocol/ui": {} },
+    },
+  };
+  const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+
+  test("modern request declaring io.modelcontextprotocol/ui GETS the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 60,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          _meta: UI_CAPABLE_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
+    );
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  test("modern request NOT declaring io.modelcontextprotocol/ui does NOT get the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          // VALID_ENVELOPE's clientCapabilities is {} — no extensions at
+          // all, so no io.modelcontextprotocol/ui declaration.
+          _meta: VALID_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
+    );
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeUndefined();
+  });
+
+  // Pinned so a later refactor of the gating logic cannot silently widen
+  // it onto the era that has no capability signal to gate on at all
+  // (ADR-0023 D9: "structurally impossible" on legacy, not a gap to work
+  // around). Already true today; must stay true after R-09 ships.
+  test("a legacy request gets the payload unconditionally, regardless of R-09's gating", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 62,
+      method: "tools/call",
+      params: { name: "search_vault_simple", arguments: { query: "hit" } },
+    });
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  // isError regression guard at the transport level, mirroring the
+  // existing unit-level pins in searchVaultSimple.test.ts /
+  // searchVaultSmart.test.ts — already true today via
+  // withSearchResultsPayload's isError short-circuit, must stay true once
+  // gating is added on top of it (isError must short-circuit BEFORE the
+  // capability check, not after).
+  test("an isError result carries no _meta key even when the caller declares io.modelcontextprotocol/ui", async () => {
+    // No mock files at all: search_vault_smart's provider-not-ready path
+    // is the simplest reliable isError branch available at this level
+    // without faking a whole SemanticSearchProvider through HTTP.
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 63,
+        method: "tools/call",
+        params: {
+          name: "search_vault_smart",
+          arguments: { query: "hit" },
+          _meta: UI_CAPABLE_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_smart" },
+    );
+    const body = await res.json();
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeUndefined();
   });
 });

@@ -536,6 +536,50 @@ describe("per-token mutators (multi-token world, R-05, R-10, R-12)", () => {
     );
   });
 
+  // R-11 regression guard (ADR-0023 D11): `promotedFor`/`setPromoted`
+  // (toolLoadingManager.ts:36, :52) are structural fallbacks for a
+  // missing profiles entry, NOT new-token defaults — D11 explicitly
+  // leaves them untouched. Exercised through the public mutators, since
+  // both helpers are module-private. "As before" means: they read/write
+  // through `defaultPolicy()` (profile "all"), never NEW_TOKEN_POLICY.
+  test("activateTool against a token with no profiles entry starts from the 'all'-shaped default, not NEW_TOKEN_POLICY (R-11 regression guard)", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        // `claude` has NO profiles entry at all — the exact missing-entry
+        // shape promotedFor/setPromoted must degrade from.
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    const outcome = await mgr.activateTool(
+      "search_and_replace",
+      ALL_NAMES,
+      plugin,
+      "claude",
+    );
+
+    expect(outcome).toBe("activated");
+    const toolLoading = plugin._store().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    // setPromoted's missing-entry branch must seed the SAME shape
+    // defaultPolicy() always has (profile "all"), not adaptive.
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "all",
+      promoted: ["search_and_replace"],
+      allowed: null,
+    });
+  });
+
   test("resetAll splits: counters reset globally, promoted resets only for the given token (R-10)", async () => {
     const plugin = makePlugin({
       ...TWO_TOKEN_FIXTURE,

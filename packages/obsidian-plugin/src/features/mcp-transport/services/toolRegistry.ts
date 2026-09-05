@@ -43,6 +43,27 @@ interface HandlerContext {
    * why the tool names and their reasons never appear in this file.
    */
   refusedTools?: ReadonlyMap<string, string>;
+  /**
+   * Whether THIS caller declared `io.modelcontextprotocol/ui` extension
+   * support (R-09, ADR-0023 D9). `true`/`false` on the modern
+   * (2026-07-28) era, read from `ctx.mcpReq.envelope`'s
+   * `CLIENT_CAPABILITIES_META_KEY` entry at the mcpServer.ts dispatch call
+   * site — the SDK's own per-request signal (`Server._inputRequestCapabilityView`'s
+   * documented idiom), not a project-invented one. `undefined` on the
+   * legacy era, where no per-request capability signal exists at all
+   * (stateless, POST-only, no `initialize` state survives to a later
+   * request) — undefined must NOT be read as "declared: false"; it means
+   * "no signal", and the legacy era's unconditional attach depends on that
+   * distinction.
+   *
+   * TESTER STUB (task 8, dispatched ahead of the coder per ADR-0049): this
+   * field is declared so the modernEra.test.ts / searchVaultSimple.test.ts
+   * / searchVaultSmart.test.ts tests below compile and fail for the right
+   * reason. It is NOT yet populated at the mcpServer.ts dispatch call site
+   * and NOT yet threaded into the two search tools' handlers — that
+   * wiring, and the final field name/shape, belongs to the coder.
+   */
+  hasUiCapability?: boolean;
 }
 
 /** One `tools/list` entry, as served on the wire. */

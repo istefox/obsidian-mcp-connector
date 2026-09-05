@@ -38,6 +38,19 @@ export type SearchVaultSimpleContext = {
     maxMatchesPerFile?: number;
   };
   app: App;
+  /**
+   * R-09 (ADR-0023 D9) capability signal, threaded from
+   * `HandlerContext.hasUiCapability` (mcp-transport/services/toolRegistry.ts)
+   * the same way `search_vault_smart`'s `sendNotification` already is.
+   * `true`/`false` on the modern era, `undefined` on the legacy era (no
+   * per-request signal exists there) and in partial test fixtures / non-HTTP
+   * call sites.
+   *
+   * TESTER STUB (task 8): declared so tests compile; NOT yet consulted by
+   * `searchVaultSimpleHandler`, which still calls `withSearchResultsPayload`
+   * unconditionally. Gating the call on this field is the coder's job.
+   */
+  hasUiCapability?: boolean;
 };
 
 type FileResult = {

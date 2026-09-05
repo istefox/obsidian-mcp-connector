@@ -260,3 +260,46 @@ describe("search_vault_simple — result _meta carries the structured payload on
     expect("structuredContent" in result).toBe(false);
   });
 });
+
+describe("search_vault_simple — _meta payload gated on declared UI capability (R-09, ADR-0023 D9)", () => {
+  const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+
+  // FAILING today: searchVaultSimpleHandler calls withSearchResultsPayload
+  // unconditionally and never reads hasUiCapability at all.
+  test("hasUiCapability: false — the modern era's declared non-support — omits the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const result = (await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+      hasUiCapability: false,
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeUndefined();
+  });
+
+  test("hasUiCapability: true — the modern era's declared support — carries the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const result = (await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+      hasUiCapability: true,
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  // Regression guard, not a task-8 failing case: hasUiCapability absent is
+  // the legacy-era shape (no per-request signal exists there) AND every
+  // caller that predates this field (direct handler callers, partial test
+  // fixtures) — both must keep the unconditional-attach behaviour that
+  // exists today. This must stay green through task 8's implementation.
+  test("hasUiCapability omitted (legacy era / callers that predate the signal) — payload stays unconditional", async () => {
+    setMockFile("a.md", "one hit here");
+    const result = (await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+});

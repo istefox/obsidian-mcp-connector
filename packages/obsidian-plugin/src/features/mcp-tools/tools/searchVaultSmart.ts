@@ -50,6 +50,18 @@ export type SearchVaultSmartContext = {
     method: string;
     params?: Record<string, unknown>;
   }) => Promise<void>;
+  /**
+   * R-09 (ADR-0023 D9) capability signal, threaded from
+   * `HandlerContext.hasUiCapability` the same way `sendNotification` above
+   * already is. `true`/`false` on the modern era, `undefined` on the
+   * legacy era (no per-request signal exists there) and in partial test
+   * fixtures / non-HTTP call sites.
+   *
+   * TESTER STUB (task 8): declared so tests compile; NOT yet consulted by
+   * `searchVaultSmartHandler`, which still calls `withSearchResultsPayload`
+   * unconditionally. Gating the call on this field is the coder's job.
+   */
+  hasUiCapability?: boolean;
 };
 
 type ToolResult = {

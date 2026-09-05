@@ -38,6 +38,25 @@ export const DEFAULT_POLICY: TokenPolicy = {
   allowed: null,
 };
 
+/**
+ * What a genuinely NEW token resolves to (R-11, ADR-0023 D11) — distinct
+ * from {@link DEFAULT_POLICY}, which keeps its "all" degrade-to-prior-
+ * behaviour meaning for the three structural fallback sites that are not
+ * this role (legacy-mirror recompute, `promotedFor`/`setPromoted`).
+ *
+ * TESTER STUB (task 7, dispatched ahead of the coder per ADR-0049): this
+ * declaration exists only so `tokenPolicyStore.test.ts` compiles against
+ * the shape ADR-0023 D11 specifies. It is intentionally NOT yet adopted
+ * at either of the two sites D11 names (`readPolicy`'s fallback here, and
+ * `tokenStore.ts`'s `withPolicyFor` non-seed branch) — that wiring, and
+ * the final ownership of this export, belongs to the coder.
+ */
+export const NEW_TOKEN_POLICY: TokenPolicy = {
+  profile: "adaptive",
+  promoted: [],
+  allowed: null,
+};
+
 /** Normalized view of the whole `toolLoading` slice. */
 export type ToolLoadingState = {
   /** Legacy mirror of `profiles[tokens[0].id].profile`. */
