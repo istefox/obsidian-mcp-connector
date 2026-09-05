@@ -970,12 +970,23 @@ describe("ToolRegistry annotations", () => {
       });
     });
 
-    test("every field omitted from a tool's own annotations still round-trips through the spec-default rule independently per field", () => {
+    // ADR-0023 D8's "one deliberate exception" paragraph: destructiveHint is
+    // the only field this rule strips at its spec default. readOnlyHint and
+    // openWorldHint must always survive emission as explicit booleans,
+    // regardless of value, because mcpServer.test.ts's full-registry
+    // completeness guard (~line 246) requires every wire tool entry to carry
+    // both as booleans. Since readOnlyHint:false and openWorldHint:true ARE
+    // the spec defaults for most tools, stripping them at spec-default value
+    // would break that guard — so the strip rule is scoped to destructiveHint
+    // only, not applied uniformly across all four annotation fields.
+    test("destructiveHint at its spec default is omitted, while readOnlyHint and openWorldHint are never stripped even at their own spec defaults", () => {
       const { tools } = buildRegistryWithTwoTools();
 
-      // All four fields at their spec defaults — every one should be
-      // stripped, leaving `annotations` either absent or an empty object,
-      // never a partially-stripped shape.
+      // readOnlyHint: false and openWorldHint: true are each that field's
+      // own spec default, and idempotentHint: false is also its spec
+      // default — none of the three should be stripped. destructiveHint:
+      // true is the spec default for that field, and is the sole field
+      // this rule omits.
       tools.setAnnotations({
         alpha: {
           readOnlyHint: false,
@@ -986,10 +997,14 @@ describe("ToolRegistry annotations", () => {
       });
 
       const alpha = tools.list().tools.find((t) => t.name === "alpha");
-      const remaining = alpha?.annotations
-        ? Object.keys(alpha.annotations)
-        : [];
-      expect(remaining).toEqual([]);
+      expect(alpha?.annotations && "destructiveHint" in alpha.annotations).toBe(
+        false,
+      );
+      // readOnlyHint and openWorldHint always survive as explicit booleans,
+      // never stripped, per the mcpServer.test.ts completeness guard.
+      expect(alpha?.annotations?.readOnlyHint).toBe(false);
+      expect(alpha?.annotations?.openWorldHint).toBe(true);
+      expect(alpha?.annotations?.idempotentHint).toBe(false);
     });
   });
 });
