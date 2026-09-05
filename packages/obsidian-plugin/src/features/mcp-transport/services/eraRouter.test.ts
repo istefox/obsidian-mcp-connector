@@ -104,24 +104,53 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
       // `server/discover` capability assertion, and together they are the
       // record that one declaration in `buildMcpServer` reaches both eras
       // (ADR-0018 D1, D2).
+      // Task 6 / R-10 / ADR-0023 D5: `buildMcpServer` now sets a non-empty
+      // `instructions` string on the McpServer construction, and the SDK's
+      // `_oninitialize` emits it as a new top-level field of `result`
+      // (server/index.js's `...this._instructions && { instructions:
+      // this._instructions }` spread — see CLAUDE.md's mcpServer.ts note).
+      // `instructions` reaches ONLY the legacy era (ADR-0016: modern enters
+      // at `server/discover`, which never calls `_oninitialize`), so this
+      // is the one and only wire site to assert its presence and content.
+      //
+      // The full-body `toEqual` above this comment historically asserted
+      // every key of `result` in one shot; `instructions`' arbitrary prose
+      // is not something this test should pin verbatim (that is the
+      // coder's/human's judgment call per R-05's no-test rule for the
+      // shortening work) — so the shape is split: every pre-existing key
+      // stays a full-body pin, and `instructions` gets its own minimum-
+      // content assertions instead of a byte-exact string.
+      const { instructions, ...resultWithoutInstructions } = body.result as {
+        instructions?: unknown;
+        [key: string]: unknown;
+      };
       expect(body).toEqual({
         jsonrpc: "2.0",
         id: 1,
-        result: {
-          protocolVersion: "2025-06-18",
-          capabilities: {
-            tools: { listChanged: true },
-            prompts: { listChanged: false },
-            resources: { subscribe: false, listChanged: false },
-            extensions: {
-              "io.modelcontextprotocol/ui": {
-                mimeTypes: ["text/html;profile=mcp-app"],
-              },
+        result: { instructions, ...resultWithoutInstructions },
+      });
+      expect(resultWithoutInstructions).toEqual({
+        protocolVersion: "2025-06-18",
+        capabilities: {
+          tools: { listChanged: true },
+          prompts: { listChanged: false },
+          resources: { subscribe: false, listChanged: false },
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
             },
           },
-          serverInfo: { name: "mcp-connector", version: "0.4.0-alpha.1" },
         },
+        serverInfo: { name: "mcp-connector", version: "0.4.0-alpha.1" },
       });
+
+      // R-10's explicit minimum coverage, verbatim from the plan: vault-
+      // relative paths, 0-indexed lines, the errorCode response shape.
+      expect(typeof instructions).toBe("string");
+      expect((instructions as string).length).toBeGreaterThan(0);
+      expect(instructions).toMatch(/vault-relative/i);
+      expect(instructions).toMatch(/0-indexed|zero-indexed/i);
+      expect(instructions).toMatch(/errorCode/);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }

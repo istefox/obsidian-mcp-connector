@@ -897,6 +897,101 @@ describe("ToolRegistry annotations", () => {
       readOnlyHint: true,
     });
   });
+
+  // R-08 / ADR-0023 D8: spec-default-valued annotation fields are stripped
+  // at the EMISSION seam (this file's list()/entries()), not by editing the
+  // source table in mcp-tools/toolAnnotations.ts — that table keeps setting
+  // destructiveHint explicitly on every writer so the classification stays
+  // reviewable in one place. setAnnotations() itself must keep storing the
+  // caller's literal map unchanged; only the wire-facing `entry.annotations`
+  // built in entries() may omit spec-default values.
+  //
+  // MCP spec defaults for an annotation field absent from `tools/list`:
+  // readOnlyHint: false, destructiveHint: true, idempotentHint: false,
+  // openWorldHint: true.
+  describe("R-08: spec-default annotation fields are omitted at the emission seam", () => {
+    test("a field explicitly set to its spec-default value is omitted from the wire entry", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // destructiveHint: true is the spec default for an unlisted field,
+      // and openWorldHint: false is NOT the spec default (true is) — so
+      // only destructiveHint should be stripped here.
+      tools.setAnnotations({
+        alpha: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: false,
+        },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      expect(alpha?.annotations).toEqual({
+        readOnlyHint: false,
+        openWorldHint: false,
+      });
+      expect(alpha?.annotations && "destructiveHint" in alpha.annotations).toBe(
+        false,
+      );
+    });
+
+    test("a field explicitly set to a NON-default value is kept on the wire entry", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // destructiveHint: false is NOT the spec default (true is), so it
+      // must survive emission.
+      tools.setAnnotations({
+        alpha: { readOnlyHint: false, destructiveHint: false },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      expect(alpha?.annotations?.destructiveHint).toBe(false);
+    });
+
+    test("setAnnotations() itself is unaffected — the stored map keeps the caller's literal (spec-default-inclusive) values", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      const stored = {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      };
+      tools.setAnnotations({ alpha: stored });
+
+      // The emission seam must be a read-time transform of what
+      // toolAnnotations.ts declared, not a mutation performed by
+      // setAnnotations() at write time — otherwise a second read of the
+      // same input (e.g. a future getAnnotations()-style accessor) would
+      // see the already-stripped shape instead of the source table's
+      // literal declaration.
+      expect(stored).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      });
+    });
+
+    test("every field omitted from a tool's own annotations still round-trips through the spec-default rule independently per field", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // All four fields at their spec defaults — every one should be
+      // stripped, leaving `annotations` either absent or an empty object,
+      // never a partially-stripped shape.
+      tools.setAnnotations({
+        alpha: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      const remaining = alpha?.annotations
+        ? Object.keys(alpha.annotations)
+        : [];
+      expect(remaining).toEqual([]);
+    });
+  });
 });
 
 describe("ToolRegistry outputSchema", () => {
