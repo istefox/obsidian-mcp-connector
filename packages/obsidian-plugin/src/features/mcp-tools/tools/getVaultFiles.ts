@@ -17,7 +17,7 @@ export const getVaultFilesSchema = type({
     ),
   },
 }).describe(
-  "Reads up to 20 vault text/markdown files in one call, returning one result per input path in the same order. A bad path never fails the whole call: missing files, folders, and binary files each produce a per-entry error instead. Binary files (images, audio, PDFs, etc.) are not supported here regardless of `format` — use get_vault_file to read one individually.",
+  "Reads up to 20 vault text/markdown files in one call, returning one result per input path in the same order. A bad path never fails the whole call: missing files, folders and binary files each produce a per-entry error instead. Binary files are unsupported here regardless of `format` — use get_vault_file for those.",
 );
 
 export type GetVaultFilesContext = {

@@ -28,7 +28,7 @@ export const searchVaultSmartSchema = type({
     ),
   },
 }).describe(
-  "Semantic search through the configured semantic search provider — native Transformers.js (default) or Smart Connections, per Settings → MCP Connector → Semantic Search. Returns notes ranked by similarity to the query, each with the 0-indexed line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
+  "Semantic search through the configured provider, native Transformers.js or Smart Connections. Returns notes ranked by similarity to the query, each with the line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
 );
 
 export type SearchVaultSmartContext = {

@@ -15,7 +15,7 @@ export const listPropertyValuesSchema = type({
     ),
   },
 }).describe(
-  "Enumerates the distinct values of a single frontmatter (note property) key across the vault, with per-value occurrence counts and native types preserved. List-valued frontmatter contributes each element. Scans Obsidian's metadata cache only (no file I/O), so it scales to large vaults. To find which notes carry a given value, use `search_vault` with a DQL/JsonLogic query. Always read-only.",
+  "Enumerates the distinct values of a single frontmatter (note property) key across the vault, with per-value occurrence counts and native types preserved. List-valued frontmatter contributes each element separately. To find which notes carry a given value, use `search_vault` with a DQL/JsonLogic query.",
 );
 
 export type ListPropertyValuesContext = {

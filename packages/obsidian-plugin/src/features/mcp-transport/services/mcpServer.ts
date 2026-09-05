@@ -59,6 +59,38 @@ import {
 const asListToolsResult = (value: unknown) => value as ListToolsResult;
 const asCallToolResult = (value: unknown) => value as CallToolResult;
 
+/**
+ * Server-level conventions, stated once instead of once per tool
+ * (ADR-0023 D5, R-10).
+ *
+ * These three rules held across the whole tool surface and were repeated
+ * in dozens of individual tool and parameter descriptions, which is a
+ * session-fixed cost paid on every `tools/list`. Saying them here and
+ * deleting the repetitions is a net reduction — which is why the two
+ * halves of D5 ship together: this string alone is *added* prose.
+ *
+ * Reaches the LEGACY era only. The SDK emits it from `_oninitialize`
+ * (`instructions` spread into the initialize result), and a 2026-07-28
+ * client never calls `initialize` — it enters at `server/discover`
+ * (ADR-0016). A modern client therefore reads these conventions nowhere,
+ * so nothing a caller strictly needs to invoke a tool correctly may live
+ * only here: this is a de-duplication of guidance, not the sole home of
+ * a required argument's meaning.
+ */
+const SERVER_INSTRUCTIONS = [
+  "This server exposes an Obsidian vault.",
+  "",
+  "Conventions shared by every tool, so they are not repeated per tool:",
+  "",
+  "- Paths are vault-relative, never absolute, and include the file extension",
+  "  (e.g. 'Projects/Notes/idea.md'). There is no leading slash and no '~'.",
+  "- Line numbers are 0-indexed, and a startLine/endLine range is inclusive",
+  "  on both ends.",
+  "- A failure comes back as an ordinary result with isError: true, whose text",
+  "  is JSON carrying an errorCode field plus a human-readable message. Match on",
+  "  errorCode, not on the message text.",
+].join("\n");
+
 export type McpServiceConfig = {
   app: App;
   plugin: McpToolsPlugin;
@@ -212,6 +244,9 @@ export async function createMcpService(
         version: config.pluginVersion,
       },
       {
+        // Emitted by the SDK from `_oninitialize` only, so it is served to
+        // the legacy era alone (ADR-0016) — see SERVER_INSTRUCTIONS.
+        instructions: SERVER_INSTRUCTIONS,
         capabilities: {
           // Declare tools capability so the SDK allows tools/list and
           // tools/call request handler registration. Without this the
