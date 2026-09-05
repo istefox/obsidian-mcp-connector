@@ -34,9 +34,11 @@ export type ExecuteDataviewQueryContext = {
 //   { successful: false, error: string }
 // We unwrap the envelope and return the inner `value` (or surface `error`).
 // The success `value` carries extra fields beyond the documented contract
-// (`idMeaning` on table, `primaryMeaning` on list, grouping on task); we
-// pass them through verbatim. The load-bearing contract per ADR-0003 is the
-// `type` discriminator + the typed `headers`/`values` per shape.
+// (`idMeaning` on table, `primaryMeaning` on list, grouping on task). All but
+// `idMeaning` pass through verbatim; `idMeaning` is dropped, and `Link`
+// objects flatten to their path, per ADR-0023 D3 — see
+// `serializeDataviewResult` below. The load-bearing contract per ADR-0003 is
+// the `type` discriminator + the typed `headers`/`values` per shape.
 
 interface DataviewResultSuccess<T> {
   successful: true;
@@ -61,6 +63,81 @@ interface DataviewApi {
 
 interface DataviewPlugin {
   api?: DataviewApi;
+}
+
+// ── Result serialisation (ADR-0023 D3, R-03) ───────────────────────────────
+//
+// A Dataview `Link` serialises as `{path, embed, type, display}`, of which
+// only `path` is actionable for an MCP client. Flattening it to the plain
+// path string is applied **recursively**: a Link commonly sits inside an
+// array inside a TABLE cell, and a top-level-only transform would emit the
+// same logical value in two different shapes depending on nesting depth.
+//
+// `search_vault` (dataview mode) needs no copy of this: it delegates to this
+// handler, so both callers share this single seam by construction.
+
+/** Structural test for Dataview's `Link`, whose class is out-of-repo. */
+function isDataviewLink(value: object): value is { path: string } {
+  return (
+    "path" in value &&
+    typeof (value as { path: unknown }).path === "string" &&
+    "embed" in value &&
+    "type" in value
+  );
+}
+
+/**
+ * Deep-map a Dataview query result: `Link` → `path` string, everything else
+ * structurally preserved. `seen` guards against the circular references
+ * Dataview objects can carry — without it the recursion would blow the stack
+ * before `JSON.stringify`'s own throw could be caught. It *throws* on a cycle
+ * rather than substituting a placeholder: a circular result was already a
+ * structured `dataview_query_failed` before this pass existed, and silently
+ * emitting a truncated-but-valid result instead would be a behaviour change
+ * nobody asked for.
+ */
+function flattenDataviewLinks(value: unknown, seen: WeakSet<object>): unknown {
+  if (value === null || typeof value !== "object") return value;
+  const obj = value as object;
+  if (seen.has(obj)) {
+    throw new TypeError("Converting circular structure to JSON");
+  }
+  if (isDataviewLink(obj)) return obj.path;
+  seen.add(obj);
+  try {
+    if (Array.isArray(obj)) {
+      return obj.map((entry) => flattenDataviewLinks(entry, seen));
+    }
+    const mapped: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(obj)) {
+      mapped[key] = flattenDataviewLinks(entry, seen);
+    }
+    return mapped;
+  } finally {
+    seen.delete(obj);
+  }
+}
+
+/**
+ * Prepare a successful query result for the wire: recursive Link flattening
+ * plus the removal of TABLE-mode's `idMeaning`, which restates what the
+ * first column already is.
+ */
+function serializeDataviewResult(value: unknown): unknown {
+  const flattened = flattenDataviewLinks(value, new WeakSet<object>());
+  if (
+    flattened !== null &&
+    typeof flattened === "object" &&
+    !Array.isArray(flattened) &&
+    "idMeaning" in flattened
+  ) {
+    const { idMeaning: _idMeaning, ...rest } = flattened as Record<
+      string,
+      unknown
+    >;
+    return rest;
+  }
+  return flattened;
 }
 
 interface AppWithPlugins {
@@ -132,7 +209,7 @@ export async function executeDataviewQueryHandler(
   // structured error rather than an unhandled rejection.
   let text: string;
   try {
-    text = JSON.stringify(result.value);
+    text = JSON.stringify(serializeDataviewResult(result.value));
   } catch {
     return errorPayload(
       "Dataview result contains non-serialisable values (circular reference or BigInt). Add LIMIT or simplify the query to reduce result complexity.",

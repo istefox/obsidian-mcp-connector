@@ -8,6 +8,7 @@ import {
 
 const DEFAULT_CONTEXT = 100;
 const DEFAULT_LIMIT = 50;
+const DEFAULT_MAX_MATCHES_PER_FILE = 5;
 
 export const searchVaultSimpleSchema = type({
   name: '"search_vault_simple"',
@@ -21,9 +22,6 @@ export const searchVaultSimpleSchema = type({
     "limit?": type("number.integer>=1").describe(
       "Max number of files to return matches from. Default 50.",
     ),
-    // Signature declared here for R-01 (test-first, tester-owned per
-    // ADR-0023 D2 / plan task 1); the cap/moreMatches BEHAVIOR below is
-    // the coder's, not implemented by this declaration alone.
     "maxMatchesPerFile?": type("number.integer>=1").describe(
       "Max number of matches to return per file. Default 5.",
     ),
@@ -47,19 +45,12 @@ type FileResult = {
   /**
    * Set when this file had more matches than `maxMatchesPerFile` allowed
    * through (R-02, ADR-0023 D2) — "more than the cap", not "at least the
-   * cap". Absent/false for a file at or under the cap. Declared here
-   * (signature only) for the R-01/R-02 tests; not yet populated by the
-   * handler below — that population, and the removal of `match` from
-   * both this type and the pushed object, are the coder's (plan task 1).
+   * cap". Left absent (never `false`) for a file at or under the cap, so
+   * the serialized response carries no key for the common case.
    */
   moreMatches?: boolean;
   matches: Array<{
     context: string;
-    // TODO(coder, plan task 1 / R-02): remove this field — the response
-    // must no longer include match.start/match.end. Left in place here
-    // only so the still-unmodified handler body below keeps compiling;
-    // the FileResult["matches"] literal it pushes still populates it.
-    match: { start: number; end: number };
     /** 0-indexed line the match starts at. */
     line: number;
   }>;
@@ -91,6 +82,8 @@ export async function searchVaultSimpleHandler(
   const query = ctx.arguments.query;
   const contextLength = ctx.arguments.contextLength ?? DEFAULT_CONTEXT;
   const limit = ctx.arguments.limit ?? DEFAULT_LIMIT;
+  const maxMatchesPerFile =
+    ctx.arguments.maxMatchesPerFile ?? DEFAULT_MAX_MATCHES_PER_FILE;
   const patternSource = escapeRegExp(query);
 
   const files = ctx.app.vault.getMarkdownFiles();
@@ -110,8 +103,16 @@ export async function searchVaultSimpleHandler(
         // Per-file scanner: files in a batch scan concurrently, so a
         // shared regex would race on lastIndex.
         let m: RegExpExecArray | null;
+        let moreMatches = false;
         const scanner = new RegExp(patternSource, "gi");
         while ((m = scanner.exec(content)) !== null) {
+          // One match past the cap is enough to know there are more: stop
+          // scanning there instead of collecting a file's worth of hits
+          // that are about to be dropped (R-02, ADR-0023 D2).
+          if (matches.length >= maxMatchesPerFile) {
+            moreMatches = true;
+            break;
+          }
           const idx = m.index;
           const start = Math.max(0, idx - contextLength);
           const end = Math.min(
@@ -120,7 +121,6 @@ export async function searchVaultSimpleHandler(
           );
           matches.push({
             context: content.slice(start, end),
-            match: { start: idx, end: idx + query.length },
             line: content.slice(0, idx).split("\n").length - 1,
           });
           // Match length equals query length (literal pattern), so this
@@ -128,7 +128,13 @@ export async function searchVaultSimpleHandler(
           scanner.lastIndex = idx + query.length;
         }
 
-        return matches.length > 0 ? { filename: file.path, matches } : null;
+        if (matches.length === 0) return null;
+        // `moreMatches` is omitted rather than set to false at or under the
+        // cap: the flag is the exception, and every file paying a `false`
+        // key back to the client is the cost this change exists to cut.
+        return moreMatches
+          ? { filename: file.path, matches, moreMatches: true }
+          : { filename: file.path, matches };
       }),
     );
 

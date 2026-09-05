@@ -119,6 +119,66 @@ function dedupeUnionDescriptions(node: unknown): void {
   for (const value of Object.values(obj)) dedupeUnionDescriptions(value);
 }
 
+/**
+ * Collapse `anyOf` shapes that carry no information beyond a simpler
+ * equivalent (ADR-0023 D6, R-06):
+ *
+ * - a **single-member** `anyOf` is the wrapper itself, not a union — ArkType
+ *   emits `{"anyOf":[{"type":"boolean"}]}` for an optional boolean, which
+ *   12 parameters across the registry pay for (`search_and_replace`'s
+ *   `dry_run` among them, the shape named in issue #508). The member's keys
+ *   are merged into the parent, with the parent's own keys winning: a
+ *   description hoisted by `dedupeUnionDescriptions` must survive.
+ * - an `anyOf` whose members are **all `const`** is an `enum`, spelled the
+ *   long way. Member order is preserved.
+ *
+ * A genuine multi-member, non-const union is left exactly as it is. Runs
+ * after `dedupeUnionDescriptions` so a hoisted description is never stranded
+ * on a member about to disappear.
+ */
+function simplifyAnyOfNodes(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) simplifyAnyOfNodes(item);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const obj = node as Record<string, unknown>;
+
+  // Depth-first: simplify members before deciding what this node is, so a
+  // nested wrapper cannot survive inside a member we are about to hoist.
+  for (const value of Object.values(obj)) simplifyAnyOfNodes(value);
+
+  if (!Array.isArray(obj.anyOf) || obj.anyOf.length === 0) return;
+  const members = obj.anyOf;
+
+  if (members.length === 1) {
+    const only = members[0];
+    if (typeof only === "object" && only !== null && !Array.isArray(only)) {
+      delete obj.anyOf;
+      for (const [key, value] of Object.entries(only)) {
+        if (!(key in obj)) obj[key] = value;
+      }
+    }
+    return;
+  }
+
+  // `const` must be the member's ONLY key: a member carrying sibling
+  // metadata (a description that did not dedupe away, a title) has no place
+  // in a flat `enum`, and collapsing it would drop that metadata silently.
+  const isConstUnion = members.every(
+    (m): m is Record<string, unknown> =>
+      typeof m === "object" &&
+      m !== null &&
+      !Array.isArray(m) &&
+      "const" in m &&
+      Object.keys(m).length === 1,
+  );
+  if (isConstUnion) {
+    obj.enum = members.map((m) => (m as Record<string, unknown>).const);
+    delete obj.anyOf;
+  }
+}
+
 export function normalizeInputSchema(
   jsonSchema: unknown,
 ): Record<string, unknown> {
@@ -135,6 +195,9 @@ export function normalizeInputSchema(
   const result: Record<string, unknown> = structuredClone(base);
 
   dedupeUnionDescriptions(result);
+  // Strictly after the dedupe above: it may hoist a description onto a
+  // parent whose `anyOf` this pass then removes (ADR-0023 D6).
+  simplifyAnyOfNodes(result);
 
   // Force-set `type: "object"` if missing — MCP inputSchema must be an
   // object type by protocol.
