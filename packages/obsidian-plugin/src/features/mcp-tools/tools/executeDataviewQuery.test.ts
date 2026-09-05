@@ -102,7 +102,10 @@ describe("execute_dataview_query", () => {
       },
     );
 
-    test("extra Dataview fields (idMeaning) pass through unchanged", async () => {
+    test("idMeaning is removed from TABLE-mode output (R-03, repairs the pre-ADR contract)", async () => {
+      // Pre-ADR-0023 this field passed through unchanged; R-03 removes it
+      // as part of the Dataview result-shape cleanup (Invariant 7 — the
+      // old contract is updated, never silently skipped).
       setMockDataviewState("ready");
       setMockDataviewQueryImpl(() => ({
         successful: true,
@@ -118,7 +121,62 @@ describe("execute_dataview_query", () => {
         app: mockApp(),
       });
       const body = parse(res);
-      expect(body.idMeaning).toEqual({ type: "path" });
+      expect("idMeaning" in body).toBe(false);
+    });
+  });
+
+  describe("Dataview Link flattening (R-03)", () => {
+    // Dataview's real Link shape, per the SPEC's stated contract:
+    // {path, embed, type, display} — not derived from an installed
+    // Dataview type, since the plugin API is out-of-repo at runtime
+    // (see the file-level comment on DataviewApi above).
+    function makeLink(path: string) {
+      return { path, embed: false, type: "file", display: null };
+    }
+
+    test("a top-level Link value flattens to its plain path string", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "list",
+          values: [makeLink("Notes/A.md")],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'LIST FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual(["Notes/A.md"]);
+    });
+
+    test("a Link nested inside an array inside a TABLE cell also flattens (SPEC edge case)", async () => {
+      // The explicit edge case the SPEC calls out: a top-level-only
+      // transform passes a naive test and fails this one, because the
+      // TABLE cell here is itself an array of Links, one level deeper
+      // than the top-level case above.
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "outlinks"],
+          values: [
+            ["Notes/A.md", [makeLink("Notes/B.md"), makeLink("Notes/C.md")]],
+          ],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.outlinks FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([
+        ["Notes/A.md", ["Notes/B.md", "Notes/C.md"]],
+      ]);
     });
   });
 

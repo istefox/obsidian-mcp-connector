@@ -236,6 +236,106 @@ describe("normalizeInputSchema", () => {
     normalizeInputSchema(input);
     expect(input).toEqual(snapshot);
   });
+
+  // R-06: unwrap single-member anyOf, collapse const-union anyOf into enum.
+  // ArkType's optional-boolean emission ({"anyOf":[{"type":"boolean"}]}) is
+  // the confirmed real-world case (issue #508 / search_and_replace's
+  // dry_run) — see the ADR-0023 note in toolRegistry.ts.
+  describe("R-06: single-member anyOf unwrap and const-union collapse", () => {
+    test("single-member anyOf unwraps to the member itself, preserving a sibling description", () => {
+      const input = {
+        type: "object",
+        properties: {
+          dry_run: {
+            description: "Preview without writing.",
+            anyOf: [{ type: "boolean" }],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: {
+          dry_run: { type?: string; anyOf?: unknown; description: string };
+        };
+      };
+      expect(out.properties.dry_run).toEqual({
+        type: "boolean",
+        description: "Preview without writing.",
+      });
+      expect("anyOf" in out.properties.dry_run).toBe(false);
+    });
+
+    test("anyOf of all-const members collapses to enum, preserving member order", () => {
+      const input = {
+        type: "object",
+        properties: {
+          period: {
+            anyOf: [
+              { const: "daily" },
+              { const: "weekly" },
+              { const: "monthly" },
+            ],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: { period: { enum?: unknown[]; anyOf?: unknown } };
+      };
+      expect(out.properties.period.enum).toEqual([
+        "daily",
+        "weekly",
+        "monthly",
+      ]);
+      expect("anyOf" in out.properties.period).toBe(false);
+    });
+
+    test("a genuine multi-type, multi-member anyOf is left untouched", () => {
+      const input = {
+        type: "object",
+        properties: {
+          value: {
+            anyOf: [{ type: "string" }, { type: "number" }],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: { value: { anyOf: Record<string, unknown>[] } };
+      };
+      expect(out.properties.value.anyOf).toEqual([
+        { type: "string" },
+        { type: "number" },
+      ]);
+    });
+
+    test("existing dedupeUnionDescriptions behaviour still holds alongside the new unwrap/collapse", () => {
+      // Order matters (plan task 3): the unwrap/collapse pass must run
+      // AFTER dedupeUnionDescriptions, so a description hoisted onto the
+      // parent from identical member descriptions is not stranded on a
+      // member that is about to be unwrapped or collapsed away.
+      const desc = "Period granularity.";
+      const input = {
+        type: "object",
+        properties: {
+          period: {
+            anyOf: [
+              { const: "daily", description: desc },
+              { const: "weekly", description: desc },
+            ],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: {
+          period: { description?: string; enum?: unknown[]; anyOf?: unknown };
+        };
+      };
+      // The pre-existing hoist: identical member descriptions rise to the
+      // parent.
+      expect(out.properties.period.description).toBe(desc);
+      // The new R-06 collapse: an all-const anyOf becomes enum.
+      expect(out.properties.period.enum).toEqual(["daily", "weekly"]);
+      expect("anyOf" in out.properties.period).toBe(false);
+    });
+  });
 });
 
 describe("ToolRegistry list() — issue #77 regression", () => {

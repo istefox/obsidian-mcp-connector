@@ -21,20 +21,44 @@ export const searchVaultSimpleSchema = type({
     "limit?": type("number.integer>=1").describe(
       "Max number of files to return matches from. Default 50.",
     ),
+    // Signature declared here for R-01 (test-first, tester-owned per
+    // ADR-0023 D2 / plan task 1); the cap/moreMatches BEHAVIOR below is
+    // the coder's, not implemented by this declaration alone.
+    "maxMatchesPerFile?": type("number.integer>=1").describe(
+      "Max number of matches to return per file. Default 5.",
+    ),
   },
 }).describe(
   "Plain-text substring search across all markdown files in the vault. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at.",
 );
 
 export type SearchVaultSimpleContext = {
-  arguments: { query: string; contextLength?: number; limit?: number };
+  arguments: {
+    query: string;
+    contextLength?: number;
+    limit?: number;
+    maxMatchesPerFile?: number;
+  };
   app: App;
 };
 
 type FileResult = {
   filename: string;
+  /**
+   * Set when this file had more matches than `maxMatchesPerFile` allowed
+   * through (R-02, ADR-0023 D2) — "more than the cap", not "at least the
+   * cap". Absent/false for a file at or under the cap. Declared here
+   * (signature only) for the R-01/R-02 tests; not yet populated by the
+   * handler below — that population, and the removal of `match` from
+   * both this type and the pushed object, are the coder's (plan task 1).
+   */
+  moreMatches?: boolean;
   matches: Array<{
     context: string;
+    // TODO(coder, plan task 1 / R-02): remove this field — the response
+    // must no longer include match.start/match.end. Left in place here
+    // only so the still-unmodified handler body below keeps compiling;
+    // the FileResult["matches"] literal it pushes still populates it.
     match: { start: number; end: number };
     /** 0-indexed line the match starts at. */
     line: number;

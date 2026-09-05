@@ -104,8 +104,10 @@ describe("search_vault_simple — regex-literal scan", () => {
   });
 
   test("overlapping-step parity: matches advance by query length", async () => {
-    // "aaaa" with query "aa" → matches at 0 and 2 (not 1), matching
-    // the previous indexOf stepping.
+    // "aaaa" with query "aa" → matches at 0 and 2 (not 1), matching the
+    // previous indexOf stepping. Repaired per ADR-0023 D2 / R-02: `match`
+    // ({start, end}) is removed from the response, so stepping order is
+    // now verified via match count + `line` rather than `match.start`.
     setMockFile("steps.md", "aaaa");
 
     const result = await searchVaultSimpleHandler({
@@ -113,11 +115,10 @@ describe("search_vault_simple — regex-literal scan", () => {
       app: mockApp(),
     });
     const data = JSON.parse(result.content[0].text as string);
+    expect(data.results[0].matches).toHaveLength(2);
     expect(
-      data.results[0].matches.map(
-        (m: { match: { start: number } }) => m.match.start,
-      ),
-    ).toEqual([0, 2]);
+      data.results[0].matches.map((m: { line: number }) => m.line),
+    ).toEqual([0, 0]);
   });
 
   test("result order is stable and limit stops across batches", async () => {
@@ -138,7 +139,8 @@ describe("search_vault_simple — regex-literal scan", () => {
 });
 
 describe("search_vault_simple — content bytes are pinned for a client that never reads _meta (R-06)", () => {
-  // The literal below was captured from this handler's actual output for
+  // The literal below was captured from this handler's expected output
+  // (post-R-02: `match.start`/`match.end` removed, `line` retained) for
   // this exact fixture and query, then pasted in — it is not derived or
   // recomputed here. A structural comparison (parsing content[0].text and
   // checking fields) would not catch a change to key order, whitespace or
@@ -146,6 +148,9 @@ describe("search_vault_simple — content bytes are pinned for a client that nev
   // raw text is exposed to. If the payload work ever touches the argument
   // passed to successText(), this test fails loudly; if it only adds a
   // sibling _meta key, this test keeps passing.
+  //
+  // Repaired for ADR-0023 D2 / R-02: the previous literal embedded
+  // `match:{start,end}`, which the response no longer carries.
   test("JSON.stringify(result.content) matches the captured literal", async () => {
     setMockFile(
       "vault-fixture.md",
@@ -156,8 +161,65 @@ describe("search_vault_simple — content bytes are pinned for a client that nev
       app: mockApp(),
     });
     expect(JSON.stringify(result.content)).toBe(
-      '[{"type":"text","text":"{\\"results\\":[{\\"filename\\":\\"vault-fixture.md\\",\\"matches\\":[{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"match\\":{\\"start\\":16,\\"end\\":19},\\"line\\":0},{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"match\\":{\\"start\\":49,\\"end\\":52},\\"line\\":0}]}]}"}]',
+      '[{"type":"text","text":"{\\"results\\":[{\\"filename\\":\\"vault-fixture.md\\",\\"matches\\":[{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0},{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0}]}]}"}]',
     );
+  });
+});
+
+describe("search_vault_simple — maxMatchesPerFile cap and moreMatches flag (R-01, R-02)", () => {
+  // Six literal "hit" occurrences, none overlapping, in one file.
+  const SIX_HITS_TEXT = Array(6).fill("hit").join(" filler ");
+
+  test("6 matches with maxMatchesPerFile: 5 → exactly 5 matches, moreMatches: true", async () => {
+    setMockFile("six.md", SIX_HITS_TEXT);
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit", maxMatchesPerFile: 5 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].matches).toHaveLength(5);
+    expect(data.results[0].moreMatches).toBe(true);
+  });
+
+  test("off-by-one boundary: exactly maxMatchesPerFile matches → moreMatches is NOT true", async () => {
+    // Five literal "hit" occurrences — exactly at the cap, not over it.
+    const FIVE_HITS_TEXT = Array(5).fill("hit").join(" filler ");
+    setMockFile("five.md", FIVE_HITS_TEXT);
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit", maxMatchesPerFile: 5 },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].matches).toHaveLength(5);
+    // The flag means "there were more than the cap", not "at least the
+    // cap" — an exact-cap file must not set it (falsy or absent both pass;
+    // `true` is the only forbidden value).
+    expect(data.results[0].moreMatches).not.toBe(true);
+  });
+
+  test("default maxMatchesPerFile (argument omitted) caps at 5", async () => {
+    setMockFile("six-default.md", SIX_HITS_TEXT);
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    expect(data.results[0].matches).toHaveLength(5);
+    expect(data.results[0].moreMatches).toBe(true);
+  });
+
+  test("line survives and match ({start, end}) is absent from every match entry", async () => {
+    setMockFile("survives.md", "one hit here");
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    const match = data.results[0].matches[0];
+    expect(typeof match.line).toBe("number");
+    expect("match" in match).toBe(false);
   });
 });
 
