@@ -154,6 +154,15 @@ describe("normalizeInputSchema", () => {
   test("strips anyOf member descriptions duplicating the parent's", () => {
     // ArkType propagates a union's .describe() onto every branch; the
     // wire format only needs the property-level copy.
+    //
+    // ADR-0023 D6: this fixture is an all-const anyOf, so the R-06
+    // const-union collapse now turns it into `enum` with no `anyOf` left
+    // to strip descriptions from. The parent-level description hoist this
+    // test originally guarded still holds; it is asserted here against the
+    // new post-collapse shape instead of the old anyOf-member shape. The
+    // dedupeUnionDescriptions-alongside-collapse interaction has its own
+    // dedicated test below ("existing dedupeUnionDescriptions behaviour
+    // still holds alongside the new unwrap/collapse").
     const desc = "Period granularity.";
     const input = {
       type: "object",
@@ -169,13 +178,12 @@ describe("normalizeInputSchema", () => {
     };
     const out = normalizeInputSchema(input) as {
       properties: {
-        period: { description: string; anyOf: Record<string, unknown>[] };
+        period: { description: string; enum?: unknown[]; anyOf?: unknown };
       };
     };
     expect(out.properties.period.description).toBe(desc);
-    for (const member of out.properties.period.anyOf) {
-      expect("description" in member).toBe(false);
-    }
+    expect(out.properties.period.enum).toEqual(["daily", "weekly"]);
+    expect("anyOf" in out.properties.period).toBe(false);
   });
 
   test("hoists a description shared by all anyOf members when the parent has none", () => {
