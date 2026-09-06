@@ -82,10 +82,14 @@ export async function findBrokenLinksHandler(
       raw: RawCacheLink,
       kind: "link" | "embed" | "frontmatter",
     ): void => {
-      const dest = ctx.app.metadataCache.getFirstLinkpathDest(
-        raw.link,
-        file.path,
-      );
+      // A link starting with "#" (`[[#Heading]]`) has an empty file
+      // portion — Obsidian resolves that as "this document", but
+      // `getFirstLinkpathDest` returns null for an empty linkpath, which
+      // would otherwise misreport valid same-doc heading navigation as
+      // broken (see #522).
+      const dest = raw.link.startsWith("#")
+        ? file
+        : ctx.app.metadataCache.getFirstLinkpathDest(raw.link, file.path);
       if (dest !== null) return; // resolved — not broken
       const entry: BrokenLinkEntry = {
         source_path: file.path,

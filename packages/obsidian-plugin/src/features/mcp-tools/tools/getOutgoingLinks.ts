@@ -76,10 +76,12 @@ export async function getOutgoingLinksHandler(
   const resolve = (
     linkpath: string,
   ): { resolved: boolean; targetPath: string | null } => {
-    const dest = ctx.app.metadataCache.getFirstLinkpathDest(
-      linkpath,
-      sourcePath,
-    );
+    // A linkpath starting with "#" (`[[#Heading]]`) has an empty file
+    // portion — Obsidian resolves that as "this document", but
+    // `getFirstLinkpathDest` returns null for an empty linkpath (see #522).
+    const dest = linkpath.startsWith("#")
+      ? file
+      : ctx.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
     if (dest) return { resolved: true, targetPath: dest.path };
     return { resolved: false, targetPath: null };
   };
