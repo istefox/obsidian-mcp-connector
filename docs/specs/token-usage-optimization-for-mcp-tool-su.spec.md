@@ -197,7 +197,7 @@ fallback value (`DEFAULT_POLICY`) used for an ABSENT entry changes (R-11).
       final chain report state the measured KB/token reduction for each shipped candidate
       (`no-test: a reporting obligation on the measurement script's output, not an assertion the
       test suite itself makes`).
-- [ ] R-13 — Manual end-to-end verification against the Labs vault: `search_vault_simple` against
+- [x] R-13 — Manual end-to-end verification against the Labs vault: `search_vault_simple` against
       a file with more than 5 matches shows `moreMatches: true`; `tool_catalog` and `tools/list`
       are inspected live and confirmed to match the shipped shape
       (`no-test: manual verification against a real vault, not automatable in the unit/integration
