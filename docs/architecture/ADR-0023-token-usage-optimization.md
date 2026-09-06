@@ -55,6 +55,23 @@ adding bytes of their own. The measurement isolates neither share; it only confi
 as-shipped total did not regress. This is the combined figure R-12 asked for: `instructions` is
 never credited alone (see the R-10-alone risk note below).
 
+**`search_vault_simple` re-measurement, 2026-09-06**, same methodology, live Labs vault server, the
+same `("the", limit 3)` call as the baseline row. This is the one baseline row the 2026-09-05 pass
+left unmeasured — capturing it needed a genuinely idle vault (Obsidian fully quit, `data.json`
+backed up before edit, `all` ↔ `adaptive` toggled on the one live token only while the app was
+closed, restored afterward) rather than the `tools/list`-only comparison the same-session pass
+could do live:
+
+| Surface | Size | Est. tokens | vs. baseline |
+| --- | --- | --- | --- |
+| `search_vault_simple("the", limit 3)` — text only | 3.9 KB | ~1.0k | -8.4 KB / -2.1k (-68%) |
+| `search_vault_simple("the", limit 3)` — with MCP Apps `_meta` | 8.8 KB | ~2.2k | -6.7 KB / -1.7k (-43%) |
+
+The drop is dominated by D1's `maxMatchesPerFile` cap and D2's removal of the unread
+`match.start`/`match.end` offsets, not by the `_meta` gating decision (D9): this call rides the
+legacy, stateless era, which keeps attaching `_meta` unconditionally by design (see D9), so the
+`_meta` row's reduction comes entirely from the same per-match trimming as the text-only row.
+
 **R-13 confirmed live**, same session: `search_vault_simple("the")` against a vault file with more
 than 5 matches (`03 Risorse/prompts/ricerca-caratteristiche-antivibranti.md`) returns exactly 5
 entries under `matches` for that file plus `"moreMatches": true`, and no result anywhere in the

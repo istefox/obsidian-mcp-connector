@@ -17,12 +17,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
   defaults to the `adaptive` profile instead of `all` — existing tokens are unaffected, only newly
   created ones. `search_vault_simple` now caps matches to 5 per file (`moreMatches: true` marks a
   truncated file) and no longer returns the unused `match.start`/`match.end` character offsets;
-  Dataview `Link` values in results are flattened to their plain path string. A schema-generation
+  Dataview `Link` values in results are flattened to their plain path string. Measured against the
+  same Labs vault call as before, this cuts a `search_vault_simple("the", limit 3)` response from
+  12.3 KB to 3.9 KB (text only, -68%) and from 15.5 KB to 8.8 KB (with the MCP Apps `_meta` payload
+  attached, -43%). A schema-generation
   bug that wrapped some boolean parameters (including `search_and_replace`'s `dry_run`) in an
   unnecessary `anyOf` is fixed. The MCP Apps `_meta` search-results payload is now sent only to
   clients that declare `io.modelcontextprotocol/ui` support on the modern (2026-07-28) protocol
   era; the legacy, stateless era keeps sending it unconditionally, as before, since it has no
-  per-request capability signal to gate on. Full design: [ADR-0023](docs/architecture/ADR-0023-token-usage-optimization.md).
+  per-request capability signal to gate on. The server now also sends a non-empty `instructions`
+  string on the legacy `initialize` handshake, centralizing the vault-relative-path,
+  0-indexed-line, and `errorCode` conventions that were previously repeated across individual tool
+  descriptions — this is why shortening those descriptions is a net token win rather than a wash.
+  Full design: [ADR-0023](docs/architecture/ADR-0023-token-usage-optimization.md).
 
 ## [2.4.0] — 2026-08-27
 
