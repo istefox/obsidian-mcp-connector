@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-09-06
+
 ### Changed
 
 - **Reduced the MCP tool surface's token cost**, both the fixed cost every session pays for
