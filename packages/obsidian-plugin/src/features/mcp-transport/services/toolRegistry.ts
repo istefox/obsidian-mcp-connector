@@ -43,6 +43,24 @@ interface HandlerContext {
    * why the tool names and their reasons never appear in this file.
    */
   refusedTools?: ReadonlyMap<string, string>;
+  /**
+   * Whether THIS caller declared `io.modelcontextprotocol/ui` extension
+   * support (R-09, ADR-0023 D9). `true`/`false` on the modern
+   * (2026-07-28) era, read from `ctx.mcpReq.envelope`'s
+   * `CLIENT_CAPABILITIES_META_KEY` entry at the mcpServer.ts dispatch call
+   * site — the SDK's own per-request signal (`Server._inputRequestCapabilityView`'s
+   * documented idiom), not a project-invented one. `undefined` on the
+   * legacy era, where no per-request capability signal exists at all
+   * (stateless, POST-only, no `initialize` state survives to a later
+   * request) — undefined must NOT be read as "declared: false"; it means
+   * "no signal", and the legacy era's unconditional attach depends on that
+   * distinction.
+   *
+   * Populated at the `tools/call` dispatch site in mcpServer.ts and read by
+   * `search_vault_simple` / `search_vault_smart`, the only two tools that
+   * carry a `ui://` payload. Every other tool ignores it.
+   */
+  hasUiCapability?: boolean;
 }
 
 /** One `tools/list` entry, as served on the wire. */
@@ -119,6 +137,107 @@ function dedupeUnionDescriptions(node: unknown): void {
   for (const value of Object.values(obj)) dedupeUnionDescriptions(value);
 }
 
+/**
+ * Collapse `anyOf` shapes that carry no information beyond a simpler
+ * equivalent (ADR-0023 D6, R-06):
+ *
+ * - a **single-member** `anyOf` is the wrapper itself, not a union — ArkType
+ *   emits `{"anyOf":[{"type":"boolean"}]}` for an optional boolean, which
+ *   12 parameters across the registry pay for (`search_and_replace`'s
+ *   `dry_run` among them, the shape named in issue #508). The member's keys
+ *   are merged into the parent, with the parent's own keys winning: a
+ *   description hoisted by `dedupeUnionDescriptions` must survive.
+ * - an `anyOf` whose members are **all `const`** is an `enum`, spelled the
+ *   long way. Member order is preserved.
+ *
+ * A genuine multi-member, non-const union is left exactly as it is. Runs
+ * after `dedupeUnionDescriptions` so a hoisted description is never stranded
+ * on a member about to disappear.
+ */
+function simplifyAnyOfNodes(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) simplifyAnyOfNodes(item);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const obj = node as Record<string, unknown>;
+
+  // Depth-first: simplify members before deciding what this node is, so a
+  // nested wrapper cannot survive inside a member we are about to hoist.
+  for (const value of Object.values(obj)) simplifyAnyOfNodes(value);
+
+  if (!Array.isArray(obj.anyOf) || obj.anyOf.length === 0) return;
+  const members = obj.anyOf;
+
+  if (members.length === 1) {
+    const only = members[0];
+    if (typeof only === "object" && only !== null && !Array.isArray(only)) {
+      delete obj.anyOf;
+      for (const [key, value] of Object.entries(only)) {
+        if (!(key in obj)) obj[key] = value;
+      }
+    }
+    return;
+  }
+
+  // `const` must be the member's ONLY key: a member carrying sibling
+  // metadata (a description that did not dedupe away, a title) has no place
+  // in a flat `enum`, and collapsing it would drop that metadata silently.
+  const isConstUnion = members.every(
+    (m): m is Record<string, unknown> =>
+      typeof m === "object" &&
+      m !== null &&
+      !Array.isArray(m) &&
+      "const" in m &&
+      Object.keys(m).length === 1,
+  );
+  if (isConstUnion) {
+    obj.enum = members.map((m) => (m as Record<string, unknown>).const);
+    delete obj.anyOf;
+  }
+}
+
+/**
+ * ArkType's `string.base64` emits the full RFC 4648 grammar as a JSON
+ * Schema `pattern` — group-of-four repetition plus both padding tails:
+ *
+ *   ^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
+ *
+ * 64 characters, advertised on every `tools/list`, to say something a
+ * caller cannot act on: a client that would emit a wrongly-padded
+ * base64 string is not going to be saved by reading the padding rule.
+ * The advertised form is replaced with the alphabet assertion, which is
+ * what a caller actually reads it for (ADR-0023 D8, R-08).
+ *
+ * **This does not weaken validation, because it is not the validator.**
+ * Validation is layered and both layers are untouched: the ArkType
+ * `string.base64` check still runs at `schema.assert()` in `dispatch()`,
+ * before any handler, rejecting a bad alphabet *and* bad padding; and
+ * `createVaultBinaryFile`'s handler catches an `atob()` decode failure
+ * on top of that. Only the advertised description of the constraint is
+ * shortened — the enforcement of it is elsewhere and unchanged.
+ */
+const ARKTYPE_BASE64_PATTERN =
+  "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$";
+
+/** The advertised replacement: base64 alphabet, padding included. */
+const SIMPLIFIED_BASE64_PATTERN = "^[A-Za-z0-9+/]*={0,2}$";
+
+function simplifyBase64Pattern(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) simplifyBase64Pattern(item);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const obj = node as Record<string, unknown>;
+
+  if (obj.pattern === ARKTYPE_BASE64_PATTERN) {
+    obj.pattern = SIMPLIFIED_BASE64_PATTERN;
+  }
+
+  for (const value of Object.values(obj)) simplifyBase64Pattern(value);
+}
+
 export function normalizeInputSchema(
   jsonSchema: unknown,
 ): Record<string, unknown> {
@@ -135,6 +254,12 @@ export function normalizeInputSchema(
   const result: Record<string, unknown> = structuredClone(base);
 
   dedupeUnionDescriptions(result);
+  // Strictly after the dedupe above: it may hoist a description onto a
+  // parent whose `anyOf` this pass then removes (ADR-0023 D6).
+  simplifyAnyOfNodes(result);
+  // Order-independent of the two above — it matches on `pattern`, which
+  // neither of them reads or writes (ADR-0023 D8).
+  simplifyBase64Pattern(result);
 
   // Force-set `type: "object"` if missing — MCP inputSchema must be an
   // object type by protocol.
@@ -163,6 +288,68 @@ export function normalizeInputSchema(
   }
 
   return result;
+}
+
+/**
+ * Annotation fields dropped from the wire entry when their value equals
+ * the MCP spec default for an ABSENT field (ADR-0023 R-08, D8).
+ *
+ * Only `destructiveHint` is listed, and that is deliberate — D8's
+ * "one deliberate exception" paragraph is written about this field
+ * specifically: `mcp-tools/toolAnnotations.ts` sets it explicitly on
+ * every writer *including where it matches the spec default*, so the
+ * read/write/destructive classification stays reviewable in one place.
+ * D8's resolution is to keep that explicit source table and stop the
+ * WIRE paying for it, which is exactly what stripping it here does.
+ *
+ * `readOnlyHint` and `openWorldHint` are NOT stripped even though
+ * `false`/`true` are their spec defaults: `mcpServer.test.ts`'s
+ * full-registry completeness check reads both back off the wire as
+ * booleans for all 52 tools, so that they are present is a load-bearing
+ * invariant — it is how a tool registered without a `toolAnnotations.ts`
+ * entry is caught. Omitting them would trade a real regression guard for
+ * a handful of bytes. `idempotentHint` is likewise left alone: it is set
+ * on only a few tools, so there is nothing to win, and keeping the
+ * stripped set to the single field D8 argues for keeps this seam's
+ * behaviour equal to its written justification.
+ *
+ * `title` has no spec default at all — free-form prose — so no value of
+ * it is reproducible by omission.
+ */
+const STRIPPABLE_ANNOTATION_DEFAULTS = {
+  destructiveHint: true,
+} as const satisfies Partial<Record<keyof ToolAnnotations, boolean>>;
+
+/**
+ * Drop spec-default-valued annotation fields from the wire copy
+ * (ADR-0023 R-08, D8).
+ *
+ * This runs at the WIRE-EMISSION seam and nowhere else: the source table
+ * in `mcp-tools/toolAnnotations.ts` and the map stored by
+ * `setAnnotations()` both keep the caller's literal values. Only the
+ * copy served to clients is slimmed, which is the only copy anyone pays
+ * tokens for.
+ *
+ * Returns `undefined` when nothing survives — an empty `annotations: {}`
+ * object is itself pure wire cost and says no more than its absence.
+ */
+function stripDefaultAnnotations(
+  annotations: ToolAnnotations,
+): ToolAnnotations | undefined {
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(annotations)) {
+    const specDefault =
+      STRIPPABLE_ANNOTATION_DEFAULTS[
+        key as keyof typeof STRIPPABLE_ANNOTATION_DEFAULTS
+      ];
+    // `specDefault === undefined` covers every field not listed above —
+    // an unlisted field is always kept, never guessed at.
+    if (specDefault !== undefined && value === specDefault) continue;
+    stripped[key] = value;
+  }
+  return Object.keys(stripped).length > 0
+    ? (stripped as ToolAnnotations)
+    : undefined;
 }
 
 const textResult = type({
@@ -476,6 +663,12 @@ export class ToolRegistryClass<
     (this.entriesCache ??= Array.from(this.handlers.keys()).map((schema) => {
       const name = this.toolNameOf(schema);
       const annotations = this.annotationsByName.get(name);
+      // Read-time transform, never a write-time mutation of the stored
+      // map (ADR-0023 D8): `annotationsByName` keeps the source table's
+      // literal declaration, and only this wire copy is slimmed.
+      const wireAnnotations = annotations
+        ? stripDefaultAnnotations(annotations)
+        : undefined;
       const outputSchema = this.outputSchemasByName.get(name);
       const meta = this.metaByName.get(name);
       return {
@@ -486,7 +679,7 @@ export class ToolRegistryClass<
           inputSchema: normalizeInputSchema(
             schema.get("arguments").toJsonSchema(),
           ),
-          ...(annotations ? { annotations } : {}),
+          ...(wireAnnotations ? { annotations: wireAnnotations } : {}),
           ...(outputSchema ? { outputSchema } : {}),
           ...(meta ? { _meta: meta } : {}),
         },

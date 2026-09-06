@@ -14,7 +14,7 @@ export const getOrCreateDailyNoteSchema = type({
     ),
   },
 }).describe(
-  "Reads today's daily note (or the one at `date`), creating it if missing. Returns `{path, content, created}`. When the Daily Notes core plugin or the community Periodic Notes plugin is enabled, the note is created via the plugin's API so the configured template + `{{date}}`/`{{title}}` interpolations run; otherwise it is created as an empty file at the ISO path under the vault root. For weekly/monthly/quarterly/yearly notes use `get_or_create_periodic_note`.",
+  "Reads today's daily note (or the one at `date`), creating it if missing. Returns `{path, content, created}`. With the Daily Notes or Periodic Notes plugin enabled, creation runs the configured template; otherwise the note is created empty at the ISO path under the vault root. For weekly/monthly/quarterly/yearly notes use `get_or_create_periodic_note`.",
 );
 
 export type GetOrCreateDailyNoteContext = {

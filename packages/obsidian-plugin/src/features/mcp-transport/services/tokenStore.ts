@@ -32,7 +32,7 @@ import type { PluginDataLike } from "$/shared/types";
 // reads the transport slice through SettingsStore and never imports this
 // module — so it introduces no cycle.
 import {
-  defaultPolicy,
+  newTokenPolicy,
   normalizePolicy,
   updateToolLoading,
   type TokenPolicy,
@@ -166,7 +166,13 @@ function withPolicyFor(
       promoted: slice.promoted,
     });
   } else if (!isRecord(profiles[mirrorId])) {
-    profiles[mirrorId] = defaultPolicy();
+    // A genuinely new token, never a migration: `tokens[]` already
+    // existed, so the globals belong to some previous tokens[0] and this
+    // id has never been configured. That is the new-token role, which
+    // ADR-0023 D11 moves to `adaptive` — the mirror recompute below is
+    // driven by the entry seeded here, and the entry is this token's own
+    // policy, not a degraded reading of somebody else's.
+    profiles[mirrorId] = newTokenPolicy();
   }
   // Normalize even when the entry already existed: this runs during
   // migration, before anything validates the slice, so a hand-edited

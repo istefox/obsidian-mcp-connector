@@ -54,11 +54,45 @@ function seedVaultFixture(): void {
   );
 }
 
+/**
+ * A plugin whose `default` token — the id `staticTokenProvider` hands out —
+ * carries an explicit `profile: "all"` policy.
+ *
+ * A bare `mockPlugin()` seeds no `toolLoading` slice, so its token resolves
+ * through `readPolicy`'s missing-entry fallback. R-11 (ADR-0023 D11) moved
+ * that fallback from `DEFAULT_POLICY` ("all") to `NEW_TOKEN_POLICY`
+ * ("adaptive"), which narrows the surface to
+ * `ALWAYS_ACTIVE_TOOLS ∪ CORE_SET ∪ promoted` — and `search_vault_smart` is
+ * not in the core set. This file's claim is "exactly the two search tools
+ * carry the UI pointer", which needs both of them present, so the profile is
+ * pinned here rather than inherited from whatever the ambient default is.
+ * `test-setup.ts`'s shared `mockPlugin()` is deliberately left alone:
+ * `tokenPolicyStore.test.ts` exercises that very fallback against it.
+ */
+function makeAllProfilePlugin() {
+  let store: Record<string, unknown> = {
+    toolLoading: {
+      profile: "all",
+      promoted: [],
+      counters: {},
+      profiles: {
+        default: { profile: "all", promoted: [], allowed: null },
+      },
+    },
+  };
+  return mockPlugin({
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+  });
+}
+
 async function startService(): Promise<RunningServer> {
   const { startHttpServer } = await import("./httpServer");
   const svc = await createMcpService({
     app: mockApp(),
-    plugin: mockPlugin(),
+    plugin: makeAllProfilePlugin(),
     pluginVersion: "0.4.0-alpha.1",
     serverName: "mcp-connector",
   });

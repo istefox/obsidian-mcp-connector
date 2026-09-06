@@ -11,7 +11,7 @@ export const getRecentFilesSchema = type({
     ),
   },
 }).describe(
-  "Returns the most recently modified markdown files in the vault, ordered by `mtime` descending with a `path` ascending tiebreaker on equal `mtime`. Each entry includes `path`, `mtime`, `ctime` (Unix epoch milliseconds), and `size` (bytes). Honours Obsidian's `Files & Links → Excluded files` configuration via `MetadataCache.isUserIgnored`; markdown-only via `vault.getMarkdownFiles()`. Useful for agent-recency context. Always read-only.",
+  "Returns the most recently modified markdown files in the vault, ordered by `mtime` descending with a `path` ascending tiebreaker. Each entry includes `path`, `mtime`, `ctime` (Unix epoch milliseconds), and `size` (bytes). Markdown only, and files excluded in Obsidian's `Files & Links → Excluded files` are omitted.",
 );
 
 export type GetRecentFilesContext = {

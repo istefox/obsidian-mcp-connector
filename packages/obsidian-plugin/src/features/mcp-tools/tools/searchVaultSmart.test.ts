@@ -703,3 +703,90 @@ describe("search_vault_smart — result _meta carries the structured payload on 
     expect("_meta" in result).toBe(false);
   });
 });
+
+describe("search_vault_smart — _meta payload gated on declared UI capability (R-09, ADR-0023 D9)", () => {
+  const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+  const sampleResults: SearchResult[] = [
+    {
+      filePath: "Notes/ml.md",
+      heading: "ML Notes",
+      excerpt: "ML Notes: introduction to gradient descent.",
+      line: 3,
+      score: 0.91,
+    },
+  ];
+
+  // FAILING today: searchVaultSmartHandler calls withSearchResultsPayload
+  // unconditionally and never reads hasUiCapability at all.
+  test("hasUiCapability: false — the modern era's declared non-support — omits the _meta payload", async () => {
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+      hasUiCapability: false,
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeUndefined();
+  });
+
+  test("hasUiCapability: true — the modern era's declared support — carries the _meta payload", async () => {
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+      hasUiCapability: true,
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  // Regression guard, not a task-8 failing case: hasUiCapability absent is
+  // the legacy-era shape (no per-request signal exists there) AND every
+  // caller that predates this field. Must stay green through task 8.
+  test("hasUiCapability omitted (legacy era / callers that predate the signal) — payload stays unconditional", async () => {
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+    })) as { _meta?: Record<string, unknown> };
+
+    expect(result._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  // isError already has its own dedicated regression coverage above
+  // ("index_building..." / "provider not ready...", R-05); this adds the
+  // one case those do not: isError must stay _meta-free even when the
+  // caller ALSO declares hasUiCapability: true — the branch order must be
+  // isError-first, capability-gate-second, never the reverse.
+  test("isError with hasUiCapability: true still carries no _meta key", async () => {
+    const spy = fakeProvider({ ready: false });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = (await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin,
+      hasUiCapability: true,
+    })) as { isError?: true; _meta?: Record<string, unknown> };
+
+    expect(result.isError).toBe(true);
+    expect("_meta" in result).toBe(false);
+  });
+});

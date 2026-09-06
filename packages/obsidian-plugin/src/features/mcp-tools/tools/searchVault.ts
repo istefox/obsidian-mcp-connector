@@ -15,7 +15,7 @@ export const searchVaultSchema = type({
     ),
   },
 }).describe(
-  'Run a Dataview DQL or JsonLogic query against the vault. DQL: in-process via the Dataview plugin API — requires the Dataview community plugin (`errorCode: "dataview_not_installed"` if absent). JsonLogic: filter all vault markdown files by frontmatter/tags/path using a JsonLogic rule (JSON string); no additional plugin required. Returns the Dataview query result for DQL, or a JSON array of matching `{path}` objects for JsonLogic.',
+  "Run a Dataview DQL or JsonLogic query against the vault. DQL requires the Dataview community plugin (`dataview_not_installed` if absent) and returns its native query result. JsonLogic filters all vault markdown files by frontmatter/tags/path using a rule passed as a JSON string, and returns a JSON array of matching `{path}` objects.",
 );
 
 export type SearchVaultContext = {

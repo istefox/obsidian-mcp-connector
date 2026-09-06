@@ -20,6 +20,40 @@ afterEach(async () => {
   for (const s of active.splice(0)) await destroyMcpService(s);
 });
 
+/**
+ * A plugin whose `default` token — the id `staticTokenProvider` hands out —
+ * carries an explicit `profile: "all"` policy.
+ *
+ * A bare `mockPlugin()` seeds no `toolLoading` slice, so its token resolves
+ * through `readPolicy`'s missing-entry fallback. R-11 (ADR-0023 D11) moved
+ * that fallback from `DEFAULT_POLICY` ("all") to `NEW_TOKEN_POLICY`
+ * ("adaptive"), which narrows the surface to
+ * `ALWAYS_ACTIVE_TOOLS ∪ CORE_SET ∪ promoted` and drops non-core tools such
+ * as `search_vault_smart`. Tests that are about the FULL registry, not about
+ * policy resolution, must pin the profile rather than inherit whatever the
+ * ambient default happens to be. `test-setup.ts`'s shared `mockPlugin()` is
+ * deliberately left alone: `tokenPolicyStore.test.ts` exercises that very
+ * fallback against the bare default.
+ */
+function makeAllProfilePlugin() {
+  let store: Record<string, unknown> = {
+    toolLoading: {
+      profile: "all",
+      promoted: [],
+      counters: {},
+      profiles: {
+        default: { profile: "all", promoted: [], allowed: null },
+      },
+    },
+  };
+  return mockPlugin({
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+  });
+}
+
 describe("createMcpService", () => {
   test("exposes a request handler compatible with StreamableHTTPServerTransport", async () => {
     const svc = await createMcpService({
@@ -140,10 +174,13 @@ describe("end-to-end: HTTP → McpServer", () => {
     // call: the affected tool's own unit tests keep passing in isolation, but
     // the tool stops being exposed via MCP. A failure here means either the
     // registry shrunk (missing tool) or grew (new tool needs the list updated).
+    // The token is pinned to `profile: "all"` so this stays a registry
+    // regression guard: under the R-11 default (`adaptive`) the list would be
+    // the core subset, and the assertion would be measuring policy instead.
     const { startHttpServer } = await import("./httpServer");
     const svc = await createMcpService({
       app: mockApp(),
-      plugin: mockPlugin(),
+      plugin: makeAllProfilePlugin(),
       pluginVersion: "0.4.0-alpha.1",
       serverName: "mcp-connector",
     });

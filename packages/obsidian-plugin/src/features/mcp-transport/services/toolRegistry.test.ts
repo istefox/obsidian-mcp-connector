@@ -154,6 +154,15 @@ describe("normalizeInputSchema", () => {
   test("strips anyOf member descriptions duplicating the parent's", () => {
     // ArkType propagates a union's .describe() onto every branch; the
     // wire format only needs the property-level copy.
+    //
+    // ADR-0023 D6: this fixture is an all-const anyOf, so the R-06
+    // const-union collapse now turns it into `enum` with no `anyOf` left
+    // to strip descriptions from. The parent-level description hoist this
+    // test originally guarded still holds; it is asserted here against the
+    // new post-collapse shape instead of the old anyOf-member shape. The
+    // dedupeUnionDescriptions-alongside-collapse interaction has its own
+    // dedicated test below ("existing dedupeUnionDescriptions behaviour
+    // still holds alongside the new unwrap/collapse").
     const desc = "Period granularity.";
     const input = {
       type: "object",
@@ -169,13 +178,12 @@ describe("normalizeInputSchema", () => {
     };
     const out = normalizeInputSchema(input) as {
       properties: {
-        period: { description: string; anyOf: Record<string, unknown>[] };
+        period: { description: string; enum?: unknown[]; anyOf?: unknown };
       };
     };
     expect(out.properties.period.description).toBe(desc);
-    for (const member of out.properties.period.anyOf) {
-      expect("description" in member).toBe(false);
-    }
+    expect(out.properties.period.enum).toEqual(["daily", "weekly"]);
+    expect("anyOf" in out.properties.period).toBe(false);
   });
 
   test("hoists a description shared by all anyOf members when the parent has none", () => {
@@ -235,6 +243,106 @@ describe("normalizeInputSchema", () => {
     const snapshot = JSON.parse(JSON.stringify(input));
     normalizeInputSchema(input);
     expect(input).toEqual(snapshot);
+  });
+
+  // R-06: unwrap single-member anyOf, collapse const-union anyOf into enum.
+  // ArkType's optional-boolean emission ({"anyOf":[{"type":"boolean"}]}) is
+  // the confirmed real-world case (issue #508 / search_and_replace's
+  // dry_run) — see the ADR-0023 note in toolRegistry.ts.
+  describe("R-06: single-member anyOf unwrap and const-union collapse", () => {
+    test("single-member anyOf unwraps to the member itself, preserving a sibling description", () => {
+      const input = {
+        type: "object",
+        properties: {
+          dry_run: {
+            description: "Preview without writing.",
+            anyOf: [{ type: "boolean" }],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: {
+          dry_run: { type?: string; anyOf?: unknown; description: string };
+        };
+      };
+      expect(out.properties.dry_run).toEqual({
+        type: "boolean",
+        description: "Preview without writing.",
+      });
+      expect("anyOf" in out.properties.dry_run).toBe(false);
+    });
+
+    test("anyOf of all-const members collapses to enum, preserving member order", () => {
+      const input = {
+        type: "object",
+        properties: {
+          period: {
+            anyOf: [
+              { const: "daily" },
+              { const: "weekly" },
+              { const: "monthly" },
+            ],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: { period: { enum?: unknown[]; anyOf?: unknown } };
+      };
+      expect(out.properties.period.enum).toEqual([
+        "daily",
+        "weekly",
+        "monthly",
+      ]);
+      expect("anyOf" in out.properties.period).toBe(false);
+    });
+
+    test("a genuine multi-type, multi-member anyOf is left untouched", () => {
+      const input = {
+        type: "object",
+        properties: {
+          value: {
+            anyOf: [{ type: "string" }, { type: "number" }],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: { value: { anyOf: Record<string, unknown>[] } };
+      };
+      expect(out.properties.value.anyOf).toEqual([
+        { type: "string" },
+        { type: "number" },
+      ]);
+    });
+
+    test("existing dedupeUnionDescriptions behaviour still holds alongside the new unwrap/collapse", () => {
+      // Order matters (plan task 3): the unwrap/collapse pass must run
+      // AFTER dedupeUnionDescriptions, so a description hoisted onto the
+      // parent from identical member descriptions is not stranded on a
+      // member that is about to be unwrapped or collapsed away.
+      const desc = "Period granularity.";
+      const input = {
+        type: "object",
+        properties: {
+          period: {
+            anyOf: [
+              { const: "daily", description: desc },
+              { const: "weekly", description: desc },
+            ],
+          },
+        },
+      };
+      const out = normalizeInputSchema(input) as {
+        properties: {
+          period: { description?: string; enum?: unknown[]; anyOf?: unknown };
+        };
+      };
+      // The pre-existing hoist: identical member descriptions rise to the
+      // parent.
+      expect(out.properties.period.description).toBe(desc);
+      // The new R-06 collapse: an all-const anyOf becomes enum.
+      expect(out.properties.period.enum).toEqual(["daily", "weekly"]);
+      expect("anyOf" in out.properties.period).toBe(false);
+    });
   });
 });
 
@@ -787,6 +895,116 @@ describe("ToolRegistry annotations", () => {
     expect(second).not.toBe(first);
     expect(second.tools.find((t) => t.name === "alpha")?.annotations).toEqual({
       readOnlyHint: true,
+    });
+  });
+
+  // R-08 / ADR-0023 D8: spec-default-valued annotation fields are stripped
+  // at the EMISSION seam (this file's list()/entries()), not by editing the
+  // source table in mcp-tools/toolAnnotations.ts — that table keeps setting
+  // destructiveHint explicitly on every writer so the classification stays
+  // reviewable in one place. setAnnotations() itself must keep storing the
+  // caller's literal map unchanged; only the wire-facing `entry.annotations`
+  // built in entries() may omit spec-default values.
+  //
+  // MCP spec defaults for an annotation field absent from `tools/list`:
+  // readOnlyHint: false, destructiveHint: true, idempotentHint: false,
+  // openWorldHint: true.
+  describe("R-08: spec-default annotation fields are omitted at the emission seam", () => {
+    test("a field explicitly set to its spec-default value is omitted from the wire entry", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // destructiveHint: true is the spec default for an unlisted field,
+      // and openWorldHint: false is NOT the spec default (true is) — so
+      // only destructiveHint should be stripped here.
+      tools.setAnnotations({
+        alpha: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: false,
+        },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      expect(alpha?.annotations).toEqual({
+        readOnlyHint: false,
+        openWorldHint: false,
+      });
+      expect(alpha?.annotations && "destructiveHint" in alpha.annotations).toBe(
+        false,
+      );
+    });
+
+    test("a field explicitly set to a NON-default value is kept on the wire entry", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // destructiveHint: false is NOT the spec default (true is), so it
+      // must survive emission.
+      tools.setAnnotations({
+        alpha: { readOnlyHint: false, destructiveHint: false },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      expect(alpha?.annotations?.destructiveHint).toBe(false);
+    });
+
+    test("setAnnotations() itself is unaffected — the stored map keeps the caller's literal (spec-default-inclusive) values", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      const stored = {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      };
+      tools.setAnnotations({ alpha: stored });
+
+      // The emission seam must be a read-time transform of what
+      // toolAnnotations.ts declared, not a mutation performed by
+      // setAnnotations() at write time — otherwise a second read of the
+      // same input (e.g. a future getAnnotations()-style accessor) would
+      // see the already-stripped shape instead of the source table's
+      // literal declaration.
+      expect(stored).toEqual({
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      });
+    });
+
+    // ADR-0023 D8's "one deliberate exception" paragraph: destructiveHint is
+    // the only field this rule strips at its spec default. readOnlyHint and
+    // openWorldHint must always survive emission as explicit booleans,
+    // regardless of value, because mcpServer.test.ts's full-registry
+    // completeness guard (~line 246) requires every wire tool entry to carry
+    // both as booleans. Since readOnlyHint:false and openWorldHint:true ARE
+    // the spec defaults for most tools, stripping them at spec-default value
+    // would break that guard — so the strip rule is scoped to destructiveHint
+    // only, not applied uniformly across all four annotation fields.
+    test("destructiveHint at its spec default is omitted, while readOnlyHint and openWorldHint are never stripped even at their own spec defaults", () => {
+      const { tools } = buildRegistryWithTwoTools();
+
+      // readOnlyHint: false and openWorldHint: true are each that field's
+      // own spec default, and idempotentHint: false is also its spec
+      // default — none of the three should be stripped. destructiveHint:
+      // true is the spec default for that field, and is the sole field
+      // this rule omits.
+      tools.setAnnotations({
+        alpha: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      });
+
+      const alpha = tools.list().tools.find((t) => t.name === "alpha");
+      expect(alpha?.annotations && "destructiveHint" in alpha.annotations).toBe(
+        false,
+      );
+      // readOnlyHint and openWorldHint always survive as explicit booleans,
+      // never stripped, per the mcpServer.test.ts completeness guard.
+      expect(alpha?.annotations?.readOnlyHint).toBe(false);
+      expect(alpha?.annotations?.openWorldHint).toBe(true);
+      expect(alpha?.annotations?.idempotentHint).toBe(false);
     });
   });
 });

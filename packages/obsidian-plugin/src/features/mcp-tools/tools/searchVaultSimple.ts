@@ -8,6 +8,7 @@ import {
 
 const DEFAULT_CONTEXT = 100;
 const DEFAULT_LIMIT = 50;
+const DEFAULT_MAX_MATCHES_PER_FILE = 5;
 
 export const searchVaultSimpleSchema = type({
   name: '"search_vault_simple"',
@@ -21,21 +22,48 @@ export const searchVaultSimpleSchema = type({
     "limit?": type("number.integer>=1").describe(
       "Max number of files to return matches from. Default 50.",
     ),
+    "maxMatchesPerFile?": type("number.integer>=1").describe(
+      "Max number of matches to return per file. Default 5.",
+    ),
   },
 }).describe(
   "Plain-text substring search across all markdown files in the vault. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at.",
 );
 
 export type SearchVaultSimpleContext = {
-  arguments: { query: string; contextLength?: number; limit?: number };
+  arguments: {
+    query: string;
+    contextLength?: number;
+    limit?: number;
+    maxMatchesPerFile?: number;
+  };
   app: App;
+  /**
+   * R-09 (ADR-0023 D9) capability signal, threaded from
+   * `HandlerContext.hasUiCapability` (mcp-transport/services/toolRegistry.ts)
+   * the same way `search_vault_smart`'s `sendNotification` already is.
+   * `true`/`false` on the modern era, `undefined` on the legacy era (no
+   * per-request signal exists there) and in partial test fixtures / non-HTTP
+   * call sites.
+   *
+   * Only an explicit `false` withholds the payload. `undefined` must never
+   * be read as "declared: false" — the legacy era's unconditional attach
+   * depends on that distinction.
+   */
+  hasUiCapability?: boolean;
 };
 
 type FileResult = {
   filename: string;
+  /**
+   * Set when this file had more matches than `maxMatchesPerFile` allowed
+   * through (R-02, ADR-0023 D2) — "more than the cap", not "at least the
+   * cap". Left absent (never `false`) for a file at or under the cap, so
+   * the serialized response carries no key for the common case.
+   */
+  moreMatches?: boolean;
   matches: Array<{
     context: string;
-    match: { start: number; end: number };
     /** 0-indexed line the match starts at. */
     line: number;
   }>;
@@ -67,6 +95,8 @@ export async function searchVaultSimpleHandler(
   const query = ctx.arguments.query;
   const contextLength = ctx.arguments.contextLength ?? DEFAULT_CONTEXT;
   const limit = ctx.arguments.limit ?? DEFAULT_LIMIT;
+  const maxMatchesPerFile =
+    ctx.arguments.maxMatchesPerFile ?? DEFAULT_MAX_MATCHES_PER_FILE;
   const patternSource = escapeRegExp(query);
 
   const files = ctx.app.vault.getMarkdownFiles();
@@ -86,8 +116,16 @@ export async function searchVaultSimpleHandler(
         // Per-file scanner: files in a batch scan concurrently, so a
         // shared regex would race on lastIndex.
         let m: RegExpExecArray | null;
+        let moreMatches = false;
         const scanner = new RegExp(patternSource, "gi");
         while ((m = scanner.exec(content)) !== null) {
+          // One match past the cap is enough to know there are more: stop
+          // scanning there instead of collecting a file's worth of hits
+          // that are about to be dropped (R-02, ADR-0023 D2).
+          if (matches.length >= maxMatchesPerFile) {
+            moreMatches = true;
+            break;
+          }
           const idx = m.index;
           const start = Math.max(0, idx - contextLength);
           const end = Math.min(
@@ -96,7 +134,6 @@ export async function searchVaultSimpleHandler(
           );
           matches.push({
             context: content.slice(start, end),
-            match: { start: idx, end: idx + query.length },
             line: content.slice(0, idx).split("\n").length - 1,
           });
           // Match length equals query length (literal pattern), so this
@@ -104,7 +141,13 @@ export async function searchVaultSimpleHandler(
           scanner.lastIndex = idx + query.length;
         }
 
-        return matches.length > 0 ? { filename: file.path, matches } : null;
+        if (matches.length === 0) return null;
+        // `moreMatches` is omitted rather than set to false at or under the
+        // cap: the flag is the exception, and every file paying a `false`
+        // key back to the client is the cost this change exists to cut.
+        return moreMatches
+          ? { filename: file.path, matches, moreMatches: true }
+          : { filename: file.path, matches };
       }),
     );
 
@@ -115,8 +158,14 @@ export async function searchVaultSimpleHandler(
     }
   }
 
+  const result = successText(JSON.stringify({ results }));
+  // `=== false` and not `!ctx.hasUiCapability`: only an explicit, declared
+  // NON-support withholds the payload (R-09, ADR-0023 D9). `undefined` is
+  // "no signal" — the legacy era, which is stateless and POST-only and
+  // therefore cannot have one — and keeps attaching unconditionally.
+  if (ctx.hasUiCapability === false) return result;
   return withSearchResultsPayload(
-    successText(JSON.stringify({ results })),
+    result,
     projectSimpleSearchResults(results, ctx.app.vault.getName()),
   );
 }

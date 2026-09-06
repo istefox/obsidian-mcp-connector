@@ -33,7 +33,9 @@ function makePlugin(toolLoading?: {
 type CatalogEntry = {
   name: string;
   status: "active" | "inactive" | "promoted";
-  call_count: number;
+  // R-04: `call_count` is omitted entirely from the wire entry when the
+  // count is 0 — the key itself is optional, not merely `0`-valued.
+  call_count?: number;
   description?: string;
 };
 
@@ -104,6 +106,63 @@ describe("toolCatalogHandler", () => {
     expect(entry?.description).toBe(
       "Finds broken internal links across the vault.",
     );
+  });
+
+  // R-04: `call_count: 0` has NO `call_count` key on the wire; a non-zero
+  // count still reports it. Assert both sides of the omission on the same
+  // shape so a regression that always includes (or always omits) the key
+  // cannot slip through.
+  test("R-04: call_count is omitted entirely when the count is 0, present when non-zero", async () => {
+    const plugin = makePlugin({
+      counters: { find_broken_links: 0 },
+    });
+    const result = await toolCatalogHandler({
+      registry: makeRegistry(ENTRIES),
+      plugin,
+    });
+    const catalog = parse(result);
+    const entry = catalog.find((e) => e.name === "find_broken_links");
+    expect(entry).toBeDefined();
+    expect("call_count" in (entry as object)).toBe(false);
+
+    const pluginWithCalls = makePlugin({
+      counters: { find_broken_links: 3 },
+    });
+    const resultWithCalls = await toolCatalogHandler({
+      registry: makeRegistry(ENTRIES),
+      plugin: pluginWithCalls,
+    });
+    const catalogWithCalls = parse(resultWithCalls);
+    const entryWithCalls = catalogWithCalls.find(
+      (e) => e.name === "find_broken_links",
+    );
+    expect(entryWithCalls).toBeDefined();
+    expect("call_count" in (entryWithCalls as object)).toBe(true);
+    expect(entryWithCalls?.call_count).toBe(3);
+  });
+
+  // R-04's explicit requirement: first-sentence truncation must be
+  // exercised against a description with at least three sentences, not
+  // just the two-sentence fixture already used above — a truncation bug
+  // that keeps the first TWO sentences (off-by-one on the split) would
+  // pass a two-sentence fixture by accident.
+  test("R-04: first-sentence truncation holds for a genuinely multi-sentence (3+) description", async () => {
+    const entries = [
+      {
+        name: "multi_sentence_tool",
+        enabled: false,
+        description:
+          "Reads a note by path. Supports partial ranges via startLine and endLine. Returns UTF-8 text content only, never binary bytes.",
+      },
+    ];
+    const plugin = makePlugin();
+    const result = await toolCatalogHandler({
+      registry: makeRegistry(entries),
+      plugin,
+    });
+    const catalog = parse(result);
+    const entry = catalog.find((e) => e.name === "multi_sentence_tool");
+    expect(entry?.description).toBe("Reads a note by path.");
   });
 });
 

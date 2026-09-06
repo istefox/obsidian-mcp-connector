@@ -449,6 +449,87 @@ describe("ensureTokenStore — re-mint over an emptied tokens[]", () => {
   });
 });
 
+// R-11 (ADR-0023 D11): `withPolicyFor`'s non-seed branch (tokenStore.ts:169)
+// is one of the exactly-two sites that adopts NEW_TOKEN_POLICY. The
+// non-seed branch runs whenever `ensureTokenStore` is called with
+// `existing.length > 0` (a live tokens[] already exists) AND the mirror
+// token (tokens[0]) has no `profiles` entry — "seed a genuinely new
+// token", never a 0.28.2 migration (`seedFromGlobals`). The revoke-then-
+// reload pattern below is the same one the existing suite already uses
+// (see "revokeToken" describe block) to land a survivor token in exactly
+// that shape, reused here to assert the NEW expected value directly.
+// FAILING today: the non-seed branch still calls `defaultPolicy()`
+// ("all").
+//
+// NOTE for the coder: two EXISTING tests in the "revokeToken" describe
+// block below — "a lost policy sweep does not let the survivor inherit on
+// the next load" (~line 639) and "the survivor does not inherit the
+// revoked token's policy on the next load" (~line 699) — reach this SAME
+// non-seed branch and currently assert `{ profile: "all", ... }` on the
+// survivor. Once tokenStore.ts:169 adopts NEW_TOKEN_POLICY, both will
+// fail and MUST be updated to `{ profile: "adaptive", promoted: [],
+// allowed: null }` — their intent (the survivor gets a fresh policy, not
+// the revoked token's) survives unchanged; only the expected profile
+// value moves, exactly like tokenPolicyStore.test.ts:36-52. Not updated
+// here: task 7's brief named only tokenPolicyStore.test.ts:36-52 for this
+// treatment, and pre-emptively rewriting these two risks masking a
+// different regression under this same edit — flagged instead so the
+// coder updates them deliberately, in the same change that flips the
+// production site.
+describe("ensureTokenStore — new-token default (R-11, ADR-0023 D11)", () => {
+  test("a survivor token seeded with no profiles entry resolves to adaptive, not all (orphaned-token shape)", async () => {
+    const { plugin, getData } = makePlugin({
+      mcpTransport: {
+        bearerToken: "a".repeat(43),
+        tokens: [
+          {
+            id: "default",
+            label: "Default",
+            token: "a".repeat(43),
+            createdAt: 1,
+          },
+          {
+            id: "claude",
+            label: "claude.ai",
+            token: "b".repeat(43),
+            createdAt: 2,
+          },
+        ],
+      },
+      toolLoading: {
+        profile: "core",
+        promoted: ["x"],
+        counters: {},
+        profiles: {
+          default: { profile: "core", promoted: ["x"], allowed: null },
+          // "claude" has NO entry — it will become tokens[0] (the mirror
+          // token) once "default" is revoked below, landing exactly on
+          // the SPEC's orphaned-token shape: present in mcpTransport.tokens,
+          // absent from toolLoading.profiles.
+        },
+      },
+    });
+
+    await revokeToken(plugin, "default");
+    // withPolicyFor seeds a missing mirror-token entry on the NEXT load —
+    // this is what reaches the non-seed branch with existing.length > 0
+    // (one surviving token) and no profiles entry for it.
+    await ensureTokenStore(plugin);
+
+    const toolLoading = getData().toolLoading as {
+      profiles: Record<
+        string,
+        { profile: string; promoted: string[]; allowed: string[] | null }
+      >;
+    };
+    expect(toolLoading.profiles.claude).toEqual({
+      profile: "adaptive",
+      promoted: [],
+      allowed: null,
+    });
+  });
+});
+
 describe("revokeToken", () => {
   test("refuses to revoke the last remaining token", async () => {
     const { plugin } = makePlugin({
@@ -689,8 +770,12 @@ describe("revokeToken", () => {
     const toolLoading = data.toolLoading as {
       profiles: Record<string, unknown>;
     };
+    // `adaptive` since R-11 (ADR-0023 D11): the non-seed branch is the
+    // new-token role and now seeds NEW_TOKEN_POLICY. What this test
+    // asserts is unchanged — the survivor gets its OWN fresh policy, not
+    // the revoked token's `core`/`["x"]`.
     expect(toolLoading.profiles.claude).toEqual({
-      profile: "all",
+      profile: "adaptive",
       promoted: [],
       allowed: null,
     });
@@ -734,8 +819,11 @@ describe("revokeToken", () => {
     const toolLoading = getData().toolLoading as {
       profiles: Record<string, unknown>;
     };
+    // `adaptive` since R-11 (ADR-0023 D11), same reason as above: the
+    // point being pinned is that the survivor does NOT come out as
+    // `core`/`["x"]`, which is the revoked token's policy.
     expect(toolLoading.profiles.claude).toEqual({
-      profile: "all",
+      profile: "adaptive",
       promoted: [],
       allowed: null,
     });

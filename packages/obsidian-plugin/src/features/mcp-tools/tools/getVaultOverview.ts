@@ -19,7 +19,7 @@ export const getVaultOverviewSchema = type({
     ),
   },
 }).describe(
-  "One-call snapshot of the vault: active file, total note count, top-level folder distribution, top tags, and most recently modified notes. Cheaper than calling get_active_file, list_tags, and get_recent_files separately for situational awareness at the start of a task. A bounded snapshot, not a paginated listing — call list_tags/get_recent_files directly for more than the snapshot ceiling. Always read-only.",
+  "One-call snapshot of the vault: active file, total note count, top-level folder distribution, top tags, and most recently modified notes. A bounded snapshot, not a paginated listing — call list_tags or get_recent_files directly for more than the snapshot ceiling.",
 );
 
 export type GetVaultOverviewContext = {

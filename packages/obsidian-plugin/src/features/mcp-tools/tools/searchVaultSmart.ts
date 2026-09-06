@@ -28,7 +28,7 @@ export const searchVaultSmartSchema = type({
     ),
   },
 }).describe(
-  "Semantic search through the configured semantic search provider — native Transformers.js (default) or Smart Connections, per Settings → MCP Connector → Semantic Search. Returns notes ranked by similarity to the query, each with the 0-indexed line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
+  "Semantic search through the configured provider, native Transformers.js or Smart Connections. Returns notes ranked by similarity to the query, each with the line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
 );
 
 export type SearchVaultSmartContext = {
@@ -50,6 +50,18 @@ export type SearchVaultSmartContext = {
     method: string;
     params?: Record<string, unknown>;
   }) => Promise<void>;
+  /**
+   * R-09 (ADR-0023 D9) capability signal, threaded from
+   * `HandlerContext.hasUiCapability` the same way `sendNotification` above
+   * already is. `true`/`false` on the modern era, `undefined` on the
+   * legacy era (no per-request signal exists there) and in partial test
+   * fixtures / non-HTTP call sites.
+   *
+   * Only an explicit `false` withholds the payload. `undefined` must never
+   * be read as "declared: false" — the legacy era's unconditional attach
+   * depends on that distinction.
+   */
+  hasUiCapability?: boolean;
 };
 
 type ToolResult = {
@@ -266,8 +278,15 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
+  const result = successText(JSON.stringify({ results }));
+  // Same rule as `search_vault_simple` (R-09, ADR-0023 D9): only a
+  // declared NON-support withholds the payload. `undefined` means "no
+  // signal" — the legacy era, and every caller predating this field — and
+  // keeps attaching. Every `isError` return above short-circuits before
+  // reaching here, so the error branch still carries no key on either era.
+  if (ctx.hasUiCapability === false) return result;
   return withSearchResultsPayload(
-    successText(JSON.stringify({ results })),
+    result,
     projectSmartSearchResults(results, ctx.app.vault.getName()),
   );
 }

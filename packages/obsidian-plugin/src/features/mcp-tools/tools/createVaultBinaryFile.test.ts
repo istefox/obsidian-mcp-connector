@@ -96,6 +96,51 @@ describe("create_vault_binary_file tool", () => {
   });
 });
 
+// R-08 / ADR-0023: the tool's advertised JSON-schema `pattern` constraint
+// for `content` is simplified for token cost, but validation is LAYERED —
+// this must not weaken the runtime check. Two independent layers exist:
+//   1. The ArkType schema itself (`string.base64` or whatever replaces it),
+//      enforced by `schema.assert()` at the ToolRegistry.dispatch() gate
+//      BEFORE the handler ever runs.
+//   2. The handler's own atob() decode try/catch (createVaultBinaryFile.ts
+//      base64ToBuf, exercised by "returns isError ... on invalid base64"
+//      above).
+// This describe block locks in layer 1 directly against the exported
+// schema, independent of the registry, so a simplified pattern that
+// silently drops the ArkType-level check cannot pass while layer 2 alone
+// keeps the handler-level test above green.
+describe("create_vault_binary_file — schema-level base64 validation is not weakened (R-08)", () => {
+  test("schema.assert rejects non-base64 content before the handler ever runs", () => {
+    expect(() =>
+      createVaultBinaryFileSchema.assert({
+        name: "create_vault_binary_file",
+        arguments: { path: "bad.png", content: "not-valid-base64!!!" },
+      }),
+    ).toThrow();
+  });
+
+  test("schema.assert rejects content with characters outside the base64 alphabet", () => {
+    // Underscore and '@' are outside even a loosened base64 charset; this
+    // must fail regardless of how the pattern is simplified.
+    expect(() =>
+      createVaultBinaryFileSchema.assert({
+        name: "create_vault_binary_file",
+        arguments: { path: "bad.png", content: "abc_def@ghi" },
+      }),
+    ).toThrow();
+  });
+
+  test("schema.assert accepts genuinely valid base64 content unchanged", () => {
+    const validB64 = b64("fake-png-bytes");
+    expect(() =>
+      createVaultBinaryFileSchema.assert({
+        name: "create_vault_binary_file",
+        arguments: { path: "ok.png", content: validB64 },
+      }),
+    ).not.toThrow();
+  });
+});
+
 describe("create_vault_binary_file — overwrite write precondition (ADR-0022)", () => {
   const FILE = "Images/precond.png";
 

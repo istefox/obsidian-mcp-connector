@@ -12,7 +12,7 @@ export const findOrphanedNotesSchema = type({
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
-  "Returns all markdown notes that have zero incoming resolved links from any vault file. Builds the referenced-file set from Obsidian's resolvedLinks cache (no file I/O). Notes in excluded folders (this tool's own `exclude_folders`, or any folder the vault owner has hidden vault-wide) are omitted from the output but their outgoing links still count toward other notes' reference status. Always read-only.",
+  "Returns all markdown notes that have zero incoming resolved links from any vault file. Notes in excluded folders (this tool's own `exclude_folders`, or any folder hidden vault-wide) are omitted from the output, but their outgoing links still count toward other notes' reference status.",
 );
 
 export type FindOrphanedNotesContext = {

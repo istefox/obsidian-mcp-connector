@@ -114,13 +114,52 @@ afterEach(async () => {
   }
 });
 
+/**
+ * The `toolLoading` slice pinning the `default` token — the id
+ * `staticTokenProvider` hands out — to `profile: "all"`.
+ *
+ * A bare `mockPlugin()` seeds no `toolLoading` slice, so its token resolves
+ * through `readPolicy`'s missing-entry fallback. R-11 (ADR-0023 D11) moved
+ * that fallback from `DEFAULT_POLICY` ("all") to `NEW_TOKEN_POLICY`
+ * ("adaptive"), which narrows the surface to
+ * `ALWAYS_ACTIVE_TOOLS ∪ CORE_SET ∪ promoted` and drops non-core tools such
+ * as `search_vault_smart`. The era-routing cases in this file are about which
+ * transport answers, not about policy, so they pin the profile instead of
+ * inheriting whatever the ambient default happens to be. `test-setup.ts`'s
+ * shared `mockPlugin()` is deliberately left alone: `tokenPolicyStore.test.ts`
+ * exercises that very fallback against the bare default.
+ */
+const ALL_PROFILE_TOOL_LOADING = {
+  profile: "all",
+  promoted: [],
+  counters: {},
+  profiles: {
+    default: { profile: "all", promoted: [], allowed: null },
+  },
+} as const;
+
+/** A plugin backed by {@link ALL_PROFILE_TOOL_LOADING}, plus any extra
+ * overrides a caller needs (e.g. a seeded `semanticSearchState`). */
+function makeAllProfilePlugin(overrides: Record<string, unknown> = {}) {
+  let store: Record<string, unknown> = {
+    toolLoading: { ...ALL_PROFILE_TOOL_LOADING },
+  };
+  return mockPlugin({
+    loadData: async () => ({ ...store }),
+    saveData: async (d: unknown) => {
+      store = { ...(d as Record<string, unknown>) };
+    },
+    ...overrides,
+  } as never);
+}
+
 /** Boot a service + HTTP server behind a single static token, the same
  * idiom `mcpServer.test.ts` and `eraRouter.test.ts` use. */
 async function startService(): Promise<RunningServer> {
   const { startHttpServer } = await import("./httpServer");
   const svc = await createMcpService({
     app: mockApp(),
-    plugin: mockPlugin(),
+    plugin: makeAllProfilePlugin(),
     pluginVersion: "0.4.0-alpha.1",
     serverName: "mcp-connector",
   });
@@ -739,8 +778,12 @@ describe("search_vault_smart's notifications/progress rides the modern path's ow
   // (#344): `nativeIndexBuildInProgress: true` is the sole gate the
   // handler checks before it computes a progress percentage and pushes
   // it, independent of provider.isReady().
+  // The `profile: "all"` pin comes from `makeAllProfilePlugin` for the reason
+  // documented there: `search_vault_smart` is not in CORE_SET, so under R-11's
+  // `adaptive` default this tool would not be callable at all and the progress
+  // frames this test is about would never be produced.
   function buildingSemanticPlugin() {
-    return mockPlugin({
+    return makeAllProfilePlugin({
       semanticSearchState: {
         provider: { isReady: () => true, search: async () => [] },
         settings: { provider: "native", indexingMode: "live" },
@@ -748,7 +791,7 @@ describe("search_vault_smart's notifications/progress rides the modern path's ow
         nativeIndexBuildInProgress: true,
         nativeIndexBuildStartedAt: Date.now() - 1_000,
       },
-    } as never);
+    });
   }
 
   async function bootBuildingServer(): Promise<RunningServer> {
@@ -1112,6 +1155,20 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
     ).toBeDefined();
   });
 
+  // R-09 (ADR-0023 D9) resolved the note that stood here: this test's
+  // subject is R-06 — the payload key SURVIVING the 2026 encode seam —
+  // which is only observable on a request that gets a payload at all. Under
+  // gating that now means a UI-declaring envelope, so the envelope moved
+  // and the assertions did not. The mirror case (a modern request WITHOUT
+  // the extension gets no payload) is owned by the R-09 describe block
+  // below, which is where that claim belongs.
+  const UI_ENVELOPE = {
+    ...VALID_ENVELOPE,
+    "io.modelcontextprotocol/clientCapabilities": {
+      extensions: { "io.modelcontextprotocol/ui": {} },
+    },
+  };
+
   test("modern: the same key survives the 2026 encode seam, alongside the seam's own stamped _meta fields", async () => {
     setMockFile("a.md", "one hit here");
     const server = await startService();
@@ -1125,7 +1182,7 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
         params: {
           name: "search_vault_simple",
           arguments: { query: "hit" },
-          _meta: VALID_ENVELOPE,
+          _meta: UI_ENVELOPE,
         },
       },
       { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
@@ -1152,5 +1209,120 @@ describe("search_vault_simple — the _meta payload key survives both the legacy
     expect(
       body.result?._meta?.["io.modelcontextprotocol/serverInfo"],
     ).toBeDefined();
+  });
+});
+
+/**
+ * R-09 (ADR-0023 D9): gate the search-results `_meta` payload on the
+ * modern era's declared `io.modelcontextprotocol/ui` extension support.
+ * Real end-to-end coverage through the actual transport — `classifyEra`,
+ * the SDK's `serveModern` capability lift (`ctx.mcpReq.envelope`), and
+ * `mcpServer.ts`'s dispatch call site — not a mock of any of those layers.
+ *
+ * FAILING today (both gating cases): the payload is attached unconditionally
+ * regardless of the declared envelope, exactly as R-06's tests above already
+ * demonstrate with a NON-declaring envelope.
+ */
+describe("search_vault_simple — _meta payload gated on the modern era's declared UI capability (R-09, ADR-0023 D9)", () => {
+  const UI_CAPABLE_ENVELOPE = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {
+      extensions: { "io.modelcontextprotocol/ui": {} },
+    },
+  };
+  const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+
+  test("modern request declaring io.modelcontextprotocol/ui GETS the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 60,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          _meta: UI_CAPABLE_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
+    );
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  test("modern request NOT declaring io.modelcontextprotocol/ui does NOT get the _meta payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          // VALID_ENVELOPE's clientCapabilities is {} — no extensions at
+          // all, so no io.modelcontextprotocol/ui declaration.
+          _meta: VALID_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_simple" },
+    );
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeUndefined();
+  });
+
+  // Pinned so a later refactor of the gating logic cannot silently widen
+  // it onto the era that has no capability signal to gate on at all
+  // (ADR-0023 D9: "structurally impossible" on legacy, not a gap to work
+  // around). Already true today; must stay true after R-09 ships.
+  test("a legacy request gets the payload unconditionally, regardless of R-09's gating", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startService();
+    const res = await postMcp(server.port, TOKEN, {
+      jsonrpc: "2.0",
+      id: 62,
+      method: "tools/call",
+      params: { name: "search_vault_simple", arguments: { query: "hit" } },
+    });
+    const body = await res.json();
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeDefined();
+  });
+
+  // isError regression guard at the transport level, mirroring the
+  // existing unit-level pins in searchVaultSimple.test.ts /
+  // searchVaultSmart.test.ts — already true today via
+  // withSearchResultsPayload's isError short-circuit, must stay true once
+  // gating is added on top of it (isError must short-circuit BEFORE the
+  // capability check, not after).
+  test("an isError result carries no _meta key even when the caller declares io.modelcontextprotocol/ui", async () => {
+    // No mock files at all: search_vault_smart's provider-not-ready path
+    // is the simplest reliable isError branch available at this level
+    // without faking a whole SemanticSearchProvider through HTTP.
+    const server = await startService();
+    const res = await postMcp(
+      server.port,
+      TOKEN,
+      {
+        jsonrpc: "2.0",
+        id: 63,
+        method: "tools/call",
+        params: {
+          name: "search_vault_smart",
+          arguments: { query: "hit" },
+          _meta: UI_CAPABLE_ENVELOPE,
+        },
+      },
+      { ...modernHeaders("tools/call"), "mcp-name": "search_vault_smart" },
+    );
+    const body = await res.json();
+    expect(body.result?.isError).toBe(true);
+    expect(body.result?._meta?.[PAYLOAD_KEY]).toBeUndefined();
   });
 });

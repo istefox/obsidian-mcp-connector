@@ -362,12 +362,23 @@ export async function registerTools(
       app: ctx.app,
     }),
   );
-  registry.register(searchVaultSimpleSchema, async ({ arguments: args }) =>
-    searchVaultSimpleHandler({ arguments: args, app: ctx.app }),
+  // `hasUiCapability` rides the HandlerContext the same way
+  // `sendNotification` does (R-09, ADR-0023 D9). Forwarded as-is,
+  // `undefined` included: the tools distinguish "declared no support"
+  // from "no signal at all", and collapsing the two here would silently
+  // strip the payload from every legacy-era call.
+  registry.register(
+    searchVaultSimpleSchema,
+    async ({ arguments: args }, { hasUiCapability }) =>
+      searchVaultSimpleHandler({
+        arguments: args,
+        app: ctx.app,
+        hasUiCapability,
+      }),
   );
   registry.register(
     searchVaultSmartSchema,
-    async (params, { sendNotification }) =>
+    async (params, { sendNotification, hasUiCapability }) =>
       searchVaultSmartHandler({
         arguments: (
           params as { arguments: SearchVaultSmartContext["arguments"] }
@@ -378,6 +389,7 @@ export async function registerTools(
           params as { _meta?: { progressToken?: string | number } }
         )._meta?.progressToken,
         sendNotification,
+        hasUiCapability,
       }),
   );
   registry.register(executeDataviewQuerySchema, async ({ arguments: args }) =>

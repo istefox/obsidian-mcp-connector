@@ -102,7 +102,10 @@ describe("execute_dataview_query", () => {
       },
     );
 
-    test("extra Dataview fields (idMeaning) pass through unchanged", async () => {
+    test("idMeaning is removed from TABLE-mode output (R-03, repairs the pre-ADR contract)", async () => {
+      // Pre-ADR-0023 this field passed through unchanged; R-03 removes it
+      // as part of the Dataview result-shape cleanup (Invariant 7 — the
+      // old contract is updated, never silently skipped).
       setMockDataviewState("ready");
       setMockDataviewQueryImpl(() => ({
         successful: true,
@@ -118,7 +121,122 @@ describe("execute_dataview_query", () => {
         app: mockApp(),
       });
       const body = parse(res);
-      expect(body.idMeaning).toEqual({ type: "path" });
+      expect("idMeaning" in body).toBe(false);
+    });
+  });
+
+  describe("Dataview Link flattening (R-03)", () => {
+    // Dataview's real Link shape, per the SPEC's stated contract:
+    // {path, embed, type, display} — not derived from an installed
+    // Dataview type, since the plugin API is out-of-repo at runtime
+    // (see the file-level comment on DataviewApi above).
+    function makeLink(path: string) {
+      return { path, embed: false, type: "file", display: null };
+    }
+
+    test("a top-level Link value flattens to its plain path string", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "list",
+          values: [makeLink("Notes/A.md")],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'LIST FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual(["Notes/A.md"]);
+    });
+
+    test("a Link nested inside an array inside a TABLE cell also flattens (SPEC edge case)", async () => {
+      // The explicit edge case the SPEC calls out: a top-level-only
+      // transform passes a naive test and fails this one, because the
+      // TABLE cell here is itself an array of Links, one level deeper
+      // than the top-level case above.
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "outlinks"],
+          values: [
+            ["Notes/A.md", [makeLink("Notes/B.md"), makeLink("Notes/C.md")]],
+          ],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.outlinks FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([
+        ["Notes/A.md", ["Notes/B.md", "Notes/C.md"]],
+      ]);
+    });
+  });
+
+  describe("toJSON-bearing values are not walked (R-03 regression: DateTime/Duration corruption)", () => {
+    // Synthetic stand-in for Dataview's luxon-based DateTime/Duration: a
+    // plain object whose OWN enumerable fields are internal representation
+    // detail, and whose `toJSON()` is the only correct serialisation.
+    function makeDateTimeLike(iso: string) {
+      return {
+        // Internal fields a naive Object.entries walk would otherwise emit
+        // instead of the ISO string.
+        year: 2026,
+        month: 5,
+        day: 22,
+        toJSON() {
+          return iso;
+        },
+      };
+    }
+
+    test("a toJSON-bearing value nested inside a TABLE cell serialises via toJSON(), not its enumerable fields", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "mtime"],
+          values: [
+            ["Notes/A.md", makeDateTimeLike("2026-05-22T00:00:00.000Z")],
+          ],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.mtime FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([["Notes/A.md", "2026-05-22T00:00:00.000Z"]]);
+    });
+
+    test("a plain nested object with no toJSON and no Link shape still flattens recursively, unchanged", async () => {
+      setMockDataviewState("ready");
+      setMockDataviewQueryImpl(() => ({
+        successful: true,
+        value: {
+          type: "table",
+          headers: ["file", "meta"],
+          values: [["Notes/A.md", { status: "open", nested: { count: 2 } }]],
+        },
+      }));
+      const res = await executeDataviewQueryHandler({
+        arguments: { query: 'TABLE file.meta FROM ""' },
+        app: mockApp(),
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.values).toEqual([
+        ["Notes/A.md", { status: "open", nested: { count: 2 } }],
+      ]);
     });
   });
 

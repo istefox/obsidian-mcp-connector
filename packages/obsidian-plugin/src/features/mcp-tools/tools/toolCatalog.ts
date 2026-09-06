@@ -22,7 +22,14 @@ type ToolEntry = {
    * refuse it too (ADR-0014 §9).
    */
   status: "active" | "inactive" | "promoted" | "unavailable";
-  call_count: number;
+  /**
+   * Omitted entirely when the count is 0 (ADR-0023 R-04): a never-called
+   * tool is the common case across the whole catalog, and `"call_count":0`
+   * on every one of ~50 entries is pure wire cost. Absent therefore reads
+   * as zero — the field is only present once a tool has actually been
+   * called.
+   */
+  call_count?: number;
   description?: string;
 };
 
@@ -77,12 +84,18 @@ export async function toolCatalogHandler({
     .filter((entry) => !entry.userDisabled)
     .map((entry) => {
       const callCount = counters[entry.name] ?? 0;
+      // Spread-in only when non-zero: the key's absence means zero
+      // (see ToolEntry.call_count). A conditional spread rather than
+      // `call_count: undefined` because the catalog is JSON-serialized
+      // and both forms serialize identically — the spread is the one
+      // that also keeps the in-memory object honest for unit tests.
+      const countField = callCount > 0 ? { call_count: callCount } : {};
       const isActive = isActiveFor(entry.enabled, entry.name, scope);
       if (isActive) {
         return {
           name: entry.name,
           status: promoted.has(entry.name) ? "promoted" : "active",
-          call_count: callCount,
+          ...countField,
         };
       }
       // Outside the token's ceiling: report it, but without the
@@ -92,13 +105,13 @@ export async function toolCatalogHandler({
         return {
           name: entry.name,
           status: "unavailable",
-          call_count: callCount,
+          ...countField,
         };
       }
       return {
         name: entry.name,
         status: "inactive",
-        call_count: callCount,
+        ...countField,
         description: entry.description
           ? firstSentence(entry.description)
           : undefined,
