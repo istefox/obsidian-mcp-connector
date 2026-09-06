@@ -65,6 +65,20 @@ describe("get_outgoing_links tool", () => {
     });
   });
 
+  test("resolves a same-doc heading link (empty file portion) to the source file", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      links: [{ link: "#Heading", original: "[[#Heading]]" }],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0].resolved).toBe(true);
+    expect(data.links[0].targetPath).toBe("note.md");
+  });
+
   test("marks unresolved links with resolved:false and targetPath:null", async () => {
     setMockFile("note.md", "");
     setMockMetadata("note.md", {

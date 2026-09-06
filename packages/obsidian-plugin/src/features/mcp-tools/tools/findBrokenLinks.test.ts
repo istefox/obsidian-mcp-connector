@@ -51,6 +51,17 @@ describe("find_broken_links tool", () => {
     expect(entry.original).toBe("[[NonExistent]]");
   });
 
+  test("does not flag a same-doc heading link as broken", async () => {
+    setMockFile("a.md", "");
+    setMockMetadata("a.md", {
+      links: [{ link: "#Heading", original: "[[#Heading]]", line: 1 }],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(0);
+    expect(data.broken_links).toEqual([]);
+  });
+
   test("detects a broken embed", async () => {
     setMockFile("a.md", "");
     setMockMetadata("a.md", {
