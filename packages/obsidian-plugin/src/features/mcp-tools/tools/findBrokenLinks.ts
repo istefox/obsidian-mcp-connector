@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 import { isUnderFolder, normalizeFolderEntry } from "$/shared/pathPolicy";
+import { resolveLinkTarget } from "../services/resolveLinkTarget";
 
 export const findBrokenLinksSchema = type({
   name: '"find_broken_links"',
@@ -15,7 +16,7 @@ export const findBrokenLinksSchema = type({
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
-  "Scans the vault (or a scoped subset) for unresolved links (wiki-links, markdown links, embeds, frontmatter links) and returns every broken link with its source file, 1-based line number, link target, original syntax, and link type. Uses Obsidian's metadata cache — no file I/O. Always read-only.",
+  "Scans the vault (or a scoped subset) for unresolved links (wiki-links, markdown links, embeds, frontmatter links) and returns every broken link with its source file, 1-based line number, link target, original syntax, link type, and a reason (`file_not_found` or `subpath_not_found`, the latter for a `#heading`/`#^block` anchor that does not exist in an otherwise-valid file). Uses Obsidian's metadata cache — no file I/O. Always read-only.",
 );
 
 export type FindBrokenLinksContext = {
@@ -32,6 +33,7 @@ type BrokenLinkEntry = {
   display_text?: string;
   link_type: "link" | "embed" | "frontmatter";
   original: string;
+  reason: "file_not_found" | "subpath_not_found";
 };
 
 type RawCacheLink = {
@@ -82,15 +84,13 @@ export async function findBrokenLinksHandler(
       raw: RawCacheLink,
       kind: "link" | "embed" | "frontmatter",
     ): void => {
-      // A link starting with "#" (`[[#Heading]]`) has an empty file
-      // portion — Obsidian resolves that as "this document", but
-      // `getFirstLinkpathDest` returns null for an empty linkpath, which
-      // would otherwise misreport valid same-doc heading navigation as
-      // broken (see #522).
-      const dest = raw.link.startsWith("#")
-        ? file
-        : ctx.app.metadataCache.getFirstLinkpathDest(raw.link, file.path);
-      if (dest !== null) return; // resolved — not broken
+      // The file portion must resolve to a vault file, and any
+      // `#heading`/`#^block` subpath must resolve against that file's
+      // cache (see #525 — a link was previously reported resolved
+      // whenever it merely started with "#", with no check that the
+      // anchor existed).
+      const r = resolveLinkTarget(ctx.app, raw.link, file);
+      if (r.resolved) return; // resolved — not broken
       const entry: BrokenLinkEntry = {
         source_path: file.path,
         // frontmatterLinks have no position; use 0 as sentinel.
@@ -98,6 +98,7 @@ export async function findBrokenLinksHandler(
         link_target: raw.link,
         link_type: kind,
         original: raw.original,
+        reason: r.reason,
       };
       if (raw.displayText !== undefined) entry.display_text = raw.displayText;
       broken.push(entry);

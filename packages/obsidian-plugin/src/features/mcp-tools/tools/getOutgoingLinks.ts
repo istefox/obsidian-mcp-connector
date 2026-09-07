@@ -1,5 +1,6 @@
 import { type } from "arktype";
 import { type App } from "obsidian";
+import { resolveLinkTarget } from "../services/resolveLinkTarget";
 import { resolveTFile } from "../services/resolveTFile";
 import { errorText, successJson } from "../services/responseBuilders";
 
@@ -69,21 +70,17 @@ export async function getOutgoingLinksHandler(
   const includeEmbeds = ctx.arguments.includeEmbeds ?? true;
   const includeUnresolved = ctx.arguments.includeUnresolved ?? true;
 
-  // Resolution helper. `getFirstLinkpathDest` is the documented public
-  // API for turning a linkpath (e.g. `"Note Name"` or `"folder/Note"`)
-  // into a concrete `TFile`; using it here means the caller gets the
-  // resolved vault path without an extra round-trip to a separate tool.
+  // Resolution helper: the file portion must resolve to a vault file, and
+  // any `#heading`/`#^block` subpath must resolve against that file's
+  // cache (see #525 — a link was previously reported resolved whenever it
+  // merely started with "#", with no check that the anchor existed).
   const resolve = (
     linkpath: string,
   ): { resolved: boolean; targetPath: string | null } => {
-    // A linkpath starting with "#" (`[[#Heading]]`) has an empty file
-    // portion — Obsidian resolves that as "this document", but
-    // `getFirstLinkpathDest` returns null for an empty linkpath (see #522).
-    const dest = linkpath.startsWith("#")
-      ? file
-      : ctx.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
-    if (dest) return { resolved: true, targetPath: dest.path };
-    return { resolved: false, targetPath: null };
+    const r = resolveLinkTarget(ctx.app, linkpath, file);
+    return r.resolved
+      ? { resolved: true, targetPath: r.file.path }
+      : { resolved: false, targetPath: null };
   };
 
   const buildEntry = (

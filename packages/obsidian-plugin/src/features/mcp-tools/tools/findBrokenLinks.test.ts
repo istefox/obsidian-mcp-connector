@@ -54,12 +54,79 @@ describe("find_broken_links tool", () => {
   test("does not flag a same-doc heading link as broken", async () => {
     setMockFile("a.md", "");
     setMockMetadata("a.md", {
+      headings: [{ heading: "Heading", level: 2, line: 0 }],
       links: [{ link: "#Heading", original: "[[#Heading]]", line: 1 }],
     });
     const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
     const data = JSON.parse(r.content[0].text as string);
     expect(data.total_broken_links).toBe(0);
     expect(data.broken_links).toEqual([]);
+  });
+
+  test("flags a same-doc link to a heading that does not exist (#525 regression)", async () => {
+    setMockFile("a.md", "");
+    setMockMetadata("a.md", {
+      headings: [{ heading: "Heading", level: 2, line: 0 }],
+      links: [{ link: "#Ghost", original: "[[#Ghost]]", line: 1 }],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(1);
+    expect(data.broken_links[0]).toMatchObject({
+      link_target: "#Ghost",
+      link_type: "link",
+      reason: "subpath_not_found",
+    });
+  });
+
+  test("does not flag a same-doc block ref that exists, flags one that doesn't", async () => {
+    setMockFile("a.md", "");
+    setMockMetadata("a.md", {
+      blocks: { abc: { startLine: 3, endLine: 3 } },
+      links: [
+        { link: "#^abc", original: "[[#^abc]]", line: 1 },
+        { link: "#^ghost", original: "[[#^ghost]]", line: 2 },
+      ],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(1);
+    expect(data.broken_links[0].link_target).toBe("#^ghost");
+  });
+
+  test("resolves a cross-file heading link, flags one to a missing heading", async () => {
+    setMockFile("a.md", "");
+    setMockFile("b.md", "");
+    setMockMetadata("b.md", {
+      headings: [{ heading: "Sec", level: 1, line: 0 }],
+    });
+    setMockMetadata("a.md", {
+      links: [
+        { link: "b#Sec", original: "[[b#Sec]]", line: 1 },
+        { link: "b#Ghost", original: "[[b#Ghost]]", line: 2 },
+      ],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(1);
+    expect(data.broken_links[0].link_target).toBe("b#Ghost");
+  });
+
+  test("does not flag a non-markdown embed subpath as broken", async () => {
+    setMockFile("a.md", "");
+    setMockFile("diagram.png", "");
+    setMockMetadata("a.md", {
+      embeds: [
+        {
+          link: "diagram.png#page=2",
+          original: "![[diagram.png#page=2]]",
+          line: 1,
+        },
+      ],
+    });
+    const r = await findBrokenLinksHandler({ arguments: {}, app: mockApp() });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.total_broken_links).toBe(0);
   });
 
   test("detects a broken embed", async () => {
