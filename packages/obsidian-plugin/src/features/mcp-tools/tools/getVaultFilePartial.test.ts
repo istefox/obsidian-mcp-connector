@@ -1,3 +1,4 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
   getVaultFilePartialHandler,

@@ -1,3 +1,4 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   mockApp,
