@@ -211,6 +211,7 @@ export async function getVaultFilePartialHandler(
       headingEntriesFromCache(cache),
       segments,
       lines.length,
+      delim,
     );
     if (result.kind === "not-found") {
       return errorResponse(

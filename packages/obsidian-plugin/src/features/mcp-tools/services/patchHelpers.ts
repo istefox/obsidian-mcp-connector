@@ -840,6 +840,7 @@ function computePatchedContent(
       app.metadataCache.getFileCache(file),
       lines,
       segments,
+      targetDelimiter,
     );
 
     if (r.kind === "ambiguous") {

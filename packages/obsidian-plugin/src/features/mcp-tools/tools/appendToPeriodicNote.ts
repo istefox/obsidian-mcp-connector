@@ -124,6 +124,7 @@ export async function appendToPeriodicNoteHandler(
           ctx.app.metadataCache.getFileCache(tfile),
           lines,
           segments,
+          HEADING_DELIMITER,
         );
 
         if (r.kind === "ambiguous") {

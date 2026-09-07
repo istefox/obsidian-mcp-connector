@@ -181,6 +181,24 @@ describe("resolveHeadingEntries (R-01, R-02, R-05)", () => {
     });
   });
 
+  test("names the ancestors with the caller's own delimiter", () => {
+    // The message echoes the path back to the caller, so it has to be joined
+    // with the delimiter the caller wrote it in — `"A::B"` for a `" > "`
+    // request describes a scope the caller never asked for.
+    expect(
+      resolveHeadingEntries(
+        [heading("Parent", 1, 0), heading("Child", 2, 1)],
+        ["Parent", "Child", "Missing"],
+        4,
+        " > ",
+      ),
+    ).toEqual({
+      kind: "not-found",
+      segment: "Missing",
+      where: 'under "Parent > Child"',
+    });
+  });
+
   test("names the file when the first segment is missing", () => {
     expect(resolveHeadingEntries([], ["Missing"], 0)).toEqual({
       kind: "not-found",
@@ -302,5 +320,52 @@ describe("resolveHeadingForWrite (R-07 setup, R-08)", () => {
         ["A", "X"],
       ),
     ).toMatchObject({ kind: "found", line: 2, level: 3 });
+  });
+
+  test("reports ambiguity when content gained a duplicate the cache predates", () => {
+    // The cache was indexed before the second "## Section" was written, so it
+    // still resolves to a single line 1 and the cached line itself is
+    // untouched. Only a full re-resolution over the content sees the second
+    // candidate; without it the write silently picks one of the two.
+    expect(
+      resolveHeadingForWrite(
+        { headings: [cacheHeading("Section", 2, 1)] },
+        ["# Parent", "## Section", "body", "## Section"],
+        ["Section"],
+      ),
+    ).toMatchObject({ kind: "ambiguous", segment: "Section" });
+  });
+
+  test("resolves the surviving match when the cache is ambiguous but content is not", () => {
+    // The mirror case: the cache still lists a "## Section" at line 3 that the
+    // file no longer has. The ambiguity is an artefact of the stale index, and
+    // erroring on it refuses a write that has exactly one valid target.
+    expect(
+      resolveHeadingForWrite(
+        {
+          headings: [
+            cacheHeading("Section", 2, 1),
+            cacheHeading("Section", 2, 3),
+          ],
+        },
+        ["# Parent", "## Section", "body", "tail", "more"],
+        ["Section"],
+      ),
+    ).toMatchObject({ kind: "found", line: 1, level: 2 });
+  });
+
+  test("passes the caller's delimiter through to the not-found message", () => {
+    expect(
+      resolveHeadingForWrite(
+        null,
+        ["# A", "## B", "body"],
+        ["A", "B", "Missing"],
+        " > ",
+      ),
+    ).toEqual({
+      kind: "not-found",
+      segment: "Missing",
+      where: 'under "A > B"',
+    });
   });
 });

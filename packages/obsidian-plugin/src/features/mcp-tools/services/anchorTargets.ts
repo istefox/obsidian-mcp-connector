@@ -129,11 +129,17 @@ export function headingEntriesFromCache(
  * anywhere in the file for the first segment) and before the previous
  * segment's section closes, and (past the first segment) be strictly
  * deeper than the previous match's level.
+ *
+ * `delimiter` is only used to re-join the resolved ancestors in the
+ * not-found message, so it reads back in the form the caller wrote the
+ * path in (`"A > B"` for a caller that split on `" > "`). It defaults to
+ * `"::"`, the default `targetDelimiter`.
  */
 export function resolveHeadingEntries(
   entries: HeadingEntry[],
   segments: string[],
   totalLines: number,
+  delimiter: string = "::",
 ): HeadingResolution {
   if (segments.length === 0) {
     return { kind: "not-found", segment: "", where: "in the file" };
@@ -158,7 +164,7 @@ export function resolveHeadingEntries(
       const where =
         segIdx === 0
           ? "in the file"
-          : `under "${segments.slice(0, segIdx).join("::")}"`;
+          : `under "${segments.slice(0, segIdx).join(delimiter)}"`;
       return { kind: "not-found", segment: seg, where };
     }
     if (candidates.length > 1) {
@@ -203,102 +209,58 @@ export function resolveHeadingEntries(
 }
 
 /**
- * Derive the ancestor chain of `entries[index]`: every enclosing heading, from
- * the outermost one down to the entry itself, found by walking backwards and
- * keeping each heading strictly shallower than the last one kept.
- */
-function ancestorPath(entries: HeadingEntry[], index: number): HeadingEntry[] {
-  const path = [entries[index]];
-  let level = entries[index].level;
-  for (let i = index - 1; i >= 0 && level > 1; i--) {
-    if (entries[i].level < level) {
-      path.unshift(entries[i]);
-      level = entries[i].level;
-    }
-  }
-  return path;
-}
-
-/**
- * Does `segments` still describe the heading at `entries[index]`? The last
- * segment must be that heading's own text, and the earlier ones must appear,
- * in order, among its ancestors — the same relation `resolveHeadingEntries`
- * enforces while walking (each segment strictly deeper than, and inside the
- * section of, the previous one), re-checked here against a chain derived from
- * the current content. Intermediate levels may be skipped in the request
- * (`"A::X"` for `A > B > X`), so the ancestors match as an ordered
- * subsequence, not as an exact chain. Comparison is case-insensitive, like
- * every other heading compare in this module.
- */
-function pathMatchesSegments(
-  entries: HeadingEntry[],
-  index: number,
-  segments: string[],
-): boolean {
-  const path = ancestorPath(entries, index);
-  if (segments.length === 0 || segments.length > path.length) return false;
-
-  const leaf = path[path.length - 1];
-  if (
-    normalizeHeadingText(leaf.heading) !==
-    normalizeHeadingText(segments[segments.length - 1])
-  ) {
-    return false;
-  }
-
-  let seg = segments.length - 2;
-  for (let i = path.length - 2; i >= 0 && seg >= 0; i--) {
-    if (
-      normalizeHeadingText(path[i].heading) ===
-      normalizeHeadingText(segments[seg])
-    ) {
-      seg--;
-    }
-  }
-  return seg < 0;
-}
-
-/**
- * Resolve a nested heading path for a write-path caller: cache-first with a
- * content fallback (R-07). The cache leg is trusted only when the *whole*
- * requested path still holds in `lines`: the resolved line must carry a
- * non-fenced heading matching the last segment, and its ancestor chain, as
- * re-derived from the current content, must still contain the earlier
- * segments in order. Checking the leaf alone would accept a restructured
- * document where a same-named heading has moved under a different parent, and
- * the write would silently land in the wrong section — the defect class
- * ADR-0024 exists to close. Any disagreement (rename since indexing,
- * just-created file, rapid double-write, reparented heading) falls through to
- * a fresh scan of `lines` via `headingEntriesFromContent`, which is itself
- * fence-aware. An ambiguous cache result is reported immediately; it is not
- * something a content rescan can resolve more precisely.
+ * Resolve a nested heading path for a write-path caller: cache-first, with
+ * the current content as the arbiter (R-07). The metadata cache can lag the
+ * bytes on disk in either direction, so the whole path is resolved twice —
+ * once over the cache, once over a fresh scan of `lines` via
+ * `headingEntriesFromContent`, which is itself fence-aware — and the cache
+ * answer is kept only when the two agree exactly: both `found`, same line,
+ * same level. Anything else returns the content resolution.
+ *
+ * Comparing full resolutions, rather than re-checking the cached line in
+ * isolation, is what makes the lag safe in both directions. A cache hit whose
+ * heading has since been duplicated must become ambiguous even though the
+ * cached line still carries the requested text (otherwise the write silently
+ * picks one of two candidates), and a cache that is ambiguous only because it
+ * still lists a heading the file no longer has must resolve to the single
+ * surviving match instead of erroring. A reparented heading — same leaf text,
+ * different ancestor — falls out of the same comparison: the content
+ * resolution disagrees, so it wins, which is the wrong-section write ADR-0024
+ * exists to close.
+ *
+ * `delimiter` is the one the caller split `segments` with; it only shapes the
+ * not-found message (see `resolveHeadingEntries`).
  */
 export function resolveHeadingForWrite(
   cache: Parameters<typeof headingEntriesFromCache>[0],
   lines: string[],
   segments: string[],
+  delimiter: string = "::",
 ): HeadingResolution {
   const cacheResult = resolveHeadingEntries(
     headingEntriesFromCache(cache),
     segments,
     lines.length,
+    delimiter,
   );
-
-  if (cacheResult.kind === "ambiguous") {
-    return cacheResult;
-  }
 
   // Fence-aware and heading-shaped by construction: an entry exists at a line
   // only if that line is a real, unfenced heading in the current content.
-  const contentEntries = headingEntriesFromContent(lines);
+  const contentResult = resolveHeadingEntries(
+    headingEntriesFromContent(lines),
+    segments,
+    lines.length,
+    delimiter,
+  );
 
-  if (cacheResult.kind === "found") {
-    const cachedLine = cacheResult.line;
-    const index = contentEntries.findIndex((h) => h.line === cachedLine);
-    if (index !== -1 && pathMatchesSegments(contentEntries, index, segments)) {
-      return cacheResult;
-    }
+  if (
+    cacheResult.kind === "found" &&
+    contentResult.kind === "found" &&
+    cacheResult.line === contentResult.line &&
+    cacheResult.level === contentResult.level
+  ) {
+    return cacheResult;
   }
 
-  return resolveHeadingEntries(contentEntries, segments, lines.length);
+  return contentResult;
 }
