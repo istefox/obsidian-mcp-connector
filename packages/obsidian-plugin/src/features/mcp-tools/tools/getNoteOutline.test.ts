@@ -35,7 +35,7 @@ describe("get_note_outline tool", () => {
       level: 1,
       text: "Introduction",
       line_number: 1,
-      anchor: "introduction",
+      anchor: "Introduction",
     });
     expect(data.headings[1].line_number).toBe(5);
   });
@@ -64,7 +64,7 @@ describe("get_note_outline tool", () => {
     );
   });
 
-  test("anchor slug lowercases and hyphenates correctly", async () => {
+  test("anchor is the literal heading text", async () => {
     setMockFile("n.md", "");
     setMockMetadata("n.md", {
       headings: [{ heading: "Hello World 2026", level: 1, line: 0 }],
@@ -74,10 +74,10 @@ describe("get_note_outline tool", () => {
       app: mockApp(),
     });
     const data = JSON.parse(r.content[0].text as string);
-    expect(data.headings[0].anchor).toBe("hello-world-2026");
+    expect(data.headings[0].anchor).toBe("Hello World 2026");
   });
 
-  test("anchor strips non-word characters", async () => {
+  test("anchor preserves punctuation in the heading text", async () => {
     setMockFile("n.md", "");
     setMockMetadata("n.md", {
       headings: [{ heading: "C++ Basics!", level: 2, line: 0 }],
@@ -87,11 +87,11 @@ describe("get_note_outline tool", () => {
       app: mockApp(),
     });
     expect(JSON.parse(r.content[0].text as string).headings[0].anchor).toBe(
-      "c-basics",
+      "C++ Basics!",
     );
   });
 
-  test("produces correct anchor for non-ASCII heading", async () => {
+  test("anchor preserves non-ASCII heading text verbatim", async () => {
     setMockFile("n.md", "");
     setMockMetadata("n.md", {
       headings: [{ heading: "Résumé", level: 2, line: 0 }],
@@ -101,8 +101,27 @@ describe("get_note_outline tool", () => {
       app: mockApp(),
     });
     expect(JSON.parse(r.content[0].text as string).headings[0].anchor).toBe(
-      "résumé",
+      "Résumé",
     );
+  });
+
+  test("trims surrounding heading whitespace and keeps anchor equal to text", async () => {
+    setMockFile("n.md", "##   Spaced   ");
+    setMockMetadata("n.md", {
+      headings: [{ heading: "  Spaced   ", level: 2, line: 0 }],
+    });
+    const r = await getNoteOutlineHandler({
+      arguments: { path: "n.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.headings[0].anchor).toBe("Spaced");
+    expect(
+      data.headings.every(
+        (heading: { anchor: string; text: string }) =>
+          heading.anchor === heading.text,
+      ),
+    ).toBe(true);
   });
 
   test("returns empty result on no-cache file (safe skip)", async () => {
