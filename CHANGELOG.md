@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.5.1] — 2026-09-07
+
+### Fixed
+
+- **`find_broken_links` and `get_outgoing_links` no longer flag a same-document heading link (`[[#Heading]]`) as broken.** Both tools resolved a link's target through `getFirstLinkpathDest`, which returns no match for a linkpath with an empty file portion — the shape `[[#Heading]]` produces — even though Obsidian itself resolves that as "this document". A note with several internal `[[#Heading]]` navigation links reported each one as a broken link. Reported by @rneilsen. (#522)
+
 ## [2.5.0] — 2026-09-06
 
 ### Changed
