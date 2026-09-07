@@ -1,5 +1,11 @@
 import { type } from "arktype";
 import { type App } from "obsidian";
+import {
+  headingEntriesFromCache,
+  normalizeBlockId,
+  resolveHeadingEntries,
+  splitHeadingPath,
+} from "../services/anchorTargets";
 import { resolveTFile } from "../services/resolveTFile";
 // Response envelopes shared across tools — aliased to the original local
 // names to keep this file's call sites stable.
@@ -63,100 +69,6 @@ type MockCache = {
   frontmatter?: Record<string, unknown>;
 };
 
-/**
- * Find the heading entry that matches a target path. `target` may be a single
- * heading text or a path of headings separated by `delimiter` (e.g.
- * `"Parent::Child::Grandchild"` with delimiter `"::"`).
- *
- * Returns either the matched heading + the lower bound of its section
- * (exclusive end line: the line BEFORE the next same-or-higher-level heading,
- * or `totalLines` for end-of-file), or an error string.
- *
- * Disambiguation: if the path is unique, the match is returned. If multiple
- * matches exist at the same depth (truly ambiguous), an error is returned. The
- * caller surfaces it as `isError: true`.
- */
-function findHeadingSection(
-  headings: MockHeading[],
-  target: string,
-  delimiter: string,
-  totalLines: number,
-): { startLine: number; endLine: number; level: number } | { error: string } {
-  const segments = target
-    .split(delimiter)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (segments.length === 0) {
-    return { error: "Invalid heading target: empty after delimiter split." };
-  }
-
-  // Walk the segments. For each segment, we need to find a heading whose text
-  // matches AND that lives inside the section of the previous segment (i.e.
-  // appears after the previous match and before the previous section closes).
-  //
-  // - prevEndLine starts at `totalLines` so the first segment can match
-  //   anywhere in the file.
-  // - prevLevel starts at 0 so the first segment matches any level.
-  let prevStartLine = -1; // exclusive lower bound for the next segment
-  let prevEndLine = totalLines;
-  let prevLevel = 0;
-  let lastMatch: MockHeading | null = null;
-
-  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
-    const seg = segments[segIdx];
-    const candidates = headings.filter(
-      (h) =>
-        h.heading === seg &&
-        h.position.start.line > prevStartLine &&
-        h.position.start.line < prevEndLine &&
-        (segIdx === 0 || h.level > prevLevel),
-    );
-
-    if (candidates.length === 0) {
-      const where =
-        segIdx === 0
-          ? "in the file"
-          : `under "${segments.slice(0, segIdx).join(delimiter)}"`;
-      return {
-        error: `Heading not found: "${seg}" ${where}.`,
-      };
-    }
-    if (candidates.length > 1) {
-      const lines = candidates
-        .map((c) => `level ${c.level} at line ${c.position.start.line}`)
-        .join(", ");
-      return {
-        error: `Ambiguous heading target: "${seg}" matches multiple headings (${lines}). Use a nested path with \`targetDelimiter\` to disambiguate.`,
-      };
-    }
-
-    const match = candidates[0];
-    lastMatch = match;
-    prevStartLine = match.position.start.line;
-    prevLevel = match.level;
-
-    // The section under `match` ends at the next heading with level <= match.level
-    // (or EOF if no such heading exists). This is the boundary that the next
-    // segment in the path must respect.
-    const closer = headings.find(
-      (h) =>
-        h.position.start.line > match.position.start.line &&
-        h.level <= match.level,
-    );
-    prevEndLine = closer ? closer.position.start.line : totalLines;
-  }
-
-  if (!lastMatch) {
-    return { error: `Heading not found: "${target}".` };
-  }
-
-  return {
-    startLine: lastMatch.position.start.line,
-    endLine: prevEndLine,
-    level: lastMatch.level,
-  };
-}
-
 export async function getVaultFilePartialHandler(
   ctx: GetVaultFilePartialContext,
 ): Promise<{
@@ -177,11 +89,14 @@ export async function getVaultFilePartialHandler(
   // Schema-level guard: `target` is required for every mode except
   // `document-map` and `lines` (which use `startLine`/`endLine` instead).
   // We enforce this at the handler level (rather than via arktype) so the
-  // error message can name the mode explicitly.
+  // error message can name the mode explicitly. `block` mode is excluded
+  // from the empty-after-trim check: `normalizeBlockId` (R-10) is the single
+  // place that owns validating a block target, including the empty-string
+  // case, so it must see the raw value rather than have this guard shadow it.
   if (
     mode !== "document-map" &&
     mode !== "lines" &&
-    (!target || !target.trim())
+    (target === undefined || (mode !== "block" && !target.trim()))
   ) {
     return errorResponse(
       `Missing required \`target\` for mode "${mode}". The \`target\` argument is required for "frontmatter", "heading", and "block" modes.`,
@@ -291,27 +206,34 @@ export async function getVaultFilePartialHandler(
       return errorResponse(`File has no headings: ${filename}.`);
     }
     const delim = targetDelimiter ?? "::";
-    const result = findHeadingSection(headings, target!, delim, lines.length);
-    if ("error" in result) {
-      return errorResponse(result.error);
+    const segments = splitHeadingPath(target!, delim);
+    const result = resolveHeadingEntries(
+      headingEntriesFromCache(cache),
+      segments,
+      lines.length,
+    );
+    if (result.kind === "not-found") {
+      return errorResponse(
+        `Heading not found: "${result.segment}" ${result.where}.`,
+      );
+    }
+    if (result.kind === "ambiguous") {
+      return errorResponse(result.message);
     }
     // `endLine` is the start line of the next same-or-higher-level heading
     // (exclusive) or `lines.length` for EOF. Slice [startLine, endLine).
-    const section = lines.slice(result.startLine, result.endLine).join("\n");
+    const section = lines.slice(result.line, result.endLine).join("\n");
     return textResponse(section);
   }
 
   // ── block ─────────────────────────────────────────────────────────────────
   if (mode === "block") {
     const blocks = cache.blocks ?? {};
-    // Strip leading `^` characters and trim. Obsidian addresses blocks
-    // without the caret in the metadata cache; users may pass either form.
-    const key = target!.trim().replace(/^\^+/, "");
-    if (!key) {
-      return errorResponse(
-        `Invalid block target: input is empty or contains only "^" characters.`,
-      );
+    const idResult = normalizeBlockId(target!);
+    if (!idResult.ok) {
+      return errorResponse(idResult.error);
     }
+    const key = idResult.id;
     const entry = blocks[key];
     if (!entry) {
       return errorResponse(`Block not found: "^${key}" in ${filename}.`);
