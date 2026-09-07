@@ -68,6 +68,7 @@ describe("get_outgoing_links tool", () => {
   test("resolves a same-doc heading link (empty file portion) to the source file", async () => {
     setMockFile("note.md", "");
     setMockMetadata("note.md", {
+      headings: [{ heading: "Heading", level: 2, line: 0 }],
       links: [{ link: "#Heading", original: "[[#Heading]]" }],
     });
     const r = await getOutgoingLinksHandler({
@@ -77,6 +78,120 @@ describe("get_outgoing_links tool", () => {
     const data = JSON.parse(r.content[0].text as string);
     expect(data.links[0].resolved).toBe(true);
     expect(data.links[0].targetPath).toBe("note.md");
+  });
+
+  test("a same-doc link to a heading that does not exist is unresolved (#525 regression)", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      headings: [{ heading: "Heading", level: 2, line: 0 }],
+      links: [{ link: "#Ghost", original: "[[#Ghost]]" }],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0].resolved).toBe(false);
+    expect(data.links[0].targetPath).toBeNull();
+  });
+
+  test("a same-doc block ref resolves when the block exists, not when it doesn't", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      blocks: { abc: { startLine: 3, endLine: 3 } },
+      links: [
+        { link: "#^abc", original: "[[#^abc]]" },
+        { link: "#^ghost", original: "[[#^ghost]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0].resolved).toBe(true);
+    expect(data.links[1].resolved).toBe(false);
+  });
+
+  test("a cross-file heading link resolves against the target file's headings", async () => {
+    setMockFile("note.md", "");
+    setMockFile("other.md", "");
+    setMockMetadata("other.md", {
+      headings: [{ heading: "Sec", level: 1, line: 0 }],
+    });
+    setMockMetadata("note.md", {
+      links: [
+        { link: "other#Sec", original: "[[other#Sec]]" },
+        { link: "other#Ghost", original: "[[other#Ghost]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0]).toMatchObject({
+      resolved: true,
+      targetPath: "other.md",
+    });
+    expect(data.links[1]).toMatchObject({ resolved: false, targetPath: null });
+  });
+
+  test("an embed with a non-markdown subpath resolves without heading validation", async () => {
+    setMockFile("note.md", "");
+    setMockFile("diagram.png", "");
+    setMockMetadata("note.md", {
+      embeds: [
+        { link: "diagram.png#page=2", original: "![[diagram.png#page=2]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0].resolved).toBe(true);
+  });
+
+  test("excludes a same-doc unresolved-heading link when includeUnresolved=false", async () => {
+    setMockFile("note.md", "");
+    setMockMetadata("note.md", {
+      headings: [{ heading: "Real", level: 2, line: 0 }],
+      links: [
+        { link: "#Real", original: "[[#Real]]" },
+        { link: "#Ghost", original: "[[#Ghost]]" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "note.md", includeUnresolved: false },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.totalLinks).toBe(1);
+    expect(data.links[0].link).toBe("#Real");
+  });
+
+  test("a frontmatter link carrying a subpath is validated the same way", async () => {
+    setMockFile("child.md", "");
+    setMockFile("parent.md", "");
+    setMockMetadata("parent.md", {
+      headings: [{ heading: "Sec", level: 1, line: 0 }],
+    });
+    setMockMetadata("child.md", {
+      frontmatterLinks: [
+        { link: "parent#Ghost", original: "[[parent#Ghost]]", key: "parent" },
+      ],
+    });
+    const r = await getOutgoingLinksHandler({
+      arguments: { path: "child.md" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(r.content[0].text as string);
+    expect(data.links[0]).toMatchObject({
+      source: "frontmatter",
+      resolved: false,
+      targetPath: null,
+    });
   });
 
   test("marks unresolved links with resolved:false and targetPath:null", async () => {

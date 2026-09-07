@@ -216,6 +216,64 @@ void mock.module("obsidian", () => {
     return out.length === 0 ? null : Array.from(new Set(out));
   }
 
+  /**
+   * Mock of Obsidian's `parseLinktext`: splits a linktext into its file
+   * portion and subpath on the first `#`. The subpath keeps its leading
+   * `#`, matching the real API.
+   */
+  function parseLinktext(linktext: string): { path: string; subpath: string } {
+    const hashIndex = linktext.indexOf("#");
+    if (hashIndex === -1) return { path: linktext, subpath: "" };
+    return {
+      path: linktext.slice(0, hashIndex),
+      subpath: linktext.slice(hashIndex),
+    };
+  }
+
+  /**
+   * Mock of Obsidian's `resolveSubpath`: resolves a `#heading`/`#^block`
+   * subpath against a file's cache. Supports heading paths (`#a#b`, matched
+   * case-insensitively) and bare block ids. Does NOT model
+   * `stripHeadingForLink` normalization (a heading containing markdown
+   * does not match its literal text in real Obsidian) or footnote
+   * subpaths (`@since` the plugin's own `minAppVersion`) — those are
+   * covered only by live acceptance testing against the real app, never
+   * by a unit test that asserts on this stub's behaviour for them.
+   */
+  function resolveSubpath(
+    cache: {
+      headings?: Array<{ heading: string; level: number }>;
+      blocks?: Record<string, unknown>;
+    },
+    subpath: string,
+  ): unknown | null {
+    const trimmed = subpath.replace(/^#/, "").trim();
+    if (trimmed === "") return null;
+
+    if (trimmed.startsWith("^")) {
+      const id = trimmed.slice(1);
+      const block = cache.blocks?.[id];
+      return block ? { type: "block", block } : null;
+    }
+
+    const parts = trimmed.split("#").map((p) => p.trim().toLowerCase());
+    const headings = cache.headings ?? [];
+    let searchStart = 0;
+    let match: { heading: string; level: number } | undefined;
+    for (const part of parts) {
+      match = undefined;
+      for (let i = searchStart; i < headings.length; i++) {
+        if (headings[i].heading.trim().toLowerCase() === part) {
+          match = headings[i];
+          searchStart = i + 1;
+          break;
+        }
+      }
+      if (!match) return null;
+    }
+    return match ? { type: "heading", current: match } : null;
+  }
+
   // Platform shape mirrors `obsidian.d.ts` enough for tests to import
   // `Platform.isMobile` / `Platform.isDesktop` without crashing. Default
   // to "desktop" since the plugin is `isDesktopOnly: true`.
@@ -237,6 +295,8 @@ void mock.module("obsidian", () => {
     Modal,
     Platform,
     getAllTags,
+    parseLinktext,
+    resolveSubpath,
     // Obsidian re-exports the `moment` library at runtime; pin to the real
     // npm package in tests so code that does `import { moment } from "obsidian"`
     // (e.g. the periodic-notes detector) resolves without crashing at module
