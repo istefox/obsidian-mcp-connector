@@ -8,79 +8,13 @@
 import type { App, TFile } from "obsidian";
 import { withVaultWriteLock } from "./vaultWriteLock";
 import { errorJson } from "./responseBuilders";
+import {
+  normalizeBlockId,
+  resolveHeadingForWrite,
+  splitHeadingPath,
+} from "./anchorTargets";
 
 export type PatchOperation = "append" | "prepend" | "replace";
-
-/**
- * Parse markdown content and resolve a partial heading name to its full
- * hierarchical path (e.g., "Section A" -> "Top Level::Section A"). Returns
- * the full path of the first matching heading by document order, or null
- * if no heading with that exact name exists in the content.
- *
- * Ported verbatim from packages/mcp-server/src/features/local-rest-api/index.ts.
- *
- * Args:
- *   content: Full markdown file content as a string.
- *   leafName: Exact heading text to search for (without leading #).
- *   delimiter: Separator used to join the ancestor chain (e.g. "::").
- *
- * Returns:
- *   The full hierarchical path string, or null if no match found.
- */
-export function resolveHeadingPath(
-  content: string,
-  leafName: string,
-  delimiter: string,
-): string | null {
-  const lines = content.split("\n");
-  // Stack of heading names at each indentation level. stack[level-1] holds
-  // the name of the heading at that level. When we encounter a heading at
-  // level N, all deeper levels become stale and are truncated.
-  const stack: string[] = [];
-
-  for (const line of lines) {
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
-    if (!match) continue;
-    const level = match[1].length;
-    const headingText = match[2].trim();
-
-    // Drop any stack entries deeper than the current level, then set the
-    // current level's slot. This keeps `stack.slice(0, level)` a valid
-    // ancestor path for any subsequent match at a deeper level.
-    stack.length = level - 1;
-    stack[level - 1] = headingText;
-
-    if (headingText === leafName) {
-      // Join the full ancestor chain (including the match itself) with the
-      // delimiter the caller will also pass as the Target-Delimiter header.
-      return stack.slice(0, level).join(delimiter);
-    }
-  }
-
-  return null;
-}
-
-/**
- * Find the first line that is a heading (`#`–`######` followed by a space and
- * text) whose trimmed text equals `leafHeading`. Returns the 0-based line
- * index and the heading level (count of leading `#`), or `null` if absent.
- *
- * Shared by `patch_vault_file` and `append_to_periodic_note` so both locate a
- * leaf heading identically. The level is the `#{1,6}` capture length, which
- * for any line that matches equals a separate `/^(#+)/` count.
- */
-export function findLeafHeadingLine(
-  lines: string[],
-  leafHeading: string,
-): { line: number; level: number } | null {
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(#{1,6})\s+(.+)$/);
-    if (m && m[2].trim() === leafHeading) {
-      return { line: i, level: m[1].length };
-    }
-  }
-  return null;
-}
 
 /**
  * Ensure appended content ends with whitespace so the next section in the
@@ -898,24 +832,21 @@ function computePatchedContent(
   const lines = rawContent.split("\n");
 
   if (args.targetType === "heading") {
-    // Resolve partial leaf name to full hierarchical path so the lookup
-    // matches even when the heading is nested (e.g. "A" → "Top::A").
-    let resolvedTarget = args.target;
-    if (!args.target.includes(targetDelimiter)) {
-      const fullPath = resolveHeadingPath(
-        rawContent,
-        args.target,
-        targetDelimiter,
-      );
-      if (fullPath) resolvedTarget = fullPath;
+    // Resolve the (possibly nested) heading path through the shared
+    // cache-first-with-content-fallback resolver (ADR-0024), rather than a
+    // hand-rolled resolve-then-drop-ancestors walk.
+    const segments = splitHeadingPath(args.target, targetDelimiter);
+    const r = resolveHeadingForWrite(
+      app.metadataCache.getFileCache(file),
+      lines,
+      segments,
+    );
+
+    if (r.kind === "ambiguous") {
+      return { kind: "error", text: r.message, errorCode: "ambiguous_heading" };
     }
 
-    // Find the heading line by comparing the full path.
-    const targetParts = resolvedTarget.split(targetDelimiter);
-    const leafHeading = targetParts[targetParts.length - 1];
-    const found = findLeafHeadingLine(lines, leafHeading);
-
-    if (found === null) {
+    if (r.kind === "not-found") {
       // Heading not found — respect createTargetIfMissing.
       if (!createIfMissing) {
         return { kind: "error", text: `Heading not found: ${args.target}` };
@@ -925,7 +856,8 @@ function computePatchedContent(
       return { kind: "ok", newContent: rawContent + body };
     }
 
-    const { line: headingLine, level: headingLevel } = found;
+    const headingLine = r.line;
+    const headingLevel = r.level;
 
     // Find the end of this heading's section: the next heading of same or
     // higher level (lower number means higher in hierarchy), or EOF.
@@ -1018,12 +950,21 @@ function computePatchedContent(
   }
 
   // ── block branch ─────────────────────────────────────────────────────
+  // Strip leading `^` characters up front (R-10) so a caller passing either
+  // "abc" or "^abc" resolves identically, and so a doubled caret never
+  // reaches the lookups or the error messages below as "^^abc".
+  const blockIdResult = normalizeBlockId(args.target);
+  if (!blockIdResult.ok) {
+    return { kind: "error", text: blockIdResult.error };
+  }
+  const id = blockIdResult.id;
+
   const cache = app.metadataCache.getFileCache(file);
-  let blockPos = findBlockPositionFromCache(cache, args.target);
+  let blockPos = findBlockPositionFromCache(cache, id);
 
   if (!blockPos) {
     // Fallback: regex scan (doesn't work for blocks inside tables — #71).
-    blockPos = findBlockReferenceInContent(rawContent, args.target);
+    blockPos = findBlockReferenceInContent(rawContent, id);
   }
 
   if (!blockPos) {
@@ -1031,7 +972,7 @@ function computePatchedContent(
     if (!createIfMissing) {
       return {
         kind: "error",
-        text: `Block not found: ^${args.target} (unresolved — block may be inside a table, which is not indexed by Obsidian's metadataCache)`,
+        text: `Block not found: ^${id} (unresolved — block may be inside a table, which is not indexed by Obsidian's metadataCache)`,
       };
     }
     // Caller explicitly opted into createIfMissing — append at EOF.
@@ -1061,7 +1002,7 @@ function computePatchedContent(
   ) {
     return {
       kind: "error",
-      text: `Block "^${args.target}" resolved to line ${blockPos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
+      text: `Block "^${id}" resolved to line ${blockPos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
     };
   }
 
@@ -1076,7 +1017,7 @@ function computePatchedContent(
         .slice(blockPos.startLine, blockPos.endLine + 1)
         .join("\n"),
       require: opts.requirePrecondition,
-      targetLabel: `block "^${args.target}"`,
+      targetLabel: `block "^${id}"`,
     });
     if (refusal) {
       return { kind: "error", text: refusal, errorCode: "stale_precondition" };
