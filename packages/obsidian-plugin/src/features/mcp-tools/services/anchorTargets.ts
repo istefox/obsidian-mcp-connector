@@ -203,13 +203,75 @@ export function resolveHeadingEntries(
 }
 
 /**
+ * Derive the ancestor chain of `entries[index]`: every enclosing heading, from
+ * the outermost one down to the entry itself, found by walking backwards and
+ * keeping each heading strictly shallower than the last one kept.
+ */
+function ancestorPath(entries: HeadingEntry[], index: number): HeadingEntry[] {
+  const path = [entries[index]];
+  let level = entries[index].level;
+  for (let i = index - 1; i >= 0 && level > 1; i--) {
+    if (entries[i].level < level) {
+      path.unshift(entries[i]);
+      level = entries[i].level;
+    }
+  }
+  return path;
+}
+
+/**
+ * Does `segments` still describe the heading at `entries[index]`? The last
+ * segment must be that heading's own text, and the earlier ones must appear,
+ * in order, among its ancestors — the same relation `resolveHeadingEntries`
+ * enforces while walking (each segment strictly deeper than, and inside the
+ * section of, the previous one), re-checked here against a chain derived from
+ * the current content. Intermediate levels may be skipped in the request
+ * (`"A::X"` for `A > B > X`), so the ancestors match as an ordered
+ * subsequence, not as an exact chain. Comparison is case-insensitive, like
+ * every other heading compare in this module.
+ */
+function pathMatchesSegments(
+  entries: HeadingEntry[],
+  index: number,
+  segments: string[],
+): boolean {
+  const path = ancestorPath(entries, index);
+  if (segments.length === 0 || segments.length > path.length) return false;
+
+  const leaf = path[path.length - 1];
+  if (
+    normalizeHeadingText(leaf.heading) !==
+    normalizeHeadingText(segments[segments.length - 1])
+  ) {
+    return false;
+  }
+
+  let seg = segments.length - 2;
+  for (let i = path.length - 2; i >= 0 && seg >= 0; i--) {
+    if (
+      normalizeHeadingText(path[i].heading) ===
+      normalizeHeadingText(segments[seg])
+    ) {
+      seg--;
+    }
+  }
+  return seg < 0;
+}
+
+/**
  * Resolve a nested heading path for a write-path caller: cache-first with a
- * content fallback (R-07). The cache leg is trusted only when the resolved
- * line still holds a matching, non-fenced heading in `lines` — a stale cache
- * (rename since indexing, just-created file, rapid double-write) falls
- * through to a fresh scan of `lines` via `headingEntriesFromContent`, which
- * is itself fence-aware. An ambiguous cache result is reported immediately;
- * it is not something a content rescan can resolve more precisely.
+ * content fallback (R-07). The cache leg is trusted only when the *whole*
+ * requested path still holds in `lines`: the resolved line must carry a
+ * non-fenced heading matching the last segment, and its ancestor chain, as
+ * re-derived from the current content, must still contain the earlier
+ * segments in order. Checking the leaf alone would accept a restructured
+ * document where a same-named heading has moved under a different parent, and
+ * the write would silently land in the wrong section — the defect class
+ * ADR-0024 exists to close. Any disagreement (rename since indexing,
+ * just-created file, rapid double-write, reparented heading) falls through to
+ * a fresh scan of `lines` via `headingEntriesFromContent`, which is itself
+ * fence-aware. An ambiguous cache result is reported immediately; it is not
+ * something a content rescan can resolve more precisely.
  */
 export function resolveHeadingForWrite(
   cache: Parameters<typeof headingEntriesFromCache>[0],
@@ -226,23 +288,17 @@ export function resolveHeadingForWrite(
     return cacheResult;
   }
 
+  // Fence-aware and heading-shaped by construction: an entry exists at a line
+  // only if that line is a real, unfenced heading in the current content.
+  const contentEntries = headingEntriesFromContent(lines);
+
   if (cacheResult.kind === "found") {
-    const fenceOpen = computeFenceOpenState(lines);
-    const line = lines[cacheResult.line];
-    const m = line?.match(HEADING_LINE);
-    const lastSegment = segments[segments.length - 1] ?? "";
-    if (
-      !fenceOpen[cacheResult.line] &&
-      m &&
-      m[2].trim().toLowerCase() === lastSegment.trim().toLowerCase()
-    ) {
+    const cachedLine = cacheResult.line;
+    const index = contentEntries.findIndex((h) => h.line === cachedLine);
+    if (index !== -1 && pathMatchesSegments(contentEntries, index, segments)) {
       return cacheResult;
     }
   }
 
-  return resolveHeadingEntries(
-    headingEntriesFromContent(lines),
-    segments,
-    lines.length,
-  );
+  return resolveHeadingEntries(contentEntries, segments, lines.length);
 }

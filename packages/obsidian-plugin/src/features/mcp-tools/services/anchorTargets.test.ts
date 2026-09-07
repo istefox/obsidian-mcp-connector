@@ -261,4 +261,46 @@ describe("resolveHeadingForWrite (R-07 setup, R-08)", () => {
       ),
     ).toMatchObject({ kind: "ambiguous", segment: "Section" });
   });
+
+  test("discards a cache hit whose leaf now sits under a different parent", () => {
+    // The cache was indexed before "## Z" (under "A") became "# B", so it
+    // still resolves "A::X" to line 3. Line 3 itself is untouched, so a
+    // leaf-text-only agreement check accepts the stale hit and the write
+    // lands under "B" instead of "A" — the wrong-section write ADR-0024
+    // exists to close. The full path has to be re-checked against content.
+    expect(
+      resolveHeadingForWrite(
+        {
+          headings: [
+            cacheHeading("A", 1, 0),
+            cacheHeading("Y", 2, 1),
+            cacheHeading("Z", 2, 2),
+            cacheHeading("X", 2, 3),
+          ],
+        },
+        ["# A", "## Y", "# B", "## X"],
+        ["A", "X"],
+      ),
+    ).toEqual({
+      kind: "not-found",
+      segment: "X",
+      where: 'under "A"',
+    });
+  });
+
+  test("keeps a nested hit whose path skips an intermediate ancestor", () => {
+    expect(
+      resolveHeadingForWrite(
+        {
+          headings: [
+            cacheHeading("A", 1, 0),
+            cacheHeading("B", 2, 1),
+            cacheHeading("X", 3, 2),
+          ],
+        },
+        ["# A", "## B", "### X"],
+        ["A", "X"],
+      ),
+    ).toMatchObject({ kind: "found", line: 2, level: 3 });
+  });
 });
