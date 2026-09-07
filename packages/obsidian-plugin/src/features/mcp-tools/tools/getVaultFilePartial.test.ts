@@ -363,7 +363,10 @@ describe("get_vault_file_partial tool", () => {
     });
 
     test("R-02: matches a unique heading case-insensitively", async () => {
-      setMockFile("doc.md", "## Section A\nsection body\n## Section B\nother body");
+      setMockFile(
+        "doc.md",
+        "## Section A\nsection body\n## Section B\nother body",
+      );
       setMockMetadata("doc.md", {
         headings: [
           { heading: "Section A", level: 2, line: 0 },
