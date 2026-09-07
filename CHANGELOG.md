@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.5.2] — 2026-09-07
+
+### Fixed
+
+- **`find_broken_links` and `get_outgoing_links` no longer report a false negative on a cross-file link that carries a heading or block subpath (`[[Note#Heading]]`, `[[Note#^block]]`).** The #522 fix treated any link starting with `#` as resolved without checking the anchor existed, and separately passed a cross-file link's full linktext — subpath included — into `getFirstLinkpathDest` unvalidated. Both are now resolved and the subpath validated through Obsidian's own `resolveSubpath`, via a new shared `resolveLinkTarget()` service. Fixes #525.
+- **Heading/block anchor resolution for `patch_active_file`, `patch_vault_file`, `append_to_periodic_note`, `get_vault_file_partial` and `get_note_outline` no longer silently writes to the wrong section on a nested `heading::path` target.** The five tools previously used three independently hand-rolled matchers that had drifted apart; one of them accepted a stale metadata-cache hit whenever the leaf heading text still matched, even if that heading had since moved under a different parent — so a nested write could land under the wrong ancestor with no error. All five now share one resolver (`anchorTargets.ts`): matching is case-insensitive everywhere in scope except `rename_heading` (unchanged, case-sensitive by contract), an ambiguous target is always a hard error, nested paths honor real ancestry, and a metadata-cache hit is trusted only when it agrees with a fresh scan of the file's current content. `get_note_outline`'s `anchor` field is now the literal heading text instead of a slug that never matched Obsidian's own link resolution. See [ADR-0024](docs/architecture/ADR-0024-converge-anchor-matchers.md).
+
 ## [2.5.1] — 2026-09-07
 
 ### Fixed
