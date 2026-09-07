@@ -362,6 +362,26 @@ describe("get_vault_file_partial tool", () => {
       expect(r.content[0].text).toBe("# Intro\nthis is intro\nstill intro");
     });
 
+    test("R-02: matches a unique heading case-insensitively", async () => {
+      setMockFile("doc.md", "## Section A\nsection body\n## Section B\nother body");
+      setMockMetadata("doc.md", {
+        headings: [
+          { heading: "Section A", level: 2, line: 0 },
+          { heading: "Section B", level: 2, line: 2 },
+        ],
+      });
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "heading",
+          target: "section a",
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toBe("## Section A\nsection body");
+    });
+
     test("returns isError when the target heading is missing", async () => {
       setMockFile("doc.md", "# A\ntext");
       setMockMetadata("doc.md", {
@@ -418,6 +438,71 @@ describe("get_vault_file_partial tool", () => {
       expect(r.content[0].text).toBe("## Section\nfirst");
     });
 
+    test("R-02 R-04: matches every nested heading segment case-insensitively", async () => {
+      setMockFile(
+        "doc.md",
+        "# Parent\nintro\n## Section\nnested body\n# Other\nother body",
+      );
+      setMockMetadata("doc.md", {
+        headings: [
+          { heading: "Parent", level: 1, line: 0 },
+          { heading: "Section", level: 2, line: 2 },
+          { heading: "Other", level: 1, line: 4 },
+        ],
+      });
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "heading",
+          target: "parent::section",
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBeUndefined();
+      expect(r.content[0].text).toBe("## Section\nnested body");
+    });
+
+    test("R-06: names a missing leaf segment and its parent scope", async () => {
+      setMockFile("doc.md", "# Parent\nintro\n## Existing\nbody");
+      setMockMetadata("doc.md", {
+        headings: [
+          { heading: "Parent", level: 1, line: 0 },
+          { heading: "Existing", level: 2, line: 2 },
+        ],
+      });
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "heading",
+          target: "Parent::Child",
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(
+        'Heading not found: "Child" under "Parent".',
+      );
+    });
+
+    test("R-06: names a missing first segment and the file scope", async () => {
+      setMockFile("doc.md", "# Present\nbody");
+      setMockMetadata("doc.md", {
+        headings: [{ heading: "Present", level: 1, line: 0 }],
+      });
+      const r = await getVaultFilePartialHandler({
+        arguments: {
+          filename: "doc.md",
+          mode: "heading",
+          target: "Missing::Child",
+        },
+        app: mockApp(),
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0].text).toContain(
+        'Heading not found: "Missing" in the file.',
+      );
+    });
+
     test("section extends to end-of-file when no closer heading exists", async () => {
       setMockFile("doc.md", "# A\nline1\nline2");
       setMockMetadata("doc.md", {
@@ -462,6 +547,43 @@ describe("get_vault_file_partial tool", () => {
         app: mockApp(),
       });
       expect(withCaret.content[0].text).toBe(withoutCaret.content[0].text);
+    });
+
+    test("R-10: strips any number of leading carets from a block target", async () => {
+      setMockFile("doc.md", "before\ntarget line ^abc\nafter");
+      setMockMetadata("doc.md", {
+        blocks: { abc: { startLine: 1, endLine: 1 } },
+      });
+
+      const results = await Promise.all(
+        ["^abc", "abc", "^^^abc"].map((target) =>
+          getVaultFilePartialHandler({
+            arguments: { filename: "doc.md", mode: "block", target },
+            app: mockApp(),
+          }),
+        ),
+      );
+
+      for (const r of results) {
+        expect(r.isError).toBeUndefined();
+        expect(r.content[0].text).toBe("target line ^abc");
+      }
+    });
+
+    test("R-10: rejects block targets that are empty after caret stripping", async () => {
+      setMockFile("doc.md", "target line ^abc");
+      setMockMetadata("doc.md", {
+        blocks: { abc: { startLine: 0, endLine: 0 } },
+      });
+
+      for (const target of ["^", ""]) {
+        const r = await getVaultFilePartialHandler({
+          arguments: { filename: "doc.md", mode: "block", target },
+          app: mockApp(),
+        });
+        expect(r.isError).toBe(true);
+        expect(r.content[0].text).toContain("Invalid block target");
+      }
     });
 
     test("returns isError when the target block is missing", async () => {
