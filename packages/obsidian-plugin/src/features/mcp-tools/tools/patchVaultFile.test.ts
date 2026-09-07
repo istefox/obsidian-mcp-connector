@@ -1,3 +1,4 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { describe, expect, test, beforeEach } from "bun:test";
 import { patchVaultFileHandler, patchVaultFileSchema } from "./patchVaultFile";
 import {
@@ -338,6 +339,263 @@ describe("patch_vault_file tool", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/block.*not found|unresolved/i);
+  });
+});
+
+describe("patch_vault_file — converged heading and block targets", () => {
+  test("R-01/R-03: resolves a heading target case-insensitively", async () => {
+    setMockFile("Notes/case.md", "# Top\n\n## Section A\n\nold\n");
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/case.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "section a",
+        createTargetIfMissing: false,
+        content: "patched",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.vault.getAbstractFileByPath("Notes/case.md");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as never);
+    expect(final).toContain("## Section A\n\npatched");
+    expect(final).not.toContain("\nold\n");
+  });
+
+  test("R-04: explicit nested path changes only the matching ancestor branch", async () => {
+    setMockFile(
+      "Notes/nested.md",
+      "# A\n\n## X\n\nfromA\n\n# B\n\n## X\n\nfromB\n",
+    );
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/nested.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "B::X",
+        createTargetIfMissing: false,
+        content: "patchedB",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.vault.getAbstractFileByPath("Notes/nested.md");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as never);
+    expect(final).toContain("# A\n\n## X\n\nfromA");
+    expect(final).toContain("# B\n\n## X\n\npatchedB");
+    expect(final).not.toContain("fromB");
+  });
+
+  test("R-05: ambiguous same-level heading errors without changing the file", async () => {
+    const fixture = "# A\n\n## Notes\n\nfirst\n\n# B\n\n## Notes\n\nsecond\n";
+    setMockFile("Notes/ambiguous.md", fixture);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/ambiguous.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "Notes",
+        createTargetIfMissing: false,
+        content: "must-not-write",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Ambiguous heading target");
+    const file = app.vault.getAbstractFileByPath("Notes/ambiguous.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as never)).toBe(fixture);
+  });
+
+  test("R-05: ambiguity still errors when createTargetIfMissing is true", async () => {
+    const fixture = "# A\n\n## Notes\n\nfirst\n\n# B\n\n## Notes\n\nsecond\n";
+    setMockFile("Notes/ambiguous-create.md", fixture);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/ambiguous-create.md",
+        operation: "append",
+        targetType: "heading",
+        target: "Notes",
+        createTargetIfMissing: true,
+        content: "must-not-append-at-eof",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Ambiguous heading target");
+    const file = app.vault.getAbstractFileByPath("Notes/ambiguous-create.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as never)).toBe(fixture);
+  });
+
+  test("R-08: content fallback ignores a heading inside a fenced block", async () => {
+    const fixture = "# Top\n\n```md\n## Target\ninside\n```\n";
+    setMockFile("Notes/fenced-content.md", fixture);
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/fenced-content.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "Target",
+        createTargetIfMissing: false,
+        content: "must-not-write",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Heading not found");
+    const file = app.vault.getAbstractFileByPath("Notes/fenced-content.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as never)).toBe(fixture);
+  });
+
+  test("R-08: cache miss also ignores a heading inside a fenced block", async () => {
+    const fixture = "# Top\n\n```md\n## Target\ninside\n```\n";
+    setMockFile("Notes/fenced-cache.md", fixture);
+    setMockMetadata("Notes/fenced-cache.md", {
+      headings: [{ heading: "Top", level: 1, line: 0 }],
+    });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/fenced-cache.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "Target",
+        createTargetIfMissing: false,
+        content: "must-not-write",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Heading not found");
+    const file = app.vault.getAbstractFileByPath("Notes/fenced-cache.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as never)).toBe(fixture);
+  });
+
+  test("R-07: stale heading cache falls back to the current content location", async () => {
+    setMockFile("Notes/stale.md", "# Top\n\n## Section\n\nold\n");
+    setMockMetadata("Notes/stale.md", {
+      headings: [{ heading: "Section", level: 2, line: 99 }],
+    });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/stale.md",
+        operation: "replace",
+        targetType: "heading",
+        target: "Section",
+        createTargetIfMissing: false,
+        content: "patched-at-line-2",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.vault.getAbstractFileByPath("Notes/stale.md");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as never);
+    expect(final).toContain("## Section\n\npatched-at-line-2");
+    expect(final).not.toContain("\nold\n");
+  });
+
+  test("R-10: caret and bare block targets resolve identically through cache", async () => {
+    const outputs: string[] = [];
+    for (const [index, target] of ["abc123", "^abc123"].entries()) {
+      const path = `Notes/block-cache-${index}.md`;
+      setMockFile(path, "before\n\nblock body\n^abc123\n\nafter\n");
+      setMockMetadata(path, {
+        blocks: { abc123: { startLine: 2, endLine: 3 } },
+      });
+      const app = mockApp();
+      const result = await patchVaultFileHandler({
+        arguments: {
+          path,
+          operation: "replace",
+          targetType: "block",
+          target,
+          createTargetIfMissing: false,
+          content: "patched block",
+        },
+        app,
+      });
+      expect(result.isError).toBeUndefined();
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!file) throw new Error("expected file");
+      outputs.push(await app.vault.read(file as never));
+    }
+    expect(outputs[1]).toBe(outputs[0]);
+    expect(outputs[0]).toContain("patched block");
+  });
+
+  test("R-10: caret and bare block targets resolve identically through regex fallback", async () => {
+    const outputs: string[] = [];
+    for (const [index, target] of ["abc123", "^abc123"].entries()) {
+      const path = `Notes/block-content-${index}.md`;
+      setMockFile(path, "before\n\nblock body\n^abc123\n\nafter\n");
+      const app = mockApp();
+      const result = await patchVaultFileHandler({
+        arguments: {
+          path,
+          operation: "replace",
+          targetType: "block",
+          target,
+          createTargetIfMissing: false,
+          content: "patched block",
+        },
+        app,
+      });
+      expect(result.isError).toBeUndefined();
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!file) throw new Error("expected file");
+      outputs.push(await app.vault.read(file as never));
+    }
+    expect(outputs[1]).toBe(outputs[0]);
+    expect(outputs[0]).toContain("patched block");
+  });
+
+  test("R-09: caret block target preserves table refusal and file bytes", async () => {
+    const fixture =
+      "## Section\n\n| Col | Data |\n| --- | --- |\n| a | b ^tablecell |\n";
+    setMockFile("Notes/table-caret.md", fixture);
+    setMockMetadata("Notes/table-caret.md", {
+      blocks: { tablecell: { startLine: 4, endLine: 4 } },
+    });
+    const app = mockApp();
+    const result = await patchVaultFileHandler({
+      arguments: {
+        path: "Notes/table-caret.md",
+        operation: "replace",
+        targetType: "block",
+        target: "^tablecell",
+        createTargetIfMissing: false,
+        content: "must-not-corrupt-table",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(
+      /markdown table or fenced code block/i,
+    );
+    const file = app.vault.getAbstractFileByPath("Notes/table-caret.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as never)).toBe(fixture);
   });
 });
 

@@ -10,10 +10,12 @@ import {
 } from "$/features/mcp-tools/services/periodicNotesDetector";
 import {
   findHeadingSectionEnd,
-  findLeafHeadingLine,
   normalizeAppendBody,
-  resolveHeadingPath,
 } from "$/features/mcp-tools/services/patchHelpers";
+import {
+  resolveHeadingForWrite,
+  splitHeadingPath,
+} from "$/features/mcp-tools/services/anchorTargets";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 
 export const appendToPeriodicNoteSchema = type({
@@ -109,32 +111,33 @@ export async function appendToPeriodicNoteHandler(
       // is signalled via a flag; the callback returns the input
       // unchanged (content no-op).
       let headingFound = true;
+      let ambiguityMessage: string | null = null;
       await ctx.app.vault.process(tfile, (raw) => {
         const lines = raw.split("\n");
 
-        // Resolve partial leaf name to full hierarchical path (same as
-        // patch_vault_file): so `underHeading: "Highlights"` matches a nested
+        // Resolve the (possibly nested) heading path through the shared
+        // cache-first-with-content-fallback resolver (ADR-0024): so
+        // `underHeading: "Highlights"` matches a nested
         // `## Weekly review > ## Highlights` without the caller knowing the path.
-        let resolvedTarget = underHeading;
-        if (!underHeading.includes(HEADING_DELIMITER)) {
-          const fullPath = resolveHeadingPath(
-            raw,
-            underHeading,
-            HEADING_DELIMITER,
-          );
-          if (fullPath) resolvedTarget = fullPath;
+        const segments = splitHeadingPath(underHeading, HEADING_DELIMITER);
+        const r = resolveHeadingForWrite(
+          ctx.app.metadataCache.getFileCache(tfile),
+          lines,
+          segments,
+          HEADING_DELIMITER,
+        );
+
+        if (r.kind === "ambiguous") {
+          ambiguityMessage = r.message;
+          return raw;
         }
-        const targetParts = resolvedTarget.split(HEADING_DELIMITER);
-        const leafHeading = targetParts[targetParts.length - 1];
 
-        const found = findLeafHeadingLine(lines, leafHeading);
-
-        if (found === null) {
+        if (r.kind === "not-found") {
           headingFound = false;
           return raw;
         }
 
-        const { line: headingLine, level: headingLevel } = found;
+        const { line: headingLine, level: headingLevel } = r;
         const sectionEnd = findHeadingSectionEnd(
           lines,
           headingLine,
@@ -146,6 +149,15 @@ export async function appendToPeriodicNoteHandler(
           ...lines.slice(sectionEnd),
         ].join("\n");
       });
+
+      if (ambiguityMessage !== null) {
+        return errorPayload(ambiguityMessage, "ambiguous_heading", {
+          period,
+          path: resolved.path,
+          created,
+          underHeading,
+        });
+      }
 
       if (!headingFound) {
         // Strict-by-default: do NOT silently fall back to EOF, do NOT

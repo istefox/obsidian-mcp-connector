@@ -1,3 +1,4 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   mockApp,
@@ -136,5 +137,79 @@ describe("append_to_periodic_note", () => {
     const body = parse(res);
     expect(body.errorCode).toBe("invalid_date_for_period");
     expect(app.vault.getAbstractFileByPath("bad.md")).toBeNull();
+  });
+});
+
+describe("append_to_periodic_note — converged heading targets", () => {
+  beforeEach(() => {
+    resetMockVault();
+  });
+
+  test("R-01/R-03: resolves underHeading case-insensitively", async () => {
+    setMockFile("2026-09-07.md", "# Top\n\n## Section A\n\nold\n");
+    const app = mockApp();
+    const result = await appendToPeriodicNoteHandler({
+      arguments: {
+        period: "daily",
+        date: "2026-09-07",
+        underHeading: "section a",
+        content: "patched",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.vault.getAbstractFileByPath("2026-09-07.md");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as import("obsidian").TFile);
+    expect(final.indexOf("patched")).toBeGreaterThan(final.indexOf("old"));
+  });
+
+  test("R-04: explicit nested path appends only inside the matching ancestor branch", async () => {
+    setMockFile(
+      "2026-09-07.md",
+      "# A\n\n## X\n\nfromA\n\n# B\n\n## X\n\nfromB\n",
+    );
+    const app = mockApp();
+    const result = await appendToPeriodicNoteHandler({
+      arguments: {
+        period: "daily",
+        date: "2026-09-07",
+        underHeading: "B::X",
+        content: "patchedB",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.vault.getAbstractFileByPath("2026-09-07.md");
+    if (!file) throw new Error("expected file");
+    const final = await app.vault.read(file as import("obsidian").TFile);
+    expect(final).toContain("# A\n\n## X\n\nfromA");
+    expect(final.indexOf("patchedB")).toBeGreaterThan(final.indexOf("# B"));
+    expect(final.indexOf("patchedB")).toBeGreaterThan(final.indexOf("fromB"));
+  });
+
+  test("R-05: ambiguous same-level underHeading errors without changing the file", async () => {
+    const fixture = "# A\n\n## Notes\n\nfirst\n\n# B\n\n## Notes\n\nsecond\n";
+    setMockFile("2026-09-07.md", fixture);
+    const app = mockApp();
+    const result = await appendToPeriodicNoteHandler({
+      arguments: {
+        period: "daily",
+        date: "2026-09-07",
+        underHeading: "Notes",
+        content: "must-not-write",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Ambiguous heading target");
+    const file = app.vault.getAbstractFileByPath("2026-09-07.md");
+    if (!file) throw new Error("expected file");
+    expect(await app.vault.read(file as import("obsidian").TFile)).toBe(
+      fixture,
+    );
   });
 });

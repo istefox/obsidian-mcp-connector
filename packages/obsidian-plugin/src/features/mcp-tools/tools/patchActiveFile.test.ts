@@ -1,3 +1,4 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
   patchActiveFileHandler,
@@ -480,5 +481,77 @@ describe("patch_active_file tool", () => {
     expect(final).not.toContain("In-fence block.");
     expect(final).not.toContain("In-fence tail.");
     expect(final).not.toContain("Postamble prose.");
+  });
+});
+
+describe("patch_active_file — converged heading targets", () => {
+  test("R-01/R-03: resolves a heading target case-insensitively", async () => {
+    setMockFile("case.md", "# Top\n\n## Section A\n\nold\n");
+    setMockActiveFile("case.md");
+    const app = mockApp();
+    const result = await patchActiveFileHandler({
+      arguments: {
+        operation: "replace",
+        targetType: "heading",
+        target: "section a",
+        createTargetIfMissing: false,
+        content: "patched",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    const final = await app.vault.read(file);
+    expect(final).toContain("## Section A\n\npatched");
+    expect(final).not.toContain("\nold\n");
+  });
+
+  test("R-04: explicit nested path changes only the matching ancestor branch", async () => {
+    setMockFile("nested.md", "# A\n\n## X\n\nfromA\n\n# B\n\n## X\n\nfromB\n");
+    setMockActiveFile("nested.md");
+    const app = mockApp();
+    const result = await patchActiveFileHandler({
+      arguments: {
+        operation: "replace",
+        targetType: "heading",
+        target: "B::X",
+        createTargetIfMissing: false,
+        content: "patchedB",
+      },
+      app,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const file = app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    const final = await app.vault.read(file);
+    expect(final).toContain("# A\n\n## X\n\nfromA");
+    expect(final).toContain("# B\n\n## X\n\npatchedB");
+    expect(final).not.toContain("fromB");
+  });
+
+  test("R-05: ambiguous same-level heading errors without changing the file", async () => {
+    const fixture = "# A\n\n## Notes\n\nfirst\n\n# B\n\n## Notes\n\nsecond\n";
+    setMockFile("ambiguous.md", fixture);
+    setMockActiveFile("ambiguous.md");
+    const app = mockApp();
+    const result = await patchActiveFileHandler({
+      arguments: {
+        operation: "replace",
+        targetType: "heading",
+        target: "Notes",
+        createTargetIfMissing: false,
+        content: "must-not-write",
+      },
+      app,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Ambiguous heading target");
+    const file = app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    expect(await app.vault.read(file)).toBe(fixture);
   });
 });

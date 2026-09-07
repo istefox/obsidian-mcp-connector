@@ -1,10 +1,10 @@
+// See docs/architecture/ADR-0024-converge-anchor-matchers.md.
 import { describe, expect, test } from "bun:test";
 import {
   hasParentH1,
   hasAnyH1,
   isInsideTableOrFencedCode,
   isBlockRangeStructurallyUnsafe,
-  resolveHeadingPath,
   normalizeAppendBody,
   findBlockReferenceInContent,
   findBlockPositionFromCache,
@@ -14,35 +14,6 @@ import {
   normalizeForPreconditionCompare,
   checkReplacePrecondition,
 } from "./patchHelpers";
-
-describe("resolveHeadingPath", () => {
-  test("matches single-level heading", () => {
-    const content = "# Top\n\nbody\n\n## Section A\n";
-    expect(resolveHeadingPath(content, "Section A", "::")).toBe(
-      "Top::Section A",
-    );
-  });
-
-  test("matches nested heading via stack", () => {
-    const content = "# A\n\n## B\n\n### C\n\nbody\n\n## D\n";
-    expect(resolveHeadingPath(content, "C", "::")).toBe("A::B::C");
-  });
-
-  test("returns null on miss", () => {
-    const content = "# A\n\n## B\n";
-    expect(resolveHeadingPath(content, "X", "::")).toBeNull();
-  });
-
-  test("respects custom delimiter", () => {
-    const content = "# A\n\n## B\n";
-    expect(resolveHeadingPath(content, "B", " > ")).toBe("A > B");
-  });
-
-  test("returns first match when multiple headings have same leaf name", () => {
-    const content = "# A\n\n## X\n\n# B\n\n## X\n";
-    expect(resolveHeadingPath(content, "X", "::")).toBe("A::X");
-  });
-});
 
 describe("normalizeAppendBody", () => {
   test("appends double newline on append op when missing", () => {

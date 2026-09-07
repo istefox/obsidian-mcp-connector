@@ -21,7 +21,8 @@
 		"release": "bun run build && bun run zip",
 		"zip": "bun scripts/zip.ts",
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
-		"test:conformance": "bash scripts/conformance/run.sh"
+		"test:conformance": "bash scripts/conformance/run.sh",
+		"test:spec-coverage": "bash scripts/spec-coverage-converge-anchors.sh"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",

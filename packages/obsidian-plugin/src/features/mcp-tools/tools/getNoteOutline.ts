@@ -8,21 +8,13 @@ export const getNoteOutlineSchema = type({
     path: type("string>0").describe("Vault-relative path to the note."),
   },
 }).describe(
-  "Returns the structured heading outline of a note: level (1–6), heading text, 1-based line number, and an Obsidian-compatible anchor slug. Empty array when the note has no headings. Use the anchors to construct `[[note#heading]]` links. Reads from Obsidian's metadata cache (no file I/O). Always read-only.",
+  "Returns the structured heading outline of a note: level (1–6), heading text, 1-based line number, and the literal heading text as the link anchor. Empty array when the note has no headings. Use the anchors to construct `[[note#heading]]` links. Reads from Obsidian's metadata cache (no file I/O). Always read-only.",
 );
 
 export type GetNoteOutlineContext = {
   arguments: { path: string };
   app: App;
 };
-
-function toAnchor(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .replace(/\s+/g, "-");
-}
 
 export async function getNoteOutlineHandler(
   ctx: GetNoteOutlineContext,
@@ -59,12 +51,15 @@ export async function getNoteOutlineHandler(
   const cache = ctx.app.metadataCache.getFileCache(abstract);
   const raw = cache?.headings ?? [];
 
-  const headings = raw.map((h) => ({
-    level: h.level,
-    text: h.heading,
-    line_number: h.position.start.line + 1,
-    anchor: toAnchor(h.heading),
-  }));
+  const headings = raw.map((h) => {
+    const text = h.heading.trim();
+    return {
+      level: h.level,
+      text,
+      line_number: h.position.start.line + 1,
+      anchor: text,
+    };
+  });
 
   return {
     content: [
