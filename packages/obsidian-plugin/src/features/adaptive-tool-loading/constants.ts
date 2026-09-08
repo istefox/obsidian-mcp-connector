@@ -1,6 +1,14 @@
 export const PROMOTION_THRESHOLD = 3;
 
 /**
+ * Days of observed usage before an existing token becomes eligible for
+ * migration to `adaptive` (ADR-0025 D4). A heuristic, not a guarantee:
+ * two full weekly cycles, chosen so both a weekday-only and a
+ * weekend-only client get one uninterrupted period plus a repeat.
+ */
+export const MIGRATION_OBSERVATION_DAYS = 14;
+
+/**
  * Meta-tools that are always active regardless of profile and can never be
  * demoted.
  *

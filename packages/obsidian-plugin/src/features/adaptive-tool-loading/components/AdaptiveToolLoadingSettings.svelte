@@ -3,9 +3,31 @@
   import { Notice } from "obsidian";
   import { createEventDispatcher, onMount } from "svelte";
   import { ToolLoadingManager } from "../toolLoadingManager";
-  import { readPolicy, updateTokenPolicy } from "../tokenPolicyStore";
+  import {
+    readEverCalled,
+    readEverCalledSince,
+    readPolicy,
+    readTokenMeta,
+    updateTokenPolicy,
+  } from "../tokenPolicyStore";
   import type { TokenPolicy } from "../tokenPolicyStore";
-  import { ALWAYS_ACTIVE_TOOLS, CORE_SET, META_TOOLS } from "../constants";
+  import {
+    ALWAYS_ACTIVE_TOOLS,
+    CORE_SET,
+    META_TOOLS,
+    MIGRATION_OBSERVATION_DAYS,
+  } from "../constants";
+  import { migrationEligibility } from "../services/migrationEligibility";
+  import type { MigrationEligibility } from "../services/migrationEligibility";
+  import { migrationViewState } from "../services/migrationViewState";
+  import { planMigration } from "../services/planMigration";
+  import {
+    migrateTokenToAdaptive,
+    revertTokenToAll,
+  } from "../services/migrateToken";
+
+  /** So the deactivation Notice stays on screen long enough to read (R-06). */
+  const MIGRATION_NOTICE_DURATION_MS = 15000;
 
   export let plugin: McpToolsPlugin;
   /**
@@ -30,7 +52,22 @@
   // server is up. Empty when the server has not started yet (settings
   // opened before connect): the manual picker then shows a hint.
   let allToolNames: string[] = [];
+  // Same registry snapshot, filtered to what the registry actually
+  // serves (ADR-0025 D8) — the `allNames` the migration preview and the
+  // migration itself must use, so a user-disabled tool is never listed
+  // as something the migration deactivates (it is already off).
+  let servedToolNames: string[] = [];
   let selected = "";
+
+  // Task 7 migration state: everCalled/label feed the preview and the
+  // Notice, eligibility feeds the countdown (ADR-0025 D3, D8).
+  let everCalled: string[] = [];
+  let tokenLabel = "";
+  let eligibility: MigrationEligibility = {
+    eligible: false,
+    daysRemaining: MIGRATION_OBSERVATION_DAYS,
+  };
+  $: viewState = migrationViewState(eligibility, profile);
 
   const mgr = new ToolLoadingManager();
 
@@ -49,7 +86,9 @@
 
   onMount(() => {
     const registry = plugin.mcpTransportState?.mcp.registry;
-    allToolNames = registry ? registry.listAll().map((t) => t.name) : [];
+    const all = registry ? registry.listAll() : [];
+    allToolNames = all.map((t) => t.name);
+    servedToolNames = all.filter((t) => t.enabled).map((t) => t.name);
   });
 
   // Follow the selection. `loadedTokenId` is set before the await so a
@@ -59,10 +98,22 @@
   async function loadPolicy(id: string): Promise<void> {
     loadedTokenId = id;
     try {
-      const policy = await readPolicy(plugin, id);
+      const [policy, calls, meta, everCalledSince] = await Promise.all([
+        readPolicy(plugin, id),
+        readEverCalled(plugin, id),
+        readTokenMeta(plugin, id),
+        readEverCalledSince(plugin),
+      ]);
       profile = policy.profile;
       promoted = policy.promoted;
       allowed = policy.allowed;
+      everCalled = calls;
+      tokenLabel = meta?.label ?? id;
+      eligibility = migrationEligibility(
+        Date.now(),
+        everCalledSince,
+        meta?.createdAt ?? 0,
+      );
       mounted = true;
     } catch (err) {
       // Without this the read rejects into a fire-and-forget `void` call
@@ -96,6 +147,119 @@
   function onProfileChange(value: "all" | "core" | "adaptive"): void {
     profile = value;
     void savePolicy({ profile });
+  }
+
+  /**
+   * Flipping the migration toggle on. Confirms with the exact
+   * `deactivated` list from {@link planMigration} BEFORE any write
+   * (ADR-0025 D11), then migrates and announces the outcome. Not
+   * optimistic like {@link onProfileChange}: the Notice reports what
+   * actually happened, so `profile`/`promoted` only move after the
+   * write lands, and the checkbox is reset by hand on cancel or
+   * failure — a plain `checked={...}` binding does not revert itself.
+   */
+  async function confirmAndMigrate(checkbox: HTMLInputElement): Promise<void> {
+    busy = true;
+    let plan: ReturnType<typeof planMigration>;
+    try {
+      // A call made just before the toggle is flipped can still be sitting
+      // in ToolLoadingManager's trailing debounce buffer (recordCall),
+      // unwritten to `everCalled`. Flushing and re-reading here (RTF cycle
+      // 1 finding) keeps the preview and the write from deactivating a
+      // tool the client just used. Optional access: a settings tab opened
+      // before the server started has no `mcp` to flush yet, same guard as
+      // `notifyToolsChanged`. Inside the try (RTF cycle 1, finding 2): a
+      // rejected flush or reload must reach the same error path as a
+      // rejected write, not escape the fire-and-forget caller unhandled.
+      await plugin.mcpTransportState?.mcp.flushPendingCalls?.();
+      await loadPolicy(tokenId);
+      const currentPolicy: TokenPolicy = { profile, promoted, allowed };
+      plan = planMigration(servedToolNames, currentPolicy, everCalled);
+    } catch (err) {
+      checkbox.checked = false;
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to save tool loading settings: ${message}`);
+      busy = false;
+      return;
+    }
+    busy = false;
+    const list =
+      plan.deactivated.length > 0 ? plan.deactivated.join(", ") : "none";
+    const confirmed = confirm(
+      `Switch "${tokenLabel}" to Adaptive? Tools this client has never called would deactivate until you call activate_tool or promote them again: ${list}.`,
+    );
+    if (!confirmed) {
+      checkbox.checked = false;
+      return;
+    }
+
+    busy = true;
+    try {
+      const deactivated = await migrateTokenToAdaptive(
+        plugin,
+        tokenId,
+        servedToolNames,
+      );
+      await loadPolicy(tokenId);
+      new Notice(
+        `"${tokenLabel}" switched to Adaptive. ${deactivated.length} tool${
+          deactivated.length === 1 ? "" : "s"
+        } deactivated — call activate_tool from chat, or add it back under Promoted tools, to bring one back.`,
+        MIGRATION_NOTICE_DURATION_MS,
+      );
+      try {
+        // The migration is already persisted and announced at this point
+        // (Gate 5.06 finding). A listener that throws here is a transport
+        // problem, not a reason to report the migration itself as failed —
+        // same reasoning as ToolLoadingManager's onToolsPromoted guard.
+        plugin.mcpTransportState?.mcp.notifyToolsChanged?.();
+      } catch (notifyErr) {
+        const notifyMessage =
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+        console.warn(
+          `[adaptive] notifyToolsChanged threw after migration: ${notifyMessage}`,
+        );
+      }
+      dispatch("policychange");
+    } catch (err) {
+      checkbox.checked = false;
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to save tool loading settings: ${message}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /**
+   * Flipping the migration toggle off. A widening needs no confirmation
+   * (ADR-0025 D7): revert immediately. No Notice and no
+   * `notifyToolsChanged` — R-06/R-07 are about announcing a migration,
+   * not a revert.
+   */
+  async function revertAdaptive(checkbox: HTMLInputElement): Promise<void> {
+    busy = true;
+    try {
+      await revertTokenToAll(plugin, tokenId);
+      await loadPolicy(tokenId);
+      dispatch("policychange");
+    } catch (err) {
+      checkbox.checked = true;
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to save tool loading settings: ${message}`);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function onAdaptiveToggle(
+    event: Event & { currentTarget: HTMLInputElement },
+  ): void {
+    const checkbox = event.currentTarget;
+    if (checkbox.checked) {
+      void confirmAndMigrate(checkbox);
+    } else {
+      void revertAdaptive(checkbox);
+    }
   }
 
   async function addPromoted(name: string): Promise<void> {
@@ -219,6 +383,47 @@
         />
         <span>Adaptive <span class="muted">(core + promoted tools)</span></span>
       </label>
+    </div>
+
+    <div class="migration-section">
+      <label class="radio-row">
+        <input
+          type="checkbox"
+          checked={viewState.checked}
+          disabled={viewState.disabled || busy || allToolNames.length === 0}
+          on:change={onAdaptiveToggle}
+          aria-label="Migrate this token to Adaptive"
+        />
+        <span>
+          Migrate to Adaptive
+          {#if viewState.state === "under-observation"}
+            <span class="muted"
+              >— ready in {viewState.daysRemaining} day{viewState.daysRemaining ===
+              1
+                ? ""
+                : "s"}. Reduces session-fixed tool-list cost; seeds Promoted
+              tools from what this client has actually called.</span
+            >
+          {:else if viewState.state === "eligible-off"}
+            <span class="muted"
+              >— seeds Promoted tools from what this client has actually
+              called, then behaves like Adaptive above. Shows exactly which
+              tools would deactivate before anything changes.</span
+            >
+          {:else}
+            <span class="muted"
+              >— active for this token. Turn off to restore All tools
+              immediately.</span
+            >
+          {/if}
+        </span>
+      </label>
+      {#if viewState.state === "eligible-off" && allToolNames.length === 0}
+        <p class="muted empty-hint">
+          Connect an MCP client once so the tool list is available, then
+          reopen settings to migrate.
+        </p>
+      {/if}
     </div>
 
     {#if profile !== "all"}
@@ -387,6 +592,13 @@
     margin: 0 0 0.5em;
   }
 
+  .migration-section {
+    padding: 0.6em 0.8em;
+    background: var(--background-secondary);
+    border-radius: 4px;
+    margin-bottom: 0.8em;
+  }
+
   .promoted-section {
     padding: 0.6em 0.8em;
     background: var(--background-secondary);
@@ -463,6 +675,7 @@
   .allowlist code {
     font-family: var(--font-monospace);
     font-size: 0.9em;
+    overflow-wrap: anywhere;
   }
 
   .reset-btn {

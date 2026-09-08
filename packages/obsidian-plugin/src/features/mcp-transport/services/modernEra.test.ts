@@ -1008,6 +1008,50 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     return res;
   }
 
+  type ToolsChangedService = McpService & {
+    notifyToolsChanged: () => void;
+  };
+
+  test("notifyToolsChanged publishes onto an already-open subscribed stream (R-07)", async () => {
+    const { server, svc } = await bootAdaptiveService();
+    const subscribed = await openListen(server.port, 300, {
+      toolsListChanged: true,
+    });
+    const pendingFrames = collectFrames(subscribed, 2);
+
+    try {
+      (svc as ToolsChangedService).notifyToolsChanged();
+      const frames = await pendingFrames;
+
+      expect(frames[0]?.method).toBe(
+        "notifications/subscriptions/acknowledged",
+      );
+      expect(frames[1]?.method).toBe("notifications/tools/list_changed");
+      expect(
+        (frames[1]?.params as Record<string, unknown> | undefined)?._meta,
+      ).toMatchObject({
+        "io.modelcontextprotocol/subscriptionId": 300,
+      });
+    } finally {
+      for (const controller of listenAborts.splice(0)) controller.abort();
+      await pendingFrames.catch(() => undefined);
+    }
+  });
+
+  test("notifyToolsChanged is a no-op when no subscribers are open (R-07)", async () => {
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: makeAllProfilePlugin(),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+
+    expect(() =>
+      (svc as ToolsChangedService).notifyToolsChanged(),
+    ).not.toThrow();
+  });
+
   /**
    * Both subscribers live on ONE service, on purpose, and not only for speed.
    *

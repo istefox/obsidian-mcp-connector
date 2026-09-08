@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **An existing MCP token can now migrate to the `adaptive` tool-loading profile from the Access Control settings panel**, closing the gap ADR-0023 left open for tokens created before adaptive loading existed. A per-token toggle, disabled with a "Ready in N days" countdown until the token has 14 days of observed usage (`MIGRATION_OBSERVATION_DAYS`), shows an exact preview of which tools would deactivate before any write happens. Confirming seeds `Promoted tools` from what the client has actually called, switches the profile, and shows a Notice naming the token, the deactivated count and the `activate_tool` recovery path. A 2026-era client connected when the migration happens gets a live `tools/list` update; the legacy stateless transport relies on the Notice alone, structurally. Turning the toggle off reverts to `all` immediately, no confirmation needed, and discards nothing — `everCalled` history survives the round trip. See [ADR-0025](docs/architecture/ADR-0025-migrate-existing-tokens-to-adaptive.md).
+
 ## [2.5.2] — 2026-09-07
 
 ### Fixed

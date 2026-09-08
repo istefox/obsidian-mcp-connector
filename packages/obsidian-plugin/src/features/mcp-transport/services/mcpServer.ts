@@ -194,6 +194,21 @@ export type McpService = {
    */
   notifyPromptsChanged: () => void;
   /**
+   * Publish `notifications/tools/list_changed` onto every open
+   * `subscriptions/listen` stream that opted in — the same fan-out
+   * `onToolsPromoted` already drives for auto-promotion, exposed here so
+   * the settings layer can trigger it after an explicit migration
+   * (ADR-0025 D10, R-07).
+   *
+   * Modern era only, structurally: the legacy transport is stateless and
+   * POST-only (ADR-0016), so there is no channel to push onto at all.
+   * That gap is not filled here — a settings-layer Notice is the
+   * mitigation for a legacy client, which re-lists on its next
+   * connection (ADR-0025 D9, D10; do not build a connection registry to
+   * target one client, ADR-0025 A7).
+   */
+  notifyToolsChanged: () => void;
+  /**
    * Persist both in-memory counter batches: tool calls (see
    * ToolLoadingManager) and per-era requests (see eraCounters). One entry
    * point rather than two so every existing call site — the tests and
@@ -394,7 +409,7 @@ export async function createMcpService(
         !(META_TOOLS as string[]).includes(request.params.name)
       ) {
         toolLoadingManager
-          .recordCall(request.params.name, config.plugin)
+          .recordCall(request.params.name, config.plugin, tokenId)
           .catch((error: unknown) => {
             // Fire-and-forget by design, but a persistent settings
             // write failure (disk full, corrupted data.json) must
@@ -611,6 +626,7 @@ export async function createMcpService(
     handleRequest,
     buildMcpServer,
     notifyPromptsChanged: () => modernHandler.notify.promptsChanged(),
+    notifyToolsChanged: () => modernHandler.notify.toolsChanged(),
     flushPendingCalls: async () => {
       // Both batches drain, independently. Chaining them with bare awaits
       // meant a rejected first flush skipped the second entirely, which is

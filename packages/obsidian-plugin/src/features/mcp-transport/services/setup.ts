@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { SettingsStore } from "$/shared/settingsStore";
 import { logger } from "$/shared";
+import { ensureEverCalledTracking } from "$/features/adaptive-tool-loading/services/migrationEligibility";
 import {
   startHttpServer,
   stopHttpServer,
@@ -67,6 +68,13 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
     const tokens = await ensureTokenStore(plugin);
     // The mirror, which is `tokens[0]` by position (ADR-0014 §7).
     const bearerToken = tokens[0].token;
+    // A DIFFERENT owner from ensureTokenStore, deliberately not folded into
+    // it: this writes the migration-eligibility anchor
+    // (`toolLoading.everCalledSince`), idempotently, once per vault
+    // (ADR-0025 D3). Keeping it a separate call after ensureTokenStore's
+    // own write lets `tokenStore.test.ts`'s save-count assertions stay
+    // green without knowing about this feature.
+    await ensureEverCalledTracking(plugin);
 
     const mcpTransportSlice = (await new SettingsStore(plugin).readSlice(
       "mcpTransport",

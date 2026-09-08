@@ -235,7 +235,7 @@ describe("recordCall", () => {
       },
     };
     const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
-    await debounced.recordCall("search_vault", flaky);
+    await debounced.recordCall("search_vault", flaky, "tok");
     await expect(debounced.flushPendingCalls(flaky)).rejects.toThrow(
       "disk full",
     );
@@ -243,8 +243,10 @@ describe("recordCall", () => {
     await debounced.flushPendingCalls(flaky);
     const state = plugin._store().toolLoading as {
       counters: Record<string, number>;
+      everCalled: Record<string, string[]>;
     };
     expect(state.counters["search_vault"]).toBe(1);
+    expect(state.everCalled.tok).toEqual(["search_vault"]);
   });
 
   test("does not re-promote an already-promoted tool", async () => {
@@ -262,6 +264,176 @@ describe("recordCall", () => {
     expect(
       state.promoted.filter((n) => n === "search_and_replace").length,
     ).toBe(1);
+  });
+});
+
+describe("per-token call history (R-01)", () => {
+  function countingPlugin(data: Record<string, unknown> = {}) {
+    const base = makePlugin(data);
+    let saves = 0;
+    return {
+      plugin: {
+        loadData: base.loadData,
+        saveData: async (next: unknown) => {
+          saves += 1;
+          await base.saveData(next);
+        },
+      },
+      get saves() {
+        return saves;
+      },
+      getStore: base._store,
+    };
+  }
+
+  test("a tokenised call records history and preserves the global counter shape", async () => {
+    const harness = countingPlugin();
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+
+    await debounced.recordCall("search_vault", harness.plugin, "tok");
+    await debounced.flushPendingCalls(harness.plugin);
+
+    const slice = harness.getStore().toolLoading as {
+      counters: Record<string, number>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(slice.counters).toEqual({ search_vault: 1 });
+    expect(slice.everCalled).toEqual({ tok: ["search_vault"] });
+    expect(harness.saves).toBe(1);
+  });
+
+  test("a call without a token id increments the counter and creates no history", async () => {
+    const harness = countingPlugin();
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+
+    await debounced.recordCall("search_vault", harness.plugin);
+    await debounced.flushPendingCalls(harness.plugin);
+
+    const slice = harness.getStore().toolLoading as Record<string, unknown>;
+    expect(slice.counters).toEqual({ search_vault: 1 });
+    expect(Object.prototype.hasOwnProperty.call(slice, "everCalled")).toBe(
+      false,
+    );
+  });
+
+  test("deduplicates repeated token-tool history and converges after one flush", async () => {
+    const harness = countingPlugin();
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+
+    await debounced.recordCall("search_vault", harness.plugin, "tok");
+    await debounced.recordCall("search_vault", harness.plugin, "tok");
+    await debounced.flushPendingCalls(harness.plugin);
+
+    const first = harness.getStore().toolLoading as {
+      counters: Record<string, number>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(first.counters.search_vault).toBe(2);
+    expect(first.everCalled.tok).toEqual(["search_vault"]);
+    expect(harness.saves).toBe(1);
+
+    await debounced.flushPendingCalls(harness.plugin);
+    expect(harness.saves).toBe(1);
+  });
+
+  test("persists independent histories for two tokens in one write", async () => {
+    const harness = countingPlugin();
+    const debounced = new ToolLoadingManager({ flushDelayMs: 60_000 });
+
+    await debounced.recordCall("search_vault", harness.plugin, "first");
+    await debounced.recordCall("get_active_file", harness.plugin, "second");
+    await debounced.flushPendingCalls(harness.plugin);
+
+    const slice = harness.getStore().toolLoading as {
+      counters: Record<string, number>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(slice.counters).toEqual({ search_vault: 1, get_active_file: 1 });
+    expect(slice.everCalled).toEqual({
+      first: ["search_vault"],
+      second: ["get_active_file"],
+    });
+    expect(harness.saves).toBe(1);
+  });
+
+  test("flushes history left pending after reset drops the counter batch", async () => {
+    const harness = countingPlugin({
+      toolLoading: {
+        profile: "adaptive",
+        promoted: ["search_and_replace"],
+        counters: {},
+        profiles: {
+          tok: {
+            profile: "adaptive",
+            promoted: ["search_and_replace"],
+            allowed: null,
+          },
+        },
+      },
+    });
+    const transport = new ToolLoadingManager({ flushDelayMs: 60_000 });
+    const settings = new ToolLoadingManager({ flushDelayMs: 0 });
+
+    await transport.recordCall("search_vault", harness.plugin, "tok");
+    await settings.resetAll(harness.plugin, "tok");
+    expect(harness.saves).toBe(1);
+
+    await transport.flushPendingCalls(harness.plugin);
+
+    const slice = harness.getStore().toolLoading as {
+      counters: Record<string, number>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(slice.counters).toEqual({});
+    expect(slice.everCalled).toEqual({ tok: ["search_vault"] });
+    expect(harness.saves).toBe(2);
+  });
+
+  test("reset clears counters and only the selected promotion, preserving history", async () => {
+    const plugin = makePlugin({
+      mcpTransport: {
+        tokens: [
+          { id: "first", createdAt: 1 },
+          { id: "second", createdAt: 2 },
+        ],
+      },
+      toolLoading: {
+        profile: "adaptive",
+        promoted: ["search_and_replace"],
+        counters: { search_vault: 4 },
+        profiles: {
+          first: {
+            profile: "adaptive",
+            promoted: ["search_and_replace"],
+            allowed: null,
+          },
+          second: {
+            profile: "adaptive",
+            promoted: ["get_active_file"],
+            allowed: null,
+          },
+        },
+        everCalled: {
+          first: ["search_vault"],
+          second: ["get_active_file"],
+        },
+      },
+    });
+
+    await mgr.resetAll(plugin, "first");
+
+    const slice = plugin._store().toolLoading as {
+      counters: Record<string, number>;
+      profiles: Record<string, { promoted: string[] }>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(slice.counters).toEqual({});
+    expect(slice.profiles.first.promoted).toEqual([]);
+    expect(slice.profiles.second.promoted).toEqual(["get_active_file"]);
+    expect(slice.everCalled).toEqual({
+      first: ["search_vault"],
+      second: ["get_active_file"],
+    });
   });
 });
 
