@@ -159,16 +159,30 @@
    * failure — a plain `checked={...}` binding does not revert itself.
    */
   async function confirmAndMigrate(checkbox: HTMLInputElement): Promise<void> {
-    // A call made just before the toggle is flipped can still be sitting in
-    // ToolLoadingManager's trailing debounce buffer (recordCall), unwritten
-    // to `everCalled`. Flushing and re-reading here (RTF cycle 1 finding)
-    // keeps the preview and the write from deactivating a tool the client
-    // just used. Optional access: a settings tab opened before the server
-    // started has no `mcp` to flush yet, same guard as `notifyToolsChanged`.
-    await plugin.mcpTransportState?.mcp.flushPendingCalls?.();
-    await loadPolicy(tokenId);
-    const currentPolicy: TokenPolicy = { profile, promoted, allowed };
-    const plan = planMigration(servedToolNames, currentPolicy, everCalled);
+    busy = true;
+    let plan: ReturnType<typeof planMigration>;
+    try {
+      // A call made just before the toggle is flipped can still be sitting
+      // in ToolLoadingManager's trailing debounce buffer (recordCall),
+      // unwritten to `everCalled`. Flushing and re-reading here (RTF cycle
+      // 1 finding) keeps the preview and the write from deactivating a
+      // tool the client just used. Optional access: a settings tab opened
+      // before the server started has no `mcp` to flush yet, same guard as
+      // `notifyToolsChanged`. Inside the try (RTF cycle 1, finding 2): a
+      // rejected flush or reload must reach the same error path as a
+      // rejected write, not escape the fire-and-forget caller unhandled.
+      await plugin.mcpTransportState?.mcp.flushPendingCalls?.();
+      await loadPolicy(tokenId);
+      const currentPolicy: TokenPolicy = { profile, promoted, allowed };
+      plan = planMigration(servedToolNames, currentPolicy, everCalled);
+    } catch (err) {
+      checkbox.checked = false;
+      const message = err instanceof Error ? err.message : String(err);
+      new Notice(`Failed to save tool loading settings: ${message}`);
+      busy = false;
+      return;
+    }
+    busy = false;
     const list =
       plan.deactivated.length > 0 ? plan.deactivated.join(", ") : "none";
     const confirmed = confirm(
