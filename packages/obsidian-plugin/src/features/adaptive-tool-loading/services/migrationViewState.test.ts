@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-// Task 7 test-first contract, derived from the supplied brief only.
+// Task 7 test-first contract (ADR-0025), derived from the supplied brief only.
 // The coder supplies this pure helper and calls it from the settings panel.
 // Existing service tests provide only the eligibility/profile input shapes.
 type Eligibility = { eligible: boolean; daysRemaining: number };
