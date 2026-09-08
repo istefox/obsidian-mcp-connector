@@ -5,6 +5,7 @@ import {
   readPolicy,
   updateToolLoading,
 } from "./tokenPolicyStore";
+import * as tokenPolicyStore from "./tokenPolicyStore";
 import { ToolLoadingManager } from "./toolLoadingManager";
 import { PROMOTION_THRESHOLD } from "./constants";
 
@@ -32,6 +33,19 @@ const TWO_TOKEN_FIXTURE = {
     ],
   },
 };
+
+type EverCalledState = {
+  everCalled: Record<string, string[]>;
+};
+
+const readEverCalled = (
+  tokenPolicyStore as unknown as {
+    readEverCalled: (
+      plugin: ReturnType<typeof makePlugin>,
+      tokenId: string,
+    ) => Promise<string[]>;
+  }
+).readEverCalled;
 
 describe("readPolicy", () => {
   // Updated for R-11 (ADR-0023 D11): a live token with no `profiles` entry
@@ -325,6 +339,157 @@ describe("updateToolLoading", () => {
     };
     expect(toolLoading.profiles.orphan).toBeUndefined();
     expect(toolLoading.profiles.default).toBeDefined();
+  });
+});
+
+describe("everCalled storage (R-01, R-02)", () => {
+  test("survives mergeState, an unrelated mutation, and toSlice", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {},
+        everCalled: { claude: ["search_vault"] },
+      },
+    });
+
+    await updateToolLoading(plugin, (state) => {
+      state.counters.get_active_file = 1;
+      return state;
+    });
+
+    const slice = plugin._store().toolLoading as EverCalledState;
+    expect(slice.everCalled).toEqual({ claude: ["search_vault"] });
+    expect(await readEverCalled(plugin, "claude")).toEqual(["search_vault"]);
+  });
+
+  test.each([
+    ["a non-object value", "broken"],
+    ["a member that is not an array", { claude: "search_vault" }],
+    ["a member containing a non-string", { claude: ["search_vault", 7] }],
+  ])(
+    "normalises %s to an empty map without throwing",
+    async (_label, value) => {
+      const plugin = makePlugin({
+        ...TWO_TOKEN_FIXTURE,
+        toolLoading: {
+          profile: "all",
+          promoted: [],
+          counters: {},
+          profiles: {},
+          everCalled: value,
+        },
+      });
+
+      await expect(
+        updateToolLoading(plugin, (state) => {
+          state.counters.search_vault = 1;
+          return state;
+        }),
+      ).resolves.toBeUndefined();
+      const slice = plugin._store().toolLoading as Record<string, unknown>;
+      expect(slice.everCalled).toBeUndefined();
+      expect(await readEverCalled(plugin, "claude")).toEqual([]);
+    },
+  );
+
+  test("prunes history for token ids absent from a non-empty token list", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {},
+        everCalled: {
+          default: ["get_active_file"],
+          orphan: ["search_vault"],
+        },
+      },
+    });
+
+    await updateToolLoading(plugin, (state) => state);
+
+    const slice = plugin._store().toolLoading as EverCalledState;
+    expect(slice.everCalled).toEqual({ default: ["get_active_file"] });
+  });
+
+  test("does not prune history when the token list is empty", async () => {
+    const plugin = makePlugin({
+      mcpTransport: { tokens: [] },
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {},
+        everCalled: { legacy: ["search_vault"] },
+      },
+    });
+
+    await updateToolLoading(plugin, (state) => state);
+
+    const slice = plugin._store().toolLoading as EverCalledState;
+    expect(slice.everCalled).toEqual({ legacy: ["search_vault"] });
+  });
+
+  test("omits an empty everCalled map from the persisted slice", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {},
+        everCalled: {},
+      },
+    });
+
+    await updateToolLoading(plugin, (state) => {
+      state.counters.search_vault = 1;
+      return state;
+    });
+
+    const slice = plugin._store().toolLoading as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(slice, "everCalled")).toBe(
+      false,
+    );
+  });
+
+  test("writing history creates no policy and leaves the legacy mirror unchanged", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "core",
+        promoted: ["get_active_file"],
+        counters: {},
+        profiles: {
+          default: {
+            profile: "core",
+            promoted: ["get_active_file"],
+            allowed: null,
+          },
+        },
+      },
+    });
+
+    await updateToolLoading(plugin, (state) => {
+      const withHistory = state as typeof state & EverCalledState;
+      withHistory.everCalled = { claude: ["search_vault"] };
+      return withHistory;
+    });
+
+    const slice = plugin._store().toolLoading as {
+      profile: string;
+      promoted: string[];
+      profiles?: Record<string, unknown>;
+      everCalled: Record<string, string[]>;
+    };
+    expect(slice.everCalled).toEqual({ claude: ["search_vault"] });
+    expect(slice.profiles?.claude).toBeUndefined();
+    expect(slice.profile).toBe("core");
+    expect(slice.promoted).toEqual(["get_active_file"]);
   });
 });
 
