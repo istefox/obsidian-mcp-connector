@@ -272,6 +272,44 @@ export async function readEverCalled(
 }
 
 /**
+ * The vault-wide migration-eligibility anchor (ADR-0025 D3), or `0`
+ * before `ensureEverCalledTracking` has ever run.
+ */
+export async function readEverCalledSince(
+  plugin: PluginDataLike,
+): Promise<number> {
+  const slice = await new SettingsStore(plugin).readSlice(SLICE);
+  return isRecord(slice) && typeof slice.everCalledSince === "number"
+    ? slice.everCalledSince
+    : 0;
+}
+
+/**
+ * `tokenId`'s live `label` and `createdAt`, read from `mcpTransport.tokens`
+ * structurally through `SettingsStore.readSlice` — never by importing
+ * `tokenStore`, the same one-directional convention {@link tokenIdsIn}
+ * already follows for token ids, keeping this feature free of an import
+ * back into `mcp-transport` (ADR-0025 D3). `undefined` when the token
+ * has no entry (revoked mid-session, or the slice does not exist yet).
+ */
+export async function readTokenMeta(
+  plugin: PluginDataLike,
+  tokenId: string,
+): Promise<{ label: string; createdAt: number } | undefined> {
+  const slice = await new SettingsStore(plugin).readSlice(TRANSPORT_SLICE);
+  const tokens = isRecord(slice) ? slice.tokens : undefined;
+  if (!Array.isArray(tokens)) return undefined;
+  const record = tokens.find(
+    (t): t is Record<string, unknown> => isRecord(t) && t.id === tokenId,
+  );
+  if (!record) return undefined;
+  return {
+    label: typeof record.label === "string" ? record.label : tokenId,
+    createdAt: typeof record.createdAt === "number" ? record.createdAt : 0,
+  };
+}
+
+/**
  * The one write path into the `toolLoading` slice. Applies `mutate`,
  * prunes policy entries whose token no longer exists, and recomputes
  * the legacy mirror from the first token's entry — all inside a single
