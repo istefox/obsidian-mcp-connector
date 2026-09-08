@@ -207,7 +207,19 @@
         } deactivated — call activate_tool from chat, or add it back under Promoted tools, to bring one back.`,
         MIGRATION_NOTICE_DURATION_MS,
       );
-      plugin.mcpTransportState?.mcp.notifyToolsChanged?.();
+      try {
+        // The migration is already persisted and announced at this point
+        // (Gate 5.06 finding). A listener that throws here is a transport
+        // problem, not a reason to report the migration itself as failed —
+        // same reasoning as ToolLoadingManager's onToolsPromoted guard.
+        plugin.mcpTransportState?.mcp.notifyToolsChanged?.();
+      } catch (notifyErr) {
+        const notifyMessage =
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+        console.warn(
+          `[adaptive] notifyToolsChanged threw after migration: ${notifyMessage}`,
+        );
+      }
       dispatch("policychange");
     } catch (err) {
       checkbox.checked = false;
@@ -663,6 +675,7 @@
   .allowlist code {
     font-family: var(--font-monospace);
     font-size: 0.9em;
+    overflow-wrap: anywhere;
   }
 
   .reset-btn {

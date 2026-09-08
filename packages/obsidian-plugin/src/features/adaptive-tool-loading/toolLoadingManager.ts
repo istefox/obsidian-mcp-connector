@@ -221,8 +221,12 @@ export class ToolLoadingManager {
       pending.timer = window.setTimeout(() => {
         pending.timer = null;
         // Fire-and-forget: a failed flush restores the batch in memory
-        // (see flushPendingCalls) and the next call retries.
-        void this.flushPendingCalls(plugin).catch(() => {});
+        // (see flushPendingCalls) and the next call retries. Logged so a
+        // persistent failure (disk full, corrupted data.json) leaves a
+        // trail instead of retrying forever in silence (Gate 5.06 finding).
+        void this.flushPendingCalls(plugin).catch((error: unknown) => {
+          logger.warn("[adaptive] debounced flush failed", { error });
+        });
       }, delay);
     }
   }
