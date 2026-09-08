@@ -107,6 +107,15 @@ const RECORD_FLUSH_DELAY_MS = 2_000;
  */
 type PendingState = {
   counts: Map<string, number>;
+  /**
+   * Per-token call history awaiting persistence, keyed by token id, each
+   * value a set so repeated calls to the same tool converge instead of
+   * growing (ADR-0025 D2). A SEPARATE map from `counts`: `resetAll` must
+   * drop pending counters without discarding pending history, since
+   * `everCalled` is migration-eligibility history, not a promotion
+   * signal, and is left untouched by a reset (ADR-0025 D7).
+   */
+  everCalled: Map<string, Set<string>>;
   timer: number | null;
 };
 const pendingByPlugin = new WeakMap<PluginDataLike, PendingState>();
@@ -114,7 +123,7 @@ const pendingByPlugin = new WeakMap<PluginDataLike, PendingState>();
 function pendingFor(plugin: PluginDataLike): PendingState {
   let state = pendingByPlugin.get(plugin);
   if (!state) {
-    state = { counts: new Map(), timer: null };
+    state = { counts: new Map(), everCalled: new Map(), timer: null };
     pendingByPlugin.set(plugin, state);
   }
   return state;
@@ -180,10 +189,26 @@ export class ToolLoadingManager {
    * of persisting per call (see RECORD_FLUSH_DELAY_MS). With
    * `flushDelayMs: 0` the flush is immediate — used by tests that
    * assert on persisted state.
+   *
+   * `tokenId` is optional (ADR-0025 D2): only the transport knows who is
+   * calling, so the settings UI's own manager instance and the ~14
+   * existing call sites that omit it keep recording a counter and no
+   * history. When given, the call is ALSO added to that token's
+   * migration-eligibility history (`everCalled`), converging after the
+   * first call to a given (token, tool) pair.
    */
-  async recordCall(toolName: string, plugin: PluginDataLike): Promise<void> {
+  async recordCall(
+    toolName: string,
+    plugin: PluginDataLike,
+    tokenId?: string,
+  ): Promise<void> {
     const pending = pendingFor(plugin);
     pending.counts.set(toolName, (pending.counts.get(toolName) ?? 0) + 1);
+    if (tokenId !== undefined) {
+      const names = pending.everCalled.get(tokenId) ?? new Set<string>();
+      names.add(toolName);
+      pending.everCalled.set(tokenId, names);
+    }
     const delay = this.opts.flushDelayMs ?? RECORD_FLUSH_DELAY_MS;
     if (delay <= 0) {
       await this.flushPendingCalls(plugin);
@@ -214,9 +239,13 @@ export class ToolLoadingManager {
       window.clearTimeout(pending.timer);
       pending.timer = null;
     }
-    if (pending.counts.size === 0) return;
+    // Both maps gate the early return (ADR-0025 D2): a flush with only
+    // history pending (no counters) must still write.
+    if (pending.counts.size === 0 && pending.everCalled.size === 0) return;
     const batch = pending.counts;
+    const historyBatch = pending.everCalled;
     pending.counts = new Map();
+    pending.everCalled = new Map();
     // Set inside the recipe, read after the write resolves. A promotion that
     // was computed but never persisted must not be announced, and the recipe
     // itself is a pure function of one snapshot — it is the wrong place to
@@ -266,16 +295,33 @@ export class ToolLoadingManager {
             setPromoted(state, id, [toolName]);
           }
         }
+        // Per-token call history (ADR-0025 D1, D2): merged into the SAME
+        // write as the counters above, one settings write per flush. A
+        // set converges, so a name already recorded for a token costs
+        // nothing here.
+        for (const [tokenId, names] of historyBatch) {
+          const existing = state.everCalled[tokenId] ?? [];
+          const merged = [...existing];
+          for (const name of names) {
+            if (!merged.includes(name)) merged.push(name);
+          }
+          state.everCalled[tokenId] = merged;
+        }
         return state;
       });
     } catch (error) {
-      // Put the batch back so a transient write failure does not drop
-      // the counts; merge with anything recorded meanwhile.
+      // Put both batches back so a transient write failure does not drop
+      // counters or history; merge with anything recorded meanwhile.
       for (const [toolName, count] of batch) {
         pending.counts.set(
           toolName,
           (pending.counts.get(toolName) ?? 0) + count,
         );
+      }
+      for (const [tokenId, names] of historyBatch) {
+        const restored = pending.everCalled.get(tokenId) ?? new Set<string>();
+        for (const name of names) restored.add(name);
+        pending.everCalled.set(tokenId, restored);
       }
       throw error;
     }
@@ -383,9 +429,12 @@ export class ToolLoadingManager {
    * client's surface is untouched.
    */
   async resetAll(plugin: PluginDataLike, tokenId?: string): Promise<void> {
-    // Drop the unpersisted batch FIRST (module-level, shared with the
-    // transport's manager instance) so a debounced flush scheduled
-    // before the reset cannot re-add pre-reset counts afterwards.
+    // Drop the unpersisted COUNTER batch FIRST (module-level, shared with
+    // the transport's manager instance) so a debounced flush scheduled
+    // before the reset cannot re-add pre-reset counts afterwards. Pending
+    // `everCalled` history is left alone on purpose — it is migration-
+    // eligibility history, not a promotion signal, and a reset never
+    // discards it (ADR-0025 D7); a later flush persists it normally.
     const pending = pendingFor(plugin);
     if (pending.timer !== null) {
       window.clearTimeout(pending.timer);

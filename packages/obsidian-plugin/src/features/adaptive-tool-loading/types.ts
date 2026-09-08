@@ -18,6 +18,14 @@ declare module "obsidian" {
           allowed: string[] | null;
         }
       >;
+      /**
+       * Which tools each token has ever actually called, first-seen
+       * order, deduped. Lives beside `profiles`, never inside a token's
+       * policy entry (ADR-0025 D1).
+       */
+      everCalled?: Record<string, string[]>;
+      /** Vault-wide migration-eligibility anchor, epoch ms (ADR-0025 D3). */
+      everCalledSince?: number;
     };
   }
 }

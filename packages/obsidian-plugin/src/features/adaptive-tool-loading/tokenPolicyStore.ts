@@ -69,6 +69,19 @@ export type ToolLoadingState = {
   /** Legacy mirror of `profiles[tokens[0].id].promoted`. */
   promoted: string[];
   profiles: Record<string, TokenPolicy>;
+  /**
+   * Which tools each token has ever actually called, first-seen order,
+   * deduped (ADR-0025 D1). Lives beside `profiles`, never inside a
+   * `TokenPolicy` entry — see this module's doc comment.
+   */
+  everCalled: Record<string, string[]>;
+  /**
+   * The vault-wide migration-eligibility anchor, epoch ms (ADR-0025 D3).
+   * Absent until the eligibility service's `ensureEverCalledTracking`
+   * first runs; a per-token effective anchor is
+   * `max(everCalledSince, token.createdAt)`.
+   */
+  everCalledSince?: number;
 };
 
 /** Context every `updateToolLoading` recipe gets alongside the state. */
@@ -142,6 +155,25 @@ function normalizeProfiles(value: unknown): Record<string, TokenPolicy> {
 }
 
 /**
+ * Same tolerance `normalizeProfiles` applies to a policy entry: a
+ * malformed `everCalled` (not an object) or a malformed member (not an
+ * array of strings) normalizes away rather than throwing. A member with
+ * even one non-string element is dropped WHOLE, not filtered down to its
+ * valid strings — a partially-trusted history is worse than none, since
+ * migration eligibility reads it as fact.
+ */
+function normalizeEverCalled(value: unknown): Record<string, string[]> {
+  if (!isRecord(value)) return {};
+  const everCalled: Record<string, string[]> = {};
+  for (const [id, names] of Object.entries(value)) {
+    if (Array.isArray(names) && names.every((n) => typeof n === "string")) {
+      everCalled[id] = [...(names as string[])];
+    }
+  }
+  return everCalled;
+}
+
+/**
  * Normalize a raw `toolLoading` slice value into a well-formed state.
  *
  * Unknown keys are preserved: this slice is only partly ours, and a
@@ -163,6 +195,9 @@ export function mergeState(slice: unknown): ToolLoadingState {
       : {},
     promoted: readNames(s.promoted),
     profiles: normalizeProfiles(s.profiles),
+    everCalled: normalizeEverCalled(s.everCalled),
+    everCalledSince:
+      typeof s.everCalledSince === "number" ? s.everCalledSince : undefined,
   };
 }
 
@@ -173,8 +208,16 @@ export function mergeState(slice: unknown): ToolLoadingState {
  * `data.json` and defeat the NO_CHANGE convention.
  */
 function toSlice(state: ToolLoadingState): Record<string, unknown> {
-  const { profiles, ...rest } = state;
-  return Object.keys(profiles).length > 0 ? { ...rest, profiles } : rest;
+  const { profiles, everCalled, everCalledSince, ...rest } = state;
+  const withProfiles =
+    Object.keys(profiles).length > 0 ? { ...rest, profiles } : rest;
+  const withEverCalled =
+    Object.keys(everCalled).length > 0
+      ? { ...withProfiles, everCalled }
+      : withProfiles;
+  return everCalledSince !== undefined
+    ? { ...withEverCalled, everCalledSince }
+    : withEverCalled;
 }
 
 /**
@@ -212,6 +255,23 @@ export async function readPolicy(
 }
 
 /**
+ * The tools `tokenId` has ever actually called, or `[]` when it has
+ * none (or the slice does not exist yet). Read-only counterpart to
+ * {@link readPolicy}, kept a separate function because `everCalled`
+ * lives beside `profiles`, not inside a `TokenPolicy` (ADR-0025 D1).
+ */
+export async function readEverCalled(
+  plugin: PluginDataLike,
+  tokenId: string,
+): Promise<string[]> {
+  const slice = await new SettingsStore(plugin).readSlice(SLICE);
+  const everCalled = normalizeEverCalled(
+    isRecord(slice) ? slice.everCalled : {},
+  );
+  return everCalled[tokenId] ?? [];
+}
+
+/**
  * The one write path into the `toolLoading` slice. Applies `mutate`,
  * prunes policy entries whose token no longer exists, and recomputes
  * the legacy mirror from the first token's entry — all inside a single
@@ -239,9 +299,13 @@ export async function updateToolLoading(
     // every policy write sweeps them. With no live token list there is
     // nothing to prune against — a pre-migration vault must not have
     // its policy entries deleted on the way to acquiring tokens.
+    // `everCalled` is swept by the same rule, symmetrically (ADR-0025 D1).
     if (tokenIds.length > 0) {
       for (const id of Object.keys(next.profiles)) {
         if (!tokenIds.includes(id)) delete next.profiles[id];
+      }
+      for (const id of Object.keys(next.everCalled)) {
+        if (!tokenIds.includes(id)) delete next.everCalled[id];
       }
     }
 

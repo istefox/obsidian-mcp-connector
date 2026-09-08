@@ -394,7 +394,7 @@ export async function createMcpService(
         !(META_TOOLS as string[]).includes(request.params.name)
       ) {
         toolLoadingManager
-          .recordCall(request.params.name, config.plugin)
+          .recordCall(request.params.name, config.plugin, tokenId)
           .catch((error: unknown) => {
             // Fire-and-forget by design, but a persistent settings
             // write failure (disk full, corrupted data.json) must
