@@ -366,8 +366,9 @@ The installer uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
 Otherwise, it uses `~/.codex/config.toml` only when the `~/.codex` directory exists.
 It shows the exact path and whether it will add or replace `[mcp_servers.obsidian_<vault>]` before asking for confirmation.
 Replacing an entry also removes its old nested transport settings while preserving per-tool approval settings.
-The installer creates a timestamped backup, writes atomically, verifies the result, and restores the previous file if verification fails.
-It aborts if the file changes after the preview.
+The installer creates a timestamped backup, writes atomically, and reads back the expected bytes
+It checks for changes after preview and backup, but cannot lock out unrelated editors
+It refuses unsupported tables or additional entry settings rather than deleting them, and never rolls back over an externally replaced file
 It permits unrelated multiline strings but refuses ambiguous entries and target entries that it cannot replace conservatively.
 Use the copy action when Codex uses a project config or a custom home that Obsidian cannot locate.
 
@@ -380,6 +381,15 @@ Codex discovery supports desktop Windows, macOS, and Linux installations where O
 If Node.js is unavailable, the optional connection remains disabled and the rest of the plugin continues to run.
 Bun is not required at runtime.
 See [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) for the detached-process lifecycle and accepted local port-owner risk.
+
+The connection status distinguishes connected, retrying, stopped and identity-conflict states
+Routes are held in broker memory and the executable is stored outside the system temporary directory
+After updating an older broker, update the other open vaults and close their old connections before retrying
+
+If a vault location changes, choose **This vault was moved** to keep its connection identity or **Reset connection identity** for a copy
+An identity reset requires a new client entry, but does not change copied vault tokens
+Use **Reset vault token secrets** separately to rotate those credentials while preserving tool permissions, then update direct clients and exported configurations
+Legacy settings bind to their current location on first upgraded use, so a pre-upgrade copy opened alone cannot be identified automatically
 
 ### Verifying
 

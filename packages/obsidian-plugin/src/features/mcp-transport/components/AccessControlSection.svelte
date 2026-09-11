@@ -1,7 +1,7 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import {
     setup as mcpTransportSetup,
     teardown as mcpTransportTeardown,
@@ -10,6 +10,7 @@
     addToken,
     readTokens,
     regenerateToken,
+    regenerateAllTokenSecrets,
     renameToken,
     revokeToken,
     type TokenRecord,
@@ -28,6 +29,10 @@
   } from "$/features/mcp-transport/constants";
   import {
     applyAutoWrite,
+    acceptDiscoveryMove,
+    resetDiscoveryIdentity,
+    startCodexDiscovery,
+    type DiscoveryStatus,
     codexConfigSnippet,
     CopyConfigMenu,
     detectNode,
@@ -75,6 +80,17 @@
    */
   let autoWriteOwner: string | null = null;
   let codexDiscoveryOwner: string | null = null;
+  let discoveryStatus: DiscoveryStatus = { state: "stopped" };
+  let unsubscribeDiscovery: (() => void) | undefined;
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; unsubscribeDiscovery?.(); });
+
+  function watchDiscoveryStatus(): void {
+    unsubscribeDiscovery?.();
+    if (destroyed) return;
+    discoveryStatus = plugin.codexDiscoveryState?.status ?? { state: "stopped" };
+    unsubscribeDiscovery = plugin.codexDiscoveryState?.subscribe((status) => { discoveryStatus = status; });
+  }
 
   /**
    * Node presence, detected once for the whole list. A `.mcpb` runs
@@ -175,6 +191,7 @@
     // validates it against that list and can rewrite it.
     autoWriteOwner = await resolveAutoWriteOwner(plugin);
     codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
+    watchDiscoveryStatus();
     syncMirror();
   }
 
@@ -501,13 +518,49 @@
       await plugin.codexDiscoveryState?.stop();
       plugin.codexDiscoveryState = await enableCodexDiscovery(plugin, token.id);
       codexDiscoveryOwner = token.id;
-      new Notice(`The Codex connection now uses "${token.label}". Install or copy the config once.`);
+      new Notice(`Connection configured for "${token.label}". Check its status below before connecting a client`);
     } catch (err) {
       noticeFailure("changing the Codex connection", err);
       codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
     } finally {
+      watchDiscoveryStatus();
       busy = false;
     }
+  }
+
+  async function handleConnectionRecovery(action: "retry" | "move" | "reset"): Promise<void> {
+    if (busy) return;
+    if (action === "move" && !confirm("Keep this connection identity at the new vault location? Choose this only for a moved vault, not a copy")) return;
+    if (action === "reset" && !confirm("Create a new connection identity for this vault? Its route and broker credential will change. Replace its client configuration afterward. Copied vault token secrets will not change")) return;
+    busy = true;
+    try {
+      const runtime = plugin.codexDiscoveryState;
+      if (action === "reset") plugin.codexDiscoveryState = await resetDiscoveryIdentity(plugin, runtime) ?? undefined;
+      else if (action === "move") plugin.codexDiscoveryState = await acceptDiscoveryMove(plugin, runtime) ?? undefined;
+      else {
+        await runtime?.stop();
+        plugin.codexDiscoveryState = await startCodexDiscovery(plugin) ?? undefined;
+      }
+      await refreshTokens();
+      if (action === "reset") new Notice("Connection identity reset. Copy or install the new client entry and remove the obsolete entry where appropriate");
+    } catch (err) {
+      noticeFailure("recovering the connection", err);
+    } finally {
+      watchDiscoveryStatus();
+      busy = false;
+    }
+  }
+
+  async function handleResetVaultCredentials(): Promise<void> {
+    if (busy || !confirm("Regenerate every MCP token secret in this vault? Direct HTTP and exported clients must be updated. Token identities and tool permissions stay unchanged. Other vaults and client configuration files will not be edited")) return;
+    busy = true;
+    try {
+      await regenerateAllTokenSecrets(plugin);
+      revealed = {};
+      await refreshTokens();
+      new Notice("Vault token secrets regenerated. Update direct clients; the broker reads the new secret on its next request");
+    } catch (err) { noticeFailure("resetting vault credentials", err); }
+    finally { busy = false; }
   }
 
   async function connectionSnippet(): Promise<string> {
@@ -757,6 +810,22 @@
         </li>
       {/each}
     </ul>
+
+    {#if codexDiscoveryOwner !== null}
+      <p role="status" aria-live="polite">
+        Connection: <strong>{discoveryStatus.state === "connected" ? "Connected" : discoveryStatus.state === "connecting" ? "Connecting" : discoveryStatus.state === "retrying" ? "Retrying" : discoveryStatus.state === "conflict" ? "Needs attention" : "Stopped"}</strong>
+        {#if discoveryStatus.message} {discoveryStatus.message}{/if}
+      </p>
+      <div class="token-actions">
+        <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("retry")}>Retry connection</button>
+        {#if discoveryStatus.locationChanged}
+          <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("move")}>This vault was moved</button>
+        {/if}
+        <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("reset")}>Reset connection identity</button>
+      </div>
+    {/if}
+    <p class="token-hint">Copied an .obsidian folder? Give the copy a new connection identity. It also contains copied MCP token secrets, which can be reset separately without changing tool permissions</p>
+    <button type="button" disabled={busy} on:click={() => void handleResetVaultCredentials()}>Reset vault token secrets</button>
 
     {#if mcpbDisabled}
       <p class="token-hint">

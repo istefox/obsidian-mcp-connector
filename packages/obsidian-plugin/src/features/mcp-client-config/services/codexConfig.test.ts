@@ -16,6 +16,7 @@ const connection: CodexConnection = {
   routeId: "123e4567-e89b-42d3-a456-426614174000",
   accessToken: "stable-broker-token",
   brokerPort: 27206,
+  serverId: "obsidian_neonhades2",
 };
 
 let tempDir = "";
@@ -31,6 +32,14 @@ afterEach(async () => {
 });
 
 describe("Codex config snippet", () => {
+  test("new entries use route identity instead of colliding display names", () => {
+    expect(codexServerId("Vault-A", connection.routeId)).not.toBe(
+      codexServerId("Vault A", "123e4567-e89b-42d3-a456-426614174001"),
+    );
+    expect(codexServerId("Vault-A", connection.routeId)).toBe(
+      codexServerId("Renamed", connection.routeId),
+    );
+  });
   test("uses one stable broker URL instead of the live vault port or token", () => {
     expect(codexServerId(connection.vaultName)).toBe("obsidian_neonhades2");
     const snippet = codexConfigSnippet(connection);
@@ -68,6 +77,27 @@ describe("Codex config location", () => {
 });
 
 describe("explicit Codex config installer", () => {
+  test("refuses inline server tables and preserves additional entry policies", async () => {
+    for (const previous of [
+      'mcp_servers = { existing = { url = "http://localhost" } }\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nenabled_tools = ["read_only"]\n',
+    ]) {
+      await fsp.writeFile(configPath, previous);
+      await expect(
+        installCodexConfig(connection, { configPath }),
+      ).rejects.toThrow(/Copy the snippet/);
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    }
+  });
+  test("refuses an unrecognized quoted table without deleting unrelated configuration", async () => {
+    const previous =
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\n[mcp_servers."other]name"]\nurl = "preserve-me"\n';
+    await fsp.writeFile(configPath, previous);
+    await expect(
+      installCodexConfig(connection, { configPath }),
+    ).rejects.toThrow(/unsupported table/);
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+  });
   test("previews and adds one entry without touching config automatically", async () => {
     const preview = await inspectCodexInstall(connection, { configPath });
     expect(preview.action).toBe("add");

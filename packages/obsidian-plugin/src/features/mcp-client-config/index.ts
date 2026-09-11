@@ -55,6 +55,8 @@ export {
 export {
   DISCOVERY_BROKER_PORT,
   DISCOVERY_PROTOCOL_VERSION,
+  acceptDiscoveryMove,
+  resetDiscoveryIdentity,
   disableCodexDiscovery,
   enableCodexDiscovery,
   getCodexConnection,
@@ -62,6 +64,7 @@ export {
   resolveCodexDiscoveryOwner,
   startCodexDiscovery,
   type DiscoveryRuntime,
+  type DiscoveryStatus,
 } from "./services/discoveryBroker";
 
 export {

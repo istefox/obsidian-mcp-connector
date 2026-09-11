@@ -13,6 +13,7 @@ export type CodexConnection = {
   routeId: string;
   accessToken: string;
   brokerPort: number;
+  serverId?: string;
 };
 
 export type CodexConfigLocation =
@@ -31,7 +32,8 @@ export type CodexInstallResult = CodexInstallPreview & {
   backupPath?: string;
 };
 
-export function codexServerId(vaultName: string): string {
+export function codexServerId(vaultName: string, routeId?: string): string {
+  if (routeId) return `obsidian_${routeId.replace(/-/g, "")}`;
   const suffix = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (suffix.length === 0) {
     throw new Error(
@@ -42,7 +44,7 @@ export function codexServerId(vaultName: string): string {
 }
 
 export function codexConfigSnippet(input: CodexConnection): string {
-  const serverId = codexServerId(input.vaultName);
+  const serverId = connectionServerId(input);
   const url = `http://127.0.0.1:${input.brokerPort}/v1/${input.routeId}/mcp`;
   return [
     `[mcp_servers.${serverId}]`,
@@ -51,6 +53,13 @@ export function codexConfigSnippet(input: CodexConnection): string {
     "enabled = true",
     "required = false",
   ].join("\n");
+}
+
+function connectionServerId(input: CodexConnection): string {
+  const id = input.serverId ?? codexServerId(input.vaultName, input.routeId);
+  if (!/^[a-zA-Z0-9_-]+$/.test(id))
+    throw new Error("Invalid connection entry identity");
+  return id;
 }
 
 /** Locate only the user-level Codex config. Project configs are intentionally out of scope. */
@@ -96,10 +105,10 @@ export async function inspectCodexInstall(
   const previous = await readOptional(configPath);
   const raw = previous ?? "";
   const snippet = codexConfigSnippet(input);
-  const edit = planEntryEdit(raw, codexServerId(input.vaultName), snippet);
+  const edit = planEntryEdit(raw, connectionServerId(input), snippet);
   return {
     configPath,
-    serverId: codexServerId(input.vaultName),
+    serverId: connectionServerId(input),
     action: edit.action,
     snippet,
     revision: configRevision(previous),
@@ -112,7 +121,7 @@ export async function installCodexConfig(
   opts?: { configPath?: string; expectedRevision?: string },
 ): Promise<CodexInstallResult> {
   const configPath = await resolveConfigPath(opts?.configPath);
-  const serverId = codexServerId(input.vaultName);
+  const serverId = connectionServerId(input);
   const snippet = codexConfigSnippet(input);
 
   return withConfigLock(configPath, async () => {
@@ -140,16 +149,25 @@ export async function installCodexConfig(
 
     const backupPath =
       previous === null ? undefined : await backupConfig(configPath, previous);
+    if ((await readOptional(configPath)) !== previous) {
+      throw new Error(
+        "Client configuration changed during installation. Review the preview again",
+      );
+    }
+    let wrote = false;
     try {
       await writeAtomic(configPath, edit.content, previous);
+      wrote = true;
       const written = await fsp.readFile(configPath, "utf8");
-      const verified = planEntryEdit(written, serverId, snippet);
-      if (verified.action !== "unchanged") {
+      if (written !== edit.content) {
         throw new Error("the installed MCP entry did not verify");
       }
     } catch (error) {
-      if (previous === null) await fsp.rm(configPath, { force: true });
-      else await writeAtomic(configPath, previous, previous);
+      // Never roll back over a concurrent editor's replacement
+      if (wrote && (await readOptional(configPath)) === edit.content) {
+        if (previous === null) await fsp.rm(configPath, { force: true });
+        else await writeAtomic(configPath, previous, previous);
+      }
       throw error;
     }
     return {
@@ -318,8 +336,20 @@ function scanTomlStructure(raw: string): {
           continue;
         }
       }
+      // An unrecognized table must not become part of the preceding owned table
+      throw new Error(
+        "Client configuration contains an unsupported table header. Copy the snippet instead",
+      );
     }
     const opening = findMultilineStart(text);
+    if (
+      headers.length === 0 &&
+      /^\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*[.=]/.test(text)
+    ) {
+      throw new Error(
+        "Client configuration uses inline or dotted server tables. Copy the snippet instead",
+      );
+    }
     if (!opening) continue;
     const start = line.index + textOffset + opening.start;
     if (opening.end === -1) {
@@ -407,6 +437,33 @@ function planEntryEdit(
     throw new Error(
       `Codex config contains a multiline string in '${serverId}', so the installer cannot replace that entry safely. Copy the snippet instead.`,
     );
+  }
+  const root = roots[0];
+  const rootEnd = headers[headers.indexOf(root) + 1]?.start ?? raw.length;
+  const rootBody = raw
+    .slice(root.start, rootEnd)
+    .split(/\r?\n/)
+    .slice(1)
+    .join("\n");
+  const ownedKeys = new Set([
+    "url",
+    "command",
+    "args",
+    "cwd",
+    "env",
+    "http_headers",
+    "env_http_headers",
+    "bearer_token_env_var",
+    "enabled",
+    "required",
+  ]);
+  for (const match of rootBody.matchAll(/^\s*([^#\r\n=]+)=/gm)) {
+    const key = parseDottedKey(match[1].trim());
+    if (!key || key.length !== 1 || !ownedKeys.has(key[0])) {
+      throw new Error(
+        "Client entry contains additional settings that the installer will not discard. Copy the snippet instead",
+      );
+    }
   }
   let content = "";
   let cursor = 0;
