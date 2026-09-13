@@ -249,6 +249,67 @@ describe("Codex discovery ownership", () => {
 
     expect(probes).toBe(2);
   });
+
+  test("stop() racing a pending reconnection closes the connection once it resolves", async () => {
+    const plugin = fakePlugin(withTokens("a"));
+    let callCount = 0;
+    let resolveSecond!: (control: TestControl) => void;
+    const secondControlPending = new Promise<TestControl>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const gatedConnect: typeof connectRegistration = async (
+      port,
+      routeIdArg,
+      token,
+      lease,
+      registration,
+    ) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return connectRegistration(
+          port,
+          routeIdArg,
+          token,
+          lease,
+          registration,
+        );
+      }
+      // The recovery attempt stays pending until the test resolves it, so
+      // establishControl's own stopped-check (after openRegistration
+      // resolves) is what tears this connection down, not stop() itself.
+      return secondControlPending;
+    };
+
+    const runtime = await enableCodexDiscovery(plugin, "a", {
+      rootDir: tempDir,
+      dataPath,
+      ensureBroker: async () => {},
+      connectRegistration: gatedConnect,
+      reconnectMs: 1,
+    });
+    expect(controls).toHaveLength(1);
+
+    controls[0].disconnect();
+    await waitFor(() => callCount === 2);
+
+    const stopPromise = runtime.stop();
+    let secondClosed = false;
+    let resolveSecondClosed!: () => void;
+    const secondClosedPromise = new Promise<void>((resolve) => {
+      resolveSecondClosed = resolve;
+    });
+    resolveSecond({
+      close: () => {
+        secondClosed = true;
+        resolveSecondClosed();
+      },
+      closed: secondClosedPromise,
+      disconnect: () => {},
+    });
+
+    await stopPromise;
+    expect(secondClosed).toBe(true);
+  });
 });
 
 test("a copied settings identity is blocked until an explicit move or reset", async () => {

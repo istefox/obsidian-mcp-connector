@@ -715,6 +715,119 @@ test("a copied route cannot overwrite or unregister the existing owner", async (
   ).toBe("original");
 });
 
+test("a same-vault reconnect evicts its own stale control instead of a 409", async () => {
+  const file = await vaultTarget("second-connection", "data.json");
+  const port = await frontPort();
+  const first = await registerRoute(port, clientToken, "lease", routeId, file);
+  // First is still open here. A same-dataPath registration must evict it
+  // instead of rejecting with 409, unlike a copied vault's different dataPath.
+  const second = await registerRoute(port, clientToken, "lease", routeId, file);
+  expect(
+    (
+      await request(port, {
+        path: `/v1/${routeId}/mcp`,
+        token: clientToken,
+        body: "{}",
+      })
+    ).body,
+  ).toBe("second-connection");
+  // The evicted first control is already closed broker-side; close() must be safe to call anyway.
+  await first.close();
+  await second.close();
+});
+
+describe("ownsRegistration rejection branches", () => {
+  async function rawRegister(
+    port: number,
+    dataPath: string,
+    overrides: Partial<{ routeId: string }> = {},
+  ) {
+    const id = overrides.routeId ?? routeId;
+    const body = JSON.stringify({
+      version: broker.BROKER_VERSION,
+      routeId: id,
+      dataPath,
+      tokenId: "selected",
+      accessTokenHash: broker.sha256(clientToken),
+      leaseId: "lease",
+    });
+    return request(port, {
+      path: `/_obsidian_mcp_broker/register/${id}`,
+      token: clientToken,
+      body,
+      headers: { "x-obsidian-mcp-lease-id": "lease" },
+    });
+  }
+
+  test("rejects a registration whose on-disk settings name a different routeId", async () => {
+    const dataPath = path.join(tempDir, "data.json");
+    await fsp.writeFile(
+      dataPath,
+      JSON.stringify({
+        mcpClientConfig: {
+          codexDiscovery: {
+            enabled: true,
+            routeId: "123e4567-e89b-42d3-a456-426614174099",
+            tokenId: "selected",
+            accessToken: clientToken,
+          },
+        },
+      }),
+    );
+    const port = await frontPort();
+    expect((await rawRegister(port, dataPath)).status).toBe(401);
+  });
+
+  test("rejects a registration for a disabled discovery entry", async () => {
+    const dataPath = path.join(tempDir, "data.json");
+    await fsp.writeFile(
+      dataPath,
+      JSON.stringify({
+        mcpClientConfig: {
+          codexDiscovery: {
+            enabled: false,
+            routeId,
+            tokenId: "selected",
+            accessToken: clientToken,
+          },
+        },
+      }),
+    );
+    const port = await frontPort();
+    expect((await rawRegister(port, dataPath)).status).toBe(401);
+  });
+
+  test("rejects a registration whose access token has since rotated", async () => {
+    const dataPath = path.join(tempDir, "data.json");
+    await fsp.writeFile(
+      dataPath,
+      JSON.stringify({
+        mcpClientConfig: {
+          codexDiscovery: {
+            enabled: true,
+            routeId,
+            tokenId: "selected",
+            accessToken: "a-newer-rotated-token",
+          },
+        },
+      }),
+    );
+    const port = await frontPort();
+    expect((await rawRegister(port, dataPath)).status).toBe(401);
+  });
+
+  test("rejects a registration whose dataPath file is missing or corrupt", async () => {
+    const port = await frontPort();
+    expect(
+      (await rawRegister(port, path.join(tempDir, "missing.json"))).status,
+    ).toBe(401);
+
+    const corrupt = path.join(tempDir, "corrupt.json");
+    await fsp.writeFile(corrupt, "not json");
+    expect((await rawRegister(port, corrupt)).status).toBe(401);
+  });
+});
+
 test("concurrent clients share one broker and closing another vault preserves its sibling", async () => {
   const first = await vaultTarget("first", "first.json");
   const second = await vaultTarget("second", "second.json");

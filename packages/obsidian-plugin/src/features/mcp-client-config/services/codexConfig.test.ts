@@ -80,7 +80,7 @@ describe("explicit Codex config installer", () => {
   test("refuses inline server tables and preserves additional entry policies", async () => {
     for (const previous of [
       'mcp_servers = { existing = { url = "http://localhost" } }\n',
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nenabled_tools = ["read_only"]\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nnot_a_real_codex_key = ["read_only"]\n',
     ]) {
       await fsp.writeFile(configPath, previous);
       await expect(
@@ -98,6 +98,20 @@ describe("explicit Codex config installer", () => {
     ).rejects.toThrow(/unsupported table/);
     expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
   });
+  test("replaces an entry that sets Codex's genuine extra config keys instead of refusing", async () => {
+    const previous =
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nenabled_tools = ["read_only"]\nstartup_timeout_sec = 5\n[mcp_servers.obsidian_neonhades2.oauth]\nclient_id = "keep-me"\n';
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.action).toBe("replace");
+    await installCodexConfig(connection, { configPath });
+
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written).toContain("[mcp_servers.obsidian_neonhades2.oauth]");
+    expect(written).toContain('client_id = "keep-me"');
+  });
+
   test("previews and adds one entry without touching config automatically", async () => {
     const preview = await inspectCodexInstall(connection, { configPath });
     expect(preview.action).toBe("add");
@@ -248,6 +262,37 @@ describe("explicit Codex config installer", () => {
     const written = await fsp.readFile(configPath, "utf8");
     expect(written).toContain(previous.trimEnd());
     expect(Bun.TOML.parse(written)).toBeDefined();
+  });
+
+  test("tolerates a multi-line array literal elsewhere in the file", async () => {
+    const previous = [
+      "matrix = [",
+      "  [1, 2],",
+      "  [3, 4],",
+      "]",
+      "",
+      "[mcp_servers.other]",
+      'command = "other"',
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.action).toBe("add");
+    await installCodexConfig(connection, { configPath });
+
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written).toContain("matrix = [");
+    expect(written).toContain("[mcp_servers.other]");
+    expect(Bun.TOML.parse(written)).toBeDefined();
+  });
+
+  test("still refuses a genuinely unrecognized table header", async () => {
+    const previous = '[not.a.valid header\ncommand = "other"\n';
+    await fsp.writeFile(configPath, previous, "utf8");
+    await expect(
+      inspectCodexInstall(connection, { configPath }),
+    ).rejects.toThrow(/unsupported table/);
   });
 
   test("refuses a multiline string inside the entry being replaced", async () => {

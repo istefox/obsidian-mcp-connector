@@ -103,8 +103,14 @@ async function readRegistration(req) {
   }
 }
 
+const MAX_DATA_JSON_BYTES = 1024 * 1024;
+
 async function ownsRegistration(registration, token) {
   try {
+    // dataPath comes straight from the untrusted POST body: require a
+    // regular file under a small cap before reading it.
+    const stat = await fsp.stat(registration.dataPath);
+    if (!stat.isFile() || stat.size > MAX_DATA_JSON_BYTES) return false;
     const data = JSON.parse(await fsp.readFile(registration.dataPath, "utf8"));
     const settings = data?.mcpClientConfig?.codexDiscovery;
     return (
@@ -282,9 +288,18 @@ function startBroker({
         respond(res, 401, "unauthorized");
         return;
       }
-      if (activeRoutes.has(registration.routeId)) {
-        respond(res, 409, "route already registered");
-        return;
+      const existing = activeRoutes.get(registration.routeId);
+      if (existing) {
+        // Same dataPath means the same vault reconnecting, e.g. a stale
+        // control from a prior lease that has not been reaped yet: evict it
+        // instead of reporting a false identity conflict. A different
+        // dataPath is a genuine copied-vault conflict.
+        if (existing.registration.dataPath === registration.dataPath) {
+          existing.response.destroy();
+        } else {
+          respond(res, 409, "route already registered");
+          return;
+        }
       }
 
       if (req.aborted || res.destroyed) return;

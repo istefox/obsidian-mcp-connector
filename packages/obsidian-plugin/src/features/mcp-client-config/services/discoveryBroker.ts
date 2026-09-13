@@ -17,6 +17,7 @@ import { codexServerId, type CodexConnection } from "./codexConfig";
 export const DISCOVERY_BROKER_PORT = 27206;
 export const DISCOVERY_PROTOCOL_VERSION = 2;
 const DISCOVERY_RECONNECT_MS = 1_000;
+const MAX_RECONNECT_MS = 30_000;
 const DATA_KEY = "mcpClientConfig";
 const SETTINGS_KEY = "codexDiscovery";
 const BROKER_NAME = "obsidian-mcp-discovery-broker";
@@ -87,6 +88,20 @@ type Registration = {
 
 class RegistrationConflict extends Error {}
 
+/**
+ * Prefer the stable, human-readable vault-name id; fall back to the
+ * route-derived id only when the vault name has no ASCII alphanumerics
+ * (codexServerId(name) would otherwise throw). Never used where an id
+ * derived from the route is the deliberate choice (e.g. identity reset).
+ */
+function safeCodexServerId(vaultName: string, routeId: string): string {
+  try {
+    return codexServerId(vaultName);
+  } catch {
+    return codexServerId(vaultName, routeId);
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -151,7 +166,9 @@ export async function getCodexConnection(
     routeId: settings.routeId,
     accessToken: settings.accessToken,
     brokerPort: DISCOVERY_BROKER_PORT,
-    serverId: settings.serverId ?? codexServerId(plugin.app.vault.getName()),
+    serverId:
+      settings.serverId ??
+      safeCodexServerId(plugin.app.vault.getName(), settings.routeId),
   };
 }
 
@@ -172,14 +189,19 @@ export async function enableCodexDiscovery(
     tokenId,
     serverId:
       current?.serverId ??
-      (current ? codexServerId(plugin.app.vault.getName()) : undefined),
+      (current
+        ? safeCodexServerId(plugin.app.vault.getName(), current.routeId)
+        : undefined),
   }));
   if (!settings.serverId) {
     settings.serverId = codexServerId(
       plugin.app.vault.getName(),
       settings.routeId,
     );
-    await updateSettings(plugin, () => settings);
+    await updateSettings(plugin, (current) => ({
+      ...(current ?? settings),
+      serverId: settings.serverId,
+    }));
   }
   return startRuntime(plugin, settings, opts);
 }
@@ -241,8 +263,8 @@ export async function acceptDiscoveryMove(
   const current = await readSettings(plugin);
   if (!current) return null;
   const dataPath = await canonicalDataPath(plugin, opts);
-  const settings = await updateSettings(plugin, () => ({
-    ...current,
+  const settings = await updateSettings(plugin, (latest) => ({
+    ...(latest ?? current),
     dataPath,
   }));
   return settings.enabled && settings.tokenId !== null
@@ -307,6 +329,8 @@ async function startRuntime(
   let recovery: Promise<void> | null = null;
   let cancelReconnectDelay: (() => void) | null = null;
   let status: DiscoveryStatus = { state: "connecting" };
+  let currentDelay = reconnectMs;
+  let lastLoggedMessage: string | null = null;
   const listeners = new Set<(status: DiscoveryStatus) => void>();
   const setStatus = (next: DiscoveryStatus) => {
     status = next;
@@ -340,6 +364,8 @@ async function startRuntime(
       return;
     }
     control = next;
+    currentDelay = reconnectMs;
+    lastLoggedMessage = null;
     setStatus({ state: "connected" });
     void next.closed.then(() => {
       if (control === next) control = null;
@@ -348,7 +374,6 @@ async function startRuntime(
   };
 
   async function recover(): Promise<void> {
-    let reported = false;
     while (!stopped && control === null) {
       try {
         await establishControl();
@@ -361,23 +386,28 @@ async function startRuntime(
           return;
         }
         setStatus({ state: "retrying", message });
-        if (!reported) {
+        // Log on every distinct failure reason, not just the first, so a
+        // changing cause during a long outage is still visible in the logs.
+        if (message !== lastLoggedMessage) {
           logger.warn("Codex discovery connection recovery failed", {
-            error: error instanceof Error ? error.message : String(error),
+            error: message,
           });
-          reported = true;
+          lastLoggedMessage = message;
         }
-        if (!stopped) await waitToReconnect();
+        if (!stopped) {
+          await waitToReconnect(currentDelay);
+          currentDelay = Math.min(currentDelay * 2, MAX_RECONNECT_MS);
+        }
       }
     }
   }
 
-  function waitToReconnect(): Promise<void> {
+  function waitToReconnect(delayMs: number): Promise<void> {
     return new Promise((resolve) => {
       const timer = window.setTimeout(() => {
         cancelReconnectDelay = null;
         resolve();
-      }, reconnectMs);
+      }, delayMs);
       cancelReconnectDelay = () => {
         window.clearTimeout(timer);
         cancelReconnectDelay = null;
@@ -431,10 +461,14 @@ async function startRuntime(
     return runtime;
   }
   if (!settings.dataPath || !settings.serverId) {
-    settings = await updateSettings(plugin, () => ({
-      ...settings,
+    const fallbackServerId = safeCodexServerId(
+      plugin.app.vault.getName(),
+      settings.routeId,
+    );
+    settings = await updateSettings(plugin, (current) => ({
+      ...(current ?? settings),
       dataPath,
-      serverId: settings.serverId ?? codexServerId(plugin.app.vault.getName()),
+      serverId: (current ?? settings).serverId ?? fallbackServerId,
     }));
   }
   try {

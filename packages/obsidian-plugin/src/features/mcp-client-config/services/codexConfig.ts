@@ -32,6 +32,16 @@ export type CodexInstallResult = CodexInstallPreview & {
   backupPath?: string;
 };
 
+/** Thrown by installCodexConfig; carries the backup path even when rollback was skipped. */
+export class CodexInstallError extends Error {
+  constructor(
+    message: string,
+    readonly backupPath?: string,
+  ) {
+    super(message);
+  }
+}
+
 export function codexServerId(vaultName: string, routeId?: string): string {
   if (routeId) return `obsidian_${routeId.replace(/-/g, "")}`;
   const suffix = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -150,25 +160,32 @@ export async function installCodexConfig(
     const backupPath =
       previous === null ? undefined : await backupConfig(configPath, previous);
     if ((await readOptional(configPath)) !== previous) {
-      throw new Error(
+      throw new CodexInstallError(
         "Client configuration changed during installation. Review the preview again",
+        backupPath,
       );
     }
     let wrote = false;
+    let written: string | null = null;
     try {
       await writeAtomic(configPath, edit.content, previous);
       wrote = true;
-      const written = await fsp.readFile(configPath, "utf8");
+      written = await fsp.readFile(configPath, "utf8");
       if (written !== edit.content) {
         throw new Error("the installed MCP entry did not verify");
       }
     } catch (error) {
-      // Never roll back over a concurrent editor's replacement
-      if (wrote && (await readOptional(configPath)) === edit.content) {
+      // Roll back unless a concurrent editor's write landed after ours: compare
+      // against what this call actually wrote and observed (`written`), not the
+      // intended content, so a verify-failure on our own write still rolls back.
+      if (wrote && (await readOptional(configPath)) === written) {
         if (previous === null) await fsp.rm(configPath, { force: true });
         else await writeAtomic(configPath, previous, previous);
       }
-      throw error;
+      throw new CodexInstallError(
+        error instanceof Error ? error.message : String(error),
+        backupPath,
+      );
     }
     return {
       configPath,
@@ -298,6 +315,36 @@ function findMultilineStart(
   return null;
 }
 
+/**
+ * Net change in unclosed `[`/`]` depth contributed by one line, skipping
+ * bracket characters inside quoted strings (single-line quotes only \u2014 a
+ * multiline string is tracked separately) and anything after a `#` comment
+ * outside a string.
+ */
+function bracketDelta(text: string): number {
+  let depth = 0;
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote === '"') {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+    if (character === "#") break;
+    if (character === "[") depth += 1;
+    else if (character === "]") depth -= 1;
+    else if (character === "'" || character === '"') quote = character;
+  }
+  return depth;
+}
+
 function scanTomlStructure(raw: string): {
   headers: Header[];
   multilineStrings: MultilineStringRange[];
@@ -308,6 +355,10 @@ function scanTomlStructure(raw: string): {
     (match) => match[0].length > 0,
   );
   let multiline: { delimiter: "'''" | '"""'; start: number } | null = null;
+  // Depth of unclosed `[` from a multi-line array value (e.g. `matrix = [`
+  // continued over several lines). While positive, a line starting with `[`
+  // is an array element, not a table header.
+  let arrayDepth = 0;
   for (const line of lines) {
     const rawLine = line[0].replace(/\r?\n$/, "");
     if (multiline) {
@@ -323,6 +374,10 @@ function scanTomlStructure(raw: string): {
     }
     const textOffset = line.index === 0 && rawLine.startsWith("\uFEFF") ? 1 : 0;
     const text = rawLine.slice(textOffset);
+    if (arrayDepth > 0) {
+      arrayDepth = Math.max(0, arrayDepth + bracketDelta(text));
+      continue;
+    }
     if (/^\s*\[/.test(text)) {
       const match = /^\s*(\[\[|\[)([^\]\r\n]+)(\]\]|\])\s*(?:#.*)?$/.exec(text);
       if (match && (match[1] === "[[") === (match[3] === "]]")) {
@@ -350,7 +405,10 @@ function scanTomlStructure(raw: string): {
         "Client configuration uses inline or dotted server tables. Copy the snippet instead",
       );
     }
-    if (!opening) continue;
+    if (!opening) {
+      arrayDepth = Math.max(0, arrayDepth + bracketDelta(text));
+      continue;
+    }
     const start = line.index + textOffset + opening.start;
     if (opening.end === -1) {
       multiline = { delimiter: opening.delimiter, start };
@@ -389,6 +447,7 @@ function planEntryEdit(
     (header) =>
       header.parts.length > 2 &&
       header.parts[2] !== "tools" &&
+      header.parts[2] !== "oauth" &&
       !(header.parts.length === 3 && transportTables.has(header.parts[2])),
   );
   if (
@@ -445,6 +504,12 @@ function planEntryEdit(
     .split(/\r?\n/)
     .slice(1)
     .join("\n");
+  // Verified live against openai/codex main (commit 1715e55..., 2026-09-13,
+  // codex-rs/config/src/mcp_types.rs, RawMcpServerConfig) — re-check that
+  // source if Codex's accepted keys are suspected to have drifted.
+  // `bearer_token` is deliberately excluded: Codex itself always rejects it,
+  // so leaving it out correctly forces "copy the snippet" for a config that
+  // has it, which is the safe outcome.
   const ownedKeys = new Set([
     "url",
     "command",
@@ -456,6 +521,19 @@ function planEntryEdit(
     "bearer_token_env_var",
     "enabled",
     "required",
+    "environment_id",
+    "auth",
+    "startup_timeout_sec",
+    "startup_timeout_ms",
+    "tool_timeout_sec",
+    "supports_parallel_tool_calls",
+    "omit_tools_from",
+    "default_tools_approval_mode",
+    "enabled_tools",
+    "disabled_tools",
+    "scopes",
+    "oauth_resource",
+    "name",
   ]);
   for (const match of rootBody.matchAll(/^\s*([^#\r\n=]+)=/gm)) {
     const key = parseDottedKey(match[1].trim());

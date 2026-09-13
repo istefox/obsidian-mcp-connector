@@ -1,6 +1,7 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
+  import { logger } from "$/shared/logger";
   import { onMount, onDestroy } from "svelte";
   import {
     setup as mcpTransportSetup,
@@ -225,7 +226,14 @@
 
   function noticeFailure(action: string, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    new Notice(`MCP Connector: ${action} failed — ${message}`);
+    const backupPath =
+      err instanceof Error && "backupPath" in err
+        ? (err as { backupPath?: string }).backupPath
+        : undefined;
+    new Notice(
+      `MCP Connector: ${action} failed — ${message}` +
+        (backupPath ? ` A backup was saved at ${backupPath}.` : ""),
+    );
   }
 
   /**
@@ -521,6 +529,14 @@
       new Notice(`Connection configured for "${token.label}". Check its status below before connecting a client`);
     } catch (err) {
       noticeFailure("changing the Codex connection", err);
+      // Both branches above stop the previous runtime before the step that
+      // can throw, so on failure plugin.codexDiscoveryState (if still set)
+      // points at a dead handle: clear it rather than leave it for
+      // onunload to call stop() on again.
+      plugin.codexDiscoveryState = undefined;
+      logger.warn("Codex discovery connection toggle failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
     } finally {
       watchDiscoveryStatus();
@@ -545,6 +561,14 @@
       if (action === "reset") new Notice("Connection identity reset. Copy or install the new client entry and remove the obsolete entry where appropriate");
     } catch (err) {
       noticeFailure("recovering the connection", err);
+      // All three branches above stop the previous runtime before the step
+      // that can throw, so on failure plugin.codexDiscoveryState still
+      // points at a dead handle unless the throwing step also reassigned
+      // it: clear it rather than leave it for onunload to call stop() again.
+      plugin.codexDiscoveryState = undefined;
+      logger.warn("Codex discovery connection recovery failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       watchDiscoveryStatus();
       busy = false;
