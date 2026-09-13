@@ -110,6 +110,160 @@ describe("explicit Codex config installer", () => {
     const written = await fsp.readFile(configPath, "utf8");
     expect(written).toContain("[mcp_servers.obsidian_neonhades2.oauth]");
     expect(written).toContain('client_id = "keep-me"');
+    // The regression this guards: ownedKeys accepting these root keys must not
+    // mean the replace silently discards them.
+    expect(written).toContain('enabled_tools = ["read_only"]');
+    expect(written).toContain("startup_timeout_sec = 5");
+  });
+
+  test("carries Codex policy keys through a replace instead of discarding them", async () => {
+    const previous = [
+      "[mcp_servers.obsidian_neonhades2]",
+      'command = "node"',
+      'args = ["old.js"]',
+      'cwd = "/tmp"',
+      'env_http_headers = { A = "B" }',
+      'bearer_token_env_var = "TOK"',
+      'environment_id = "env-1"',
+      "startup_timeout_sec = 5",
+      "startup_timeout_ms = 900",
+      "tool_timeout_sec = 30",
+      "supports_parallel_tool_calls = true",
+      'default_tools_approval_mode = "on_request"',
+      'enabled_tools = ["read_only"]',
+      'disabled_tools = ["danger"]',
+      'scopes = ["a", "b"]',
+      'name = "Old Name"',
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.action).toBe("replace");
+    await installCodexConfig(connection, { configPath });
+
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written).not.toContain("command");
+    expect(written).not.toContain("old.js");
+    expect(written).not.toContain("cwd");
+    expect(written).not.toContain("bearer_token_env_var");
+    expect(written).not.toContain("env_http_headers");
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: { obsidian_neonhades2: Record<string, unknown> };
+    };
+    expect(parsed.mcp_servers.obsidian_neonhades2).toMatchObject({
+      url: "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp",
+      enabled: true,
+      required: false,
+      environment_id: "env-1",
+      startup_timeout_sec: 5,
+      startup_timeout_ms: 900,
+      tool_timeout_sec: 30,
+      supports_parallel_tool_calls: true,
+      default_tools_approval_mode: "on_request",
+      enabled_tools: ["read_only"],
+      disabled_tools: ["danger"],
+      scopes: ["a", "b"],
+      name: "Old Name",
+    });
+  });
+
+  test("keeps an OAuth pairing intact across a replace", async () => {
+    const previous = [
+      "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://old"',
+      'auth = "ema_auth"',
+      'scopes = ["a", "b"]',
+      'oauth_resource = "https://example/resource"',
+      "[mcp_servers.obsidian_neonhades2.oauth]",
+      'client_id = "keep-me"',
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    await installCodexConfig(connection, { configPath });
+    const written = await fsp.readFile(configPath, "utf8");
+
+    expect(written).toContain('auth = "ema_auth"');
+    expect(written).toContain('oauth_resource = "https://example/resource"');
+    expect(written).toContain("[mcp_servers.obsidian_neonhades2.oauth]");
+    expect(written).toContain('client_id = "keep-me"');
+    expect(written.indexOf('auth = "ema_auth"')).toBeLessThan(
+      written.indexOf("[mcp_servers.obsidian_neonhades2.oauth]"),
+    );
+    expect(Bun.TOML.parse(written)).toBeDefined();
+  });
+
+  test("preserves a multi-line array value verbatim, including its inline comment", async () => {
+    const previous = [
+      "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://old"',
+      "enabled_tools = [",
+      '  "read_only", # keep this note',
+      '  "search",',
+      "]",
+      'disabled_tools = ["danger"]',
+      "",
+      "[mcp_servers.obsidian_neonhades2.tools.get_vault_file]",
+      'approval_mode = "approve"',
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    await installCodexConfig(connection, { configPath });
+    const written = await fsp.readFile(configPath, "utf8");
+
+    expect(written).toContain(
+      [
+        "enabled_tools = [",
+        '  "read_only", # keep this note',
+        '  "search",',
+        "]",
+      ].join("\n"),
+    );
+    expect(written.split("# keep this note")).toHaveLength(2);
+    expect(written).toContain(
+      "[mcp_servers.obsidian_neonhades2.tools.get_vault_file]",
+    );
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: { obsidian_neonhades2: { enabled_tools: string[] } };
+    };
+    expect(parsed.mcp_servers.obsidian_neonhades2.enabled_tools).toEqual([
+      "read_only",
+      "search",
+    ]);
+  });
+
+  test("is idempotent after a replace that preserves policy keys", async () => {
+    const previous = [
+      "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://old"',
+      "enabled_tools = [",
+      '  "read_only",',
+      "]",
+      "startup_timeout_sec = 5",
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    await installCodexConfig(connection, { configPath });
+    const first = await fsp.readFile(configPath, "utf8");
+    const second = await installCodexConfig(connection, { configPath });
+    expect(second.action).toBe("unchanged");
+    expect(await fsp.readFile(configPath, "utf8")).toBe(first);
+  });
+
+  test("still refuses an unrecognized root key, including a multi-line one", async () => {
+    for (const previous of [
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nmystery = [\n  1,\n]\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nmystery = [\n  1,\n',
+    ]) {
+      await fsp.writeFile(configPath, previous, "utf8");
+      await expect(
+        installCodexConfig(connection, { configPath }),
+      ).rejects.toThrow(/Copy the snippet/);
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    }
   });
 
   test("previews and adds one entry without touching config automatically", async () => {
@@ -311,6 +465,40 @@ describe("explicit Codex config installer", () => {
     await expect(
       inspectCodexInstall(connection, { configPath }),
     ).rejects.toThrow(/multiline string in 'obsidian_neonhades2'/);
+  });
+
+  test("never rolls back over a concurrent editor's replacement (file pre-existed)", async () => {
+    const previous = 'model = "gpt-5"\n';
+    await fsp.writeFile(configPath, previous, "utf8");
+    const concurrentReplacement = 'model = "gpt-5.1"\nconcurrent = true\n';
+
+    await expect(
+      installCodexConfig(connection, {
+        configPath,
+        afterWrite: async () => {
+          await fsp.writeFile(configPath, concurrentReplacement, "utf8");
+        },
+      }),
+    ).rejects.toMatchObject({
+      backupPath: expect.any(String),
+    });
+
+    expect(await fsp.readFile(configPath, "utf8")).toBe(concurrentReplacement);
+  });
+
+  test("never rolls back over a concurrent editor's replacement (file did not exist)", async () => {
+    const concurrentReplacement = '[mcp_servers.other]\ncommand = "other"\n';
+
+    await expect(
+      installCodexConfig(connection, {
+        configPath,
+        afterWrite: async () => {
+          await fsp.writeFile(configPath, concurrentReplacement, "utf8");
+        },
+      }),
+    ).rejects.toThrow();
+
+    expect(await fsp.readFile(configPath, "utf8")).toBe(concurrentReplacement);
   });
 
   test("recovers a stale legacy lock before installing", async () => {

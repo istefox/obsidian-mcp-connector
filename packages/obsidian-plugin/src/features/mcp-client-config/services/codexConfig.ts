@@ -128,7 +128,14 @@ export async function inspectCodexInstall(
 /** Perform the explicit, one-time install after the UI has shown a preview. */
 export async function installCodexConfig(
   input: CodexConnection,
-  opts?: { configPath?: string; expectedRevision?: string },
+  opts?: {
+    configPath?: string;
+    expectedRevision?: string;
+    /** Test-only seam: invoked right after the atomic rename, before the
+     * verification read, so a concurrent-write race can be reproduced
+     * deterministically. Never set from production code. */
+    afterWrite?: () => Promise<void>;
+  },
 ): Promise<CodexInstallResult> {
   const configPath = await resolveConfigPath(opts?.configPath);
   const serverId = connectionServerId(input);
@@ -165,23 +172,25 @@ export async function installCodexConfig(
         backupPath,
       );
     }
-    let wrote = false;
-    let written: string | null = null;
     try {
       await writeAtomic(configPath, edit.content, previous);
-      wrote = true;
-      written = await fsp.readFile(configPath, "utf8");
+      await opts?.afterWrite?.();
+      const written = await fsp.readFile(configPath, "utf8");
       if (written !== edit.content) {
-        throw new Error("the installed MCP entry did not verify");
+        // `fsp.rename` is atomic: once it resolved, this file held exactly
+        // `edit.content` until someone else wrote to it. A verify mismatch
+        // here can therefore only mean a concurrent editor's write landed
+        // between our rename and this read — never a corruption of our own
+        // write. There is nothing to roll back: whatever is on disk now
+        // belongs to that other writer, not to us, and overwriting or
+        // deleting it would destroy their edit instead of repairing ours.
+        // (Do not "fix" this back into a rollback — that was tried and is
+        // exactly the bug this comment documents.)
+        throw new Error(
+          "Codex config was changed by another process during installation. The pre-installation config is in the backup.",
+        );
       }
     } catch (error) {
-      // Roll back unless a concurrent editor's write landed after ours: compare
-      // against what this call actually wrote and observed (`written`), not the
-      // intended content, so a verify-failure on our own write still rolls back.
-      if (wrote && (await readOptional(configPath)) === written) {
-        if (previous === null) await fsp.rm(configPath, { force: true });
-        else await writeAtomic(configPath, previous, previous);
-      }
       throw new CodexInstallError(
         error instanceof Error ? error.message : String(error),
         backupPath,
@@ -424,6 +433,11 @@ function scanTomlStructure(raw: string): {
       "Codex config contains an unterminated multiline string. Copy the snippet instead.",
     );
   }
+  if (arrayDepth > 0) {
+    throw new Error(
+      "Codex config contains an unterminated array literal. Copy the snippet instead.",
+    );
+  }
   return { headers, multilineStrings };
 }
 
@@ -499,50 +513,7 @@ function planEntryEdit(
   }
   const root = roots[0];
   const rootEnd = headers[headers.indexOf(root) + 1]?.start ?? raw.length;
-  const rootBody = raw
-    .slice(root.start, rootEnd)
-    .split(/\r?\n/)
-    .slice(1)
-    .join("\n");
-  // Verified live against openai/codex main (commit 1715e55..., 2026-09-13,
-  // codex-rs/config/src/mcp_types.rs, RawMcpServerConfig) — re-check that
-  // source if Codex's accepted keys are suspected to have drifted.
-  // `bearer_token` is deliberately excluded: Codex itself always rejects it,
-  // so leaving it out correctly forces "copy the snippet" for a config that
-  // has it, which is the safe outcome.
-  const ownedKeys = new Set([
-    "url",
-    "command",
-    "args",
-    "cwd",
-    "env",
-    "http_headers",
-    "env_http_headers",
-    "bearer_token_env_var",
-    "enabled",
-    "required",
-    "environment_id",
-    "auth",
-    "startup_timeout_sec",
-    "startup_timeout_ms",
-    "tool_timeout_sec",
-    "supports_parallel_tool_calls",
-    "omit_tools_from",
-    "default_tools_approval_mode",
-    "enabled_tools",
-    "disabled_tools",
-    "scopes",
-    "oauth_resource",
-    "name",
-  ]);
-  for (const match of rootBody.matchAll(/^\s*([^#\r\n=]+)=/gm)) {
-    const key = parseDottedKey(match[1].trim());
-    if (!key || key.length !== 1 || !ownedKeys.has(key[0])) {
-      throw new Error(
-        "Client entry contains additional settings that the installer will not discard. Copy the snippet instead",
-      );
-    }
-  }
+  const { preserved, comments } = splitRootBody(raw.slice(root.start, rootEnd));
   let content = "";
   let cursor = 0;
   let inserted = false;
@@ -550,10 +521,18 @@ function planEntryEdit(
     content += raw.slice(cursor, range.start);
     if (!inserted) {
       if (range.start === 0 && raw.startsWith("\uFEFF")) content += "\uFEFF";
-      content += `${normalizedSnippet}${newline}${newline}`;
+      content += `${normalizedSnippet}${newline}`;
+      for (const line of comments) content += `${line}${newline}`;
+      for (const segment of preserved)
+        for (const line of segment) content += `${line}${newline}`;
+      content += newline;
       inserted = true;
     }
-    content += standaloneComments(raw.slice(range.start, range.end));
+    // The root table's own comments and preserved keys were already
+    // re-emitted above from splitRootBody; re-running standaloneComments
+    // over its own range here would duplicate them.
+    if (range.start !== root.start)
+      content += standaloneComments(raw.slice(range.start, range.end));
     cursor = range.end;
   }
   content += raw.slice(cursor);
@@ -561,6 +540,105 @@ function planEntryEdit(
     action: content === raw ? "unchanged" : "replace",
     content,
   };
+}
+
+// Emitted by the generated snippet, so any existing value is overwritten.
+const SNIPPET_KEYS = new Set(["url", "http_headers", "enabled", "required"]);
+// Belong to the transport being replaced. Codex's RawMcpServerConfig
+// (codex-rs/config/src/mcp_types.rs, TryFrom) rejects several of these next
+// to a `url`, so they cannot be carried over into the new HTTP entry.
+const DISCARDED_KEYS = new Set([
+  "command",
+  "args",
+  "env",
+  "cwd",
+  "env_http_headers",
+  "bearer_token_env_var",
+]);
+// Policy/identity the user configured: carried through the replace verbatim.
+// Verified live against openai/codex main (commit 1715e55..., 2026-09-13,
+// codex-rs/config/src/mcp_types.rs, RawMcpServerConfig) \u2014 re-check that
+// source if Codex's accepted keys are suspected to have drifted.
+// `bearer_token` is deliberately excluded from every set: Codex itself
+// always rejects it, so leaving it out correctly forces "copy the snippet"
+// for a config that has it, which is the safe outcome.
+const PRESERVED_KEYS = new Set([
+  "environment_id",
+  "auth",
+  "startup_timeout_sec",
+  "startup_timeout_ms",
+  "tool_timeout_sec",
+  "supports_parallel_tool_calls",
+  "omit_tools_from",
+  "default_tools_approval_mode",
+  "enabled_tools",
+  "disabled_tools",
+  "scopes",
+  "oauth_resource",
+  "name",
+]);
+
+/**
+ * Split a `[mcp_servers.<id>]` root table's raw slice (header line included)
+ * into standalone comment lines and the policy key/value segments to carry
+ * through a replace verbatim, refusing on any key this installer does not
+ * recognize. Assumes the caller has already refused any multiline string
+ * overlapping this range, so a value can only span multiple lines via an
+ * array literal, tracked here with `bracketDelta`.
+ */
+function splitRootBody(table: string): {
+  preserved: string[][];
+  comments: string[];
+} {
+  const lines = [...table.matchAll(/^.*(?:\r?\n|$)/gm)]
+    .filter((match) => match[0].length > 0)
+    .map((match) => match[0].replace(/\r?\n$/, ""))
+    .slice(1); // drop the table header line (and any BOM riding on it)
+  const preserved: string[][] = [];
+  const comments: string[] = [];
+  let pending: { keep: boolean; lines: string[] } | null = null;
+  let depth = 0;
+  const refuse = (): never => {
+    throw new Error(
+      "Client entry contains additional settings that the installer will not discard. Copy the snippet instead",
+    );
+  };
+  const closeIfDone = () => {
+    if (!pending) return;
+    if (depth <= 0) {
+      if (pending.keep) preserved.push(pending.lines);
+      pending = null;
+      depth = 0;
+    }
+  };
+  for (const line of lines) {
+    if (pending) {
+      pending.lines.push(line);
+      depth += bracketDelta(line);
+      closeIfDone();
+      continue;
+    }
+    if (/^[ \t]*$/.test(line)) continue;
+    if (/^[ \t]*#/.test(line)) {
+      comments.push(line);
+      continue;
+    }
+    const match = /^\s*([^#\r\n=]+)=/.exec(line);
+    const key = match ? parseDottedKey(match[1].trim()) : null;
+    if (!key || key.length !== 1) return refuse();
+    const name = key[0];
+    if (
+      !SNIPPET_KEYS.has(name) &&
+      !DISCARDED_KEYS.has(name) &&
+      !PRESERVED_KEYS.has(name)
+    )
+      refuse();
+    pending = { keep: PRESERVED_KEYS.has(name), lines: [line] };
+    depth = bracketDelta(line);
+    closeIfDone();
+  }
+  if (pending) refuse(); // unterminated array value inside the owned entry
+  return { preserved, comments };
 }
 
 function standaloneComments(table: string): string {

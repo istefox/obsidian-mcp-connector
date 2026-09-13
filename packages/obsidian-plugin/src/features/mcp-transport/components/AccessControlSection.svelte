@@ -616,7 +616,7 @@
       }
       const action = preview.action === "add" ? "Add" : "Replace";
       const confirmed = confirm(
-        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " and its transport-specific nested tables" : ""}\n\nA timestamped backup will be created before an existing file is changed.`,
+        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}\n\nA timestamped backup will be created before an existing file is changed.`,
       );
       if (!confirmed) return;
       const result = await installCodexConfig(connection, {
