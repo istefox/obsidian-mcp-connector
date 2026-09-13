@@ -231,6 +231,64 @@ export function resolveHeadingEntries(
  * `delimiter` is the one the caller split `segments` with; it only shapes the
  * not-found message (see `resolveHeadingEntries`).
  */
+/**
+ * Resolve a single heading for the `obsidian://` `uri` field (ADR-0026 D7):
+ * content-first, cache as fallback, found-in-either wins. The opposite trade
+ * to {@link resolveHeadingForWrite}'s cache-first/content-arbiter — content
+ * first here because it is the only leg correct for a just-created note
+ * (whose headings the cache has not indexed yet), and the cache is a
+ * fallback because `get_vault_file`'s content can be truncated past a
+ * heading the cache still has. Ambiguity is not an error (ADR-0026 D8,
+ * deliberately diverging from `resolveHeadingForWrite`'s ADR-0024 D4 rule):
+ * a navigation URI is reversible, so the first match in document order wins,
+ * matching how Obsidian's own `[[note#X]]` resolves.
+ */
+export function resolveHeadingForUri(
+  cache: Parameters<typeof headingEntriesFromCache>[0],
+  lines: string[],
+  heading: string,
+): { ok: true; heading: string } | { ok: false } {
+  const trimmed = heading.trim();
+  if (!trimmed) return { ok: false };
+
+  const fromContent = resolveHeadingLeg(
+    headingEntriesFromContent(lines),
+    trimmed,
+    lines.length,
+  );
+  if (fromContent) return fromContent;
+
+  // The cache leg's entries carry their own line numbers, which can exceed
+  // `lines.length` when the content in hand is truncated (the exact case
+  // this fallback exists for) — bound the resolver with a value no real
+  // cache line can reach, rather than the truncated content's own length.
+  const fromCache = resolveHeadingLeg(
+    headingEntriesFromCache(cache),
+    trimmed,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (fromCache) return fromCache;
+
+  return { ok: false };
+}
+
+/** One leg of {@link resolveHeadingForUri}: resolve `heading` against `entries`, returning the entry's own (canonically-cased) text, or `null` on not-found. */
+function resolveHeadingLeg(
+  entries: HeadingEntry[],
+  heading: string,
+  totalLines: number,
+): { ok: true; heading: string } | null {
+  const result = resolveHeadingEntries(entries, [heading], totalLines);
+  if (result.kind === "found") {
+    const entry = entries.find((e) => e.line === result.line);
+    return entry ? { ok: true, heading: entry.heading } : null;
+  }
+  if (result.kind === "ambiguous") {
+    return { ok: true, heading: result.candidates[0].heading };
+  }
+  return null;
+}
+
 export function resolveHeadingForWrite(
   cache: Parameters<typeof headingEntriesFromCache>[0],
   lines: string[],

@@ -6,6 +6,7 @@ import {
   headingPathToSubpath,
   normalizeBlockId,
   resolveHeadingEntries,
+  resolveHeadingForUri,
   resolveHeadingForWrite,
   splitHeadingPath,
   type HeadingEntry,
@@ -366,6 +367,74 @@ describe("resolveHeadingForWrite (R-07 setup, R-08)", () => {
       kind: "not-found",
       segment: "Missing",
       where: 'under "A > B"',
+    });
+  });
+});
+
+describe("resolveHeadingForUri (ADR-0026 D7, D8)", () => {
+  test("exact match resolves from content", () => {
+    expect(
+      resolveHeadingForUri(null, ["# Title", "body", "## Section"], "Section"),
+    ).toEqual({ ok: true, heading: "Section" });
+  });
+
+  test("caller's casing differs from the note's — resolves, returns the note's own casing", () => {
+    expect(
+      resolveHeadingForUri(null, ["# Title", "## Section"], "section"),
+    ).toEqual({ ok: true, heading: "Section" });
+  });
+
+  test("heading only inside a fenced code block does not resolve (fence-awareness)", () => {
+    expect(
+      resolveHeadingForUri(
+        null,
+        ["```", "## Fenced Heading", "```", "body"],
+        "Fenced Heading",
+      ),
+    ).toEqual({ ok: false });
+  });
+
+  test("absent from content but present in the cache (truncated-content case) — resolves from cache", () => {
+    expect(
+      resolveHeadingForUri(
+        { headings: [cacheHeading("Past The Cut", 2, 500)] },
+        ["# Title", "body — no headings here at all"],
+        "Past The Cut",
+      ),
+    ).toEqual({ ok: true, heading: "Past The Cut" });
+  });
+
+  test("present in content but absent from the cache (just-created-note case) — resolves from content", () => {
+    expect(
+      resolveHeadingForUri(
+        { headings: [] },
+        ["# Title", "## Fresh Heading"],
+        "Fresh Heading",
+      ),
+    ).toEqual({ ok: true, heading: "Fresh Heading" });
+  });
+
+  test("two identical headings resolve to the first in document order, not an error (ADR-0026 D8 — diverges from ADR-0024 D4's write-path ambiguity rule)", () => {
+    expect(
+      resolveHeadingForUri(
+        null,
+        ["# Duplicate", "body", "# Duplicate", "more"],
+        "Duplicate",
+      ),
+    ).toEqual({ ok: true, heading: "Duplicate" });
+  });
+
+  test("whitespace-only heading does not resolve", () => {
+    expect(resolveHeadingForUri(null, ["# Title"], "   ")).toEqual({
+      ok: false,
+    });
+  });
+
+  test("absent/empty cache and empty content do not resolve, and do not throw", () => {
+    expect(() => resolveHeadingForUri(null, [], "Anything")).not.toThrow();
+    expect(resolveHeadingForUri(null, [], "Anything")).toEqual({ ok: false });
+    expect(resolveHeadingForUri({ headings: [] }, [], "Anything")).toEqual({
+      ok: false,
     });
   });
 });
