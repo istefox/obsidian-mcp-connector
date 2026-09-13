@@ -6,6 +6,7 @@ import {
   ensureTokenStore,
   readTokens,
   regenerateToken,
+  regenerateAllTokenSecrets,
   revokeToken,
   type TokenRecord,
 } from "./tokenStore";
@@ -327,6 +328,33 @@ describe("readTokens", () => {
 });
 
 describe("regenerateToken", () => {
+  test("bulk rotation changes secrets in one write without changing policies or identities", async () => {
+    const tokens = ["first", "second"].map((id, createdAt) => ({
+      id,
+      label: id,
+      createdAt,
+      token: id.padEnd(43, "x"),
+    }));
+    const policies = {
+      profiles: { first: { profile: "core" }, second: { profile: "all" } },
+    };
+    const { plugin, getData, saveCount } = makePlugin({
+      mcpTransport: { tokens },
+      toolLoading: policies,
+    });
+    const next = await regenerateAllTokenSecrets(plugin);
+    expect(saveCount()).toBe(1);
+    expect(next.map(({ token, ...identity }) => identity)).toEqual(
+      tokens.map(({ token, ...identity }) => identity),
+    );
+    expect(
+      next.every((token, index) => token.token !== tokens[index].token),
+    ).toBe(true);
+    expect(getData().toolLoading).toEqual(policies);
+    expect(
+      (getData().mcpTransport as { bearerToken: string }).bearerToken,
+    ).toBe(next[0].token);
+  });
   test("keeps id/label/createdAt/profiles entry, changes only the secret, updates the mirror (R-18)", async () => {
     const { plugin, getData } = makePlugin({});
     const [initial] = await ensureTokenStore(plugin);

@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
+import http from "http";
+import { createRequire } from "module";
+import type { Socket } from "net";
+import type { DiscoveryRuntime } from "./discoveryBroker";
 import {
   disableCodexDiscovery,
   enableCodexDiscovery,
@@ -9,6 +13,8 @@ import {
   releaseCodexDiscoveryOwner,
   resolveCodexDiscoveryOwner,
   startCodexDiscovery,
+  resetDiscoveryIdentity,
+  acceptDiscoveryMove,
 } from "./discoveryBroker";
 
 type StoredData = Record<string, unknown> | null;
@@ -61,8 +67,16 @@ type TestControl = {
   disconnect(): void;
 };
 let controls: TestControl[] = [];
+let registrations: unknown[] = [];
 
-async function connectRegistration(): Promise<TestControl> {
+async function connectRegistration(
+  _port: number,
+  _routeId: string,
+  _token: string,
+  _lease: string,
+  registration: unknown,
+): Promise<TestControl> {
+  registrations.push(registration);
   let resolveClosed!: () => void;
   let closed = false;
   const closedPromise = new Promise<void>((resolve) => {
@@ -94,6 +108,7 @@ beforeEach(async () => {
   tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-discovery-service-"));
   dataPath = path.join(tempDir, "data.json");
   controls = [];
+  registrations = [];
 });
 
 afterEach(async () => {
@@ -102,7 +117,7 @@ afterEach(async () => {
 });
 
 describe("Codex discovery ownership", () => {
-  test("is opt-in and stores a stable route without storing the vault secret in the registry", async () => {
+  test("is opt-in and registers in memory without writing broker state files", async () => {
     const plugin = fakePlugin(withTokens("a", "b"));
     const runtime = await enableCodexDiscovery(plugin, "b", {
       rootDir: tempDir,
@@ -115,14 +130,12 @@ describe("Codex discovery ownership", () => {
     const connection = await getCodexConnection(plugin);
     expect(connection?.routeId).toMatch(/^[0-9a-f-]{36}$/);
     expect(connection?.accessToken.length).toBeGreaterThanOrEqual(32);
-    const registration = await fsp.readFile(
-      path.join(tempDir, "routes", `${connection!.routeId}.json`),
-      "utf8",
-    );
+    const registration = JSON.stringify(registrations[0]);
     expect(registration).not.toContain(secretFor("b"));
     expect(registration).not.toContain(connection!.accessToken);
     expect(registration).toContain('"tokenId":"b"');
     expect(registration).not.toContain("heartbeatAt");
+    expect(await fsp.readdir(tempDir)).toEqual([]);
 
     await runtime.stop();
   });
@@ -236,6 +249,260 @@ describe("Codex discovery ownership", () => {
 
     expect(probes).toBe(2);
   });
+
+  test("stop() racing a pending reconnection closes the connection once it resolves", async () => {
+    const plugin = fakePlugin(withTokens("a"));
+    let callCount = 0;
+    let resolveSecond!: (control: TestControl) => void;
+    const secondControlPending = new Promise<TestControl>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const gatedConnect: typeof connectRegistration = async (
+      port,
+      routeIdArg,
+      token,
+      lease,
+      registration,
+    ) => {
+      callCount += 1;
+      if (callCount === 1) {
+        return connectRegistration(
+          port,
+          routeIdArg,
+          token,
+          lease,
+          registration,
+        );
+      }
+      // The recovery attempt stays pending until the test resolves it, so
+      // establishControl's own stopped-check (after openRegistration
+      // resolves) is what tears this connection down, not stop() itself.
+      return secondControlPending;
+    };
+
+    const runtime = await enableCodexDiscovery(plugin, "a", {
+      rootDir: tempDir,
+      dataPath,
+      ensureBroker: async () => {},
+      connectRegistration: gatedConnect,
+      reconnectMs: 1,
+    });
+    expect(controls).toHaveLength(1);
+
+    controls[0].disconnect();
+    await waitFor(() => callCount === 2);
+
+    const stopPromise = runtime.stop();
+    let secondClosed = false;
+    let resolveSecondClosed!: () => void;
+    const secondClosedPromise = new Promise<void>((resolve) => {
+      resolveSecondClosed = resolve;
+    });
+    resolveSecond({
+      close: () => {
+        secondClosed = true;
+        resolveSecondClosed();
+      },
+      closed: secondClosedPromise,
+      disconnect: () => {},
+    });
+
+    await stopPromise;
+    expect(secondClosed).toBe(true);
+  });
+});
+
+test("a copied settings identity is blocked until an explicit move or reset", async () => {
+  const plugin = fakePlugin(withTokens("a"));
+  const opts = {
+    rootDir: tempDir,
+    dataPath,
+    ensureBroker: async () => {},
+    connectRegistration,
+  };
+  const first = await enableCodexDiscovery(plugin, "a", opts);
+  const original = await getCodexConnection(plugin);
+  await first.stop();
+  const movedDir = path.join(tempDir, "copy");
+  await fsp.mkdir(movedDir);
+  const movedOpts = { ...opts, dataPath: path.join(movedDir, "data.json") };
+  const blocked = await startCodexDiscovery(plugin, movedOpts);
+  expect(blocked?.status.locationChanged).toBe(true);
+  expect(controls).toHaveLength(1);
+  const moved = await acceptDiscoveryMove(plugin, blocked!, movedOpts);
+  expect(moved?.status.state).toBe("connected");
+  expect(await getCodexConnection(plugin)).toEqual(original);
+  const reset = await resetDiscoveryIdentity(plugin, moved!, movedOpts);
+  const next = await getCodexConnection(plugin);
+  expect(next?.routeId).not.toBe(original?.routeId);
+  expect(next?.accessToken).not.toBe(original?.accessToken);
+  expect(next?.serverId).not.toBe(original?.serverId);
+  await reset?.stop();
+});
+
+test("initial connection failure retries and publishes connected then stopped status", async () => {
+  const plugin = fakePlugin(withTokens("a"));
+  let attempts = 0;
+  const runtime = await enableCodexDiscovery(plugin, "a", {
+    rootDir: tempDir,
+    dataPath,
+    reconnectMs: 1,
+    connectRegistration,
+    ensureBroker: async () => {
+      if (++attempts < 3) throw new Error("not ready");
+    },
+  });
+  const statuses: string[] = [];
+  const unsubscribe = runtime.subscribe((status) =>
+    statuses.push(status.state),
+  );
+  await waitFor(() => runtime.status.state === "connected");
+  await runtime.stop();
+  expect(statuses).toContain("retrying");
+  expect(statuses).toContain("connected");
+  expect(statuses.at(-1)).toBe("stopped");
+  unsubscribe();
+});
+
+test("legacy settings retain route, credential and client entry when first bound to a location", async () => {
+  const plugin = fakePlugin({
+    ...withTokens("a"),
+    mcpClientConfig: {
+      codexDiscovery: {
+        enabled: true,
+        routeId: "123e4567-e89b-42d3-a456-426614174000",
+        accessToken: secretFor("broker"),
+        tokenId: "a",
+      },
+    },
+  });
+  const before = await getCodexConnection(plugin);
+  const runtime = await startCodexDiscovery(plugin, {
+    rootDir: tempDir,
+    dataPath,
+    ensureBroker: async () => {},
+    connectRegistration,
+  });
+  expect(await getCodexConnection(plugin)).toEqual(before);
+  expect(before?.serverId).toBe("obsidian_neonhades2");
+  await runtime?.stop();
+});
+
+test("real registration transport recovers after broker loss and isolates a copied vault", async () => {
+  const require = createRequire(import.meta.url);
+  const broker = require("../../../../scripts/discoveryBroker.js") as {
+    startBroker(options: { rootDir: string; port: number }): http.Server;
+  };
+  const sockets = new Set<Socket>();
+  const runtimes: DiscoveryRuntime[] = [];
+  const listen = (server: http.Server) =>
+    new Promise<number>((resolve) =>
+      server.once("listening", () =>
+        resolve((server.address() as { port: number }).port),
+      ),
+    );
+  let front = broker.startBroker({
+    rootDir: path.join(tempDir, "broker"),
+    port: 0,
+  });
+  front.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+  });
+  const port = await listen(front);
+  const upstream = http.createServer((_req, res) => res.end("owned-vault"));
+  upstream.listen(0, "127.0.0.1");
+  const upstreamPort = await listen(upstream);
+  const plugin = fakePlugin({
+    ...withTokens("a"),
+    mcpTransport: {
+      tokens: [{ id: "a", token: secretFor("a") }],
+      livePort: upstreamPort,
+    },
+  });
+  const save = plugin.saveData;
+  plugin.saveData = async (next) => {
+    await save(next);
+    await fsp.writeFile(dataPath, JSON.stringify(next));
+  };
+  await plugin.saveData(plugin._data);
+  const opts = {
+    rootDir: tempDir,
+    dataPath,
+    brokerPort: port,
+    reconnectMs: 5,
+    ensureBroker: async () => {},
+  };
+  const response = async (
+    connection: NonNullable<Awaited<ReturnType<typeof getCodexConnection>>>,
+  ) => {
+    const result = await fetch(
+      `http://127.0.0.1:${port}/v1/${connection.routeId}/mcp`,
+      {
+        method: "POST",
+        body: "{}",
+        headers: { Authorization: `Bearer ${connection.accessToken}` },
+      },
+    );
+    await result.text();
+    return result.status;
+  };
+  try {
+    const runtime = await enableCodexDiscovery(plugin, "a", opts);
+    runtimes.push(runtime);
+    const identity = (await getCodexConnection(plugin))!;
+    expect(runtime.status.state).toBe("connected");
+    expect(await response(identity)).toBe(200);
+    let sawRetry = false;
+    const unsubscribe = runtime.subscribe((status) => {
+      if (status.state === "retrying") sawRetry = true;
+    });
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => front.close(() => resolve()));
+    await waitFor(() => sawRetry);
+    front = broker.startBroker({
+      rootDir: path.join(tempDir, "new-broker"),
+      port,
+    });
+    front.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await listen(front);
+    await waitFor(() => runtime.status.state === "connected");
+    expect(await response(identity)).toBe(200);
+    unsubscribe();
+
+    const copyPath = path.join(tempDir, "copy.json");
+    const copy = fakePlugin(JSON.parse(JSON.stringify(plugin._data)));
+    const copySave = copy.saveData;
+    copy.saveData = async (next) => {
+      await copySave(next);
+      await fsp.writeFile(copyPath, JSON.stringify(next));
+    };
+    await copy.saveData(copy._data);
+    const copyOpts = { ...opts, dataPath: copyPath };
+    const blocked = (await startCodexDiscovery(copy, copyOpts))!;
+    runtimes.push(blocked);
+    expect(blocked.status.locationChanged).toBe(true);
+    const conflict = (await acceptDiscoveryMove(copy, blocked, copyOpts))!;
+    runtimes.push(conflict);
+    expect(conflict.status.state).toBe("conflict");
+    expect(await response(identity)).toBe(200);
+    const separate = (await resetDiscoveryIdentity(copy, conflict, copyOpts))!;
+    runtimes.push(separate);
+    expect(separate.status.state).toBe("connected");
+    const copiedIdentity = (await getCodexConnection(copy))!;
+    expect(copiedIdentity.routeId).not.toBe(identity.routeId);
+    expect(await response(copiedIdentity)).toBe(200);
+    await separate.stop();
+    expect(await response(identity)).toBe(200);
+  } finally {
+    for (const runtime of runtimes) await runtime.stop();
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => front.close(() => resolve()));
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
 });
 
 test("generated broker asset matches its source", async () => {

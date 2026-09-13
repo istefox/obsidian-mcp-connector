@@ -323,6 +323,15 @@ export async function regenerateToken(
   return regenerated;
 }
 
+/** Rotate this vault's token secrets in one settings write, retaining identities and policies */
+export async function regenerateAllTokenSecrets(
+  plugin: PluginDataLike,
+): Promise<TokenRecord[]> {
+  return updateTokens(plugin, (tokens) =>
+    tokens.map((token) => ({ ...token, token: generateToken() })),
+  );
+}
+
 /**
  * Delete a token. Refused for the last remaining one: a vault with no
  * token authenticates nobody and there is no in-app path back.
