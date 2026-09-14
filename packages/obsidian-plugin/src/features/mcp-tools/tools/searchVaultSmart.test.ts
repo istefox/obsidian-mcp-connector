@@ -151,7 +151,16 @@ describe("search_vault_smart tool — dispatch contract (T11)", () => {
     });
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0]?.text ?? "{}");
-    expect(parsed.results).toEqual(sampleResults);
+    expect(parsed.results).toEqual([
+      {
+        ...sampleResults[0],
+        uri: "obsidian://open?vault=Test%20Vault&file=Notes%2Fml.md",
+      },
+      {
+        ...sampleResults[1],
+        uri: "obsidian://open?vault=Test%20Vault&file=Notes%2Fdl.md",
+      },
+    ]);
   });
 
   test("provider.search throwing is surfaced as a tool-level error (no crash)", async () => {
@@ -234,7 +243,12 @@ describe("search_vault_smart — query-time exclusion filter (#238)", () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0]?.text ?? "{}");
     // Accessor absent → exclusion disabled → all results flow through.
-    expect(parsed.results).toEqual(sampleResults);
+    expect(parsed.results).toEqual(
+      sampleResults.map((r) => ({
+        ...r,
+        uri: `obsidian://open?vault=Test%20Vault&file=${encodeURIComponent(r.filePath)}`,
+      })),
+    );
   });
 });
 
@@ -604,8 +618,11 @@ describe("search_vault_smart — content bytes are pinned for a client that neve
       app: mockApp(),
       plugin,
     });
+    // Repaired for ADR-0026 (issue #533): every row now carries a
+    // file-level `uri` (see the describe block below), a deliberate shape
+    // change to this literal, not drift.
     expect(JSON.stringify(result.content)).toBe(
-      '[{"type":"text","text":"{\\"results\\":[{\\"filePath\\":\\"Notes/ml.md\\",\\"heading\\":\\"ML Notes\\",\\"excerpt\\":\\"ML Notes: introduction to gradient descent.\\",\\"line\\":3,\\"score\\":0.91}]}"}]',
+      '[{"type":"text","text":"{\\"results\\":[{\\"filePath\\":\\"Notes/ml.md\\",\\"heading\\":\\"ML Notes\\",\\"excerpt\\":\\"ML Notes: introduction to gradient descent.\\",\\"line\\":3,\\"score\\":0.91,\\"uri\\":\\"obsidian://open?vault=Test%20Vault&file=Notes%2Fml.md\\"}]}"}]',
     );
   });
 });
@@ -658,6 +675,12 @@ describe("search_vault_smart — result _meta carries the structured payload on 
     // *tools/list* entry carries no outputSchema is checked where that
     // entry actually exists — mcpServer.test.ts — not on the call result.
     expect("structuredContent" in result).toBe(false);
+
+    // ADR-0026 D10: `uri` is a wire-only addition, mapped in immediately
+    // before JSON.stringify. It must never reach the `_meta` payload rows.
+    for (const row of payload?.rows ?? []) {
+      expect((row as Record<string, unknown>).uri).toBeUndefined();
+    }
   });
 
   test("index_building: a tool that has no results yet must not stamp a results payload it does not have — _meta is absent entirely", async () => {
@@ -788,5 +811,43 @@ describe("search_vault_smart — _meta payload gated on declared UI capability (
 
     expect(result.isError).toBe(true);
     expect("_meta" in result).toBe(false);
+  });
+});
+
+describe("search_vault_smart — file-level uri (ADR-0026, R-01, R-08, D10)", () => {
+  test("every result row carries a uri built from filePath, never a heading fragment even when heading is non-null", async () => {
+    const sampleResults: SearchResult[] = [
+      {
+        filePath: "Notes/ml.md",
+        heading: "ML Notes",
+        excerpt: "excerpt",
+        line: 3,
+        score: 0.91,
+      },
+      {
+        filePath: "Notes/dl.md",
+        heading: null,
+        excerpt: "excerpt 2",
+        line: null,
+        score: 0.84,
+      },
+    ];
+    const spy = fakeProvider({ ready: true, results: sampleResults });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "ml" },
+      app: mockApp(),
+      plugin,
+    });
+    const parsed = JSON.parse(result.content[0]?.text ?? "{}");
+    for (const row of parsed.results) {
+      expect(row.uri).toBe(
+        `obsidian://open?vault=Test%20Vault&file=${encodeURIComponent(row.filePath)}`,
+      );
+      expect(row.uri).not.toContain("%23");
+    }
   });
 });

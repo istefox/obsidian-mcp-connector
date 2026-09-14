@@ -83,13 +83,13 @@ Ask the agent to call `get_server_info` to confirm the round trip. Requirements:
 
 | Family | Tools | Notes |
 |---|---|---|
-| **Files** | `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory` | `get_vault_files` reads up to 20 files per call. Text output is capped (default 100 KB) and truncation points at `get_vault_file_partial`. Renames go through `fileManager.renameFile`, so links survive. |
-| **Active file** | `get_active_file`, `update_active_file`, `append_to_active_file`, `patch_active_file`, `delete_active_file`, `show_file_in_obsidian` | What the user is looking at right now. |
-| **Search** | `search_vault_smart`, `search_vault_simple`, `search_vault`, `execute_dataview_query` | Semantic, plain-text with context windows, DQL or JsonLogic. Hits carry a 0-indexed `line`. |
+| **Files** | `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `list_vault_files`, `create_vault_directory`, `delete_vault_directory` | `get_vault_files` reads up to 20 files per call. Text output is capped (default 100 KB) and truncation points at `get_vault_file_partial`. Renames go through `fileManager.renameFile`, so links survive. `get_vault_file` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
+| **Active file** | `get_active_file`, `update_active_file`, `append_to_active_file`, `patch_active_file`, `delete_active_file`, `show_file_in_obsidian` | What the user is looking at right now. `get_active_file` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
+| **Search** | `search_vault_smart`, `search_vault_simple`, `search_vault`, `execute_dataview_query` | Semantic, plain-text with context windows, DQL or JsonLogic. Hits carry a 0-indexed `line`. `search_vault_smart` and `search_vault_simple` also carry a file-level `obsidian://` URI per row, see [Linking out to Obsidian](#linking-out-to-obsidian). |
 | **Structure** | `get_vault_overview`, `get_note_outline`, `list_tags`, `get_files_by_tag`, `get_recent_files`, `get_outgoing_links`, `get_backlinks`, `list_bookmarks` | `get_vault_overview` replaces the 3 to 5 calls a session spends getting oriented. |
 | **Frontmatter** | `get_note_property`, `set_note_property`, `delete_note_property`, `list_property_values` | Atomic, through `processFrontMatter`. |
 | **Maintenance** | `find_broken_links`, `find_orphaned_notes`, `search_and_replace`, `rename_heading` | `search_and_replace` defaults to `dry_run`. `rename_heading` rewrites every reference pointing at it. |
-| **Periodic notes** | `get_or_create_daily_note`, `get_or_create_periodic_note`, `append_to_periodic_note` | Daily through yearly. Works with core Daily Notes and with Periodic Notes. |
+| **Periodic notes** | `get_or_create_daily_note`, `get_or_create_periodic_note`, `append_to_periodic_note` | Daily through yearly. Works with core Daily Notes and with Periodic Notes. `get_or_create_daily_note` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
 | **Canvas** | `get_canvas`, `add_canvas_node`, `connect_canvas_nodes` | Writes preserve every existing field, so canvases round-trip with clean diffs. |
 | **Execution** | `execute_template`, `list_obsidian_commands`, `execute_obsidian_command` | Templater templates as tool calls. Commands are opt-in, see [Command execution](#command-execution). |
 | **Other** | `fetch`, `get_server_info` | `fetch` returns Markdown via Turndown, paginated. |
@@ -100,6 +100,24 @@ Every tool declares MCP annotations, such as `readOnlyHint`, `destructiveHint`, 
 **On `outputSchema`, deliberately absent.** Almost no tool here declares one, and that is a decision rather than an omission. Once a tool declares an output schema, SDK clients reject every response from it that lacks `structuredContent`. Several of these tools return genuinely different shapes depending on what they find, so declaring a schema for them broke `get_vault_file` for five releases (0.27.2 through 0.27.6) before the rule was written down. A tool whose result shape is polymorphic gets no schema.
 
 **Semantic search providers.** Native MiniLM-L6-v2 (~25 MB, default), Gemma 300M (768d, best for non-Latin vaults), Multilingual-E5-Base (768d), or Smart Connections if you already use it. Providers swap live while the previous one keeps serving. The index is sharded into 16 segments by path, so editing one note rewrites one segment. While a build is running, `search_vault_smart` returns a structured `index_building` error with `filesIndexed`, `filesTotal` and an estimated `retryAfterSeconds`.
+
+## Linking out to Obsidian
+
+`get_vault_file`, `get_active_file`, `get_or_create_daily_note`, `search_vault_simple` and
+`search_vault_smart` return an `obsidian://open` URI alongside their result, so a note found
+through MCP can be linked from outside Obsidian — Mail, Slack, Things, Jira, anywhere a URI
+scheme link works. A raw-text result carries it as a trailing `URI: obsidian://...` line after
+the content; a JSON-shaped result carries it as a sibling `uri` key. The two search tools add a
+file-level `uri` to every row.
+
+`get_vault_file`, `get_active_file` and `get_or_create_daily_note` also take an optional
+`heading` argument: when it names a heading in the note, the URI navigates straight to it
+(`file=Note.md%23Heading`, the heading percent-encoded inside the `file` parameter's value, per
+Obsidian's own URI grammar — never a bare `#` fragment after the query string). A heading that
+does not match returns a `heading_not_found` error naming the heading and the path, instead of
+falling back to a plain file URI. Use `get_note_outline` to discover a note's headings before
+targeting one. The two search tools do not support `heading` — a semantic search result's
+`heading` field can be `null` or ambiguous by construction, so their URI is always file-level.
 
 ## Rendered search results (MCP Apps)
 

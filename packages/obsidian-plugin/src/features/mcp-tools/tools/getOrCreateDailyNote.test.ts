@@ -27,6 +27,9 @@ describe("get_or_create_daily_note", () => {
     expect(body.path).toBe("2026-05-22.md");
     expect(body.created).toBe(true);
     expect(body.content).toBe("");
+    expect(body.uri).toBe(
+      "obsidian://open?vault=Test%20Vault&file=2026-05-22.md",
+    );
     // File must exist in the vault after.
     expect(app.vault.getAbstractFileByPath("2026-05-22.md")).not.toBeNull();
   });
@@ -91,5 +94,42 @@ describe("get_or_create_daily_note", () => {
     expect(res.isError).toBe(true);
     const body = parse(res);
     expect(body.errorCode).toBe("invalid_date_for_period");
+  });
+
+  describe("heading input (ADR-0026 D7-D9, R-01, R-04, R-05)", () => {
+    test("heading matching a heading in a template-seeded just-created note resolves via content-first, even with an empty cache", async () => {
+      setMockPeriodicNotesPlugin("daily", {
+        loaded: true,
+        folder: "Daily",
+        format: "YYYY-MM-DD",
+        template: "## Daily plan\n",
+      });
+      const app = mockApp();
+      const res = await getOrCreateDailyNoteHandler({
+        arguments: { date: "2026-05-22", heading: "Daily plan" },
+        app,
+      });
+      expect(res.isError).toBeUndefined();
+      const body = parse(res);
+      expect(body.created).toBe(true);
+      expect(body.uri).toBe(
+        "obsidian://open?vault=Test%20Vault&file=Daily%2F2026-05-22.md%23Daily%20plan",
+      );
+    });
+
+    test("heading absent → heading_not_found naming heading + path; note is still created", async () => {
+      const app = mockApp();
+      const res = await getOrCreateDailyNoteHandler({
+        arguments: { date: "2026-05-22", heading: "Nope" },
+        app,
+      });
+      expect(res.isError).toBe(true);
+      const body = parse(res);
+      expect(body.errorCode).toBe("heading_not_found");
+      expect(body.heading).toBe("Nope");
+      expect(body.path).toBe("2026-05-22.md");
+      // The error happens AFTER create — the note still exists.
+      expect(app.vault.getAbstractFileByPath("2026-05-22.md")).not.toBeNull();
+    });
   });
 });

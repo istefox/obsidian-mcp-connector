@@ -3,7 +3,13 @@ import { type App, type TFile } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { SettingsStore } from "$/shared/settingsStore";
 import { resolveTFile } from "../services/resolveTFile";
-import { successJson } from "../services/responseBuilders";
+import { resolveHeadingForUri } from "../services/anchorTargets";
+import {
+  buildObsidianUri,
+  headingNotFoundError,
+  withUriBlock,
+} from "../services/buildObsidianUri";
+import { successJson, successText } from "../services/responseBuilders";
 import { DEFAULT_MAX_TEXT_OUTPUT_KB } from "../types";
 
 /**
@@ -77,13 +83,16 @@ export const getVaultFileSchema = type({
     "format?": type('"text"|"json"').describe(
       'Force output format. "text" returns raw content; "json" returns content + frontmatter + tags as a structured object. Default: auto-detect by extension.',
     ),
+    "heading?": type("string>0").describe(
+      "A heading in the file. When present, the returned obsidian:// URI navigates directly to it. Use get_note_outline to discover a file's headings.",
+    ),
   },
 }).describe(
   "Reads a file from the vault. Markdown and other text files return a text content block. Image and audio files up to 10 MiB return native MCP image/audio content blocks. Video, PDF, Office documents, archives, and oversized audio/image files return a structured JSON metadata hint. Text past a configurable size ceiling is truncated with a hint to use get_vault_file_partial for a specific range.",
 );
 
 export type GetVaultFileContext = {
-  arguments: { path: string; format?: "text" | "json" };
+  arguments: { path: string; format?: "text" | "json"; heading?: string };
   app: App;
   /** Optional — absent in partial test fixtures. Used to resolve the
    * `mcpTools.maxTextOutputKB` setting; falls back to the default cap
@@ -180,6 +189,7 @@ export const getVaultFileOutputSchema = type({
     size: "number",
   },
   truncated: "boolean",
+  uri: "string",
 });
 
 /**
@@ -209,6 +219,38 @@ export async function readVaultFileAsJson(
   const content = truncated ? truncateToByteLength(text, maxBytes) : text;
 
   return { path: file.path, content, frontmatter, tags, stat, truncated };
+}
+
+/**
+ * Resolve the `uri` field for a successful read (ADR-0026 D7-D9): no
+ * `heading` requested → plain file URI; `heading` requested → validate it
+ * against `lines` (the text in hand, possibly truncated or empty for a
+ * binary file) with the metadata cache as fallback, and fail closed with
+ * `heading_not_found` rather than silently dropping the heading.
+ */
+function resolveUriAndHeading(
+  ctx: GetVaultFileContext,
+  file: TFile,
+  lines: string[],
+):
+  | { ok: true; uri: string }
+  | { ok: false; error: ReturnType<typeof headingNotFoundError> } {
+  const vaultName = ctx.app.vault.getName();
+  if (!ctx.arguments.heading) {
+    return { ok: true, uri: buildObsidianUri(vaultName, file.path) };
+  }
+  const cache = ctx.app.metadataCache.getFileCache(file);
+  const resolution = resolveHeadingForUri(cache, lines, ctx.arguments.heading);
+  if (!resolution.ok) {
+    return {
+      ok: false,
+      error: headingNotFoundError(ctx.arguments.heading, file.path),
+    };
+  }
+  return {
+    ok: true,
+    uri: buildObsidianUri(vaultName, file.path, resolution.heading),
+  };
 }
 
 export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
@@ -246,7 +288,9 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   if (ctx.arguments.format === "json") {
     const maxBytes = await resolveMaxTextOutputBytes(ctx.plugin);
     const json = await readVaultFileAsJson(ctx.app, file, maxBytes);
-    return successJson(json);
+    const uriResult = resolveUriAndHeading(ctx, file, json.content.split("\n"));
+    if (!uriResult.ok) return uriResult.error;
+    return successJson({ ...json, uri: uriResult.uri });
   }
 
   // ── Text content ───────────────────────────────────────────────────────────
@@ -259,6 +303,8 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
       // through to the unsupported-binary branch below via the mimeEntry check.
       const text = await ctx.app.vault.read(file);
       const maxBytes = await resolveMaxTextOutputBytes(ctx.plugin);
+      const uriResult = resolveUriAndHeading(ctx, file, text.split("\n"));
+      if (!uriResult.ok) return uriResult.error;
       if (encodedByteLength(text) > maxBytes) {
         return {
           content: [
@@ -271,16 +317,19 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
                 truncated: true,
                 maxTextOutputBytes: maxBytes,
                 hint: `This file's text content exceeds the ${maxBytes}-byte cap (Settings → MCP Connector → "Max text output size"). Use get_vault_file_partial with mode "lines", "heading", or "block" to read a specific range, or raise the cap in settings.`,
+                uri: uriResult.uri,
               }),
             },
           ],
         };
       }
-      return { content: [{ type: "text", text }] };
+      return withUriBlock({ content: [{ type: "text", text }] }, uriResult.uri);
     }
 
     // Extension is known-binary (video, PDF, archive…) but has no native MCP
     // content-block kind → return JSON metadata hint.
+    const uriResult = resolveUriAndHeading(ctx, file, []);
+    if (!uriResult.ok) return uriResult.error;
     return {
       content: [
         {
@@ -290,6 +339,7 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
             filename: file.path,
             mimeType: "application/octet-stream",
             hint: "This file is binary (video, PDF, Office document, or archive) and cannot be returned as text content. Use show_file_in_obsidian to open it in the Obsidian UI.",
+            uri: uriResult.uri,
           }),
         },
       ],
@@ -297,6 +347,9 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
   }
 
   // ── Supported binary (image / audio) ───────────────────────────────────────
+  const uriResult = resolveUriAndHeading(ctx, file, []);
+  if (!uriResult.ok) return uriResult.error;
+
   const buf = await ctx.app.vault.readBinary(file);
 
   // Size gate — fall back to metadata hint rather than blowing the context window.
@@ -310,6 +363,7 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
             filename: file.path,
             mimeType: mimeEntry.mime,
             hint: "This file is too large to be returned inline (exceeds the 10 MiB cap to avoid overflowing the MCP client context window). Use show_file_in_obsidian to open it in the Obsidian UI.",
+            uri: uriResult.uri,
           }),
         },
       ],

@@ -5,6 +5,7 @@ import {
   projectSimpleSearchResults,
   withSearchResultsPayload,
 } from "$/features/mcp-apps/services/searchResultsPayload";
+import { buildObsidianUri } from "../services/buildObsidianUri";
 
 const DEFAULT_CONTEXT = 100;
 const DEFAULT_LIMIT = 50;
@@ -158,7 +159,12 @@ export async function searchVaultSimpleHandler(
     }
   }
 
-  const result = successText(JSON.stringify({ results }));
+  const vaultName = ctx.app.vault.getName();
+  const wireResults = results.map((r) => ({
+    ...r,
+    uri: buildObsidianUri(vaultName, r.filename),
+  }));
+  const result = successText(JSON.stringify({ results: wireResults }));
   // `=== false` and not `!ctx.hasUiCapability`: only an explicit, declared
   // NON-support withholds the payload (R-09, ADR-0023 D9). `undefined` is
   // "no signal" — the legacy era, which is stateless and POST-only and

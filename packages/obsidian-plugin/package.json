@@ -22,7 +22,8 @@
 		"zip": "bun scripts/zip.ts",
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
 		"test:conformance": "bash scripts/conformance/run.sh",
-		"test:spec-coverage": "bash scripts/spec-coverage-converge-anchors.sh"
+		"test:spec-coverage": "bash scripts/spec-coverage-converge-anchors.sh",
+		"test:spec-coverage:obsidian-uri": "bash scripts/spec-coverage-obsidian-uri.sh"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",

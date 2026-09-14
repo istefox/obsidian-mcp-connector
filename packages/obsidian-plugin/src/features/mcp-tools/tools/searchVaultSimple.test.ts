@@ -160,8 +160,11 @@ describe("search_vault_simple — content bytes are pinned for a client that nev
       arguments: { query: "fox" },
       app: mockApp(),
     });
+    // Repaired for ADR-0026 (issue #533): every row now carries a
+    // file-level `uri` (see the describe block below), a deliberate
+    // shape change to this literal, not drift.
     expect(JSON.stringify(result.content)).toBe(
-      '[{"type":"text","text":"{\\"results\\":[{\\"filename\\":\\"vault-fixture.md\\",\\"matches\\":[{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0},{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0}]}]}"}]',
+      '[{"type":"text","text":"{\\"results\\":[{\\"filename\\":\\"vault-fixture.md\\",\\"matches\\":[{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0},{\\"context\\":\\"The quick brown fox jumps over the lazy dog. The fox runs again.\\",\\"line\\":0}],\\"uri\\":\\"obsidian://open?vault=Test%20Vault&file=vault-fixture.md\\"}]}"}]',
     );
   });
 });
@@ -258,6 +261,46 @@ describe("search_vault_simple — result _meta carries the structured payload on
     // entry actually exists — mcpServer.test.ts — not on the call result,
     // which never carries that key regardless.
     expect("structuredContent" in result).toBe(false);
+
+    // ADR-0026 D10: `uri` is a wire-only addition, mapped in immediately
+    // before JSON.stringify. It must never reach the `_meta` payload rows —
+    // that would require adding `uri` to the shared `SearchResult`/row
+    // shape, which fails searchResultsPayload.ts's `Unprojected`
+    // exhaustiveness assertion.
+    for (const row of payload?.rows ?? []) {
+      expect((row as Record<string, unknown>).uri).toBeUndefined();
+    }
+  });
+});
+
+describe("search_vault_simple — file-level uri (ADR-0026, R-01, R-08)", () => {
+  test("every result row carries a uri built from filename", async () => {
+    setMockFile("a.md", "hit here");
+    setMockFile("Notes/b.md", "hit there");
+
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    expect(data.results).toHaveLength(2);
+    for (const row of data.results) {
+      expect(row.uri).toBe(
+        `obsidian://open?vault=Test%20Vault&file=${encodeURIComponent(row.filename)}`,
+      );
+    }
+  });
+
+  test("uri is file-level only — no uri key inside a matches row", async () => {
+    setMockFile("a.md", "hit here");
+    const result = await searchVaultSimpleHandler({
+      arguments: { query: "hit" },
+      app: mockApp(),
+    });
+    const data = JSON.parse(result.content[0].text as string);
+    for (const match of data.results[0].matches) {
+      expect("uri" in match).toBe(false);
+    }
   });
 });
 

@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`get_vault_file`, `get_active_file`, `get_or_create_daily_note`, `search_vault_simple` and `search_vault_smart` now return an `obsidian://open` URI** for each note they find, so a note reached through MCP can be linked from outside Obsidian — Mail, Slack, Things, Jira, anywhere a URI scheme link works. The three note-identifying tools also take an optional `heading` argument: when it names a heading in the note, the URI navigates straight to it; a heading that does not match returns a `heading_not_found` error rather than silently falling back to a plain file URI. The two search tools carry a file-level URI per row, without heading targeting — a semantic search result's `heading` can be `null` or ambiguous by construction. Closes #533. See [ADR-0026](docs/architecture/ADR-0026-obsidian-uri-on-note-tools.md).
+
+### Changed
+
+- **`get_vault_file`'s and `get_active_file`'s default (non-JSON) text result now carries a second, trailing content block** — `{type: "text", text: "URI: obsidian://..."}` — instead of a single block. The leading block (the note's own content) is unchanged and byte-identical; a client reading only `content[0]` sees no difference.
+
 ## [2.6.0] — 2026-09-08
 
 ### Added

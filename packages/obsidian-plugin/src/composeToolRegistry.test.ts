@@ -82,12 +82,21 @@ describe("composeToolRegistry — the seam is wired", () => {
     const registry = await buildRegistry(["Therapy"]);
     const out = await call(registry, "get_vault_file", { path: SECRET });
     expect(out).not.toContain(SECRET_BODY);
+    // The not-found error message legitimately echoes the requested path
+    // (ADR-0020 D3, tested below: the refusal must be indistinguishable
+    // from a path that never existed, so it names it). A leaked `uri`
+    // field would instead carry the percent-encoded form
+    // (`Therapy%2Fsession.md`) — a distinct encoding this tool never emits
+    // on an error result, and the leak surface ADR-0026 (issue #533)
+    // introduced.
+    expect(out).not.toContain(encodeURIComponent(SECRET));
   });
 
   test("an excluded file is absent from a listing", async () => {
     const registry = await buildRegistry(["Therapy"]);
     const out = await call(registry, "list_vault_files", { directory: "" });
     expect(out).not.toContain(SECRET);
+    expect(out).not.toContain(encodeURIComponent(SECRET));
     expect(out).toContain(PUBLIC);
   });
 
@@ -98,6 +107,7 @@ describe("composeToolRegistry — the seam is wired", () => {
     });
     expect(out).not.toContain(SECRET_BODY);
     expect(out).not.toContain(SECRET);
+    expect(out).not.toContain(encodeURIComponent(SECRET));
   });
 
   test("everything outside the excluded folder still works", async () => {

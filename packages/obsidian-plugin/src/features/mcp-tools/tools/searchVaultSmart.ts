@@ -8,6 +8,7 @@ import {
   projectSmartSearchResults,
   withSearchResultsPayload,
 } from "$/features/mcp-apps/services/searchResultsPayload";
+import { buildObsidianUri } from "../services/buildObsidianUri";
 
 export const searchVaultSmartSchema = type({
   name: '"search_vault_smart"',
@@ -278,7 +279,12 @@ export async function searchVaultSmartHandler(
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
 
-  const result = successText(JSON.stringify({ results }));
+  const vaultName = ctx.app.vault.getName();
+  const wireResults = results.map((r) => ({
+    ...r,
+    uri: buildObsidianUri(vaultName, r.filePath),
+  }));
+  const result = successText(JSON.stringify({ results: wireResults }));
   // Same rule as `search_vault_simple` (R-09, ADR-0023 D9): only a
   // declared NON-support withholds the payload. `undefined` means "no
   // signal" — the legacy era, and every caller predating this field — and
