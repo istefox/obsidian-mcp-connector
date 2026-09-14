@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-09-14
+
 ### Added
 
 - **`get_vault_file`, `get_active_file`, `get_or_create_daily_note`, `search_vault_simple` and `search_vault_smart` now return an `obsidian://open` URI** for each note they find, so a note reached through MCP can be linked from outside Obsidian — Mail, Slack, Things, Jira, anywhere a URI scheme link works. The three note-identifying tools also take an optional `heading` argument: when it names a heading in the note, the URI navigates straight to it; a heading that does not match returns a `heading_not_found` error rather than silently falling back to a plain file URI. The two search tools carry a file-level URI per row, without heading targeting — a semantic search result's `heading` can be `null` or ambiguous by construction. Closes #533. See [ADR-0026](docs/architecture/ADR-0026-obsidian-uri-on-note-tools.md).
@@ -12,6 +14,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 ### Changed
 
 - **`get_vault_file`'s and `get_active_file`'s default (non-JSON) text result now carries a second, trailing content block** — `{type: "text", text: "URI: obsidian://..."}` — instead of a single block. The leading block (the note's own content) is unchanged and byte-identical; a client reading only `content[0]` sees no difference.
+
+### Fixed
+
+- **Hardened the shared Codex discovery broker and its config installer** against a set of behavior regressions and gaps found while reviewing the broker's initial hardening pass. A same-vault reconnect no longer gets misclassified as a copied-vault identity conflict; the client runtime's recovery loop now backs off exponentially (capped at 30s) instead of retrying at a fixed 1s forever; three `updateSettings` call sites that merged against a stale snapshot now merge against the fresh one. The Codex config installer's replace path now segments the owned root table per key instead of substituting it wholesale, so policy keys (`enabled_tools`, `startup_timeout_sec`, `scopes`, `auth`, ...) survive a replace instead of being silently discarded; its TOML scanner no longer misclassifies a multi-line array continuation line as a table header; and its rollback-on-verify-mismatch was dropped, since with an atomic rename a mismatch can only mean a concurrent editor already replaced the file, never a corrupted write of our own. (#532, #534, #535)
 
 ## [2.6.0] — 2026-09-08
 
