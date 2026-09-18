@@ -23,7 +23,8 @@
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
 		"test:conformance": "bash scripts/conformance/run.sh",
 		"test:spec-coverage": "bash scripts/spec-coverage-converge-anchors.sh",
-		"test:spec-coverage:obsidian-uri": "bash scripts/spec-coverage-obsidian-uri.sh"
+		"test:spec-coverage:obsidian-uri": "bash scripts/spec-coverage-obsidian-uri.sh",
+		"test:mcp-app-browser": "bun scripts/mcp-apps/checkBrowser.ts"
 	},
 	"dependencies": {
 		"@huggingface/transformers": "4.2.0",
@@ -53,6 +54,7 @@
 		"fs-extra": "^11.2.0",
 		"moment": "^2.30.1",
 		"obsidian": "latest",
+		"playwright": "1.63.0",
 		"svelte-check": "^4.7.4",
 		"tslib": "2.4.0",
 		"typescript": "^5.7.2"

@@ -41,7 +41,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.10 # Matches the generated MCP App bundler.
 
       - name: Install Dependencies
         run: bun install --frozen-lockfile
@@ -71,6 +71,12 @@ jobs:
 
       - name: Tests — obsidian-plugin
         run: cd packages/obsidian-plugin && bun test
+
+      - name: Install Chromium for MCP App CSP regression
+        run: cd packages/obsidian-plugin && bunx playwright install --with-deps chromium
+
+      - name: Tests — MCP App in browser under restrictive CSP
+        run: cd packages/obsidian-plugin && bun run test:mcp-app-browser
 
       # A step in THIS job, not a job of its own: `check-and-test` is the only
       # required status check on main, so a separate job would run and report
