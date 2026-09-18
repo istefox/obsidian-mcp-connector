@@ -119,6 +119,32 @@ jobs:
       - name: Tests — Windows bridge (Python, stdlib only)
         run: python -m unittest discover -s scripts -v
 
+  # The search-results MCP App under a host CSP that allows inline scripts but
+  # not blob: or eval (issue #538). A separate job, not a step of
+  # `check-and-test`: the Chromium download is a cost the required check does
+  # not pay, and a browser failure reports here without blocking a merge.
+  mcp-app-browser-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: cd packages/obsidian-plugin && bunx playwright install --with-deps chromium
+
+      - name: Tests — MCP App in browser under restrictive CSP
+        run: cd packages/obsidian-plugin && bun run test:mcp-app-browser
+
   # The discovery broker owns files, sockets, and a detached Node.js process.
   # Run its focused contract on every supported desktop operating system.
   discovery-broker-tests:

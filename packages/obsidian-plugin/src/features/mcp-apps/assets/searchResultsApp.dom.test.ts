@@ -27,14 +27,6 @@ function extractModuleScript(html: string): string {
   return match[1];
 }
 
-function extractBundleSource(html: string): string {
-  const match = html.match(/id="mcp-apps-bundle">([\s\S]*?)<\/script>/);
-  if (!match) {
-    throw new Error("generated page has no #mcp-apps-bundle script block");
-  }
-  return match[1];
-}
-
 function extractInitialOutputText(html: string): string {
   // Attribute-order-tolerant: the element is found by carrying
   // id="output" among its attributes, in any position, rather than by
@@ -93,7 +85,6 @@ interface ShellRunResult {
  */
 async function runShellModule(html: string): Promise<ShellRunResult> {
   const moduleSource = extractModuleScript(html);
-  const bundleSource = extractBundleSource(html);
   const output = { textContent: extractInitialOutputText(html) };
 
   const calls: CapturedMessage[] = [];
@@ -140,7 +131,6 @@ async function runShellModule(html: string): Promise<ShellRunResult> {
     },
     document: {
       getElementById: (id: string) => {
-        if (id === "mcp-apps-bundle") return { textContent: bundleSource };
         if (id === "output") return output;
         return null;
       },
@@ -191,7 +181,7 @@ describe("search results view — idle output text", () => {
   // synchronously on load ("Loading search results…") and once after
   // connect() resolves ("Connected. Waiting for search results…"). Either
   // way it no longer reads the static placeholder, so that string keeps
-  // meaning only "never ran" (CSP blocked the blob: import, etc) rather
+  // meaning only "never ran" (script blocked by the host, etc) rather
   // than being indistinguishable from "connected but idle".
   test("no longer shows the static placeholder once the handshake has completed", async () => {
     const initialText = extractInitialOutputText(SEARCH_RESULTS_APP_HTML);
