@@ -195,18 +195,18 @@ MCP revision `2026-07-28` says the advertised set must not vary per-connection o
 
 ## Per-client tokens
 
-The vault holds a **list** of tokens, not one. The token on the request identifies the client, which is the only client identity a stateless transport carries. Each row in **Access control** shows the label, the profile in force, how many tools that token reaches, and per-row controls: show and copy the secret, copy a client config, export a `.mcpb`, regenerate, revoke. Up to 10 per vault.
+The vault holds a **list** of tokens, not one. The token on the request identifies the client, which is the only client identity a stateless transport carries. Each row in **Access control** shows the label, the profile in force, how many tools that token reaches, and per-row controls: show and copy the secret, copy a client config, export a `.mcpb`, replace the secret, revoke. A row that feeds the Claude Desktop config sync or the Codex connection carries a badge saying so. Up to 10 per vault.
 
 There is deliberately **no vault-wide export**. A credential always leaves the plugin naming the client it belongs to.
 
-![Access Control settings: the Default token row with its secret masked, per-client copy buttons, .mcpb export, regenerate and revoke, plus server port, fixed port and server name](docs/images/access-control.png)
+![Access Control settings: The Default token row with its secret masked, a Codex badge, per-client copy buttons, .mcpb export, Replace secret and Revoke, then the Codex connection status, the Copied this vault? row, server port, requests served and fixed port](docs/images/access-control.png)
 
-*One row per client. The label, profile and tool count are on the row; the four buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: the live endpoint, **Fixed port** (blank means the automatic 27200-27205 range, and saving a fixed port restarts the server, which clears non-persisted promotions), and **Server name**, which is how this vault identifies itself in a client that lists several servers.*
+*One row per client. The label, profile, role badges and tool count are on the row, and the four buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: The Codex connection status, **Copied this vault?** with its **Advanced** steps, the live endpoint, the request counts and **Fixed port**. A blank fixed port means the automatic 27200-27205 range, and saving one restarts the server, which clears non-persisted promotions. **Server name**, further down, is how this vault identifies itself in a client that lists several servers*
 
 | Action | Effect |
 |---|---|
 | **Add token** | New row, own profile, own promoted list, own allowlist. Labels are cosmetic and may repeat. |
-| **Regenerate** | Replaces the secret, keeps id, label and policy. Configured clients get 401 until updated. Installed `.mcpb` bundles resolve by id and pick it up on their own. |
+| **Replace secret** | Replaces the secret, keeps id, label and policy. Clients you set up by hand get 401 until updated. Installed `.mcpb` bundles resolve by id and pick it up on their own, the Codex connection uses it on its next request, and the Claude Desktop sync rewrites its entry when this token owns it |
 | **Revoke** | Deletes the token. That client's configs, bundles and bridge configs stop working; every other token is untouched. |
 
 > **Both actions are unrecoverable.** The string is stored nowhere else and nothing in the plugin can print it again.
@@ -423,13 +423,14 @@ If Node.js is unavailable, the optional connection remains disabled and the rest
 Bun is not required at runtime.
 See [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) for the detached-process lifecycle and accepted local port-owner risk.
 
-The connection status distinguishes connected, retrying, stopped and identity-conflict states
+The connection status distinguishes connected, retrying, stopped and route-conflict states
 Routes are held in broker memory and the executable is stored outside the system temporary directory
 After updating an older broker, update the other open vaults and close their old connections before retrying
 
-If a vault location changes, choose **This vault was moved** to keep its connection identity or **Reset connection identity** for a copy
-An identity reset requires a new client entry, but does not change copied vault tokens
-Use **Reset vault token secrets** separately to rotate those credentials while preserving tool permissions, then update direct clients and exported configurations
+If a vault location changes, choose **This vault was moved** to keep its Codex route
+For a copied vault, choose **Make this copy independent** in the copy. It replaces every token secret, gives the Codex connection a new route and turns off the Claude Desktop sync in that vault, without editing any client config file
+Afterwards, paste the new secrets into clients you set up by hand, install the new Codex entry and remove the old one
+**Advanced** holds **Replace all token secrets** and **New Codex route** for doing only one part
 Legacy settings bind to their current location on first upgraded use, so a pre-upgrade copy opened alone cannot be identified automatically
 
 ### Verifying
@@ -445,7 +446,7 @@ npx -y @modelcontextprotocol/inspector
 
 | Symptom | Cause and fix |
 |---|---|
-| `401` on every call | The token matches no row, usually after a regenerate or revoke. Copy the current string from that row, or add a new token if the row is gone. |
+| `401` on every call | The token matches no row, usually after a secret was replaced or a token revoked. Copy the current string from that row, or add a new token if the row is gone. |
 | `ECONNREFUSED 127.0.0.1:<port>` | Claude Desktop reads its config only at launch. Quit fully (Cmd+Q) and reopen. Check the port matches the one the plugin logs, and that only one vault has the plugin enabled. |
 | Claude Desktop: `Failed to connect`, `command not found` | Only affects the `mcp-remote` path. Settings → **Claude Desktop integration** reports whether `node` and `npx` are on the PATH Obsidian inherits, and installs Node for you on macOS. |
 | 60 s hang on Windows, then "Could not attach" | `mcp-remote` bug. Switch to the [POST-only bridge](#claude-desktop). |
