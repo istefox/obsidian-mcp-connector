@@ -359,6 +359,7 @@ async function main() {
     console.log("Building .mcpb bundle via generateMcpb()...");
     const bundleBytes = generateMcpb({
       version: "0.0.0-smoke",
+      vaultName: "Smoke Vault",
       vaultPath: vaultDir,
       configDir: CONFIG_DIR,
       tokenId: TOKEN_ID,

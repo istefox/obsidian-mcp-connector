@@ -24,6 +24,8 @@ export {
   claudeDesktopConfig,
   clientConfigInputSchema,
   streamableHttpConfig,
+  vaultNameWords,
+  vaultServerId,
   wrapInMcpServers,
   type ClaudeCodeEntry,
   type ClaudeDesktopEntry,

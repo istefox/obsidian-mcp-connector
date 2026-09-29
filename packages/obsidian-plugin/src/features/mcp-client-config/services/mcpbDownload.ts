@@ -6,7 +6,7 @@ import type McpToolsPlugin from "$/main";
 // re-exports that component, so the barrel would close a cycle.
 // `tokenStore.ts` imports nothing from this feature, so this edge does not.
 import { readTokens } from "$/features/mcp-transport/services/tokenStore";
-import { generateMcpb } from "./mcpbGenerator";
+import { generateMcpb, mcpbBundleName } from "./mcpbGenerator";
 
 /**
  * Generate a `.mcpb` bundle and put it where the user asks for it.
@@ -20,8 +20,6 @@ import { generateMcpb } from "./mcpbGenerator";
  * which; a helper that picked `tokens[0]` for them is how the download
  * button ends up bound to a position instead of an identity.
  */
-
-const FILENAME = "obsidian-mcp-connector.mcpb";
 
 type SaveDialog = {
   showSaveDialog(options: {
@@ -104,8 +102,11 @@ export async function downloadMcpb(
     return "Download .mcpb requires a desktop vault (FileSystemAdapter).";
   }
 
+  const vaultName = plugin.app.vault.getName();
+  const filename = `${mcpbBundleName(vaultName)}.mcpb`;
   const bytes = generateMcpb({
     version: plugin.manifest.version,
+    vaultName,
     vaultPath: adapter.getBasePath(),
     configDir: plugin.app.vault.configDir,
     tokenId: id,
@@ -114,7 +115,7 @@ export async function downloadMcpb(
   const dialog = electronDialog();
   if (dialog) {
     const { filePath } = await dialog.showSaveDialog({
-      defaultPath: FILENAME,
+      defaultPath: filename,
       filters: [{ name: "Claude Desktop Extension", extensions: ["mcpb"] }],
     });
     if (!filePath) return "Save cancelled.";
@@ -126,7 +127,7 @@ export async function downloadMcpb(
     // same pattern already shipping), so the OMC-019 reviewer finding is
     // gone from `src/**` with byte-identical runtime behaviour.
     await fsp.writeFile(filePath, Buffer.from(bytes));
-    return `${FILENAME} saved.`;
+    return `${filename} saved.`;
   }
 
   // Vault fallback when the Electron remote is unavailable.
@@ -134,6 +135,6 @@ export async function downloadMcpb(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength,
   );
-  await adapter.writeBinary(FILENAME, ab as ArrayBuffer);
-  return `Saved to vault root: ${FILENAME}`;
+  await adapter.writeBinary(filename, ab as ArrayBuffer);
+  return `Saved to vault root: ${filename}`;
 }

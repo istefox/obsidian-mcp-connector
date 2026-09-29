@@ -1,9 +1,16 @@
 import { zipSync, strToU8 } from "fflate";
 import { ICON_PNG_B64 } from "../assets/iconPng";
 import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
+import { vaultNameWords } from "./generators";
 
 export type McpbGeneratorInput = {
   version: string;
+  /**
+   * Vault display name (`Vault#getName()`). Names the extension, so
+   * bundles from two vaults install side by side in Claude Desktop
+   * instead of replacing each other.
+   */
+  vaultName: string;
   /** Absolute filesystem path to the vault root (`FileSystemAdapter.getBasePath()`). */
   vaultPath: string;
   /**
@@ -85,11 +92,23 @@ function buildShim(input: McpbGeneratorInput): string {
     .replace(TOKEN_ID_PLACEHOLDER, JSON.stringify(tokenId));
 }
 
+/**
+ * Per-vault extension name, also used for the bundle's file name: words
+ * joined by `-`, so "My Vault" is `obsidian-mcp-connector-my-vault`. A vault
+ * name with no ASCII alphanumerics keeps the plain name.
+ */
+export function mcpbBundleName(vaultName: string): string {
+  const words = vaultNameWords(vaultName);
+  return words.length > 0
+    ? `obsidian-mcp-connector-${words.join("-")}`
+    : "obsidian-mcp-connector";
+}
+
 function buildManifest(input: McpbGeneratorInput): McpbManifest {
   return {
     manifest_version: "0.3",
-    name: "obsidian-mcp-connector",
-    display_name: "Obsidian MCP Connector",
+    name: mcpbBundleName(input.vaultName),
+    display_name: `Obsidian MCP Connector (${input.vaultName})`,
     version: input.version,
     description:
       "Access your Obsidian vault (semantic search, notes, Templater prompts) via MCP.",

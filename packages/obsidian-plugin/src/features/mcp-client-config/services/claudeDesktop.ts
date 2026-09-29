@@ -21,15 +21,17 @@ import { mcpRemoteInvocation } from "./generators";
  * MCP endpoint. It runs on demand via `npx`, no install step.
  *
  * Key compatibility: 0.3.x wrote the entry under the legacy key
- * `"obsidian-mcp-tools"`. 0.4.0 writes under `"mcp-tools-istefox"`
- * and, when migrating, removes the legacy key.
+ * `"obsidian-mcp-tools"`, and 0.4.0 through 2.7.0 under the fixed
+ * `"mcp-tools-istefox"`. Both keys were shared by every vault, so two
+ * vaults syncing the same file overwrote each other. The sync now writes
+ * under the vault's own key (`vaultServerId`) and removes both old keys.
  */
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Plugin id used in 0.4.0 `mcpServers` map (matches manifest.json). */
+/** Fixed `mcpServers` key used by 0.4.0 through 2.7.0 (matches manifest.json). */
 export const FORK_PLUGIN_ID = "mcp-tools-istefox";
 
 /** Plugin id used by 0.3.x (the legacy config key, kept for migration). */
@@ -50,11 +52,14 @@ export const updateClaudeDesktopConfigInputSchema = type({
   token: "string > 0",
   /** Local port of the in-process MCP HTTP server (e.g. 27200). */
   port: "number.integer > 0",
-  /** Override pluginId. Defaults to FORK_PLUGIN_ID. */
+  /** Entry key. The sync passes `vaultServerId`. Defaults to FORK_PLUGIN_ID. */
   "pluginId?": "string",
   /** Override config path. Defaults to platform default. */
   "configPath?": "string",
-  /** When true, also delete the LEGACY_PLUGIN_ID entry. Default true. */
+  /**
+   * When true, also delete the LEGACY_PLUGIN_ID and FORK_PLUGIN_ID
+   * entries, except the one being written. Default true.
+   */
   "removeLegacyKey?": "boolean",
   /**
    * When true, write `<configPath>.backup` with the pre-rewrite content
@@ -146,11 +151,14 @@ export async function updateClaudeDesktopConfig(
     }
   }
 
-  // Optionally drop the legacy entry. Skipped if the legacy key equals
-  // the new pluginId (e.g. tests using the legacy id directly).
-  if (removeLegacyKey && pluginId !== LEGACY_PLUGIN_ID) {
-    delete config.mcpServers[LEGACY_PLUGIN_ID];
-  }
+  // Optionally drop the old shared-key entries, never the one being
+  // written (e.g. tests using an old id directly).
+  const removedKeys = removeLegacyKey
+    ? [LEGACY_PLUGIN_ID, FORK_PLUGIN_ID].filter(
+        (key) => key !== pluginId && key in config.mcpServers,
+      )
+    : [];
+  for (const key of removedKeys) delete config.mcpServers[key];
 
   // Write the new entry.
   config.mcpServers[pluginId] = buildHttpEntry(input.port, input.token);
@@ -159,18 +167,19 @@ export async function updateClaudeDesktopConfig(
   logger.info("Claude Desktop config updated", {
     configPath,
     pluginId,
-    legacyKeyRemoved: removeLegacyKey && pluginId !== LEGACY_PLUGIN_ID,
+    removedKeys,
   });
 }
 
 /**
- * Remove BOTH the new and legacy plugin entries from the Claude
- * Desktop config. Used by the uninstall flow and by the migration
- * "skip" path if the user wants to disable Claude Desktop integration.
+ * Remove this vault's entry (`pluginId`) and both old shared-key
+ * entries from the Claude Desktop config. Used when the token that owns
+ * the sync is revoked.
  *
  * Other `mcpServers` entries are preserved.
  */
 export async function removeFromClaudeDesktopConfig(opts?: {
+  pluginId?: string;
   configPath?: string;
 }): Promise<void> {
   const configPath = opts?.configPath ?? defaultClaudeDesktopConfigPath();
@@ -198,13 +207,11 @@ export async function removeFromClaudeDesktopConfig(opts?: {
   const map = servers as Record<string, unknown>;
 
   let changed = false;
-  if (FORK_PLUGIN_ID in map) {
-    delete map[FORK_PLUGIN_ID];
-    changed = true;
-  }
-  if (LEGACY_PLUGIN_ID in map) {
-    delete map[LEGACY_PLUGIN_ID];
-    changed = true;
+  for (const key of [opts?.pluginId, FORK_PLUGIN_ID, LEGACY_PLUGIN_ID]) {
+    if (key !== undefined && key in map) {
+      delete map[key];
+      changed = true;
+    }
   }
 
   if (changed) {

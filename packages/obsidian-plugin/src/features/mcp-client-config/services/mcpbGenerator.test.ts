@@ -4,6 +4,7 @@ import { join } from "path";
 import { unzipSync, strFromU8 } from "fflate";
 import {
   generateMcpb,
+  mcpbBundleName,
   type McpbGeneratorInput,
   type McpbManifest,
 } from "./mcpbGenerator";
@@ -16,6 +17,7 @@ import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
 const REAL_SHIM_SOURCE = CONNECTOR_SHIM_SOURCE;
 
 const VERSION = "1.2.3";
+const VAULT_NAME = "Mock Vault";
 const VAULT_PATH = "/Users/test/Obsidian/MockVault";
 const CONFIG_DIR = ".obsidian";
 const TOKEN_ID = "default";
@@ -50,6 +52,7 @@ describe("generateMcpb", () => {
   test("returns a non-empty Uint8Array", () => {
     const bytes = generateMcpb({
       version: VERSION,
+      vaultName: VAULT_NAME,
       vaultPath: VAULT_PATH,
       configDir: CONFIG_DIR,
       tokenId: TOKEN_ID,
@@ -62,6 +65,7 @@ describe("generateMcpb", () => {
     const files = getFiles(
       generateMcpb({
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
         tokenId: TOKEN_ID,
@@ -76,6 +80,7 @@ describe("generateMcpb", () => {
     const files = getFiles(
       generateMcpb({
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
         tokenId: TOKEN_ID,
@@ -89,6 +94,7 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -101,6 +107,7 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: "9.9.9",
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -113,13 +120,15 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
         }),
       );
-      expect(m.name).toBe("obsidian-mcp-connector");
-      expect(m.display_name).toBeTruthy();
+      expect(m.name).toBe("obsidian-mcp-connector-mock-vault");
+      expect(m.display_name).toBe("Obsidian MCP Connector (Mock Vault)");
+      expect(mcpbBundleName("日記")).toBe("obsidian-mcp-connector");
       expect(m.description).toBeTruthy();
       expect(m.author.name).toBeTruthy();
     });
@@ -128,6 +137,7 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -140,6 +150,7 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -158,6 +169,7 @@ describe("generateMcpb", () => {
       const m = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -170,6 +182,7 @@ describe("generateMcpb", () => {
       const m: McpbManifest = getManifest(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -193,6 +206,7 @@ describe("generateMcpb", () => {
         getFiles(
           generateMcpb({
             version: VERSION,
+            vaultName: VAULT_NAME,
             vaultPath: VAULT_PATH,
             configDir: CONFIG_DIR,
             tokenId: TOKEN_ID,
@@ -207,6 +221,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -219,6 +234,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -234,6 +250,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: ".obsidian-custom",
           tokenId: TOKEN_ID,
@@ -247,6 +264,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -266,6 +284,7 @@ describe("generateMcpb", () => {
     test("refuses to build a bundle with no token id, or a blank one", () => {
       const base = {
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
       };
@@ -282,6 +301,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -294,12 +314,14 @@ describe("generateMcpb", () => {
     test("different vault paths produce different bundles", () => {
       const a = generateMcpb({
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: "/vault/a",
         configDir: CONFIG_DIR,
         tokenId: TOKEN_ID,
       });
       const b = generateMcpb({
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: "/vault/b",
         configDir: CONFIG_DIR,
         tokenId: TOKEN_ID,
@@ -313,6 +335,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -327,6 +350,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -340,6 +364,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -354,6 +379,7 @@ describe("generateMcpb", () => {
       const shim = getShimSource(
         generateMcpb({
           version: VERSION,
+          vaultName: VAULT_NAME,
           vaultPath: VAULT_PATH,
           configDir: CONFIG_DIR,
           tokenId: TOKEN_ID,
@@ -368,6 +394,7 @@ describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17
   test("the generated shim carries the substituted token id, not the raw placeholder", () => {
     const input: McpbGeneratorInput = {
       version: VERSION,
+      vaultName: VAULT_NAME,
       vaultPath: VAULT_PATH,
       configDir: CONFIG_DIR,
       tokenId: "tok-42",
@@ -380,12 +407,14 @@ describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17
   test("different token ids produce different bundles", () => {
     const a = generateMcpb({
       version: VERSION,
+      vaultName: VAULT_NAME,
       vaultPath: VAULT_PATH,
       configDir: CONFIG_DIR,
       tokenId: "tok-a",
     });
     const b = generateMcpb({
       version: VERSION,
+      vaultName: VAULT_NAME,
       vaultPath: VAULT_PATH,
       configDir: CONFIG_DIR,
       tokenId: "tok-b",
@@ -420,6 +449,7 @@ describe("generateMcpb — tokenId placeholder for per-token .mcpb bundles (R-17
       )) as typeof import("./mcpbGenerator");
       const input: McpbGeneratorInput = {
         version: VERSION,
+        vaultName: VAULT_NAME,
         vaultPath: VAULT_PATH,
         configDir: CONFIG_DIR,
         tokenId: "tok-42",

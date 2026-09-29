@@ -127,6 +127,37 @@ describe("updateClaudeDesktopConfig", () => {
     expect(parsed.mcpServers["other-mcp"]).toBeDefined();
   });
 
+  test("a vault key replaces both old shared-key entries and leaves other vaults", async () => {
+    await fsp.writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          [LEGACY_PLUGIN_ID]: { command: "/path/to/old-binary" },
+          [FORK_PLUGIN_ID]: { command: "npx", args: ["mcp-remote"] },
+          obsidian_othervault: { command: "npx", args: ["other"] },
+        },
+      }),
+    );
+
+    await updateClaudeDesktopConfig({
+      pluginId: "obsidian_my_vault",
+      port: 27200,
+      token: "t",
+      configPath,
+    });
+
+    const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
+    expect(parsed.mcpServers[LEGACY_PLUGIN_ID]).toBeUndefined();
+    expect(parsed.mcpServers[FORK_PLUGIN_ID]).toBeUndefined();
+    expect(parsed.mcpServers.obsidian_my_vault.args).toContain(
+      "http://127.0.0.1:27200/mcp",
+    );
+    expect(parsed.mcpServers.obsidian_othervault).toEqual({
+      command: "npx",
+      args: ["other"],
+    });
+  });
+
   test("removeLegacyKey=false preserves the legacy entry", async () => {
     await fsp.writeFile(
       configPath,
@@ -278,6 +309,27 @@ describe("removeFromClaudeDesktopConfig", () => {
     expect(parsed.mcpServers[LEGACY_PLUGIN_ID]).toBeUndefined();
     expect(parsed.mcpServers[FORK_PLUGIN_ID]).toBeUndefined();
     expect(parsed.mcpServers["other-mcp"]).toEqual({ command: "/keep" });
+  });
+
+  test("removes this vault's key and leaves other vaults", async () => {
+    await fsp.writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          obsidian_my_vault: { command: "npx" },
+          obsidian_othervault: { command: "npx" },
+        },
+      }),
+    );
+
+    await removeFromClaudeDesktopConfig({
+      pluginId: "obsidian_my_vault",
+      configPath,
+    });
+
+    const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
+    expect(parsed.mcpServers.obsidian_my_vault).toBeUndefined();
+    expect(parsed.mcpServers.obsidian_othervault).toEqual({ command: "npx" });
   });
 
   test("no-op when config file is missing", async () => {

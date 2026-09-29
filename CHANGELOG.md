@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **Client configs are now named after the vault.** The Claude Desktop, Claude Code and streamable-HTTP copy buttons and the Claude Desktop config sync write the entry as `obsidian_<vault>` (vault "My Vault" becomes `obsidian_my_vault`) instead of the fixed `mcp-tools-istefox`. The `.mcpb` export is named `obsidian-mcp-connector-my-vault` and shows as "Obsidian MCP Connector (My Vault)". Before this, every vault used one key, so adding a second vault to Claude Code, Claude Desktop or any other client replaced the first. Existing entries keep working. Pasting a fresh copy adds a new entry next to the old `mcp-tools-istefox` one, which you can delete. The Claude Desktop sync removes the old key itself on its next write. A re-exported `.mcpb` installs as a new extension, so remove the old "Obsidian MCP Connector" extension afterwards
+
 ## [2.7.0] — 2026-09-14
 
 ### Added

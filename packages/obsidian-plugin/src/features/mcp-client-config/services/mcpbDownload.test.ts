@@ -45,7 +45,7 @@ function makePlugin(initial: Record<string, unknown> = twoTokenData()) {
   const adapter = new FileSystemAdapter() as Adapter;
   const plugin = mockPlugin({
     app: {
-      vault: { adapter, configDir: ".obsidian" },
+      vault: { adapter, configDir: ".obsidian", getName: () => "Mock Vault" },
     } as unknown as McpToolsPlugin["app"],
     loadData: async () => structuredClone(data),
     saveData: async (next: unknown) => {
@@ -77,6 +77,9 @@ describe("downloadMcpb", () => {
       await downloadMcpb(plugin, id);
 
       expect(adapter.writes).toHaveLength(1);
+      expect(adapter.writes[0].path).toBe(
+        "obsidian-mcp-connector-mock-vault.mcpb",
+      );
       expect(bakedTokenId(adapter.writes[0].bytes)).toBe(baked);
     },
   );
@@ -96,7 +99,7 @@ describe("downloadMcpb", () => {
     const adapter = new FileSystemAdapter() as Adapter;
     const plugin = mockPlugin({
       app: {
-        vault: { adapter, configDir: ".obsidian" },
+        vault: { adapter, configDir: ".obsidian", getName: () => "Mock Vault" },
       } as unknown as McpToolsPlugin["app"],
       loadData: async () => {
         throw new Error("disk on fire");
