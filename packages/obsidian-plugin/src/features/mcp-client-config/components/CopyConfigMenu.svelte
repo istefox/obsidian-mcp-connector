@@ -6,6 +6,7 @@
     claudeDesktopConfig,
     clineConfig,
     streamableHttpConfig,
+    vaultServerId,
     wrapInMcpServers,
   } from "../services/generators";
   import { downloadMcpb } from "../services/mcpbDownload";
@@ -38,6 +39,7 @@
   let mcpbBusy = false;
 
   $: offline = !url || !token;
+  $: serverId = vaultServerId(plugin.app.vault.getName());
 
   async function copyText(text: string, label: string): Promise<void> {
     try {
@@ -55,7 +57,7 @@
 
   function copyClaudeDesktop(): Promise<void> {
     return copyJson(
-      wrapInMcpServers(claudeDesktopConfig({ url, token })),
+      wrapInMcpServers(claudeDesktopConfig({ url, token }), serverId),
       "Claude Desktop",
     );
   }
@@ -65,14 +67,14 @@
   // for a file the user is told not to hand-edit.
   function copyClaudeCode(): Promise<void> {
     return copyText(
-      claudeCodeAddCommand({ url, token }),
+      claudeCodeAddCommand({ url, token, pluginId: serverId }),
       "Claude Code `claude mcp add` command",
     );
   }
 
   function copyStreamableHttp(): Promise<void> {
     return copyJson(
-      wrapInMcpServers(streamableHttpConfig({ url, token })),
+      wrapInMcpServers(streamableHttpConfig({ url, token }), serverId),
       "Streamable HTTP",
     );
   }

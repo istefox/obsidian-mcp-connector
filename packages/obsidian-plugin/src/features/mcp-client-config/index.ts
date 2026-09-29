@@ -23,6 +23,8 @@ export {
   clientConfigInputSchema,
   clineConfig,
   streamableHttpConfig,
+  vaultNameWords,
+  vaultServerId,
   wrapInMcpServers,
   type ClaudeCodeEntry,
   type ClaudeCodeScope,

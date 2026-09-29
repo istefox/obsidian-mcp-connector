@@ -13,6 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 - **The MCP Apps search-results view now initializes in hosts whose content-security-policy blocks `blob:` scripts** (#538, reported and first fixed by @AS-prog, #539). The view used to turn the embedded SDK into a Blob URL and import it at runtime, which a host policy of `script-src 'self' 'unsafe-inline'` (the default of `pi-mcp-adapter` 2.34.0) refuses, so the view showed "its interface bundle failed to import". The view and the SDK are now compiled into one inline module at build time: no Blob, no runtime import, no `eval`, no extra permission. Hosts must still allow the inline script, as before. A new browser test (`bun run test:mcp-app-browser`, own non-required CI job) serves the page under that policy in Chromium and checks initialization, rows, empty, error, cancel, theme and open-link; the drift guard on the generated page now asserts properties, so it holds on any Bun version.
 
+### Changed
+
+- **Client configs are now named after the vault.** The Claude Desktop, Claude Code and streamable-HTTP copy buttons and the Claude Desktop config sync write the entry as `obsidian_<vault>` (vault "My Vault" becomes `obsidian_my_vault`) instead of the fixed `mcp-tools-istefox`. The `.mcpb` export is named `obsidian-mcp-connector-my-vault` and shows as "Obsidian MCP Connector (My Vault)". Before this, every vault used one key, so adding a second vault to Claude Code, Claude Desktop or any other client replaced the first. Existing entries keep working. Pasting a fresh copy adds a new entry next to the old `mcp-tools-istefox` one, which you can delete. The Claude Desktop sync removes the old key itself on its next write. A re-exported `.mcpb` installs as a new extension, so remove the old "Obsidian MCP Connector" extension afterwards
+
 ## [2.9.0] — 2026-10-03
 
 ### Added

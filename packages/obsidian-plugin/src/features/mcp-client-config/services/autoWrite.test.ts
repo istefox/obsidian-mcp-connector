@@ -45,11 +45,14 @@ function fakePlugin(initial: StoredData = {}) {
     set _data(v: StoredData) {
       data = v;
     },
+    app: { vault: { getName: () => "Test Vault" } },
     mcpTransportState: undefined as
       | { bearerToken: string; server: { port: number } }
       | undefined,
   };
 }
+
+const VAULT_KEY = "obsidian_test_vault";
 
 /**
  * `readTokens` drops any record whose secret is under the 32-byte floor,
@@ -341,7 +344,7 @@ describe("applyAutoWrite", () => {
     const written = (await readConfig()) as unknown as {
       mcpServers: Record<string, { command: string; args: string[] }>;
     };
-    expect(written.mcpServers[FORK_PLUGIN_ID]).toEqual({
+    expect(written.mcpServers[VAULT_KEY]).toEqual({
       command: "npx",
       args: [
         "-y",
@@ -368,7 +371,7 @@ describe("applyAutoWrite", () => {
     const written = (await readConfig()) as unknown as {
       mcpServers: Record<string, { args: string[] }>;
     };
-    expect(written.mcpServers[FORK_PLUGIN_ID].args).toContain(
+    expect(written.mcpServers[VAULT_KEY].args).toContain(
       `Authorization: Bearer ${secretFor("a")}`,
     );
   });
@@ -404,7 +407,10 @@ describe("releaseAutoWriteOwner", () => {
 
   test("revoking the owner clears both keys and removes the entry", async () => {
     if (os.platform() !== "darwin") return;
-    const file = await seedConfig({ "some-other-server": { command: "x" } });
+    const file = await seedConfig({
+      [VAULT_KEY]: { command: "npx" },
+      "some-other-server": { command: "x" },
+    });
     const p = fakePlugin(
       withTokens(["a"], {
         autoWriteClaudeDesktopConfig: true,
@@ -420,6 +426,7 @@ describe("releaseAutoWriteOwner", () => {
     expect(slice.autoWriteTokenId).toBeNull();
 
     const written = JSON.parse(await fsp.readFile(file, "utf8"));
+    expect(written.mcpServers[VAULT_KEY]).toBeUndefined();
     expect(written.mcpServers[FORK_PLUGIN_ID]).toBeUndefined();
     // Entries this plugin does not own must survive.
     expect(written.mcpServers["some-other-server"]).toEqual({ command: "x" });

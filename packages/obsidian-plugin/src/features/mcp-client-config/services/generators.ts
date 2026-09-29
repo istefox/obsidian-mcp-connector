@@ -1,5 +1,4 @@
 import { type } from "arktype";
-import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 /**
  * Pure generators for the MCP client families the plugin targets. The
@@ -181,22 +180,49 @@ export function clineConfig(input: ClientConfigInput): ClineEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Per-vault entry key
+// ---------------------------------------------------------------------------
+
+/** Lowercase ASCII words of the vault name: "My Vault" is `["my", "vault"]`. May be empty. */
+export function vaultNameWords(vaultName: string): string[] {
+  return vaultName
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * The client-config key for this vault: `obsidian_<vault>`, words joined
+ * by `_`, so "My Vault" is `obsidian_my_vault`. A fixed key made every vault
+ * paste over every other one in a client that holds several. A vault name
+ * with no ASCII alphanumerics falls back to plain `obsidian`.
+ *
+ * Codex keeps its own merged form (`codexServerId`): its vault-named
+ * entries exist only for settings older than the route id, and renaming
+ * them would orphan the entry already in `config.toml` (ADR-0021).
+ */
+export function vaultServerId(vaultName: string): string {
+  const words = vaultNameWords(vaultName);
+  return words.length > 0 ? `obsidian_${words.join("_")}` : "obsidian";
+}
+
+// ---------------------------------------------------------------------------
 // Wrapper helper
 // ---------------------------------------------------------------------------
 
 /**
- * Wrap an inner entry under `mcpServers.<pluginId>` to produce a
+ * Wrap an inner entry under `mcpServers.<serverId>` to produce a
  * ready-to-paste block. Used by the Settings UI Copy buttons so the
  * user pastes a complete JSON object straight into their client
  * config file.
  */
 export function wrapInMcpServers<T>(
   entry: T,
-  pluginId: string = FORK_PLUGIN_ID,
+  serverId: string,
 ): { mcpServers: Record<string, T> } {
   return {
     mcpServers: {
-      [pluginId]: entry,
+      [serverId]: entry,
     },
   };
 }

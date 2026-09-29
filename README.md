@@ -299,6 +299,8 @@ that number.
 
 Every client is wired from its own row in **Access control**. Whichever button you use, the snippet or bundle authenticates as that row's token and no other.
 
+Copied configs and the Claude Desktop sync name the entry after the vault: `obsidian_` followed by the vault name's words in lowercase, joined by `_`, so vault "My Vault" becomes `obsidian_my_vault`. The `.mcpb` export uses the same words joined by `-`, such as `obsidian-mcp-connector-my-vault`. Configs from several vaults can sit in one client file without replacing each other. A vault name with no ASCII letters or digits falls back to `obsidian`
+
 ### Claude Desktop
 
 Claude Desktop speaks stdio, so it needs a bridge. The `.mcpb` extension is the supported path and needs no Node install of your own.
@@ -323,7 +325,7 @@ Needs Node.js on the PATH that Obsidian inherits. The plugin detects it and offe
 ```json
 {
   "mcpServers": {
-    "obsidian-mcp-connector": {
+    "obsidian_my_vault": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "http://127.0.0.1:27200/mcp",
                "--header", "Authorization: Bearer YOUR_TOKEN"]
@@ -370,7 +372,7 @@ claude mcp add --transport http --scope user obsidian-mcp-connector http://127.0
 ```json
 {
   "mcpServers": {
-    "obsidian-mcp-connector": {
+    "obsidian_my_vault": {
       "type": "http",
       "url": "http://127.0.0.1:${OBSIDIAN_MCP_PORT:-27200}/mcp",
       "headers": { "Authorization": "Bearer ${OBSIDIAN_MCP_TOKEN}" }

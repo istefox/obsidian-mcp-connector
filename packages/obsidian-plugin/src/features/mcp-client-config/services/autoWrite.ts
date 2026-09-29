@@ -10,6 +10,7 @@ import {
   removeFromClaudeDesktopConfig,
   updateClaudeDesktopConfig,
 } from "./claudeDesktop";
+import { vaultServerId } from "./generators";
 
 /**
  * Auto-write Claude Desktop config glue.
@@ -26,7 +27,8 @@ import {
  * without explicit consent.
  *
  * `claude_desktop_config.json` holds ONE `mcpServers` entry for this
- * vault, so at most one token can own it, and which one is recorded
+ * vault, keyed by `vaultServerId` so vaults do not overwrite each
+ * other. At most one token can own it, and which one is recorded
  * beside the flag as `autoWriteTokenId`. Before 1.0.0 there was no such
  * field and every sync wrote `mcpTransportState.bearerToken`, i.e.
  * `tokens[0]` — so regenerating any other token rewrote the config with
@@ -46,6 +48,8 @@ const FLAG_KEY = "autoWriteClaudeDesktopConfig";
 const OWNER_KEY = "autoWriteTokenId";
 
 type PluginLike = PluginDataLike & {
+  /** The entry key in the user's config comes from the vault name. */
+  app: { vault: { getName(): string } };
   mcpTransportState?:
     | {
         bearerToken: string;
@@ -183,7 +187,9 @@ export async function releaseAutoWriteOwner(
 
   await setAutoWriteOwner(plugin, null);
   try {
-    await removeFromClaudeDesktopConfig();
+    await removeFromClaudeDesktopConfig({
+      pluginId: vaultServerId(plugin.app.vault.getName()),
+    });
     return { released: true };
   } catch (err) {
     return {
@@ -261,6 +267,7 @@ export async function applyAutoWrite(
 
   try {
     await updateClaudeDesktopConfig({
+      pluginId: vaultServerId(plugin.app.vault.getName()),
       port: state.server.port,
       token: record.token,
     });
