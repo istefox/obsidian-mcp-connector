@@ -514,7 +514,7 @@ async function connectRegistration(
           reject(
             response.statusCode === 409
               ? new RegistrationConflict(
-                  "This identity is already in use by another open vault. Reset the copied vault's connection identity",
+                  "This Codex route is already in use by another open vault. In the copied vault, use Make this copy independent",
                 )
               : new Error(
                   `Discovery broker rejected registration with HTTP ${response.statusCode ?? 0}`,

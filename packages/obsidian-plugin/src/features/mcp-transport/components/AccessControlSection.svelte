@@ -285,14 +285,34 @@
     }
   }
 
+  /** "a", "a and b", "a, b and c" */
+  function joinList(items: string[]): string {
+    return items.length < 2
+      ? (items[0] ?? "")
+      : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  }
+
   /**
    * Mint a new secret in place. The id, the label and the tool policy
    * survive, so rotating a leaked string does not mean rebuilding that
    * client's tool selection.
+   *
+   * The confirm names what breaks and what follows on its own, because
+   * that depends on the row: `.mcpb` bundles resolve the secret by id,
+   * the Codex broker reads it per request, and the Claude Desktop sync
+   * rewrites its entry only for the token that owns it.
    */
   async function handleRegenerate(token: TokenRecord): Promise<void> {
+    const automatic = [".mcpb bundles made for this token"];
+    if (codexDiscoveryOwner === token.id) automatic.push("the Codex connection");
+    if (autoWriteOwner === token.id) automatic.push("the Claude Desktop config sync");
     const confirmed = confirm(
-      `Regenerate the secret for "${token.label}"? Every client and generated bundle configured with the current string stops working until you paste the new one. The token keeps its name and its tool profile.`,
+      [
+        `Replace the secret for "${token.label}"?`,
+        "Stops working: Any config where you pasted this token's current secret by hand, such as Claude Code or Cursor",
+        `Updates on its own: ${joinList(automatic)}`,
+        "The token keeps its name and tool profile",
+      ].join("\n\n"),
     );
     if (!confirmed) return;
 
@@ -307,10 +327,10 @@
       const autoWriteResult = await applyAutoWrite(plugin, token.id);
       new Notice(
         autoWriteResult.applied
-          ? "Secret regenerated and Claude Desktop config updated."
+          ? "Secret replaced and Claude Desktop config updated"
           : codexDiscoveryOwner === token.id
-            ? "Secret regenerated. The Codex connection will use it on the next request."
-            : "Secret regenerated. Update the client configured with this token.",
+            ? "Secret replaced. The Codex connection uses it on its next request"
+            : "Secret replaced. Paste it into the clients you set up by hand with this token",
       );
     } catch (err) {
       noticeFailure("regenerating the token", err);
@@ -546,8 +566,8 @@
 
   async function handleConnectionRecovery(action: "retry" | "move" | "reset"): Promise<void> {
     if (busy) return;
-    if (action === "move" && !confirm("Keep this connection identity at the new vault location? Choose this only for a moved vault, not a copy")) return;
-    if (action === "reset" && !confirm("Create a new connection identity for this vault? Its route and broker credential will change. Replace its client configuration afterward. Copied vault token secrets will not change")) return;
+    if (action === "move" && !confirm("Keep this Codex route at the new vault location? Choose this only for a moved vault, not a copy")) return;
+    if (action === "reset" && !confirm("Give this vault a new Codex route?\n\nThe route and broker credential change, so the current Codex entry stops working. Install or copy the new entry and remove the old one\n\nToken secrets do not change. Make this copy independent replaces those too")) return;
     busy = true;
     try {
       const runtime = plugin.codexDiscoveryState;
@@ -558,7 +578,7 @@
         plugin.codexDiscoveryState = await startCodexDiscovery(plugin) ?? undefined;
       }
       await refreshTokens();
-      if (action === "reset") new Notice("Connection identity reset. Copy or install the new client entry and remove the obsolete entry where appropriate");
+      if (action === "reset") new Notice("New Codex route created. Install or copy the new Codex entry and remove the old one");
     } catch (err) {
       noticeFailure("recovering the connection", err);
       // All three branches above stop the previous runtime before the step
@@ -575,16 +595,96 @@
     }
   }
 
+  function tokenLabel(id: string | null): string {
+    return tokens.find((t) => t.id === id)?.label ?? "";
+  }
+
+  /**
+   * Rotate every secret without editing any client config file
+   * (ADR-0021). The synced Claude Desktop entry therefore keeps the old
+   * secret until its owner's secret is replaced, and the confirm says so.
+   */
   async function handleResetVaultCredentials(): Promise<void> {
-    if (busy || !confirm("Regenerate every MCP token secret in this vault? Direct HTTP and exported clients must be updated. Token identities and tool permissions stay unchanged. Other vaults and client configuration files will not be edited")) return;
+    if (busy) return;
+    const syncLabel = tokenLabel(autoWriteOwner);
+    const message = [
+      "Replace the secret of every token in this vault?",
+      "Stops working: Every config where you pasted a secret by hand",
+      "Updates on its own: .mcpb bundles and the Codex connection",
+      ...(syncLabel
+        ? [`The synced claude_desktop_config.json keeps the old secret. Replace the secret of "${syncLabel}" afterwards to update it`]
+        : []),
+      "Token names and tool profiles stay. No client config file is edited",
+    ].join("\n\n");
+    if (!confirm(message)) return;
     busy = true;
     try {
       await regenerateAllTokenSecrets(plugin);
       revealed = {};
       await refreshTokens();
-      new Notice("Vault token secrets regenerated. Update direct clients; the broker reads the new secret on its next request");
-    } catch (err) { noticeFailure("resetting vault credentials", err); }
+      new Notice(
+        syncLabel
+          ? `All token secrets replaced. Paste them into clients you set up by hand, then replace the secret of "${syncLabel}" to update Claude Desktop`
+          : "All token secrets replaced. Paste them into clients you set up by hand",
+      );
+    } catch (err) { noticeFailure("replacing all token secrets", err); }
     finally { busy = false; }
+  }
+
+  /**
+   * The one action for a copied `.obsidian` folder, which carries the
+   * original vault's token secrets, Codex route and Claude Desktop sync
+   * setting. Replaces every secret, gives Codex a new route and turns the
+   * sync off here. The sync goes off because the copy would otherwise
+   * write into the same `claude_desktop_config.json` as the original, and
+   * under the same key when the vault names match. Only this vault's
+   * settings change: no client config file is edited (ADR-0021).
+   */
+  async function handleMakeIndependent(): Promise<void> {
+    if (busy) return;
+    const codexOn = codexDiscoveryOwner !== null;
+    const syncOn = autoWriteOwner !== null;
+    const changes = ["replaces the secret of every token"];
+    if (codexOn) changes.push("gives the Codex connection a new route");
+    if (syncOn) changes.push("turns off the Claude Desktop config sync in this vault");
+    const redo = ["Paste the new secrets into clients you set up by hand for this vault"];
+    if (codexOn) redo.push("Install or copy the new Codex entry and remove the old one");
+    if (syncOn) redo.push("Turn the Claude Desktop sync back on if you want it for this vault");
+    const message = [
+      "Make this vault independent of the vault it was copied from? Run this in the copy, not the original",
+      `This ${joinList(changes)}. Token names and tool profiles stay`,
+      `Afterwards:\n${redo.map((line) => `- ${line}`).join("\n")}`,
+      "This vault's .mcpb bundles pick up the new secrets on their own. No client config file is edited, so the original vault's entries keep working",
+    ].join("\n\n");
+    if (!confirm(message)) return;
+
+    busy = true;
+    let step = "replacing all token secrets";
+    try {
+      await regenerateAllTokenSecrets(plugin);
+      revealed = {};
+      if (syncOn) {
+        step = "turning off the Claude Desktop sync";
+        await setAutoWriteOwner(plugin, null);
+      }
+      if (codexOn) {
+        step = "creating a new Codex route";
+        plugin.codexDiscoveryState =
+          (await resetDiscoveryIdentity(plugin, plugin.codexDiscoveryState)) ??
+          undefined;
+      }
+      await refreshTokens();
+      new Notice(`This vault is now independent. ${redo.join(". ")}`);
+    } catch (err) {
+      noticeFailure(step, err);
+      // A failed route reset has already stopped the previous runtime, so
+      // the handle is dead. Same reasoning as handleConnectionRecovery.
+      if (step === "creating a new Codex route") plugin.codexDiscoveryState = undefined;
+      await refreshTokens().catch(() => undefined);
+    } finally {
+      watchDiscoveryStatus();
+      busy = false;
+    }
   }
 
   async function connectionSnippet(): Promise<string> {
@@ -719,6 +819,19 @@
             <span class="token-profile">
               {policies[token.id]?.profile ?? "all"}
             </span>
+            {#if autoWriteOwner === token.id}
+              <span
+                class="token-role"
+                title="This token's secret is kept in claude_desktop_config.json"
+              >
+                Claude Desktop sync
+              </span>
+            {/if}
+            {#if codexDiscoveryOwner === token.id}
+              <span class="token-role" title="Codex connects through this token">
+                Codex
+              </span>
+            {/if}
             {#if allToolNames.length > 0}
               <span class="token-count">{toolCounts[token.id] ?? 0} tools</span>
             {/if}
@@ -772,9 +885,9 @@
               type="button"
               on:click={() => void handleRegenerate(token)}
               disabled={busy}
-              aria-label="Regenerate the secret for {token.label}"
+              aria-label="Replace the secret for {token.label}"
             >
-              Regenerate
+              Replace secret
             </button>
             <button
               type="button"
@@ -840,16 +953,13 @@
         Connection: <strong>{discoveryStatus.state === "connected" ? "Connected" : discoveryStatus.state === "connecting" ? "Connecting" : discoveryStatus.state === "retrying" ? "Retrying" : discoveryStatus.state === "conflict" ? "Needs attention" : "Stopped"}</strong>
         {#if discoveryStatus.message} {discoveryStatus.message}{/if}
       </p>
-      <div class="token-actions">
+      <div class="token-actions connection-actions">
         <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("retry")}>Retry connection</button>
         {#if discoveryStatus.locationChanged}
           <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("move")}>This vault was moved</button>
         {/if}
-        <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("reset")}>Reset connection identity</button>
       </div>
     {/if}
-    <p class="token-hint">Copied an .obsidian folder? Give the copy a new connection identity. It also contains copied MCP token secrets, which can be reset separately without changing tool permissions</p>
-    <button type="button" disabled={busy} on:click={() => void handleResetVaultCredentials()}>Reset vault token secrets</button>
 
     {#if mcpbDisabled}
       <p class="token-hint">
@@ -864,6 +974,50 @@
       <code>config.toml</code>. Use one of the configuration actions after
       enabling it.
     </p>
+
+    <!-- Kept below the Codex hint, which describes the checkbox in the row
+         above, and with Advanced inside the row so both indent alike. -->
+    <div class="setting-item">
+      <div class="setting-item-info">
+        <div class="setting-item-name">Copied this vault?</div>
+        <div class="setting-item-description">
+          A copied <code>.obsidian</code> folder carries the original vault's
+          {codexDiscoveryOwner !== null ? "token secrets and Codex route" : "token secrets"},
+          so both vaults accept the same credentials. Run this in the copy
+        </div>
+        <details class="token-advanced">
+          <summary>Advanced</summary>
+          <p class="token-hint">Each of these does one part of the step above</p>
+          <div class="token-actions">
+            <button
+              type="button"
+              disabled={busy}
+              on:click={() => void handleResetVaultCredentials()}
+            >
+              Replace all token secrets
+            </button>
+            {#if codexDiscoveryOwner !== null}
+              <button
+                type="button"
+                disabled={busy}
+                on:click={() => void handleConnectionRecovery("reset")}
+              >
+                New Codex route
+              </button>
+            {/if}
+          </div>
+        </details>
+      </div>
+      <div class="setting-item-control">
+        <button
+          type="button"
+          disabled={busy}
+          on:click={() => void handleMakeIndependent()}
+        >
+          Make this copy independent
+        </button>
+      </div>
+    </div>
   {/if}
 
   <div class="setting-item">
@@ -988,6 +1142,11 @@
     flex-wrap: wrap;
   }
 
+  /* The Codex hint follows directly, so keep the buttons off its text. */
+  .connection-actions {
+    margin-bottom: 0.75em;
+  }
+
   .token-label {
     background: none;
     border: none;
@@ -1049,6 +1208,30 @@
   .token-autowrite input {
     /* Flex would otherwise stretch the box to the row's height. */
     flex: none;
+  }
+
+  .token-role {
+    color: var(--text-muted);
+    font-size: 0.8em;
+    white-space: nowrap;
+    padding: 0 0.4em;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+  }
+
+  .token-advanced {
+    margin-top: 0.5em;
+  }
+
+  .token-advanced .token-hint {
+    margin-bottom: 0.5em;
+  }
+
+  .token-advanced summary {
+    color: var(--text-muted);
+    font-size: 0.85em;
+    cursor: pointer;
+    margin-bottom: 0.5em;
   }
 
   .token-hint {
