@@ -908,9 +908,32 @@ export function setMockMetadata(
       displayText?: string;
       key: string;
     }>;
+    /** `ListItemCache` entries; `task` undefined = plain list item. */
+    listItems?: Array<{
+      line: number;
+      endLine?: number;
+      task?: string;
+      parent?: number;
+      id?: string;
+    }>;
   },
 ): void {
   _mockState.metadataCache.set(path, {
+    // Only when given, so cache snapshots asserted by older tests keep
+    // their exact shape.
+    ...(metadata.listItems
+      ? {
+          listItems: metadata.listItems.map((i) => ({
+            ...(i.id !== undefined ? { id: i.id } : {}),
+            ...(i.task !== undefined ? { task: i.task } : {}),
+            parent: i.parent ?? -1,
+            position: {
+              start: { line: i.line, col: 0, offset: 0 },
+              end: { line: i.endLine ?? i.line, col: 0, offset: 0 },
+            },
+          })),
+        }
+      : {}),
     headings: (metadata.headings ?? []).map((h) => ({
       heading: h.heading,
       level: h.level,

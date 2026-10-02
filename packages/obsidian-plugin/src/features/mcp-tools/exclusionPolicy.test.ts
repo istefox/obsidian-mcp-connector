@@ -358,6 +358,8 @@ describe("registry-wide folder-exclusion sweep (ADR-0020 T13)", () => {
     "names",
     "underHeading",
     "heading",
+    "expectedText",
+    "marker",
   ]);
 
   test("every tool's string-shaped argument is classified path or non-path", async () => {

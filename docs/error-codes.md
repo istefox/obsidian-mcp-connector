@@ -34,7 +34,8 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `no_active_file` | The `*_active_file` tool found no active editor file. | |
 | `permission_denied` | The file system refused the operation. | `path` |
 | `delete_failed`, `rename_failed` | The underlying Obsidian call threw; `error` carries its message. | `path` / `from`, `to` |
-| `stale_precondition` | The file no longer matches the caller's `expectedContent` (ADR-0019, ADR-0022). | `targetType`, `target` or the read tool to re-check with |
+| `stale_precondition` | The file no longer matches the caller's `expectedContent` (ADR-0019, ADR-0022), or for `set_task_status` the task text differs from `expectedText`. | `targetType`, `target` or the read tool to re-check with |
+| `write_failed` | `set_task_status`'s atomic `vault.process` threw; `error` carries its message. | `path`, `line` |
 
 ## Note anatomy
 
@@ -55,6 +56,8 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `invalid_block_id` | The block target is not a valid id. | `target` |
 | `block_not_patchable` | The block sits inside a table or fenced code block. | `targetType`, `target` |
 | `patch_failed` | A patch failure with no more specific code. | `targetType`, `target` |
+| `not_a_task` | `set_task_status` was pointed at a line that is not a `- [ ]`-style task. | `path`, `line` |
+| `line_out_of_range` | `set_task_status`'s `line` is past the end of the file. | `path`, `line`, `lineCount` |
 
 ## Arguments and queries
 

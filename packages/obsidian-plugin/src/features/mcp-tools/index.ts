@@ -38,6 +38,11 @@ import {
   getWorkspaceStateHandler,
   getWorkspaceStateSchema,
 } from "./tools/getWorkspaceState";
+import { listTasksHandler, listTasksSchema } from "./tools/listTasks";
+import {
+  setTaskStatusHandler,
+  setTaskStatusSchema,
+} from "./tools/setTaskStatus";
 import {
   listVaultFilesHandler,
   listVaultFilesSchema,
@@ -254,6 +259,14 @@ export async function registerTools(
   );
   registry.register(getWorkspaceStateSchema, async ({ arguments: args }) =>
     getWorkspaceStateHandler({ arguments: args, app: ctx.app }),
+  );
+
+  // Tasks
+  registry.register(listTasksSchema, async ({ arguments: args }) =>
+    listTasksHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(setTaskStatusSchema, async ({ arguments: args }) =>
+    setTaskStatusHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops

@@ -108,6 +108,11 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   // Workspace
   get_workspace_state: READ_ONLY,
 
+  // Tasks
+  list_tasks: READ_ONLY,
+  // Rewrites one status character; repeating the call is a no-op.
+  set_task_status: { ...DESTRUCTIVE, idempotentHint: true },
+
   // Periodic notes / misc
   get_recent_files: READ_ONLY,
   get_vault_overview: READ_ONLY,
