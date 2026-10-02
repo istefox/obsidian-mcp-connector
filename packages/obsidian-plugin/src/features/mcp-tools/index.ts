@@ -49,6 +49,14 @@ import {
 } from "./tools/updateNoteProperties";
 import { renameTagHandler, renameTagSchema } from "./tools/renameTag";
 import {
+  updateCanvasNodeHandler,
+  updateCanvasNodeSchema,
+} from "./tools/updateCanvasNode";
+import {
+  deleteCanvasNodeHandler,
+  deleteCanvasNodeSchema,
+} from "./tools/deleteCanvasNode";
+import {
   setTaskStatusHandler,
   setTaskStatusSchema,
 } from "./tools/setTaskStatus";
@@ -406,6 +414,12 @@ export async function registerTools(
   );
   registry.register(connectCanvasNodesSchema, async ({ arguments: args }) =>
     connectCanvasNodesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(updateCanvasNodeSchema, async ({ arguments: args }) =>
+    updateCanvasNodeHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(deleteCanvasNodeSchema, async ({ arguments: args }) =>
+    deleteCanvasNodeHandler({ arguments: args, app: ctx.app }),
   );
 
   // Search

@@ -128,6 +128,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_canvas: READ_ONLY,
   add_canvas_node: SAFE_WRITE,
   connect_canvas_nodes: SAFE_WRITE,
+  update_canvas_node: { ...DESTRUCTIVE, idempotentHint: true },
+  delete_canvas_node: { ...DESTRUCTIVE, idempotentHint: true },
 
   // Adaptive-loading meta-tools (registered in mcpServer.ts; lookup is
   // name-keyed at list() time, so the entry can live here regardless).

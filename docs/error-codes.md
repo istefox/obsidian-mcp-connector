@@ -70,7 +70,7 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `invalid_tag` | The tag is empty after stripping `#`, or (`rename_tag`) uses characters outside letters, digits, `_`, `-`, `/`, or is all digits. | `tag` |
 | `invalid_base64` | `create_vault_binary_file`'s content does not decode. | `path` |
 | `invalid_date_for_period` | The periodic-note date does not match the period's format or is not a real date. | `period`, `date` |
-| `invalid_node_type`, `node_not_found`, `canvas_not_found`, `malformed_canvas`, `embed_target_not_found` | Canvas tool refusals. | `path`, node ids |
+| `invalid_node_type`, `node_not_found`, `canvas_not_found`, `malformed_canvas`, `embed_target_not_found` | Canvas tool refusals. `update_canvas_node` also answers `invalid_params` with `fields` and `nodeType` when a content field does not belong to the node's type. | `path`, `nodeId`, `fields`, `nodeType` |
 | `url_rejected` | `fetch` refused the URL (scheme, loopback, private range). | `url` |
 
 ## Tool surface and policy
