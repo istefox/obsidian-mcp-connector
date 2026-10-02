@@ -2,7 +2,7 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { onMount } from "svelte";
-  import { globalSettingsMutex } from "$/features/command-permissions";
+  import { SettingsStore } from "$/shared/settingsStore";
   import { DESTRUCTIVE_TOOL_NAMES, KNOWN_MCP_TOOL_NAMES } from "../utils";
 
   /**
@@ -49,20 +49,15 @@
    */
   async function persist(): Promise<void> {
     // `busy` drives the UI-disabled state only; concurrency safety is
-    // the shared process-wide settings mutex (data.json is not atomic
-    // and is shared across features).
+    // SettingsStore's read-modify-write under the shared process-wide
+    // settings mutex (data.json is not atomic and is shared across
+    // features). An empty set returns `undefined`, which the JSON
+    // serialization drops — the same on-disk result as deleting the key.
     busy = true;
     try {
-      await globalSettingsMutex.run(async () => {
-        const data =
-          ((await plugin.loadData()) as Record<string, unknown>) ?? {};
-        if (disabled.size === 0) {
-          delete data.toolToggle;
-        } else {
-          data.toolToggle = { disabled: [...disabled].sort() };
-        }
-        await plugin.saveData(data);
-      });
+      await new SettingsStore(plugin).updateSlice("toolToggle", () =>
+        disabled.size === 0 ? undefined : { disabled: [...disabled].sort() },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to save disabled tools: ${message}`);

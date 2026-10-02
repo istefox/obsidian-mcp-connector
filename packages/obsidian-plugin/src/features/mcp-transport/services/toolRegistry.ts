@@ -78,6 +78,14 @@ type ToolListEntry = {
   _meta?: Record<string, unknown>;
 };
 
+/** What `coerceBooleanParams` needs to know about a schema's arguments. */
+type ArgumentKeys = {
+  declared: ReadonlySet<string>;
+  booleans: ReadonlySet<string>;
+  /** The arguments node's ArkType expression, for the refusal message. */
+  expression: string;
+};
+
 /** Per-call shaping of a `list()` result. */
 export type ListOptions = {
   /**
@@ -477,18 +485,70 @@ export class ToolRegistryClass<
   private byName = new Map<string, TSchema>();
 
   /**
+   * Public tool name per schema, filled on first use. `listAll()` runs
+   * once per request to resolve the caller's scope, and deriving ~50
+   * names through `toJsonSchema()` each time was the single largest
+   * fixed cost on that path; a schema's name never changes after
+   * registration, so one derivation is enough.
+   */
+  private nameBySchema = new WeakMap<TSchema, string>();
+
+  /**
+   * Per schema, the declared argument keys and which of them are
+   * boolean, filled on first dispatch. The `"true"`/`"false"` coercion
+   * (#444) used to walk the ArkType schema for every key of every call;
+   * both sets are properties of the schema, not of the call.
+   */
+  private argumentKeysBySchema = new WeakMap<TSchema, ArgumentKeys>();
+
+  /**
    * Single extraction point for the public tool name. Every tool
    * schema declares `name` as a string literal, so its JSON Schema
    * node carries `const`; the runtime guard catches a schema that
    * doesn't.
    */
   private toolNameOf = (schema: TSchema): string => {
+    const cached = this.nameBySchema.get(schema);
+    if (cached !== undefined) return cached;
     const node = schema.get("name").toJsonSchema() as { const?: unknown };
     const name = node.const;
     if (typeof name !== "string") {
       throw new Error("tool schema has no string-literal name");
     }
+    this.nameBySchema.set(schema, name);
     return name;
+  };
+
+  /**
+   * The argument keys `schema` declares, and which of them are `boolean`
+   * (optional or not). Read off the arguments' JSON Schema property list,
+   * then confirmed against the ArkType node the way the per-call walk
+   * used to, so the two cannot disagree about what counts as boolean.
+   */
+  private argumentKeysOf = (schema: TSchema): ArgumentKeys => {
+    const cached = this.argumentKeysBySchema.get(schema);
+    if (cached) return cached;
+    const argsSchema = schema.get("arguments").exclude("undefined");
+    const json = argsSchema.toJsonSchema() as {
+      properties?: Record<string, unknown>;
+    };
+    // ArkType's typed .get() no longer accepts arbitrary string keys now
+    // that the registry constraint is `object` instead of
+    // `Record<string, unknown>`. Cast the schema to a loose getter for
+    // this lookup — the runtime behavior is identical.
+    const loose = argsSchema as unknown as {
+      get: (k: string) => { exclude: (s: string) => { expression: string } };
+    };
+    const declared = new Set(Object.keys(json.properties ?? {}));
+    const booleans = new Set<string>();
+    for (const key of declared) {
+      if (loose.get(key).exclude("undefined").expression === "boolean") {
+        booleans.add(key);
+      }
+    }
+    const keys = { declared, booleans, expression: argsSchema.expression };
+    this.argumentKeysBySchema.set(schema, keys);
+    return keys;
   };
 
   /**
@@ -781,34 +841,28 @@ export class ToolRegistryClass<
     // no-arg tools can declare `arguments: {}`), but inside this method
     // we need index access, so we treat it as an open dictionary.
     const args = params.arguments as Record<string, unknown> | undefined;
-    const argsSchema = schema.get("arguments").exclude("undefined");
-    if (!args || !argsSchema) return params;
+    if (!args) return params;
+    const { declared, booleans, expression } = this.argumentKeysOf(schema);
 
-    const fixed: Record<string, unknown> = { ...args };
+    let fixed: Record<string, unknown> | undefined;
     for (const [key, value] of Object.entries(args)) {
-      // ArkType's typed .get() no longer accepts arbitrary string keys
-      // now that the registry constraint is `object` instead of
-      // `Record<string, unknown>`. Cast the schema to a loose getter for
-      // this lookup — the runtime behavior is identical.
-      const valueSchema = (
-        argsSchema as unknown as {
-          get: (k: string) => {
-            exclude: (s: string) => { expression: string };
-          };
-        }
-      )
-        .get(key)
-        .exclude("undefined");
+      // An undeclared key is refused here, loudly, as the per-call
+      // ArkType walk used to refuse it (its `.get()` threw this very
+      // message). `schema.assert()` alone would accept and ignore the
+      // key, and a misspelled `dry_run` silently falling back to the
+      // tool's default is the wrong failure mode for a destructive tool.
+      if (!declared.has(key)) {
+        throw new Error(`Key "${key}" does not exist on ${expression}`);
+      }
       if (
-        valueSchema.expression === "boolean" &&
+        booleans.has(key) &&
         typeof value === "string" &&
-        ["true", "false"].includes(value)
+        (value === "true" || value === "false")
       ) {
-        fixed[key] = value === "true";
+        (fixed ??= { ...args })[key] = value === "true";
       }
     }
-
-    return { ...params, arguments: fixed };
+    return fixed ? { ...params, arguments: fixed } : params;
   };
 
   dispatch = async <Schema extends TSchema>(

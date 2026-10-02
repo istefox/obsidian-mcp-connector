@@ -14,6 +14,10 @@
 
 import { type } from "arktype";
 import { globalSettingsMutex, type Mutex } from "./settingsLock";
+import {
+  loadSettingsSnapshot,
+  primeSettingsReadCache,
+} from "./settingsReadCache";
 import type { PluginDataLike } from "./types";
 import { logger } from "./logger";
 
@@ -75,13 +79,11 @@ export class SettingsStore {
     recipe: (current: unknown, raw: Record<string, unknown>) => T,
   ): Promise<T> {
     return this.mutex.run(async () => {
-      const raw =
-        ((await this.plugin.loadData()) as Record<string, unknown> | null) ??
-        {};
+      const raw = await this.loadForWrite();
       const current = raw[key];
       const next = recipe(current, raw);
       if ((next as unknown) !== current) {
-        await this.plugin.saveData({ ...raw, [key]: next });
+        await this.save({ ...raw, [key]: next });
       }
       return next;
     });
@@ -103,9 +105,7 @@ export class SettingsStore {
     opts: { schema?: (data: unknown) => unknown; defaults: T },
   ): Promise<T> {
     return this.mutex.run(async () => {
-      const raw =
-        ((await this.plugin.loadData()) as Record<string, unknown> | null) ??
-        {};
+      const raw = await this.loadForWrite();
       const stored = raw[key];
       const merged = {
         ...(opts.defaults as object),
@@ -126,7 +126,7 @@ export class SettingsStore {
       }
 
       if (!jsonEqual(stored, resolved)) {
-        await this.plugin.saveData({ ...raw, [key]: resolved });
+        await this.save({ ...raw, [key]: resolved });
       }
       return resolved;
     });
@@ -136,12 +136,32 @@ export class SettingsStore {
    * Read one slice without acquiring the write lock. `loadData` is a
    * single atomic read+parse, so a concurrent in-flight write can only
    * make this return the pre- or post-write snapshot, never a torn one.
+   *
+   * Served from the read cache when `main.ts` has enabled one for this
+   * plugin (`settingsReadCache.ts`): the request path reads three or four
+   * slices per call and they collapse into one disk read. Treat the
+   * returned value as read-only — it may be the cached object itself.
    */
   async readSlice(key: string): Promise<unknown> {
-    const raw = (await this.plugin.loadData()) as Record<
-      string,
-      unknown
-    > | null;
-    return raw?.[key];
+    const raw = await loadSettingsSnapshot(this.plugin);
+    return raw[key];
+  }
+
+  /**
+   * The snapshot a write starts from. Always disk, never the cache: a
+   * read-modify-write that began from a stale snapshot would lose an
+   * update the cache had not seen yet, and the mutex this runs under is
+   * exactly the guarantee that forbids that.
+   */
+  private async loadForWrite(): Promise<Record<string, unknown>> {
+    return (
+      ((await this.plugin.loadData()) as Record<string, unknown> | null) ?? {}
+    );
+  }
+
+  /** Persist, then make the written state the cache's current snapshot. */
+  private async save(next: Record<string, unknown>): Promise<void> {
+    await this.plugin.saveData(next);
+    primeSettingsReadCache(this.plugin, next);
   }
 }

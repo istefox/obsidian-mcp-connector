@@ -1394,6 +1394,58 @@ describe("dispatch() boolean argument coercion (#444)", () => {
     // default false — so the registry must not substitute one.
     expect(seen).toEqual([undefined]);
   });
+
+  test("coercion touches only declared boolean keys; a string elsewhere is untouched and an undeclared key is refused", async () => {
+    const tools = new ToolRegistryClass();
+    const seen: unknown[] = [];
+    const schema = type({
+      name: '"mixed"',
+      arguments: {
+        flag: type("boolean"),
+        "other?": type("boolean"),
+        label: type("string"),
+      },
+    }).describe("Required and optional booleans beside a string");
+    tools.register(schema, (params) => {
+      seen.push(params.arguments);
+      return { content: [{ type: "text", text: "ok" }] };
+    });
+
+    const ok = (await tools.dispatch(
+      {
+        name: "mixed",
+        arguments: { flag: "true", other: "false", label: "true" },
+      },
+      fakeContext,
+    )) as { isError?: boolean };
+    expect(ok.isError).toBeUndefined();
+    // Both booleans coerced (required and optional alike); the string
+    // that happens to spell "true" is untouched.
+    expect(seen[0]).toEqual({ flag: true, other: false, label: "true" });
+
+    // Repeated dispatches use the precomputed key set and behave the same.
+    const again = (await tools.dispatch(
+      { name: "mixed", arguments: { flag: "false", label: "x" } },
+      fakeContext,
+    )) as { isError?: boolean };
+    expect(again.isError).toBeUndefined();
+    expect(seen[1]).toEqual({ flag: false, label: "x" });
+
+    // An undeclared key is still refused, as the per-call ArkType walk
+    // refused it before the key sets were precomputed. ArkType's own
+    // `assert()` would accept and ignore it, and a misspelled `dry_run`
+    // quietly taking the default is the wrong outcome for a destructive
+    // tool.
+    const extra = (await tools.dispatch(
+      {
+        name: "mixed",
+        arguments: { flag: true, label: "x", bogus: "true" },
+      },
+      fakeContext,
+    )) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(extra.isError).toBe(true);
+    expect(extra.content[0].text).toContain('Key "bogus" does not exist');
+  });
 });
 
 describe("dispatch() — folder-exclusion refusal (ADR-0020 D9)", () => {

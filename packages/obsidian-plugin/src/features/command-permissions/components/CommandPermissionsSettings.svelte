@@ -2,7 +2,7 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { onMount, tick } from "svelte";
-  import { globalSettingsMutex } from "../index";
+  import { SettingsStore } from "$/shared/settingsStore";
   import {
     filterPresetAgainstRegistry,
     mergeIntoAllowlist,
@@ -141,32 +141,29 @@
    */
   async function persist(): Promise<void> {
     // `busy` drives the UI-disabled state only; concurrency safety is
-    // the shared process-wide settings mutex (the permission handler
-    // writes the same slice from the MCP path — read+merge under one
-    // lock so neither clobbers the other).
+    // SettingsStore's read-modify-write under the shared process-wide
+    // settings mutex (the permission handler writes the same slice from
+    // the MCP path — one lock, so neither clobbers the other). Through the
+    // store rather than a hand-rolled load/save so the write also primes
+    // the read cache the request path serves from.
     busy = true;
     try {
-      await globalSettingsMutex.run(async () => {
-        const data =
-          ((await plugin.loadData()) as Record<string, unknown>) ?? {};
-        const previous =
-          (data.commandPermissions as Record<string, unknown> | undefined) ??
-          {};
-        const softRateRaw = String(softRateLimitRaw ?? "").trim();
-        const softRateLimit =
-          softRateRaw === ""
-            ? undefined
-            : normalizeSoftRateLimit(Number(softRateRaw));
-        data.commandPermissions = {
-          ...previous,
+      const softRateRaw = String(softRateLimitRaw ?? "").trim();
+      const softRateLimit =
+        softRateRaw === ""
+          ? undefined
+          : normalizeSoftRateLimit(Number(softRateRaw));
+      await new SettingsStore(plugin).updateSlice(
+        "commandPermissions",
+        (current) => ({
+          ...((current as Record<string, unknown> | undefined) ?? {}),
           enabled,
           allowlist: [...allowlist],
           softRateLimit,
-        };
-        await plugin.saveData(data);
-        softRateLimitRaw =
-          softRateLimit !== undefined ? String(softRateLimit) : "";
-      });
+        }),
+      );
+      softRateLimitRaw =
+        softRateLimit !== undefined ? String(softRateLimit) : "";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(`Failed to save command permissions: ${message}`);

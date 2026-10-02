@@ -7,6 +7,10 @@ import {
   type DiscoveryRuntime,
 } from "./features/mcp-client-config/services/discoveryBroker";
 import { SettingsStore } from "./shared/settingsStore";
+import {
+  disableSettingsReadCache,
+  enableSettingsReadCache,
+} from "./shared/settingsReadCache";
 import { setup as setupCore } from "./features/core";
 import {
   setup as mcpTransportSetup,
@@ -73,6 +77,11 @@ export default class McpToolsPlugin extends Plugin {
   }
 
   async onload() {
+    // Every MCP request reads data.json three to four times (auth, tool
+    // policy, folder-exclusion policy). Coalesce them before anything
+    // else starts reading; writes still go to disk (settingsReadCache.ts).
+    enableSettingsReadCache(this);
+
     // Initialize features in order
     await setupCore(this);
 
@@ -186,6 +195,7 @@ export default class McpToolsPlugin extends Plugin {
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Obsidian calls onunload synchronously; the returned Promise is not awaited by the plugin lifecycle
   async onunload() {
+    disableSettingsReadCache(this);
     this.smartSearchSub?.unsubscribe();
     this.smartSearchSub = undefined;
     if (this.promptsState) {

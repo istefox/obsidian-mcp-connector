@@ -54,7 +54,6 @@
     type TokenPolicy,
   } from "$/features/adaptive-tool-loading/tokenPolicyStore";
   import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolScope";
-  import { globalSettingsMutex } from "$/features/command-permissions";
   import { SettingsStore } from "$/shared/settingsStore";
 
   export let plugin: McpToolsPlugin;
@@ -387,17 +386,10 @@
       }
       const portValue = parsed.port;
 
-      await globalSettingsMutex.run(async () => {
-        const data = ((await plugin.loadData()) ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const existing = (data.mcpTransport ?? {}) as Record<string, unknown>;
-        await plugin.saveData({
-          ...data,
-          mcpTransport: { ...existing, port: portValue },
-        });
-      });
+      await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => ({
+        ...((current as Record<string, unknown> | undefined) ?? {}),
+        port: portValue,
+      }));
 
       if (plugin.mcpTransportState) {
         await mcpTransportTeardown(plugin.mcpTransportState);
@@ -430,17 +422,10 @@
     serverNameBusy = true;
     try {
       const trimmed = serverNameInput.trim();
-      await globalSettingsMutex.run(async () => {
-        const data = ((await plugin.loadData()) ?? {}) as Record<
-          string,
-          unknown
-        >;
-        const existing = (data.mcpTransport ?? {}) as Record<string, unknown>;
-        await plugin.saveData({
-          ...data,
-          mcpTransport: { ...existing, serverName: trimmed },
-        });
-      });
+      await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => ({
+        ...((current as Record<string, unknown> | undefined) ?? {}),
+        serverName: trimmed,
+      }));
 
       if (plugin.mcpTransportState) {
         await mcpTransportTeardown(plugin.mcpTransportState);
