@@ -78,6 +78,32 @@ type ToolListEntry = {
   _meta?: Record<string, unknown>;
 };
 
+/** Per-call shaping of a `list()` result. */
+export type ListOptions = {
+  /**
+   * `_meta` keys to leave off every entry served by this call, with the
+   * `_meta` field itself dropped once nothing is left in it. A read-time
+   * transform over the memoized entries (ADR-0023 D8), never a mutation
+   * of `metaByName`: the MCP Apps off switch (discussion #543) uses it to
+   * hide the `ui://` pointer from one caller while the registry's own
+   * record of it stays intact for the next.
+   */
+  withoutMeta?: readonly string[];
+};
+
+/** `entry` without the named `_meta` keys; the same object when nothing changes. */
+function withoutMetaKeys(
+  entry: ToolListEntry,
+  keys: readonly string[],
+): ToolListEntry {
+  if (!entry._meta || !keys.some((k) => k in entry._meta!)) return entry;
+  const { _meta, ...rest } = entry;
+  const kept = Object.fromEntries(
+    Object.entries(_meta).filter(([k]) => !keys.includes(k)),
+  );
+  return Object.keys(kept).length > 0 ? { ...rest, _meta: kept } : rest;
+}
+
 /**
  * Ensure an MCP tool's `inputSchema` always carries an explicit
  * `properties` key (even when empty) and a well-formed
@@ -694,7 +720,11 @@ export class ToolRegistryClass<
    * structurally invisible to every scope (R-08) without the scope layer
    * having to remember to exclude it.
    */
-  list = (scope?: ToolScope): { tools: ToolListEntry[] } => {
+  list = (
+    scope?: ToolScope,
+    options?: ListOptions,
+  ): { tools: ToolListEntry[] } => {
+    const omit = options?.withoutMeta;
     if (scope) {
       return {
         tools: this.entries()
@@ -702,7 +732,16 @@ export class ToolRegistryClass<
             ({ schema, entry }) =>
               this.isServed(schema) && scope.active.has(entry.name),
           )
-          .map(({ entry }) => entry),
+          .map(({ entry }) => (omit ? withoutMetaKeys(entry, omit) : entry)),
+      };
+    }
+    if (omit) {
+      // Not memoized: the stripped view is the exception, and the
+      // scoped path above is the one every real request takes anyway.
+      return {
+        tools: this.entries()
+          .filter(({ schema }) => this.isServed(schema))
+          .map(({ entry }) => withoutMetaKeys(entry, omit)),
       };
     }
     this.listCache ??= {

@@ -448,6 +448,51 @@ in the very release that repaired it. `listChanged: true` honoured is not availa
 
 ---
 
+## Addendum (2026-10-02): an off switch, vault-wide and per token
+
+**Trigger.** Discussion #543: on claude.ai the view renders fully expanded with no way to collapse
+it, so one search pushes a long list of cards into the chat. The reporter asked for a setting,
+"globally or per token", to return the text result only. The Negative consequence above ("paid
+unconditionally") anticipated the cost in bytes but not this one in screen space.
+
+**Decision.** Two layers, the narrower one winning:
+
+- `mcpTools.searchResultsView?: boolean` — vault-wide, default on, a toggle in the MCP Tools
+  settings section.
+- `TokenPolicy.searchResultsView?: boolean` — per token, absent means inherit, a three-state
+  selector (Inherit / On / Off) in that token's Tool Loading panel. Stored on the policy entry
+  because that is already the per-token record the transport reads on every `tools/*` request;
+  the key is omitted when unset so an untouched entry stays byte-identical, and the legacy
+  mirror (`toolLoading.profile` / `promoted`) is unaffected.
+
+Resolution lives in `features/mcp-apps/services/searchResultsViewSetting.ts`, which owns the
+default and the list of `_meta` keys to strip. `mcpServer.ts` resolves it alongside the
+`ToolScope` from the same policy read, so a batched `tools/list` + `tools/call` cannot see a
+change between them.
+
+**What "off" changes on the wire.**
+
+- `tools/list`: the two search tools lose `_meta.ui` and `_meta["ui/resourceUri"]`, through a new
+  per-call `list(scope, { withoutMeta })` option on the registry. A read-time transform over the
+  memoized entries, as the annotations slimming already is (ADR-0023 D8); `metaByName` is never
+  mutated, so the next caller with the view on gets the pointer back.
+- `tools/call`: the row payload is withheld on every era. The dispatch site forces
+  `hasUiCapability: false`, the one value the search tools already read as "withhold" (R-09),
+  rather than adding a second flag the tools would have to get right separately.
+
+**What it deliberately leaves alone.** The `ui://` resource stays listed and readable and the
+`io.modelcontextprotocol/ui` extension stays declared. Those are server facts, not per-caller ones:
+withdrawing them would move the legacy `initialize` bytes for every token because of one token's
+choice, and a host that reads the resource without a pointer from any tool has nothing to attach
+it to. D1/D2 and R-02/R-03 therefore stand unchanged.
+
+**Alternatives not taken.** (a) A per-tool argument (`view: false`) — puts the choice on the model,
+which is exactly the party that cannot see the host's rendering problem. (b) Per-token only — the
+reporter's host is the same for every token they mint, and a vault-wide default is the cheaper
+fix for the common case. (c) Dropping the resource and capability as well when every token has
+the view off — correct in principle, but it couples the `initialize` reply to a settings read it
+does not pay today, for no observable benefit to the host.
+
 ## References
 
 - SPEC: `SPEC.md` (repo root) — OMC-016, R-01 … R-18.

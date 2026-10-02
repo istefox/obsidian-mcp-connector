@@ -566,3 +566,83 @@ describe("flushPendingCalls fans auto-promotion out per adaptive token (R-10)", 
     expect(policy.promoted).not.toContain("search_and_replace");
   });
 });
+
+/**
+ * The per-token MCP Apps override (discussion #543). The key lives on the
+ * policy entry but is read by nothing in this feature; what this feature
+ * owes it is faithful storage: a boolean survives normalization, anything
+ * else — including the `undefined` the UI writes to mean "inherit" —
+ * leaves no key behind.
+ */
+describe("TokenPolicy.searchResultsView", () => {
+  test("normalizePolicy keeps a boolean and drops a non-boolean", () => {
+    const { normalizePolicy } = tokenPolicyStore;
+    expect(
+      normalizePolicy({ profile: "all", searchResultsView: false }),
+    ).toEqual({
+      profile: "all",
+      promoted: [],
+      allowed: null,
+      searchResultsView: false,
+    });
+    expect(
+      normalizePolicy({ profile: "all", searchResultsView: true }),
+    ).toEqual({
+      profile: "all",
+      promoted: [],
+      allowed: null,
+      searchResultsView: true,
+    });
+    expect(
+      normalizePolicy({ profile: "all", searchResultsView: "off" }),
+    ).toEqual({ profile: "all", promoted: [], allowed: null });
+    expect(
+      normalizePolicy({ profile: "all", searchResultsView: undefined }),
+    ).toEqual({ profile: "all", promoted: [], allowed: null });
+  });
+
+  test("updateTokenPolicy stores the override, and a patch of undefined clears it from disk", async () => {
+    const plugin = makePlugin({
+      ...TWO_TOKEN_FIXTURE,
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: { profile: "all", promoted: [], allowed: null },
+          claude: { profile: "core", promoted: [], allowed: null },
+        },
+      },
+    });
+
+    await tokenPolicyStore.updateTokenPolicy(plugin, "claude", {
+      searchResultsView: false,
+    });
+    expect((await readPolicy(plugin, "claude")).searchResultsView).toBe(false);
+    // The other token's entry is untouched, and so is the legacy mirror.
+    expect((await readPolicy(plugin, "default")).searchResultsView).toBe(
+      undefined,
+    );
+    const stored = plugin._store().toolLoading as {
+      profile: string;
+      profiles: Record<string, Record<string, unknown>>;
+    };
+    expect(stored.profile).toBe("all");
+    expect(stored.profiles.claude).toEqual({
+      profile: "core",
+      promoted: [],
+      allowed: null,
+      searchResultsView: false,
+    });
+
+    await tokenPolicyStore.updateTokenPolicy(plugin, "claude", {
+      searchResultsView: undefined,
+    });
+    const cleared = plugin._store().toolLoading as {
+      profiles: Record<string, Record<string, unknown>>;
+    };
+    expect(Object.keys(cleared.profiles.claude)).not.toContain(
+      "searchResultsView",
+    );
+  });
+});

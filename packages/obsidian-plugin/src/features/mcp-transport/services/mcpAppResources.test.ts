@@ -267,3 +267,224 @@ describe("composed tools/list — the UI pointer names exactly two tools, both e
     assertPointerOnlyOnSearchTools(body.result?.tools ?? []);
   });
 });
+
+/**
+ * The MCP Apps off switch (discussion #543, ADR-0018 addendum), composed
+ * level: a vault-wide `mcpTools.searchResultsView` and a per-token
+ * `searchResultsView` override on the policy, driven through the real
+ * composition root over both eras. What "off" must and must not change:
+ * the `ui://` pointer leaves `tools/list`, the row payload leaves
+ * `tools/call` on every era, and the resource itself stays served.
+ */
+describe("composed — the MCP Apps off switch (#543)", () => {
+  const PAYLOAD_KEY = "io.github.istefox.mcp-connector/searchResults";
+  const UI_CAPABLE_ENVELOPE = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {
+      extensions: { "io.modelcontextprotocol/ui": {} },
+    },
+  };
+  const modernHeaders = (method: string, name?: string) => ({
+    "mcp-protocol-version": "2026-07-28",
+    "mcp-method": method,
+    ...(name ? { "mcp-name": name } : {}),
+  });
+
+  function makePlugin(opts: {
+    global?: boolean;
+    token?: boolean;
+  }): ReturnType<typeof mockPlugin> {
+    let store: Record<string, unknown> = {
+      ...(opts.global === undefined
+        ? {}
+        : { mcpTools: { searchResultsView: opts.global } }),
+      toolLoading: {
+        profile: "all",
+        promoted: [],
+        counters: {},
+        profiles: {
+          default: {
+            profile: "all",
+            promoted: [],
+            allowed: null,
+            ...(opts.token === undefined
+              ? {}
+              : { searchResultsView: opts.token }),
+          },
+        },
+      },
+    };
+    return mockPlugin({
+      loadData: async () => ({ ...store }),
+      saveData: async (d: unknown) => {
+        store = { ...(d as Record<string, unknown>) };
+      },
+    });
+  }
+
+  async function startWith(opts: {
+    global?: boolean;
+    token?: boolean;
+  }): Promise<RunningServer> {
+    const { startHttpServer } = await import("./httpServer");
+    const svc = await createMcpService({
+      app: mockApp(),
+      plugin: makePlugin(opts),
+      pluginVersion: "0.4.0-alpha.1",
+      serverName: "mcp-connector",
+    });
+    active.push(svc);
+    const server = await startHttpServer({
+      resolveTokens: staticTokenProvider(TOKEN),
+      requestHandler: svc.handleRequest,
+    });
+    runningServers.push(server);
+    return server;
+  }
+
+  type Listed = { name: string; _meta?: Record<string, unknown> };
+  const pointerNames = (tools: Listed[]): string[] =>
+    tools
+      .filter(
+        (t) => t._meta?.ui !== undefined || "ui/resourceUri" in (t._meta ?? {}),
+      )
+      .map((t) => t.name)
+      .sort();
+
+  async function listLegacy(port: number): Promise<Listed[]> {
+    const res = await postMcp(port, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    });
+    return (await res.json()).result?.tools ?? [];
+  }
+
+  async function listModern(port: number): Promise<Listed[]> {
+    const res = await postMcp(
+      port,
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/list",
+        params: { _meta: VALID_ENVELOPE },
+      },
+      modernHeaders("tools/list"),
+    );
+    return (await res.json()).result?.tools ?? [];
+  }
+
+  async function callSimpleLegacy(
+    port: number,
+  ): Promise<Record<string, unknown>> {
+    const res = await postMcp(port, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "search_vault_simple", arguments: { query: "hit" } },
+    });
+    return (await res.json()).result ?? {};
+  }
+
+  async function callSimpleModernUiCapable(
+    port: number,
+  ): Promise<Record<string, unknown>> {
+    const res = await postMcp(
+      port,
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "search_vault_simple",
+          arguments: { query: "hit" },
+          _meta: UI_CAPABLE_ENVELOPE,
+        },
+      },
+      modernHeaders("tools/call", "search_vault_simple"),
+    );
+    return (await res.json()).result ?? {};
+  }
+
+  test("vault-wide off: no tool carries the ui:// pointer, on either era", async () => {
+    const server = await startWith({ global: false });
+    expect(pointerNames(await listLegacy(server.port))).toEqual([]);
+    expect(pointerNames(await listModern(server.port))).toEqual([]);
+  });
+
+  test("vault-wide off: tools/call returns the text result without the row payload — legacy included, and a modern caller that declares UI support too", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startWith({ global: false });
+
+    const legacy = await callSimpleLegacy(server.port);
+    expect(legacy.isError).toBeUndefined();
+    expect(legacy.content).toBeDefined();
+    expect(
+      (legacy._meta as Record<string, unknown> | undefined)?.[PAYLOAD_KEY],
+    ).toBeUndefined();
+
+    const modern = await callSimpleModernUiCapable(server.port);
+    expect(modern.isError).toBeUndefined();
+    expect(
+      (modern._meta as Record<string, unknown> | undefined)?.[PAYLOAD_KEY],
+    ).toBeUndefined();
+  });
+
+  test("vault-wide off: the ui:// resource itself is still listed and readable", async () => {
+    const server = await startWith({ global: false });
+    const listed = await postMcp(server.port, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "resources/list",
+      params: {},
+    });
+    const body = await listed.json();
+    expect(body.result?.resources?.map((r: { uri: string }) => r.uri)).toEqual([
+      RESOURCE_URI,
+    ]);
+    const read = await postMcp(server.port, {
+      jsonrpc: "2.0",
+      id: 6,
+      method: "resources/read",
+      params: { uri: RESOURCE_URI },
+    });
+    expect((await read.json()).result?.contents?.[0]?.mimeType).toBe(MIME_TYPE);
+  });
+
+  test("vault-wide off, token override on: this token gets the pointer and the payload back", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startWith({ global: false, token: true });
+    expect(pointerNames(await listLegacy(server.port))).toEqual([
+      "search_vault_simple",
+      "search_vault_smart",
+    ]);
+    const modern = await callSimpleModernUiCapable(server.port);
+    expect(
+      (modern._meta as Record<string, unknown> | undefined)?.[PAYLOAD_KEY],
+    ).toBeDefined();
+  });
+
+  test("vault-wide on (the default), token override off: this token sees neither pointer nor payload", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startWith({ token: false });
+    expect(pointerNames(await listModern(server.port))).toEqual([]);
+    const legacy = await callSimpleLegacy(server.port);
+    expect(
+      (legacy._meta as Record<string, unknown> | undefined)?.[PAYLOAD_KEY],
+    ).toBeUndefined();
+  });
+
+  test("nothing configured: the 2.0.0 behaviour, pointer and payload both present", async () => {
+    setMockFile("a.md", "one hit here");
+    const server = await startWith({});
+    expect(pointerNames(await listLegacy(server.port))).toEqual([
+      "search_vault_simple",
+      "search_vault_smart",
+    ]);
+    const legacy = await callSimpleLegacy(server.port);
+    expect(
+      (legacy._meta as Record<string, unknown> | undefined)?.[PAYLOAD_KEY],
+    ).toBeDefined();
+  });
+});

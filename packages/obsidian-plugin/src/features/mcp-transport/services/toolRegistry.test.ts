@@ -1490,3 +1490,65 @@ describe("dispatch() — folder-exclusion refusal (ADR-0020 D9)", () => {
     );
   });
 });
+
+/**
+ * The MCP Apps off switch (discussion #543, ADR-0018 addendum). `list()`
+ * takes a per-call `withoutMeta` so one caller can be served without the
+ * `ui://` pointer while the registry's own `metaByName` keeps it for the
+ * next — a read-time transform, like the annotations slimming (ADR-0023
+ * D8), never a mutation.
+ */
+describe("ToolRegistry list({ withoutMeta }) — the MCP Apps off switch", () => {
+  const UI_META = {
+    ui: { resourceUri: "ui://mcp-connector/search-results" },
+    "ui/resourceUri": "ui://mcp-connector/search-results",
+  };
+
+  test("strips exactly the named keys and drops _meta when nothing is left", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setMeta({ alpha: UI_META });
+
+    const stripped = tools.list(undefined, {
+      withoutMeta: ["ui", "ui/resourceUri"],
+    }).tools;
+    const alpha = stripped.find((t) => t.name === "alpha");
+    expect(alpha).toBeDefined();
+    expect(Object.keys(alpha as object)).not.toContain("_meta");
+  });
+
+  test("keeps unrelated _meta keys on the entry", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setMeta({ alpha: { ...UI_META, "anthropic/alwaysLoad": true } });
+
+    const alpha = tools
+      .list(undefined, { withoutMeta: ["ui", "ui/resourceUri"] })
+      .tools.find((t) => t.name === "alpha");
+    expect(alpha?._meta).toEqual({ "anthropic/alwaysLoad": true });
+  });
+
+  test("does not touch the stored meta: the next plain list() still carries the pointer", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setMeta({ alpha: UI_META });
+
+    tools.list(undefined, { withoutMeta: ["ui", "ui/resourceUri"] });
+    const alpha = tools.list().tools.find((t) => t.name === "alpha");
+    expect(alpha?._meta).toEqual(UI_META);
+  });
+
+  test("applies under a scope too", () => {
+    const { tools } = buildRegistryWithTwoTools();
+    tools.setMeta({ alpha: UI_META });
+    const scope = {
+      id: "t",
+      active: new Set(["alpha", "beta"]),
+      allowed: null,
+    };
+
+    const withPointer = tools.list(scope).tools.find((t) => t.name === "alpha");
+    expect(withPointer?._meta).toEqual(UI_META);
+    const stripped = tools
+      .list(scope, { withoutMeta: ["ui", "ui/resourceUri"] })
+      .tools.find((t) => t.name === "alpha");
+    expect(stripped && "_meta" in stripped).toBe(false);
+  });
+});

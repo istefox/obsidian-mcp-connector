@@ -145,6 +145,12 @@ Four things about how this is built, because they are the parts that usually go 
 - **The line number is shown, never used as a jump target.** `obsidian://open` has no line
   parameter, and under Smart Connections the semantic provider resolves no line at all.
 
+If your client renders the view fully expanded and it buries the conversation (reported for
+claude.ai), turn it off under **Settings → MCP Connector → MCP Tools → Rendered search results
+(MCP Apps)**. The search tools then return the text result only, for every token. Each token can
+override that choice either way in its **Tool Loading** panel, so a desktop client can keep the view
+while a web client does without it.
+
 ## Adaptive tool loading
 
 Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 52 active is roughly 10K tokens per session. Adaptive loading cuts that without putting any tool out of reach.

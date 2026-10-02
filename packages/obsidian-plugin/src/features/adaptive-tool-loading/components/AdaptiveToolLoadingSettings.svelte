@@ -44,6 +44,9 @@
   let profile: "all" | "core" | "adaptive" = "all";
   let promoted: string[] = [];
   let allowed: string[] | null = null;
+  // The MCP Apps search-results view for this token (discussion #543):
+  // "inherit" follows the vault-wide setting under MCP Tools.
+  let searchResultsView: "inherit" | "on" | "off" = "inherit";
   let busy = false;
   let mounted = false;
   let loadedTokenId = "";
@@ -107,6 +110,12 @@
       profile = policy.profile;
       promoted = policy.promoted;
       allowed = policy.allowed;
+      searchResultsView =
+        policy.searchResultsView === undefined
+          ? "inherit"
+          : policy.searchResultsView
+            ? "on"
+            : "off";
       everCalled = calls;
       tokenLabel = meta?.label ?? id;
       eligibility = migrationEligibility(
@@ -147,6 +156,18 @@
   function onProfileChange(value: "all" | "core" | "adaptive"): void {
     profile = value;
     void savePolicy({ profile });
+  }
+
+  function onSearchResultsViewChange(event: Event): void {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    searchResultsView =
+      value === "on" || value === "off" ? value : "inherit";
+    // `undefined` clears the override: normalizePolicy drops the key on
+    // the way to disk, so "inherit" leaves no trace in the entry.
+    void savePolicy({
+      searchResultsView:
+        searchResultsView === "inherit" ? undefined : searchResultsView === "on",
+    });
   }
 
   /**
@@ -550,6 +571,29 @@
         {/if}
       {/if}
     </div>
+
+    <div class="view-section">
+      <label class="select-row">
+        <span>
+          Rendered search results (MCP Apps)
+          <span class="muted"
+            >— whether this token's search tools offer the ranked-list view.
+            "Inherit" follows the vault-wide setting under MCP Tools; turn it
+            off for a client that renders the view fully expanded.</span
+          >
+        </span>
+        <select
+          value={searchResultsView}
+          on:change={onSearchResultsViewChange}
+          disabled={busy}
+          aria-label="Rendered search results for this token"
+        >
+          <option value="inherit">Inherit</option>
+          <option value="on">On</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+    </div>
   {/if}
 
   <p class="footer-hint muted">
@@ -653,6 +697,24 @@
     background: var(--background-secondary);
     border-radius: 4px;
     margin-bottom: 0.8em;
+  }
+
+  .view-section {
+    padding: 0.6em 0.8em;
+    background: var(--background-secondary);
+    border-radius: 4px;
+    margin-bottom: 0.8em;
+  }
+
+  .select-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.8em;
+  }
+
+  .select-row select {
+    flex: none;
   }
 
   .allowlist-warning {

@@ -24,6 +24,15 @@ export type TokenPolicy = {
   profile: ToolProfile;
   promoted: string[];
   allowed: string[] | null;
+  /**
+   * Per-token override of the MCP Apps search-results view (discussion
+   * #543). Absent means "inherit `mcpTools.searchResultsView`"; the key
+   * is omitted rather than stored as `undefined`, so a token that never
+   * touched it keeps a byte-identical entry. Resolved by
+   * `mcp-apps/services/searchResultsViewSetting.ts`; nothing in this
+   * feature reads it.
+   */
+  searchResultsView?: boolean;
 };
 
 /**
@@ -142,6 +151,12 @@ export function normalizePolicy(value: unknown): TokenPolicy {
     // from `null`, which means no ceiling at all.
     promoted: readNames(p.promoted),
     allowed: Array.isArray(p.allowed) ? readNames(p.allowed) : null,
+    // Only a real boolean survives: a patch of `{ searchResultsView:
+    // undefined }` is how the UI clears the override back to "inherit",
+    // and it must leave no key behind.
+    ...(typeof p.searchResultsView === "boolean"
+      ? { searchResultsView: p.searchResultsView }
+      : {}),
   };
 }
 
@@ -383,10 +398,14 @@ export async function updateTokenPolicy(
   patch: Partial<TokenPolicy>,
 ): Promise<void> {
   await updateToolLoading(plugin, (state) => {
-    state.profiles[tokenId] = {
+    // Normalized on the way in, not just on the way out: a patch that
+    // sets an optional field to `undefined` (how the UI clears
+    // `searchResultsView` back to "inherit") must leave no key behind,
+    // and `toSlice` does not re-normalize entries.
+    state.profiles[tokenId] = normalizePolicy({
       ...(state.profiles[tokenId] ?? defaultPolicy()),
       ...patch,
-    };
+    });
     return state;
   });
 }

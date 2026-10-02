@@ -35,6 +35,14 @@ declare module "obsidian" {
        */
       requireWritePreconditions?: boolean;
       /**
+       * Vault-wide switch for the MCP Apps search-results view
+       * (discussion #543). Undefined → on, the 2.0.0 behaviour. A token's
+       * policy may override it either way. Resolved by
+       * `mcp-apps/services/searchResultsViewSetting.ts`, which owns the
+       * default; this slice only stores the user's choice.
+       */
+      searchResultsView?: boolean;
+      /**
        * Folders no MCP client may read, list, search or write inside
        * (ADR-0020). Absent means no exclusion policy is in force; the
        * key is omitted rather than stored empty, so a vault that never

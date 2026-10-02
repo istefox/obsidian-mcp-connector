@@ -26,6 +26,10 @@ import {
 import { readPolicy } from "$/features/adaptive-tool-loading/tokenPolicyStore";
 import { resolveToolScope } from "$/features/adaptive-tool-loading/resolveToolScope";
 import { SessionPromotions } from "$/features/adaptive-tool-loading/sessionPromotions";
+import {
+  resolveSearchResultsView,
+  SEARCH_RESULTS_UI_META_KEYS,
+} from "$/features/mcp-apps/services/searchResultsViewSetting";
 import { composeToolRegistry } from "$/composeToolRegistry";
 import { pathPolicyFor } from "$/shared/policyProvider";
 import { ERROR_CODES, MAX_REQUEST_BODY_BYTES } from "../constants";
@@ -284,10 +288,20 @@ export async function createMcpService(
   // UI applies to the very next request rather than after a restart.
   const pathPolicy = pathPolicyFor(config.plugin);
 
-  const resolveScope = async (tokenId: string): Promise<ToolScope> => {
+  /**
+   * Everything tools/* needs to know about one caller, from ONE policy
+   * read: the tool surface, and whether the MCP Apps search-results view
+   * is in force for it (discussion #543). The two ride together so a
+   * tools/list + tools/call batch cannot see a policy change between them.
+   */
+  type CallerView = { scope: ToolScope; searchResultsView: boolean };
+  const resolveCaller = async (tokenId: string): Promise<CallerView> => {
     const policy = await readPolicy(config.plugin, tokenId);
     const allNames = registry.listAll().map((entry) => entry.name);
-    return resolveToolScope(tokenId, policy, allNames, session.get(tokenId));
+    return {
+      scope: resolveToolScope(tokenId, policy, allNames, session.get(tokenId)),
+      searchResultsView: await resolveSearchResultsView(config.plugin, policy),
+    };
   };
 
   /**
@@ -306,9 +320,9 @@ export async function createMcpService(
     // tools/list + tools/call pair of a batched POST into one read. The
     // memo lives as long as the instance, which is one request on either
     // era, so its lifetime is unchanged by the extraction.
-    let scopePromise: Promise<ToolScope> | undefined;
-    const getScope = (): Promise<ToolScope> =>
-      (scopePromise ??= resolveScope(tokenId));
+    let callerPromise: Promise<CallerView> | undefined;
+    const getCaller = (): Promise<CallerView> =>
+      (callerPromise ??= resolveCaller(tokenId));
 
     const server = new McpServer(
       {
@@ -369,11 +383,22 @@ export async function createMcpService(
     // Wire the ArkType-based registry against the underlying SDK
     // Server so tools/list and tools/call go through our boolean
     // coercion + error formatting + adaptive/user disable-state support.
-    server.server.setRequestHandler("tools/list", async () =>
-      asListToolsResult(registry.list(await getScope())),
-    );
+    server.server.setRequestHandler("tools/list", async () => {
+      const { scope, searchResultsView } = await getCaller();
+      // View off: the two search tools are listed without their `ui://`
+      // pointer, so the host never learns there is a page to render. The
+      // resource itself stays served — see searchResultsViewSetting.ts.
+      return asListToolsResult(
+        registry.list(
+          scope,
+          searchResultsView
+            ? undefined
+            : { withoutMeta: SEARCH_RESULTS_UI_META_KEYS },
+        ),
+      );
+    });
     server.server.setRequestHandler("tools/call", async (request, ctx) => {
-      const scope = await getScope();
+      const { scope, searchResultsView } = await getCaller();
       // Read the outcome classification against the same scope dispatch()
       // will read, and synchronously with it: the await above is the only
       // suspension point, and dispatch()'s own branch check runs
@@ -398,7 +423,15 @@ export async function createMcpService(
           // reaches this leg with an envelope, so this stays `undefined`
           // there — which the search tools read as "no signal" and keep
           // attaching on, not as "no support".
-          hasUiCapability: declaresUiExtension(ctx.mcpReq.envelope),
+          //
+          // View switched off for this caller (discussion #543): force the
+          // signal to the one value the search tools already treat as
+          // "withhold the payload", on both eras. Reusing that branch
+          // instead of adding a second flag keeps a single withholding
+          // path for the tools to get right.
+          hasUiCapability: searchResultsView
+            ? declaresUiExtension(ctx.mcpReq.envelope)
+            : false,
         }),
       );
       // Record the call for frequency-based promotion (meta-tools and

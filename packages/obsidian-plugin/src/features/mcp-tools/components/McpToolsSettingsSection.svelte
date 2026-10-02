@@ -15,12 +15,14 @@
     normalizeExcludedFolders,
   } from "../types";
   import { isUnderFolder, normalizeFolderEntry } from "$/shared/pathPolicy";
+  import { DEFAULT_SEARCH_RESULTS_VIEW } from "$/features/mcp-apps/services/searchResultsViewSetting";
   import { ExcludedFoldersConsentModal } from "../services/excludedFoldersConsentModal";
 
   type ConsentRecord = { version: number; acceptedAt: string };
   type McpToolsSlice = {
     maxTextOutputKB?: number;
     requireWritePreconditions?: boolean;
+    searchResultsView?: boolean;
     excludedFolders?: string[];
     excludedFoldersConsent?: ConsentRecord;
   };
@@ -33,6 +35,7 @@
   // field.
   let maxTextOutputKB: number | null = null;
   let requireWritePreconditions = DEFAULT_REQUIRE_WRITE_PRECONDITIONS;
+  let searchResultsView = DEFAULT_SEARCH_RESULTS_VIEW;
   let busy = false;
 
   // --- folders hidden from MCP (ADR-0020) --------------------------------
@@ -233,6 +236,7 @@
     maxTextOutputKB = raw?.maxTextOutputKB ?? null;
     requireWritePreconditions =
       raw?.requireWritePreconditions ?? DEFAULT_REQUIRE_WRITE_PRECONDITIONS;
+    searchResultsView = raw?.searchResultsView ?? DEFAULT_SEARCH_RESULTS_VIEW;
     applySlice(raw as McpToolsSlice | undefined);
 
     // Read once: on a large vault this is thousands of entries, and it
@@ -263,6 +267,7 @@
         ...((current ?? {}) as Record<string, unknown>),
         maxTextOutputKB: normalized,
         requireWritePreconditions,
+        searchResultsView,
       }));
 
       maxTextOutputKB = normalized ?? null;
@@ -458,6 +463,30 @@
         type="checkbox"
         bind:checked={requireWritePreconditions}
         aria-label="Require a write precondition for replace operations"
+      />
+      <button type="button" on:click={handleSave} disabled={busy}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+    </div>
+  </div>
+
+  <div class="setting-item">
+    <div class="setting-item-info">
+      <div class="setting-item-name">Rendered search results (MCP Apps)</div>
+      <div class="setting-item-description">
+        When on, search_vault_simple and search_vault_smart offer an MCP Apps
+        view that renders hits as a ranked list in clients that support it.
+        Turn it off if your client renders that view fully expanded and it
+        buries the conversation: the tools then return the text result only,
+        for every token. A token can override this choice under Access
+        Control → Tool Loading.
+      </div>
+    </div>
+    <div class="setting-item-control">
+      <input
+        type="checkbox"
+        bind:checked={searchResultsView}
+        aria-label="Offer the MCP Apps search-results view"
       />
       <button type="button" on:click={handleSave} disabled={busy}>
         {busy ? "Saving…" : "Save"}
