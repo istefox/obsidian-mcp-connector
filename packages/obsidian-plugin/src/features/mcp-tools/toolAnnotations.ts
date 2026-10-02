@@ -77,6 +77,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   search_vault_simple: READ_ONLY,
   search_vault_smart: READ_ONLY,
   search_and_replace: DESTRUCTIVE,
+  rename_tag: DESTRUCTIVE,
 
   // Network
   fetch: { readOnlyHint: true, openWorldHint: true },

@@ -46,7 +46,7 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `ambiguous_section` | The heading has no H1 parent while the file has an H1 elsewhere, so its section end is undefined. Pass `allowRootHeadings: true`. | `targetType`, `target` |
 | `heading_collision` | `rename_heading`'s new text already exists at the same level. | |
 | `source_write_failed` | `rename_heading` found the source file changed between plan and apply, or its write threw; nothing else was touched. | `path` |
-| `partial_failure` | `rename_heading` updated the source but some backlinker writes failed; both lists are returned. | `updatedFiles`, `failedFiles`, `linkRewriteCount` |
+| `partial_failure` | `rename_heading` updated the source but some backlinker writes failed, or `rename_tag` could not write some files; both lists are returned. | `updatedFiles`, `failedFiles`, `linkRewriteCount` / `details`, `failedFiles` |
 | `no_headings`, `no_frontmatter` | `get_vault_file_partial` found nothing of that kind in the file. | `path` |
 | `frontmatter_unparsable` | A frontmatter block exists but Obsidian's cache exposed no fields (YAML error). | `path` |
 | `property_not_found` | The frontmatter key is absent. | `path`, `key` |
@@ -67,7 +67,7 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `invalid_arguments`, `too_many_paths`, `missing_argument` | Tool-specific argument refusals (`get_vault_files`, canvas tools). | per tool |
 | `invalid_query` | `search_vault`'s JsonLogic query is not valid JSON. | |
 | `invalid_regex`, `unsafe_regex` | `search_and_replace`'s pattern does not compile, or has nested quantifiers (ReDoS guard). | `pattern`, `flags` |
-| `invalid_tag` | The tag is empty after stripping `#`. | `tag` |
+| `invalid_tag` | The tag is empty after stripping `#`, or (`rename_tag`) uses characters outside letters, digits, `_`, `-`, `/`, or is all digits. | `tag` |
 | `invalid_base64` | `create_vault_binary_file`'s content does not decode. | `path` |
 | `invalid_date_for_period` | The periodic-note date does not match the period's format or is not a real date. | `period`, `date` |
 | `invalid_node_type`, `node_not_found`, `canvas_not_found`, `malformed_canvas`, `embed_target_not_found` | Canvas tool refusals. | `path`, node ids |

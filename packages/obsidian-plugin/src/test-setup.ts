@@ -889,7 +889,7 @@ export function setMockMetadata(
     headings?: Array<{ heading: string; level: number; line: number }>;
     blocks?: Record<string, { startLine: number; endLine: number }>;
     frontmatter?: Record<string, unknown>;
-    tags?: Array<{ tag: string; line?: number }>;
+    tags?: Array<{ tag: string; line?: number; col?: number }>;
     links?: Array<{
       link: string;
       original?: string;
@@ -950,7 +950,13 @@ export function setMockMetadata(
     frontmatter: metadata.frontmatter ?? {},
     tags: (metadata.tags ?? []).map((t) => ({
       tag: t.tag,
-      position: { start: { line: t.line ?? 0 } },
+      position:
+        t.col === undefined
+          ? { start: { line: t.line ?? 0 } }
+          : {
+              start: { line: t.line ?? 0, col: t.col },
+              end: { line: t.line ?? 0, col: t.col + t.tag.length },
+            },
     })),
     links: (metadata.links ?? []).map((l) => ({
       link: l.link,

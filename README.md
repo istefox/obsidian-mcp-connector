@@ -56,7 +56,7 @@ arrive as a list you can read instead of a wall of JSON.
 
 | Change | Why it matters |
 |---|---|
-| **Per-client bearer tokens** (1.0.0) | The vault holds up to 10 tokens, one per client. Claude Code can keep all 57 tools while claude.ai sees only the 13-tool Core set, from one vault and one server. |
+| **Per-client bearer tokens** (1.0.0) | The vault holds up to 10 tokens, one per client. Claude Code can keep all 58 tools while claude.ai sees only the 13-tool Core set, from one vault and one server. |
 | **Per-token tool policy** (1.0.0) | Profile, promoted tools and an optional hard allowlist all live on the token, not on the vault. |
 | **Rotation no longer restarts the transport** (1.0.0) | Adding, renaming, regenerating or revoking a token takes effect on the next request. The port cannot drift and in-flight requests finish. |
 | **`.mcpb` bundles are per token** (1.0.0) | Each bundle carries a token id and resolves that token's secret from the vault at connect time. Revoking the token fails the bundle closed instead of silently granting another client's access. |
@@ -89,7 +89,7 @@ Ask the agent to call `get_server_info` to confirm the round trip. Requirements:
 | **Structure** | `get_vault_overview`, `get_note_outline`, `list_tags`, `get_files_by_tag`, `get_recent_files`, `get_outgoing_links`, `get_backlinks`, `list_bookmarks` | `get_vault_overview` replaces the 3 to 5 calls a session spends getting oriented. |
 | **Tasks** | `list_tasks`, `set_task_status` | `list_tasks` reads `- [ ]` / `- [x]` / `- [/]` items from Obsidian's metadata cache, vault-wide, per folder or per file, with the 0-indexed line. `set_task_status` flips one box in place, keeps indentation and text byte for byte, accepts a custom marker (`/`, `-`, `>`) and an `expectedText` precondition. |
 | **Frontmatter** | `get_note_property`, `set_note_property`, `delete_note_property`, `get_note_properties`, `update_note_properties`, `list_property_values` | Atomic, through `processFrontMatter`. `get_note_properties` returns the whole block as one object; `update_note_properties` sets and removes several keys in one write. |
-| **Maintenance** | `find_broken_links`, `find_orphaned_notes`, `search_and_replace`, `rename_heading` | `search_and_replace` defaults to `dry_run`. `rename_heading` rewrites every reference pointing at it. |
+| **Maintenance** | `find_broken_links`, `find_orphaned_notes`, `search_and_replace`, `rename_heading`, `rename_tag` | `search_and_replace` and `rename_tag` default to `dry_run`. `rename_heading` rewrites every reference pointing at it. `rename_tag` renames inline tags (located through the metadata cache, so code blocks and URLs are left alone) and the `tags`/`tag` properties, nested tags included. |
 | **Periodic notes** | `get_or_create_daily_note`, `get_or_create_periodic_note`, `append_to_periodic_note` | Daily through yearly. Works with core Daily Notes and with Periodic Notes. `get_or_create_daily_note` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
 | **Canvas** | `get_canvas`, `add_canvas_node`, `connect_canvas_nodes` | Writes preserve every existing field, so canvases round-trip with clean diffs. |
 | **Execution** | `execute_template`, `list_obsidian_commands`, `execute_obsidian_command` | Templater templates as tool calls. Commands are opt-in, see [Command execution](#command-execution). |
@@ -162,7 +162,7 @@ Set per token in **Settings → MCP Connector → Tool Loading**.
 
 | Profile | Advertised | Use when |
 |---|---|---|
-| **All** (default) | 54 vault tools + 3 meta-tools | You want maximum capability and do not care about the schema cost. |
+| **All** (default) | 55 vault tools + 3 meta-tools | You want maximum capability and do not care about the schema cost. |
 | **Core** | 13 core tools + 3 meta-tools + whatever you promoted | You want the smallest, most predictable surface. |
 | **Adaptive** | The same, and it promotes tools you use often on its own | You want the surface to converge on how you actually work. |
 

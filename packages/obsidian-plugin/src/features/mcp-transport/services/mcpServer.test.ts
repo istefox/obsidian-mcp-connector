@@ -260,6 +260,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "patch_active_file",
         "patch_vault_file",
         "rename_heading",
+        "rename_tag",
         "rename_vault_file",
         "search_and_replace",
         "search_vault",
@@ -272,7 +273,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "update_active_file",
         "update_note_properties",
       ]);
-      expect(names).toHaveLength(57);
+      expect(names).toHaveLength(58);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.

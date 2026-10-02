@@ -47,6 +47,7 @@ import {
   updateNotePropertiesHandler,
   updateNotePropertiesSchema,
 } from "./tools/updateNoteProperties";
+import { renameTagHandler, renameTagSchema } from "./tools/renameTag";
 import {
   setTaskStatusHandler,
   setTaskStatusSchema,
@@ -283,6 +284,9 @@ export async function registerTools(
   );
   registry.register(updateNotePropertiesSchema, async ({ arguments: args }) =>
     updateNotePropertiesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(renameTagSchema, async ({ arguments: args }) =>
+    renameTagHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops
