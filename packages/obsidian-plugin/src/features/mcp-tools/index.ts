@@ -40,6 +40,14 @@ import {
 } from "./tools/getWorkspaceState";
 import { listTasksHandler, listTasksSchema } from "./tools/listTasks";
 import {
+  getNotePropertiesHandler,
+  getNotePropertiesSchema,
+} from "./tools/getNoteProperties";
+import {
+  updateNotePropertiesHandler,
+  updateNotePropertiesSchema,
+} from "./tools/updateNoteProperties";
+import {
   setTaskStatusHandler,
   setTaskStatusSchema,
 } from "./tools/setTaskStatus";
@@ -267,6 +275,14 @@ export async function registerTools(
   );
   registry.register(setTaskStatusSchema, async ({ arguments: args }) =>
     setTaskStatusHandler({ arguments: args, app: ctx.app }),
+  );
+
+  // Frontmatter, whole-block variants
+  registry.register(getNotePropertiesSchema, async ({ arguments: args }) =>
+    getNotePropertiesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(updateNotePropertiesSchema, async ({ arguments: args }) =>
+    updateNotePropertiesHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops

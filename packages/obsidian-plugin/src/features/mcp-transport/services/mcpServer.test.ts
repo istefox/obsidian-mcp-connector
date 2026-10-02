@@ -239,6 +239,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "get_canvas",
         "get_files_by_tag",
         "get_note_outline",
+        "get_note_properties",
         "get_note_property",
         "get_or_create_daily_note",
         "get_or_create_periodic_note",
@@ -269,8 +270,9 @@ describe("end-to-end: HTTP → McpServer", () => {
         "show_file_in_obsidian",
         "tool_catalog",
         "update_active_file",
+        "update_note_properties",
       ]);
-      expect(names).toHaveLength(55);
+      expect(names).toHaveLength(57);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.

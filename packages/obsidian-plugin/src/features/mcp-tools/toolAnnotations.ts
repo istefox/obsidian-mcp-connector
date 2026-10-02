@@ -103,6 +103,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_note_property: READ_ONLY,
   // Replaces the existing value for the key.
   set_note_property: { ...DESTRUCTIVE, idempotentHint: true },
+  get_note_properties: READ_ONLY,
+  update_note_properties: { ...DESTRUCTIVE, idempotentHint: true },
   delete_note_property: DESTRUCTIVE,
 
   // Workspace
