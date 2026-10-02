@@ -113,32 +113,38 @@ function declaresUiExtension(
  * deleting the repetitions is a net reduction — which is why the two
  * halves of D5 ship together: this string alone is *added* prose.
  *
- * Reaches the LEGACY era only. The SDK emits it from `_oninitialize`
- * (`instructions` spread into the initialize result), and a 2026-07-28
- * client never calls `initialize` — it enters at `server/discover`
- * (ADR-0016). A modern client therefore reads these conventions nowhere,
- * so nothing a caller strictly needs to invoke a tool correctly may live
- * only here: this is a de-duplication of guidance, not the sole home of
- * a required argument's meaning.
+ * Reaches BOTH eras. The SDK spreads it into the `initialize` result
+ * (`_oninitialize`) and, since server 2.3.0, into the `server/discover`
+ * result too (`_ondiscover`, mcp-DIH4cS6P.mjs:1363, checked 2026-10-02),
+ * which is where a 2026-07-28 client enters (ADR-0016). ADR-0023 D10 was
+ * written when only the first was true; `modernEra.test.ts` now pins the
+ * second. Still, nothing a caller strictly needs to invoke a tool
+ * correctly may live only here: this is a de-duplication of guidance,
+ * not the sole home of a required argument's meaning.
+ *
+ * Length budget: Claude Code truncates server instructions at 2,048
+ * characters and, with tool search on (its default), loads ONLY tool
+ * names plus this string at session start, so the first lines must say
+ * what the tools are for and when to search for them. Codex's guidance is
+ * to keep the first 512 characters self-contained. The whole string is
+ * held under 512 by `mcpServer.test.ts`.
  *
  * The error-shape line can say "always": every failure, from a tool
  * handler or from the dispatcher itself, goes through `errorJson` in
  * `responseBuilders.ts`, so the text is a JSON body with an `errorCode`.
  * The code vocabulary is `docs/error-codes.md`.
  */
-const SERVER_INSTRUCTIONS = [
-  "This server exposes an Obsidian vault.",
-  "",
-  "Conventions shared by every tool, so they are not repeated per tool:",
-  "",
-  "- Paths are vault-relative, never absolute, and include the file extension",
-  "  (e.g. 'Projects/Notes/idea.md'). There is no leading slash and no '~'.",
-  "- Line numbers are 0-indexed, and a startLine/endLine range is inclusive",
-  "  on both ends.",
-  "- A failure comes back as an ordinary result with isError: true. Its",
-  "  text is a JSON body { error, errorCode, ... }: match on errorCode (a",
-  "  stable snake_case word such as file_not_found or stale_precondition)",
-  "  and show error, the human-readable message, when you need to.",
+export const SERVER_INSTRUCTIONS = [
+  "Obsidian vault tools: read, search, create and edit notes, frontmatter,",
+  "tags, links, headings, blocks, canvases, periodic notes, Dataview,",
+  "Templater. Search it before answering about the user's notes.",
+  "Conventions:",
+  "- Paths are vault-relative with extension ('Projects/idea.md'), no '/'",
+  "  or '~' prefix.",
+  "- Lines are 0-indexed; startLine/endLine ranges are inclusive.",
+  "- Failures are results with isError: true and JSON text",
+  "  { error, errorCode, ... }; branch on errorCode (snake_case, e.g.",
+  "  file_not_found).",
 ].join("\n");
 
 export type McpServiceConfig = {

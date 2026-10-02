@@ -378,7 +378,7 @@ claude mcp add --transport http --scope user obsidian-mcp-connector http://127.0
 }
 ```
 
-Claude Code defers MCP tools behind its own tool search by default. A per-server `"alwaysLoad": true` in the same entry loads every tool up front instead.
+Claude Code defers MCP tools behind its own tool search by default. The plugin marks `tool_catalog`, `activate_tool` and `activate_tools` as always loaded (`_meta["anthropic/alwaysLoad"]`), so the model can still find out what exists, and raises Claude Code's inline result threshold for `get_vault_file` and the two search tools (`_meta["anthropic/maxResultSizeChars"]`), so a large note is not written to a file and replaced by its path. A per-server `"alwaysLoad": true` in the same entry loads every tool up front instead.
 
 ### Cursor, Continue, Windsurf, VS Code
 

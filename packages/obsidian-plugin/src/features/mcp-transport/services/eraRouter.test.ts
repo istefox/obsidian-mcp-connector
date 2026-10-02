@@ -109,9 +109,9 @@ describe("eraRouter (Task 2) — the legacy path stays byte-identical (R-01)", (
       // `_oninitialize` emits it as a new top-level field of `result`
       // (server/index.js's `...this._instructions && { instructions:
       // this._instructions }` spread — see CLAUDE.md's mcpServer.ts note).
-      // `instructions` reaches ONLY the legacy era (ADR-0016: modern enters
-      // at `server/discover`, which never calls `_oninitialize`), so this
-      // is the one and only wire site to assert its presence and content.
+      // `instructions` reaches both eras since server 2.3.0 (`_ondiscover`
+      // spreads it too; `modernEra.test.ts` pins that half), so this is
+      // the legacy wire site for its presence and content.
       //
       // The full-body `toEqual` above this comment historically asserted
       // every key of `result` in one shot; `instructions`' arbitrary prose

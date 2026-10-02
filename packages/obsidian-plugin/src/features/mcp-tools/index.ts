@@ -2,6 +2,7 @@ import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import type { ToolRegistry } from "$/features/mcp-transport/services/toolRegistry";
 import { TOOL_ANNOTATIONS } from "./toolAnnotations";
+import { TOOL_CLIENT_META, TOOL_TITLES } from "./toolClientMeta";
 
 export { default as FeatureSettings } from "./components/McpToolsSettingsSection.svelte";
 
@@ -448,6 +449,12 @@ export async function registerTools(
   // Covers the meta-tools registered later in mcpServer.ts too:
   // annotations are looked up by name at list() time.
   registry.setAnnotations(TOOL_ANNOTATIONS);
+  // Same by-name contract: `title` for the MCP Apps frame and the
+  // `anthropic/*` hints Claude Code reads (alwaysLoad on the meta-tools,
+  // maxResultSizeChars on the large-output tools). setMeta merges, so the
+  // MCP Apps pointer wired later in composeToolRegistry sits beside them.
+  registry.setTitles(TOOL_TITLES);
+  registry.setMeta(TOOL_CLIENT_META);
 
   // Deliberately NO registry.setOutputSchemas() call here. The MCP SDK
   // client rejects every non-error response of a tool that advertises an

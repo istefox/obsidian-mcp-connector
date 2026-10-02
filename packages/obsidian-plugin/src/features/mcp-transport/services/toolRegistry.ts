@@ -67,6 +67,12 @@ interface HandlerContext {
 /** One `tools/list` entry, as served on the wire. */
 type ToolListEntry = {
   name: string;
+  /**
+   * Human-readable display name (MCP `Tool.title`, spec 2025-06-18). Set
+   * on the tools whose MCP Apps view a host labels: ext-apps hosts fall
+   * back to `name` when it is absent, so a frame reads `search_vault_smart`.
+   */
+  title?: string;
   description: string | undefined;
   inputSchema: Record<string, unknown>;
   annotations?: ToolAnnotations;
@@ -476,6 +482,9 @@ export class ToolRegistryClass<
   /** MCP tool annotations, keyed by public tool name (set via setAnnotations). */
   private annotationsByName = new Map<string, ToolAnnotations>();
 
+  /** MCP tool `title`, keyed by public tool name (set via setTitles). */
+  private titlesByName = new Map<string, string>();
+
   /** MCP tool outputSchema, keyed by public tool name (set via setOutputSchemas). */
   private outputSchemasByName = new Map<string, Record<string, unknown>>();
 
@@ -567,6 +576,19 @@ export class ToolRegistryClass<
   };
 
   /**
+   * Attach a display `title` to a tools/list entry by public tool name.
+   * Same lazy-lookup and cache-invalidation contract as setAnnotations;
+   * an entry that never received one has no `title` key at all.
+   */
+  setTitles = (byName: Record<string, string>) => {
+    for (const [name, title] of Object.entries(byName)) {
+      this.titlesByName.set(name, title);
+    }
+    this.invalidateEntries();
+    return this;
+  };
+
+  /**
    * Attach MCP tool output schemas (the `outputSchema` field on a
    * tools/list entry, describing the `structuredContent` shape) by
    * public tool name. Same lazy-lookup / cache-invalidation contract as
@@ -597,10 +619,15 @@ export class ToolRegistryClass<
    * resource, and a host without the extension ignores the field and
    * renders the tool's ordinary text result, which the extension spec
    * requires every UI-enabled tool to keep returning.
+   *
+   * Keys MERGE per tool across calls: the MCP Apps pointer and the
+   * `anthropic/*` hints (toolClientMeta.ts) are declared by different
+   * features in whichever order they compose, and neither may erase the
+   * other. A later call wins on a key both set.
    */
   setMeta = (byName: Record<string, Record<string, unknown>>) => {
     for (const [name, meta] of Object.entries(byName)) {
-      this.metaByName.set(name, meta);
+      this.metaByName.set(name, { ...this.metaByName.get(name), ...meta });
     }
     this.invalidateEntries();
     return this;
@@ -758,10 +785,12 @@ export class ToolRegistryClass<
         : undefined;
       const outputSchema = this.outputSchemasByName.get(name);
       const meta = this.metaByName.get(name);
+      const title = this.titlesByName.get(name);
       return {
         schema,
         entry: {
           name,
+          ...(title ? { title } : {}),
           description: schema.description,
           inputSchema: normalizeInputSchema(
             schema.get("arguments").toJsonSchema(),

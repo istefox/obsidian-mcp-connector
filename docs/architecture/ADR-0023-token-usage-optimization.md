@@ -318,6 +318,13 @@ through `initialize`** — the modern era enters at `server/discover`, and `_ond
 returns no `serverInfo`. So `instructions` reaches **legacy-era clients only**, and it is *added*
 prose: it grows the legacy handshake and shrinks nothing by itself.
 
+> **Correction (2026-10-02).** True of the SDK this ADR was written against. `@modelcontextprotocol/server`
+> 2.3.0's `_ondiscover` spreads `instructions` into the `server/discover` result as well
+> (`dist/mcp-DIH4cS6P.mjs:1363`), so the string now reaches both eras; `modernEra.test.ts` pins it.
+> The D5 deduplication therefore holds for modern clients too, and the string was reworked to lead with
+> what the tools are for, since Claude Code's tool search loads only tool names and this text at session
+> start (audit 2026-10-02 § 3.1).
+
 It pays for itself only if D5 then removes the now-centralized conventions from the individual tool
 descriptions, where they are currently repeated ~49 times. **D10 without D5 is a net token
 increase.** The two are sequenced together for that reason, and the measurement in R-12 must report

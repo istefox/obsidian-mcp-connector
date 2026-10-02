@@ -8,6 +8,7 @@ import {
   createMcpService,
   destroyMcpService,
   type McpService,
+  SERVER_INSTRUCTIONS,
 } from "./mcpServer";
 import { resolveServerName } from "./setup";
 import { staticTokenProvider } from "./tokenStore";
@@ -285,8 +286,56 @@ describe("end-to-end: HTTP → McpServer", () => {
         )
         .map((t) => t.name);
       expect(missingAnnotations).toEqual([]);
+
+      // Client-facing metadata (toolClientMeta.ts): the three meta-tools
+      // stay loaded under Claude Code's tool search, the large-output
+      // tools raise its inline threshold, and the two MCP Apps tools carry
+      // a title. Nothing else carries an `anthropic/*` key or a title.
+      type Listed = {
+        name: string;
+        title?: string;
+        _meta?: Record<string, unknown>;
+      };
+      const listed = tools as Listed[];
+      const withKey = (key: string) =>
+        listed
+          .filter((t) => t._meta !== undefined && key in t._meta)
+          .map((t) => [t.name, t._meta![key]] as const)
+          .sort(([a], [b]) => a.localeCompare(b));
+      expect(withKey("anthropic/alwaysLoad")).toEqual([
+        ["activate_tool", true],
+        ["activate_tools", true],
+        ["tool_catalog", true],
+      ]);
+      expect(withKey("anthropic/maxResultSizeChars")).toEqual([
+        ["get_vault_file", 500_000],
+        ["search_vault_simple", 200_000],
+        ["search_vault_smart", 200_000],
+      ]);
+      expect(
+        listed
+          .filter((t) => "title" in t)
+          .map((t) => [t.name, t.title])
+          .sort(),
+      ).toEqual([
+        ["search_vault_simple", "Search vault"],
+        ["search_vault_smart", "Semantic search"],
+      ]);
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
+    }
+  });
+
+  test("SERVER_INSTRUCTIONS stays under Codex's 512-character self-contained budget and leads with what the tools are for", () => {
+    // Claude Code truncates at 2,048 and, with tool search on, loads only
+    // tool names plus this string at session start; Codex's guidance is
+    // that the first 512 characters stand alone. Holding the whole string
+    // under 512 satisfies both, and the opening line is what tool search
+    // reads to decide when to look for these tools.
+    expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(512);
+    expect(SERVER_INSTRUCTIONS.startsWith("Obsidian vault tools:")).toBe(true);
+    for (const convention of ["vault-relative", "0-indexed", "errorCode"]) {
+      expect(SERVER_INSTRUCTIONS).toContain(convention);
     }
   });
 

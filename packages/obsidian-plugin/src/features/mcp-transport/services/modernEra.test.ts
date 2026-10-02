@@ -4,6 +4,7 @@ import {
   createMcpService,
   destroyMcpService,
   type McpService,
+  SERVER_INSTRUCTIONS,
 } from "./mcpServer";
 import { staticTokenProvider } from "./tokenStore";
 import type { RunningServer } from "./httpServer";
@@ -239,6 +240,10 @@ describe("modern path — server/discover (R-02, R-03)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.result?.supportedVersions).toEqual(["2026-07-28"]);
+    // Server 2.3.0's `_ondiscover` spreads `instructions` into the discover
+    // result (mcp-DIH4cS6P.mjs:1363), so the ADR-0023 D5 conventions reach
+    // a modern client too; ADR-0023 D10's "legacy only" caveat predates it.
+    expect(body.result?.instructions).toBe(SERVER_INSTRUCTIONS);
     // `prompts.listChanged` is `true` here because this era CAN deliver
     // the notification and does: the prompts feature compares the
     // discovered list after a vault event and calls

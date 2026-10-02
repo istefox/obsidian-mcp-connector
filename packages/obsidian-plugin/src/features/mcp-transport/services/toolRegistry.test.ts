@@ -1104,6 +1104,37 @@ describe("ToolRegistry _meta (R-04)", () => {
     expect(beta).toBeDefined();
     expect(Object.keys(beta as object)).not.toContain("_meta");
   });
+
+  test("setMeta merges keys per tool across calls, later call winning on a shared key", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    tools.setMeta({ alpha: { "anthropic/alwaysLoad": true, shared: 1 } });
+    tools.setMeta({
+      alpha: { ui: { resourceUri: "ui://test/widget" }, shared: 2 },
+    });
+
+    expect(tools.list().tools.find((t) => t.name === "alpha")?._meta).toEqual({
+      "anthropic/alwaysLoad": true,
+      ui: { resourceUri: "ui://test/widget" },
+      shared: 2,
+    });
+  });
+});
+
+describe("ToolRegistry title", () => {
+  test("setTitles puts `title` on the named entries and nowhere else, and invalidates the memo", () => {
+    const { tools } = buildRegistryWithTwoTools();
+
+    const first = tools.list();
+    tools.setTitles({ alpha: "Alpha search" });
+    const second = tools.list();
+    expect(second).not.toBe(first);
+
+    const alpha = second.tools.find((t) => t.name === "alpha");
+    const beta = second.tools.find((t) => t.name === "beta");
+    expect(alpha?.title).toBe("Alpha search");
+    expect(beta && "title" in beta).toBe(false);
+  });
 });
 
 describe("ToolRegistry name-keyed lookups", () => {

@@ -212,8 +212,10 @@ describe("legacy path — resources/list and resources/read serve the ui:// appl
  * composition root — `composeToolRegistry` → `wireSearchResultsApp` →
  * `buildMcpServer` — over BOTH eras, because D1/D2's whole point is that
  * one declaration reaches both. Iterates the entire list rather than
- * naming a third tool, per the plan's own instruction, so a stray `_meta`
- * on any other entry fails this test.
+ * naming a third tool, per the plan's own instruction, so a stray UI
+ * pointer on any other entry fails this test. (Other `_meta` keys, the
+ * `anthropic/*` hints of toolClientMeta.ts, sit on other tools by design
+ * and are not this test's subject.)
  */
 describe("composed tools/list — the UI pointer names exactly two tools, both eras (R-04)", () => {
   const modernHeaders = (method: string) => ({
@@ -225,7 +227,7 @@ describe("composed tools/list — the UI pointer names exactly two tools, both e
     tools: Array<{ name: string; _meta?: Record<string, unknown> }>,
   ): void {
     const withMeta = tools.filter(
-      (t) => t._meta !== undefined && Object.keys(t._meta).length > 0,
+      (t) => t._meta?.ui !== undefined || "ui/resourceUri" in (t._meta ?? {}),
     );
     expect(withMeta.map((t) => t.name).sort()).toEqual([
       "search_vault_simple",
