@@ -545,20 +545,26 @@ function planEntryEdit(
 // Emitted by the generated snippet, so any existing value is overwritten.
 const SNIPPET_KEYS = new Set(["url", "http_headers", "enabled", "required"]);
 // Belong to the transport being replaced. Codex's RawMcpServerConfig
-// (codex-rs/config/src/mcp_types.rs, TryFrom) rejects several of these next
-// to a `url`, so they cannot be carried over into the new HTTP entry.
+// (codex-rs/config/src/mcp_types.rs, TryFrom) rejects the stdio ones next
+// to a `url`; `command` would flip the entry back to stdio; the three
+// header sources would compete with the static `http_headers` the snippet
+// writes. None can be carried over into the new HTTP entry.
 const DISCARDED_KEYS = new Set([
   "command",
   "args",
   "env",
+  "env_vars",
   "cwd",
   "env_http_headers",
   "bearer_token_env_var",
+  "http_headers_helper",
 ]);
 // Policy/identity the user configured: carried through the replace verbatim.
-// Verified live against openai/codex main (commit 1715e55..., 2026-09-13,
-// codex-rs/config/src/mcp_types.rs, RawMcpServerConfig) \u2014 re-check that
-// source if Codex's accepted keys are suspected to have drifted.
+// Verified live against openai/codex main (commit af0d68a, 2026-09-29,
+// codex-rs/config/src/mcp_types.rs, RawMcpServerConfig; checked
+// 2026-10-02) \u2014 re-check that source if Codex's accepted keys are
+// suspected to have drifted. `oauth` and `tools` are sub-tables, handled
+// by the table walker, not here.
 // `bearer_token` is deliberately excluded from every set: Codex itself
 // always rejects it, so leaving it out correctly forces "copy the snippet"
 // for a config that has it, which is the safe outcome.
@@ -567,7 +573,9 @@ const PRESERVED_KEYS = new Set([
   "auth",
   "startup_timeout_sec",
   "startup_timeout_ms",
+  "startup_readiness",
   "tool_timeout_sec",
+  "tool_input_schema_max_bytes",
   "supports_parallel_tool_calls",
   "omit_tools_from",
   "default_tools_approval_mode",

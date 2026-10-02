@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  claudeCodeAddCommand,
   claudeCodeConfig,
   claudeDesktopConfig,
+  clineConfig,
   streamableHttpConfig,
   wrapInMcpServers,
 } from "./generators";
@@ -40,6 +42,42 @@ describe("claudeCodeConfig", () => {
   test("emits the native HTTP shape", () => {
     expect(claudeCodeConfig({ url: URL, token: TOKEN })).toEqual({
       type: "http",
+      url: URL,
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+  });
+});
+
+describe("claudeCodeAddCommand", () => {
+  test("emits the documented one-liner at user scope by default", () => {
+    expect(claudeCodeAddCommand({ url: URL, token: TOKEN })).toBe(
+      `claude mcp add --transport http --scope user ${FORK_PLUGIN_ID} ${URL} --header "Authorization: Bearer ${TOKEN}"`,
+    );
+  });
+
+  test("honours the scope and a custom entry id", () => {
+    expect(
+      claudeCodeAddCommand(
+        { url: URL, token: TOKEN, pluginId: "vault-a" },
+        "project",
+      ),
+    ).toBe(
+      `claude mcp add --transport http --scope project vault-a ${URL} --header "Authorization: Bearer ${TOKEN}"`,
+    );
+  });
+
+  test("escapes the characters a double-quoted shell string still interprets", () => {
+    const out = claudeCodeAddCommand({ url: URL, token: 'a"b$c`d\\e' });
+    expect(
+      out.endsWith('--header "Authorization: Bearer a\\"b\\$c\\`d\\\\e"'),
+    ).toBe(true);
+  });
+});
+
+describe("clineConfig", () => {
+  test("emits Cline's camelCase transport type", () => {
+    expect(clineConfig({ url: URL, token: TOKEN })).toEqual({
+      type: "streamableHttp",
       url: URL,
       headers: { Authorization: `Bearer ${TOKEN}` },
     });

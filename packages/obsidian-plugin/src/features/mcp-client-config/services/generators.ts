@@ -2,25 +2,28 @@ import { type } from "arktype";
 import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 /**
- * Pure JSON generators for the three MCP client families the plugin
- * targets. Each function returns the inner
- * `mcpServers` entry only — the UI calls `wrapInMcpServers()` if it
- * wants the full ready-to-paste block.
+ * Pure generators for the MCP client families the plugin targets. The
+ * JSON ones return the inner `mcpServers` entry only — the UI calls
+ * `wrapInMcpServers()` if it wants the full ready-to-paste block.
  *
- * Why three shapes:
+ * Why these shapes:
  *
- *  1. **Claude Desktop** — does not support direct HTTP MCP transport
- *     yet (anthropics/claude-code#30327). Bridge through the official
- *     `mcp-remote` stdio shim invoked via `npx`.
+ *  1. **Claude Desktop** — the legacy manual path bridges through the
+ *     `mcp-remote` stdio shim invoked via `npx`. The supported path is
+ *     the `.mcpb` export (`mcpbGenerator.ts`), which does not use this.
  *  2. **Claude Code CLI** — supports HTTP MCP transports natively as
- *     `{ type: "http", url, headers }`.
- *  3. **Streamable-HTTP clients** (Cursor, Cline, Continue, Windsurf,
- *     VS Code) — use `{ type: "streamable-http", url, headers }`. A
- *     few clients spell the field `streamableHttp` instead; the
- *     Settings UI surfaces that note next to the copy button.
+ *     `{ type: "http", url, headers }`. Its docs route configuration
+ *     through `claude mcp add` (the CLI owns `~/.claude.json`), so the
+ *     Settings UI copies that command; the JSON entry is what goes into
+ *     a project's `.mcp.json`.
+ *  3. **Streamable-HTTP clients** (Cursor, Continue, Windsurf, VS Code)
+ *     — use `{ type: "streamable-http", url, headers }`.
+ *  4. **Cline** — same fields, but its config reader wants
+ *     `type: "streamableHttp"` and treats a missing type as legacy SSE
+ *     (docs.cline.bot/mcp/configuring-mcp-servers, checked 2026-10-02).
  *
- * No side effects, no I/O. The Settings UI calls these to populate
- * three "Copy" buttons; the test harness compares structural output.
+ * No side effects, no I/O. The Settings UI calls these to populate the
+ * "Copy" buttons; the test harness compares structural output.
  */
 
 export const clientConfigInputSchema = type({
@@ -102,6 +105,38 @@ export function claudeCodeConfig(input: ClientConfigInput): ClaudeCodeEntry {
   };
 }
 
+/** Where `claude mcp add` stores the entry (code.claude.com/docs/en/mcp). */
+export type ClaudeCodeScope = "user" | "project" | "local";
+
+/**
+ * The `claude mcp add` one-liner for this token. This is the documented
+ * way to register a server: `user` and `local` scope live in
+ * `~/.claude.json`, which the CLI owns, and `project` scope writes
+ * `.mcp.json` at the repository root. Default `user`, so the vault is
+ * reachable from every project.
+ *
+ * Double-quoted for both POSIX shells and PowerShell; the characters
+ * that stay special inside double quotes are escaped.
+ */
+export function claudeCodeAddCommand(
+  input: ClientConfigInput,
+  scope: ClaudeCodeScope = "user",
+): string {
+  const id = input.pluginId ?? FORK_PLUGIN_ID;
+  return [
+    "claude mcp add --transport http --scope",
+    scope,
+    id,
+    input.url,
+    "--header",
+    shellDoubleQuote(`Authorization: Bearer ${input.token}`),
+  ].join(" ");
+}
+
+function shellDoubleQuote(value: string): string {
+  return `"${value.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
+}
+
 // ---------------------------------------------------------------------------
 // Streamable-HTTP clients (Cursor / Cline / Continue / Windsurf / VS Code)
 // ---------------------------------------------------------------------------
@@ -117,6 +152,29 @@ export function streamableHttpConfig(
 ): StreamableHttpEntry {
   return {
     type: "streamable-http",
+    url: input.url,
+    headers: { Authorization: `Bearer ${input.token}` },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cline — same transport, camelCase type
+// ---------------------------------------------------------------------------
+
+export type ClineEntry = {
+  type: "streamableHttp";
+  url: string;
+  headers: { Authorization: string };
+};
+
+/**
+ * Cline's `cline_mcp_settings.json` entry. Cline reads `type:
+ * "streamableHttp"`; given `"streamable-http"` or no type at all it falls
+ * back to legacy SSE, which this server answers 405 on GET.
+ */
+export function clineConfig(input: ClientConfigInput): ClineEntry {
+  return {
+    type: "streamableHttp",
     url: input.url,
     headers: { Authorization: `Bearer ${input.token}` },
   };

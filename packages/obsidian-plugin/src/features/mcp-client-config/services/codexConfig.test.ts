@@ -124,10 +124,14 @@ describe("explicit Codex config installer", () => {
       'cwd = "/tmp"',
       'env_http_headers = { A = "B" }',
       'bearer_token_env_var = "TOK"',
+      'http_headers_helper = "get-headers"',
+      'env_vars = [{ name = "X" }]',
       'environment_id = "env-1"',
       "startup_timeout_sec = 5",
       "startup_timeout_ms = 900",
+      'startup_readiness = "cached_catalog"',
       "tool_timeout_sec = 30",
+      "tool_input_schema_max_bytes = 8000",
       "supports_parallel_tool_calls = true",
       'default_tools_approval_mode = "on_request"',
       'enabled_tools = ["read_only"]',
@@ -148,6 +152,8 @@ describe("explicit Codex config installer", () => {
     expect(written).not.toContain("cwd");
     expect(written).not.toContain("bearer_token_env_var");
     expect(written).not.toContain("env_http_headers");
+    expect(written).not.toContain("http_headers_helper");
+    expect(written).not.toContain("env_vars");
     const parsed = Bun.TOML.parse(written) as {
       mcp_servers: { obsidian_neonhades2: Record<string, unknown> };
     };
@@ -158,7 +164,9 @@ describe("explicit Codex config installer", () => {
       environment_id: "env-1",
       startup_timeout_sec: 5,
       startup_timeout_ms: 900,
+      startup_readiness: "cached_catalog",
       tool_timeout_sec: 30,
+      tool_input_schema_max_bytes: 8000,
       supports_parallel_tool_calls: true,
       default_tools_approval_mode: "on_request",
       enabled_tools: ["read_only"],

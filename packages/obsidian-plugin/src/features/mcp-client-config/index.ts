@@ -1,12 +1,9 @@
 /**
  * MCP client config feature — generates and writes config snippets
- * for the supported MCP client families (Claude Desktop via
- * `mcp-remote`, Claude Code CLI, Cursor / Cline / Continue / VS Code
- * via streamable-http).
- *
- * Public API surface today is the Claude Desktop writer (T3).
- * Pure-function generators for the three client families (T4) and
- * the Settings UI (T5) ride in subsequent commits.
+ * for the supported MCP client families: Claude Desktop (`.mcpb`
+ * export, legacy `mcp-remote`), Claude Code CLI (`claude mcp add`),
+ * Cursor / Continue / Windsurf / VS Code (streamable-http), Cline
+ * (`streamableHttp`) and Codex (TOML installer + discovery broker).
  */
 
 export {
@@ -20,14 +17,18 @@ export {
 } from "./services/claudeDesktop";
 
 export {
+  claudeCodeAddCommand,
   claudeCodeConfig,
   claudeDesktopConfig,
   clientConfigInputSchema,
+  clineConfig,
   streamableHttpConfig,
   wrapInMcpServers,
   type ClaudeCodeEntry,
+  type ClaudeCodeScope,
   type ClaudeDesktopEntry,
   type ClientConfigInput,
+  type ClineEntry,
   type StreamableHttpEntry,
 } from "./services/generators";
 

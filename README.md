@@ -358,23 +358,35 @@ Full setup: [`docs/windows-post-only-bridge.md`](docs/windows-post-only-bridge.m
 
 ### Claude Code
 
-Native HTTP transport. **Copy config for Claude Code**, then paste into `~/.claude.json` (project) or `~/.claude/settings.json` (global), or use `claude mcp add` with the same fields.
+Native HTTP transport, registered through the CLI. **Claude Code** on the token's row copies this command; run it in a terminal:
+
+```bash
+claude mcp add --transport http --scope user obsidian-mcp-connector http://127.0.0.1:27200/mcp --header "Authorization: Bearer YOUR_TOKEN"
+```
+
+`--scope user` makes the vault available in every project; drop it for the default local scope (this project only). Both are stored in `~/.claude.json`, which the CLI owns, so do not hand-edit it. To share the server with a team without sharing the secret, commit a project-scoped `.mcp.json` at the repository root and let each person export the token:
 
 ```json
 {
   "mcpServers": {
     "obsidian-mcp-connector": {
       "type": "http",
-      "url": "http://127.0.0.1:27200/mcp",
-      "headers": { "Authorization": "Bearer YOUR_TOKEN" }
+      "url": "http://127.0.0.1:${OBSIDIAN_MCP_PORT:-27200}/mcp",
+      "headers": { "Authorization": "Bearer ${OBSIDIAN_MCP_TOKEN}" }
     }
   }
 }
 ```
 
-### Cursor, Cline, Continue, Windsurf, VS Code
+Claude Code defers MCP tools behind its own tool search by default. A per-server `"alwaysLoad": true` in the same entry loads every tool up front instead.
 
-**Copy config for streamable-http clients** produces the generic payload these accept. Check each client's docs for the file location and wrapping keys.
+### Cursor, Continue, Windsurf, VS Code
+
+**Cursor / Continue / VS Code** copies the generic `"type": "streamable-http"` payload these accept. Check each client's docs for the file location and wrapping keys.
+
+### Cline
+
+**Cline** copies the same entry with `"type": "streamableHttp"`, the spelling Cline's config reader expects. Given `streamable-http` or no type at all, Cline falls back to legacy SSE, which this server does not serve.
 
 ### Codex
 
@@ -385,6 +397,8 @@ Port changes and token regeneration do not require a Codex config change or anot
 1. On a token row, tick **Enable Codex connection for this vault**.
 2. Click **Install Codex config…** to preview and approve a one-time edit, or click **Copy Codex config** and paste the snippet yourself.
 3. Keep this vault open, then restart Codex after the initial config change.
+
+Two Codex limits worth knowing. Codex logs `tools/list_changed` but does not refetch the catalog, so a tool promoted by `activate_tools` reaches a Codex session only after it reconnects; give a token used by Codex a non-adaptive profile (`core`, or `full`) unless the first catalog is enough. Codex also has no MCP prompts support, so the vault's `#mcp-tools-prompt` notes are invisible to it.
 
 The installer uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
 Otherwise, it uses `~/.codex/config.toml` only when the `~/.codex` directory exists.

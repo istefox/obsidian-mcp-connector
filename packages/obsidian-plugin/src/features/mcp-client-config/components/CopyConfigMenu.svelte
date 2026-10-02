@@ -2,8 +2,9 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import {
-    claudeCodeConfig,
+    claudeCodeAddCommand,
     claudeDesktopConfig,
+    clineConfig,
     streamableHttpConfig,
     wrapInMcpServers,
   } from "../services/generators";
@@ -38,14 +39,18 @@
 
   $: offline = !url || !token;
 
-  async function copyJson(payload: unknown, label: string): Promise<void> {
+  async function copyText(text: string, label: string): Promise<void> {
     try {
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      new Notice(`${label} config copied to clipboard.`);
+      await navigator.clipboard.writeText(text);
+      new Notice(`${label} copied to clipboard.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Copy failed: ${msg}`);
     }
+  }
+
+  function copyJson(payload: unknown, label: string): Promise<void> {
+    return copyText(JSON.stringify(payload, null, 2), `${label} config`);
   }
 
   function copyClaudeDesktop(): Promise<void> {
@@ -55,10 +60,13 @@
     );
   }
 
+  // Claude Code owns `~/.claude.json`; its docs register servers through
+  // the CLI, so the button copies the command rather than a JSON block
+  // for a file the user is told not to hand-edit.
   function copyClaudeCode(): Promise<void> {
-    return copyJson(
-      wrapInMcpServers(claudeCodeConfig({ url, token })),
-      "Claude Code",
+    return copyText(
+      claudeCodeAddCommand({ url, token }),
+      "Claude Code `claude mcp add` command",
     );
   }
 
@@ -67,6 +75,10 @@
       wrapInMcpServers(streamableHttpConfig({ url, token })),
       "Streamable HTTP",
     );
+  }
+
+  function copyCline(): Promise<void> {
+    return copyJson(wrapInMcpServers(clineConfig({ url, token })), "Cline");
   }
 
   async function handleDownloadMcpb(): Promise<void> {
@@ -100,7 +112,7 @@
     type="button"
     on:click={copyClaudeCode}
     disabled={offline}
-    aria-label="Copy Claude Code config"
+    aria-label="Copy the claude mcp add command for Claude Code"
   >
     Claude Code
   </button>
@@ -108,9 +120,17 @@
     type="button"
     on:click={copyStreamableHttp}
     disabled={offline}
-    aria-label="Copy streamable-http config (Cursor, Cline, Continue, VS Code)"
+    aria-label="Copy streamable-http config (Cursor, Continue, Windsurf, VS Code)"
   >
-    Cursor / Cline / Continue
+    Cursor / Continue / VS Code
+  </button>
+  <button
+    type="button"
+    on:click={copyCline}
+    disabled={offline}
+    aria-label="Copy Cline config (streamableHttp)"
+  >
+    Cline
   </button>
   {#if showMcpb && tokenId}
     <button
