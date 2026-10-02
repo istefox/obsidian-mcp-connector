@@ -5,6 +5,7 @@ import {
 } from "./deleteActiveFile";
 import {
   mockApp,
+  mockPlugin,
   resetMockVault,
   setMockActiveFile,
   setMockFile,
@@ -44,5 +45,48 @@ describe("delete_active_file tool", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/no active file/i);
+  });
+
+  test("expectedContent mismatch: refuses with stale_precondition and keeps the file", async () => {
+    setMockFile("Inbox/temp.md", "edited since the read");
+    setMockActiveFile("Inbox/temp.md");
+    const app = mockApp();
+    const result = await deleteActiveFileHandler({
+      arguments: { expectedContent: "what I read earlier" },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("stale_precondition");
+    expect(result.content[0].text).toContain("get_active_file");
+    expect(app.workspace.getActiveFile()?.path).toBe("Inbox/temp.md");
+    expect(getMockTrashedPaths()).toEqual([]);
+  });
+
+  test("expectedContent matching: trashes the file", async () => {
+    setMockFile("Inbox/temp.md", "bye");
+    setMockActiveFile("Inbox/temp.md");
+    const app = mockApp();
+    const result = await deleteActiveFileHandler({
+      arguments: { expectedContent: "bye" },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(getMockTrashedPaths()).toContain("Inbox/temp.md");
+  });
+
+  test("requireWritePreconditions on: refuses without expectedContent", async () => {
+    setMockFile("Inbox/temp.md", "x");
+    setMockActiveFile("Inbox/temp.md");
+    const plugin = mockPlugin({
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    });
+    const result = await deleteActiveFileHandler({
+      arguments: {},
+      app: plugin.app,
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("stale_precondition");
+    expect(plugin.app.workspace.getActiveFile()?.path).toBe("Inbox/temp.md");
   });
 });

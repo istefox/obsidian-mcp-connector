@@ -28,15 +28,32 @@ describe("show_file_in_obsidian tool", () => {
     expect(app.workspace.getActiveFile()?.path).toBe("Notes/welcome.md");
   });
 
-  test("creates and opens file when path does not exist", async () => {
+  test("refuses a missing file by default: read-only annotation must hold", async () => {
     const app = mockApp();
     const result = await showFileInObsidianHandler({
       arguments: { filename: "NewNotes/scratch.md" },
       app,
     });
 
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not found/i);
+    expect(result.content[0].text).toContain("createIfMissing");
+    // Nothing written, nothing opened.
+    expect(app.vault.getAbstractFileByPath("NewNotes/scratch.md")).toBeNull();
+    expect(app.workspace.getActiveFile()).toBeNull();
+  });
+
+  test("creates and opens a missing file only when createIfMissing is true", async () => {
+    const app = mockApp();
+    const result = await showFileInObsidianHandler({
+      arguments: { filename: "NewNotes/scratch.md", createIfMissing: true },
+      app,
+    });
+
     expect(result.isError).toBeUndefined();
-    // openLinkText mock creates missing file
+    expect(
+      app.vault.getAbstractFileByPath("NewNotes/scratch.md"),
+    ).not.toBeNull();
     expect(app.workspace.getActiveFile()?.path).toBe("NewNotes/scratch.md");
   });
 

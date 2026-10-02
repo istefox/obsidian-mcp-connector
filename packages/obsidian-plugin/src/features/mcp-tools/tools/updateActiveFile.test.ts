@@ -5,6 +5,7 @@ import {
 } from "./updateActiveFile";
 import {
   mockApp,
+  mockPlugin,
   resetMockVault,
   setMockActiveFile,
   setMockFile,
@@ -45,6 +46,54 @@ describe("update_active_file tool", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/no active file/i);
+  });
+
+  test("expectedContent mismatch: refuses with stale_precondition and keeps the content", async () => {
+    setMockFile("Inbox/note.md", "# Edited by the user");
+    setMockActiveFile("Inbox/note.md");
+    const app = mockApp();
+    const result = await updateActiveFileHandler({
+      arguments: { content: "# New", expectedContent: "# Old" },
+      app,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("stale_precondition");
+    expect(result.content[0].text).toContain("get_active_file");
+    const file = app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    expect(await app.vault.read(file)).toBe("# Edited by the user");
+  });
+
+  test("expectedContent matching: replaces the content", async () => {
+    setMockFile("Inbox/note.md", "# Old\n");
+    setMockActiveFile("Inbox/note.md");
+    const app = mockApp();
+    const result = await updateActiveFileHandler({
+      arguments: { content: "# New", expectedContent: "# Old\n" },
+      app,
+    });
+    expect(result.isError).toBeUndefined();
+    const file = app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    expect(await app.vault.read(file)).toBe("# New");
+  });
+
+  test("requireWritePreconditions on: refuses without expectedContent", async () => {
+    setMockFile("Inbox/note.md", "# Old");
+    setMockActiveFile("Inbox/note.md");
+    const plugin = mockPlugin({
+      loadData: async () => ({ mcpTools: { requireWritePreconditions: true } }),
+    });
+    const result = await updateActiveFileHandler({
+      arguments: { content: "# New" },
+      app: plugin.app,
+      plugin,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("stale_precondition");
+    const file = plugin.app.workspace.getActiveFile();
+    if (!file) throw new Error("expected active file");
+    expect(await plugin.app.vault.read(file)).toBe("# Old");
   });
 
   test("schema requires content argument", () => {

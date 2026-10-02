@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`update_active_file`, `delete_vault_file` and `delete_active_file` accept an optional `expectedContent`** write precondition, the same mechanism `create_vault_file` has had since 2.4.0 (ADR-0022, addendum). When the file no longer matches, the call refuses with a `stale_precondition` error naming the read tool to re-check with, instead of overwriting or deleting a change the caller has not seen. These were the last three tools that could remove or replace a whole file with no guard at all.
+- **`delete_vault_directory` gains `dry_run` and `trash`.** `dry_run: true` deletes nothing and returns the count of files and sub-directories the call would remove with a sample of their paths, so a recursive delete can be previewed first. `trash: true` routes the delete through the vault's "Deleted files" setting (`fileManager.trashFile`, recoverable) instead of the permanent `adapter.rmdir`; the default is unchanged.
+- **`show_file_in_obsidian` gains `createIfMissing`** (default `false`). See the behaviour change below.
+
+### Changed
+
+- **`show_file_in_obsidian` no longer creates a missing file as a side effect.** Obsidian's `openLinkText` silently created the target when it did not exist, so a tool annotated read-only was writing to the vault. A missing file is now a `file_not_found` error; pass `createIfMissing: true` to get the old behaviour on purpose.
+- **Enabling `requireWritePreconditions` now also governs `update_active_file`, `delete_vault_file` and `delete_active_file`**: with the toggle on, a call without `expectedContent` is refused. A vault that already had the toggle on sees these three tools start refusing until the caller passes `expectedContent`. Vaults with the toggle off (the default) see no change.
+- **`delete_vault_file` refuses a path that resolves to a folder** (`not_a_file` error) and points at `delete_vault_directory`, instead of handing a folder to `trashFile`.
+- **`rename_vault_file` now runs its existence checks and the rename under the vault write lock**, closing a check-then-act race with concurrent MCP writers.
+
 ## [2.7.0] — 2026-09-14
 
 ### Added

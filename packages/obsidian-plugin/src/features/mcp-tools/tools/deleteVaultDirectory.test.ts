@@ -5,6 +5,7 @@ import {
 } from "./deleteVaultDirectory";
 import {
   getMockFolders,
+  getMockTrashedPaths,
   mockApp,
   resetMockVault,
   setMockFile,
@@ -189,5 +190,132 @@ describe("delete_vault_directory tool", () => {
     expect(result.content[0].text).toContain(
       "raw string rejection from native binding",
     );
+  });
+
+  describe("dry_run", () => {
+    test("reports counts and a path sample without deleting anything", async () => {
+      setMockFolder("Archive");
+      setMockFolder("Archive/2025");
+      setMockFile("Archive/b.md", "");
+      setMockFile("Archive/2025/a.md", "");
+      setMockFile("Elsewhere.md", "");
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "Archive", recursive: true, dry_run: true },
+        app,
+      });
+      expect(result.isError).toBeUndefined();
+      const body = JSON.parse(result.content[0].text) as Record<
+        string,
+        unknown
+      >;
+      expect(body.dryRun).toBe(true);
+      expect(body.wouldDelete).toBe(true);
+      expect(body.fileCount).toBe(2);
+      expect(body.folderCount).toBe(1);
+      expect(body.files).toEqual(["Archive/2025/a.md", "Archive/b.md"]);
+      expect(body.truncated).toBe(false);
+      // Nothing removed.
+      expect(getMockFolders()).toEqual(["Archive", "Archive/2025"]);
+      expect(app.vault.getAbstractFileByPath("Archive/b.md")).not.toBeNull();
+      expect(getMockTrashedPaths()).toEqual([]);
+    });
+
+    test("non-recursive dry run on a non-empty directory says it would be refused", async () => {
+      setMockFolder("Notes");
+      setMockFile("Notes/a.md", "");
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "Notes", dry_run: true },
+        app,
+      });
+      expect(result.isError).toBeUndefined();
+      const body = JSON.parse(result.content[0].text) as Record<
+        string,
+        unknown
+      >;
+      expect(body.wouldDelete).toBe(false);
+      expect(String(body.reason)).toContain("recursive: true");
+      expect(getMockFolders()).toEqual(["Notes"]);
+    });
+
+    test("dry run on a missing directory is an error", async () => {
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "ghost", dry_run: true },
+        app,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("does not exist");
+    });
+
+    test("truncates the sample at 50 paths and flags it", async () => {
+      setMockFolder("Big");
+      for (let i = 0; i < 60; i++) {
+        setMockFile(`Big/${String(i).padStart(3, "0")}.md`, "");
+      }
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "Big", recursive: true, dry_run: true },
+        app,
+      });
+      const body = JSON.parse(result.content[0].text) as {
+        fileCount: number;
+        files: string[];
+        truncated: boolean;
+      };
+      expect(body.fileCount).toBe(60);
+      expect(body.files).toHaveLength(50);
+      expect(body.truncated).toBe(true);
+    });
+  });
+
+  describe("trash", () => {
+    test("routes a recursive delete through fileManager.trashFile", async () => {
+      setMockFolder("Archive");
+      setMockFolder("Archive/2025");
+      setMockFile("Archive/2025/a.md", "");
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "Archive", recursive: true, trash: true },
+        app,
+      });
+      expect(result.isError).toBeUndefined();
+      expect(getMockTrashedPaths()).toEqual(["Archive"]);
+      expect(getMockFolders()).toEqual([]);
+      expect(app.vault.getAbstractFileByPath("Archive/2025/a.md")).toBeNull();
+    });
+
+    test("non-recursive trash of a non-empty directory is refused with the same hint", async () => {
+      setMockFolder("Notes");
+      setMockFile("Notes/a.md", "");
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "Notes", trash: true },
+        app,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("use recursive: true");
+      expect(getMockTrashedPaths()).toEqual([]);
+      expect(getMockFolders()).toEqual(["Notes"]);
+    });
+
+    test("trash of a missing directory is an error", async () => {
+      const app = mockApp();
+      const result = await deleteVaultDirectoryHandler({
+        arguments: { path: "ghost", trash: true },
+        app,
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("does not exist");
+    });
+
+    test("default (trash unset) still uses adapter.rmdir, not trashFile", async () => {
+      setMockFolder("Empty");
+      const app = mockApp();
+      await deleteVaultDirectoryHandler({ arguments: { path: "Empty" }, app });
+      expect(getMockTrashedPaths()).toEqual([]);
+      expect(getMockFolders()).toEqual([]);
+    });
   });
 });

@@ -1440,8 +1440,25 @@ export function mockApp(): App {
      * the file removed from the live vault.
      */
     trashFile: async (file: TAbstractFile): Promise<void> => {
-      const path = (file as unknown as MockTFile).path;
+      const path = (file as unknown as MockTFile | MockTFolder).path;
       _mockState.trashedPaths.push(path);
+      if (_mockState.folders.has(path)) {
+        // Folder: the real call trashes the directory tree as one unit.
+        const prefix = `${path}/`;
+        for (const f of Array.from(_mockState.files.keys())) {
+          if (f.startsWith(prefix)) {
+            _mockState.files.delete(f);
+            if (_mockState.activeFilePath === f) {
+              _mockState.activeFilePath = null;
+            }
+          }
+        }
+        for (const d of Array.from(_mockState.folders)) {
+          if (d.startsWith(prefix)) _mockState.folders.delete(d);
+        }
+        _mockState.folders.delete(path);
+        return;
+      }
       _mockState.files.delete(path);
       if (_mockState.activeFilePath === path) {
         _mockState.activeFilePath = null;

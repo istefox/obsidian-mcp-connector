@@ -221,7 +221,11 @@ export async function registerTools(
     getActiveFileHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(updateActiveFileSchema, async ({ arguments: args }) =>
-    updateActiveFileHandler({ arguments: args, app: ctx.app }),
+    updateActiveFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(appendToActiveFileSchema, async ({ arguments: args }) =>
     appendToActiveFileHandler({ arguments: args, app: ctx.app }),
@@ -234,7 +238,11 @@ export async function registerTools(
     }),
   );
   registry.register(deleteActiveFileSchema, async ({ arguments: args }) =>
-    deleteActiveFileHandler({ arguments: args, app: ctx.app }),
+    deleteActiveFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(showFileInObsidianSchema, async ({ arguments: args }) =>
     showFileInObsidianHandler({ arguments: args, app: ctx.app }),
@@ -275,7 +283,11 @@ export async function registerTools(
     }),
   );
   registry.register(deleteVaultFileSchema, async ({ arguments: args }) =>
-    deleteVaultFileHandler({ arguments: args, app: ctx.app }),
+    deleteVaultFileHandler({
+      arguments: args,
+      app: ctx.app,
+      plugin: ctx.plugin,
+    }),
   );
   registry.register(renameVaultFileSchema, async ({ arguments: args }) =>
     renameVaultFileHandler({ arguments: args, app: ctx.app }),

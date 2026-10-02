@@ -180,3 +180,32 @@ annotation itself, since the MCP spec has no narrower vocabulary to express it.
   (`normalizeForPreconditionCompare`), `services/vaultWriteLock.ts` (the lost-update bug class and the
   non-re-entrant mutex), `services/writePreconditionSetting.ts` (`resolveRequireWritePreconditions`),
   `tools/createVaultFile.ts`, `tools/createVaultBinaryFile.ts`.
+
+## Addendum (2026-10-02): the three remaining whole-file writers
+
+The audit in `docs/audit-2026-10-02.md` (§ 4.2) found that `update_active_file`, `delete_vault_file`
+and `delete_active_file` were still the only tools that could overwrite or remove a whole file with no
+precondition at all, and that `requireWritePreconditions` did not reach them. The same decision is
+extended to the three, with no new mechanism:
+
+- all three accept an optional `expectedContent`; a mismatch refuses with the `stale_precondition`
+  code and names the read tool (`get_vault_file` or `get_active_file`) to re-check with;
+- when `requireWritePreconditions` is on, a call without `expectedContent` is refused. Unlike the two
+  create tools there is no brand-new-file exemption, because the file always exists on these paths;
+- the decision lives in `services/wholeFilePrecondition.ts` (`checkWholeFilePrecondition`), a pure
+  sibling of `checkCreatePrecondition` parameterised over the verb (`overwrite` | `delete`);
+- `update_active_file` runs the comparison inside `vault.process` (atomic read-compare-write);
+  the two delete tools read, compare and trash under `withVaultWriteLock`.
+
+Two adjacent gaps closed in the same change: `delete_vault_file` now refuses a path that resolves
+to a folder (`not_a_file`) instead of passing a `TFolder` to `trashFile`, and `rename_vault_file`
+runs its three existence checks and the rename under the write lock. `show_file_in_obsidian` no
+longer creates a missing file as a side effect of `openLinkText`: the default call is an error
+(`file_not_found`), and the opt-in `createIfMissing` is the one argument that makes it write, which
+is what its `readOnlyHint: true` annotation has always claimed. `delete_vault_directory` gains
+`dry_run` (counts and a sample of the paths it would remove) and `trash` (route through
+`fileManager.trashFile`, recoverable, instead of a permanent `adapter.rmdir`); the default path is
+unchanged.
+
+Consequence to flag, as the original decision did: enabling `requireWritePreconditions` in an existing
+vault now changes the behaviour of three more tools. Called out in the CHANGELOG.
