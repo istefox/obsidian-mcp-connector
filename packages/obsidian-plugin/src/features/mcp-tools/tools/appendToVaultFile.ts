@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 import { normalizeAppendBody } from "$/features/mcp-tools/services/patchHelpers";
@@ -47,7 +47,11 @@ export async function appendToVaultFileHandler(
         (current) => current + normalized,
       );
     } else if (resolved.reason === "not_a_file") {
-      return errorText(`Path ${ctx.arguments.path} is a folder, not a file.`);
+      return errorJson(
+        `Path ${ctx.arguments.path} is a folder, not a file.`,
+        "not_a_file",
+        { path: ctx.arguments.path },
+      );
     } else {
       await ensureParentFolderExists(ctx.app, ctx.arguments.path);
       await ctx.app.vault.create(ctx.arguments.path, normalized);

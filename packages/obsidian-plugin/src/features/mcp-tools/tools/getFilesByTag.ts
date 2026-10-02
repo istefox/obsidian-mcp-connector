@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const getFilesByTagSchema = type({
@@ -31,8 +31,10 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
   // the lookup contract.
   const normalized = ctx.arguments.tag.trim().replace(/^#+/, "").toLowerCase();
   if (!normalized) {
-    return errorText(
+    return errorJson(
       'Invalid tag: input is empty or contains only "#" characters.',
+      "invalid_tag",
+      { tag: ctx.arguments.tag },
     );
   }
 

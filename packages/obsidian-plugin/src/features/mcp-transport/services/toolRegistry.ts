@@ -6,6 +6,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import { type, type Type } from "arktype";
 import { formatMcpError } from "./formatMcpError";
+import { errorJson } from "$/features/mcp-tools/services/responseBuilders";
 import { logger } from "$/shared";
 import { isActiveFor } from "$/features/adaptive-tool-loading/resolveToolScope";
 import type { ToolScope } from "$/shared/types";
@@ -852,7 +853,10 @@ export class ToolRegistryClass<
       // key, and a misspelled `dry_run` silently falling back to the
       // tool's default is the wrong failure mode for a destructive tool.
       if (!declared.has(key)) {
-        throw new Error(`Key "${key}" does not exist on ${expression}`);
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidParams,
+          `Key "${key}" does not exist on ${expression}`,
+        );
       }
       if (
         booleans.has(key) &&
@@ -901,15 +905,11 @@ export class ToolRegistryClass<
         // stay indistinguishable from a path that never existed.
         const refusalReason = context.refusedTools?.get(params.name);
         if (refusalReason !== undefined) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `Tool '${params.name}' is disabled while folders are hidden from MCP. ${refusalReason} Ask the vault owner to clear the hidden-folder list in the plugin's settings.`,
-              },
-            ],
-            isError: true,
-          };
+          return errorJson(
+            `Tool '${params.name}' is disabled while folders are hidden from MCP. ${refusalReason} Ask the vault owner to clear the hidden-folder list in the plugin's settings.`,
+            "disabled_by_hidden_folders",
+            { tool: params.name },
+          );
         }
         const validParams = schema.assert(
           this.coerceBooleanParams(schema, params),
@@ -938,15 +938,11 @@ export class ToolRegistryClass<
         !scope.allowed.has(params.name) &&
         !scope.active.has(params.name)
       ) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Tool '${params.name}' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.`,
-            },
-          ],
-          isError: true,
-        };
+        return errorJson(
+          `Tool '${params.name}' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.`,
+          "not_allowed",
+          { tool: params.name },
+        );
       }
       // (b2) registered, NOT user-disabled, but not currently active —
       // globally (the adaptive flag) or just for this caller. Recoverable:
@@ -958,15 +954,11 @@ export class ToolRegistryClass<
         (this.adaptiveDisabled.has(schema) ||
           (scope !== undefined && !scope.active.has(params.name)))
       ) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Tool '${params.name}' exists but is inactive. Call activate_tools({"names":["${params.name}"]}) first, then retry this call.`,
-            },
-          ],
-          isError: true,
-        };
+        return errorJson(
+          `Tool '${params.name}' exists but is inactive. Call activate_tools({"names":["${params.name}"]}) first, then retry this call.`,
+          "tool_inactive",
+          { tool: params.name },
+        );
       }
       // (c) unregistered OR user-disabled (or both flags set) — unchanged.
       throw new ProtocolError(
@@ -1001,12 +993,34 @@ export class ToolRegistryClass<
         error,
         tool: params.name,
       });
-      return {
-        content: [{ type: "text" as const, text: formattedError.message }],
-        isError: true,
-      };
+      return errorJson(
+        formattedError.message,
+        errorCodeOf(formattedError.code),
+        { tool: params.name },
+      );
     }
   };
+}
+
+/**
+ * The `errorCode` for a failure that reached the dispatcher's catch: a
+ * thrown `ProtocolError`, an ArkType validation failure (which
+ * `formatMcpError` turns into `InvalidParams`) or a handler's own throw.
+ * Tool handlers return their expected failures through `errorJson` with a
+ * specific code; what lands here is unexpected, so the vocabulary is the
+ * protocol's own.
+ */
+function errorCodeOf(code: number): string {
+  switch (code) {
+    case ProtocolErrorCode.InvalidParams:
+      return "invalid_params";
+    case ProtocolErrorCode.InvalidRequest:
+      return "invalid_request";
+    case ProtocolErrorCode.MethodNotFound:
+      return "method_not_found";
+    default:
+      return "internal_error";
+  }
 }
 
 export type ToolRegistry = ToolRegistryClass<

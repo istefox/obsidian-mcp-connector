@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 
@@ -22,11 +22,11 @@ export const renameHeadingSchema = type({
         "Exact (case-sensitive) heading text to match. Cache-derived; matching is case-sensitive, mirroring Obsidian's link resolution.",
       ),
       "level?": type("1<=number.integer<=6").describe(
-        "Heading level (1-6). Optional. When omitted, ambiguity across levels surfaces as `errorCode: ambiguous-heading` with a `candidates` array.",
+        "Heading level (1-6). Optional. When omitted, ambiguity across levels surfaces as `errorCode: ambiguous_heading` with a `candidates` array.",
       ),
     },
     to: type("string>0").describe(
-      "New heading text. Must not match an existing same-level heading in the file (fail-loud per `heading-collision`).",
+      "New heading text. Must not match an existing same-level heading in the file (fail-loud per `heading_collision`).",
     ),
   },
 }).describe(
@@ -46,33 +46,12 @@ type MockCacheShape = {
   headings?: Array<HeadingCacheEntry>;
 };
 
-function errorResponse(payload: {
-  errorCode: string;
-  message: string;
-  [k: string]: unknown;
-}): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return errorText(JSON.stringify(payload));
-}
-
 function successResponse(payload: {
   ok: true;
   updatedFiles: string[];
   linkRewriteCount: number;
 }): { content: Array<{ type: "text"; text: string }> } {
   return successText(JSON.stringify(payload));
-}
-
-function partialFailureResponse(payload: {
-  errorCode: "partial-failure";
-  message: string;
-  updatedFiles: string[];
-  failedFiles: Array<{ path: string; error: string }>;
-  linkRewriteCount: number;
-}): { content: Array<{ type: "text"; text: string }>; isError: true } {
-  return errorText(JSON.stringify(payload));
 }
 
 /**
@@ -115,9 +94,8 @@ async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
   // ── 1. Load source file ─────────────────────────────────────────────────
   const resolved = resolveTFile(ctx.app.vault, path);
   if (!resolved.ok) {
-    return errorResponse({
-      errorCode: "file-not-found",
-      message: `Source file not found: ${path}`,
+    return errorJson(`Source file not found: ${path}`, "file_not_found", {
+      path,
     });
   }
   const sourceFile = resolved.file;
@@ -184,7 +162,7 @@ async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
   //
   // RFC edge case #6: two-phase commit. Phase 1 (plan computation) is
   // pure and reports collisions / ambiguity before any I/O. Phase 2
-  // writes; on mid-walk failure we surface `partial-failure` with the
+  // writes; on mid-walk failure we surface `partial_failure` with the
   // accurate list of files that did and did not get the rewrite.
   const updatedFiles: string[] = [];
   const failedFiles: Array<{ path: string; error: string }> = [];
@@ -206,18 +184,19 @@ async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
       return plan.source.newText;
     });
     if (sourceStale) {
-      return errorResponse({
-        errorCode: "source-write-failed",
-        message:
-          "Source file changed between plan and apply; aborted before any write to avoid overwriting a concurrent edit. Re-run the rename.",
-      });
+      return errorJson(
+        "Source file changed between plan and apply; aborted before any write to avoid overwriting a concurrent edit. Re-run the rename.",
+        "source_write_failed",
+        { path },
+      );
     }
     updatedFiles.push(plan.source.path);
   } catch (e) {
-    return errorResponse({
-      errorCode: "source-write-failed",
-      message: `Failed to write source file: ${e instanceof Error ? e.message : String(e)}`,
-    });
+    return errorJson(
+      `Failed to write source file: ${e instanceof Error ? e.message : String(e)}`,
+      "source_write_failed",
+      { path },
+    );
   }
 
   for (const bp of plan.backlinkers) {
@@ -261,13 +240,11 @@ async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
   }
 
   if (failedFiles.length > 0) {
-    return partialFailureResponse({
-      errorCode: "partial-failure",
-      message: `Heading renamed but ${failedFiles.length} backlinker write(s) failed. The source file was updated; some references may still point at the old heading.`,
-      updatedFiles,
-      failedFiles,
-      linkRewriteCount: plan.linkRewriteCount,
-    });
+    return errorJson(
+      `Heading renamed but ${failedFiles.length} backlinker write(s) failed. The source file was updated; some references may still point at the old heading.`,
+      "partial_failure",
+      { updatedFiles, failedFiles, linkRewriteCount: plan.linkRewriteCount },
+    );
   }
 
   return successResponse({
@@ -286,15 +263,10 @@ function renameErrorToResponse(err: RenameError): {
   content: Array<{ type: "text"; text: string }>;
   isError: true;
 } {
-  if (err.errorCode === "ambiguous-heading") {
-    return errorResponse({
-      errorCode: err.errorCode,
-      message: err.message,
+  if (err.errorCode === "ambiguous_heading") {
+    return errorJson(err.message, err.errorCode, {
       candidates: err.candidates,
     });
   }
-  return errorResponse({
-    errorCode: err.errorCode,
-    message: err.message,
-  });
+  return errorJson(err.message, err.errorCode);
 }

@@ -650,17 +650,12 @@ export async function applyPatch(
   // used to surface as a false "success" with zero actual changes. Block targets
   // stay exempt (legitimate on non-md files per the block branch below).
   if (args.targetType !== "block" && file.extension !== "md") {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Cannot patch ${args.targetType} target on non-markdown file "${file.path}": ` +
-            `frontmatter and heading operations require a markdown (.md) file (got ".${file.extension}").`,
-        },
-      ],
-      isError: true,
-    };
+    return errorJson(
+      `Cannot patch ${args.targetType} target on non-markdown file "${file.path}": ` +
+        `frontmatter and heading operations require a markdown (.md) file (got ".${file.extension}").`,
+      "not_markdown",
+      { path: file.path, targetType: args.targetType },
+    );
   }
 
   // ── frontmatter branch ──────────────────────────────────────────────────
@@ -714,6 +709,7 @@ export async function applyPatch(
         );
         if (plan.kind === "reject") {
           rejection = plan.message;
+          rejectionCode = "type_mismatch";
           return;
         }
         const next = plan.kind === "ok" ? plan.value : args.content;
@@ -746,15 +742,10 @@ export async function applyPatch(
       recordChange(next);
     });
     if (rejection !== null) {
-      return rejectionCode !== null
-        ? errorJson(rejection, rejectionCode, {
-            targetType: args.targetType,
-            target: args.target,
-          })
-        : {
-            content: [{ type: "text", text: rejection }],
-            isError: true,
-          };
+      return errorJson(rejection, rejectionCode ?? "patch_failed", {
+        targetType: args.targetType,
+        target: args.target,
+      });
     }
     return patchResult(valueChanged);
   }
@@ -789,14 +780,10 @@ export async function applyPatch(
     }),
   );
   if (failureText !== null) {
-    // Structured only where a code was set, so every pre-existing error keeps
-    // the plain-text shape its tests and its callers already expect.
-    return failureCode !== null
-      ? errorJson(failureText, failureCode, {
-          targetType: args.targetType,
-          target: args.target,
-        })
-      : { content: [{ type: "text", text: failureText }], isError: true };
+    return errorJson(failureText, failureCode ?? "patch_failed", {
+      targetType: args.targetType,
+      target: args.target,
+    });
   }
   return patchResult(changed);
 }
@@ -850,7 +837,11 @@ function computePatchedContent(
     if (r.kind === "not-found") {
       // Heading not found — respect createTargetIfMissing.
       if (!createIfMissing) {
-        return { kind: "error", text: `Heading not found: ${args.target}` };
+        return {
+          kind: "error",
+          text: `Heading not found: ${args.target}`,
+          errorCode: "heading_not_found",
+        };
       }
       // Append at EOF.
       const body = normalizeAppendBody(args.content, args.operation);
@@ -880,6 +871,7 @@ function computePatchedContent(
       return {
         kind: "error",
         text: `Heading "${args.target}" is a level-${headingLevel} heading with no level-1 (#) parent, while the document does contain an H1 elsewhere — the section boundary is ambiguous. Refusing to patch. Pass allowRootHeadings:true to target it explicitly, or createTargetIfMissing:true to bypass. (Files with no H1 at all are accepted automatically.)`,
+        errorCode: "ambiguous_section",
       };
     }
     // Section end is fence-aware: a `## …` line inside a ``` / ~~~ block
@@ -956,7 +948,11 @@ function computePatchedContent(
   // reaches the lookups or the error messages below as "^^abc".
   const blockIdResult = normalizeBlockId(args.target);
   if (!blockIdResult.ok) {
-    return { kind: "error", text: blockIdResult.error };
+    return {
+      kind: "error",
+      text: blockIdResult.error,
+      errorCode: "invalid_block_id",
+    };
   }
   const id = blockIdResult.id;
 
@@ -974,6 +970,7 @@ function computePatchedContent(
       return {
         kind: "error",
         text: `Block not found: ^${id} (unresolved — block may be inside a table, which is not indexed by Obsidian's metadataCache)`,
+        errorCode: "block_not_found",
       };
     }
     // Caller explicitly opted into createIfMissing — append at EOF.
@@ -1004,6 +1001,7 @@ function computePatchedContent(
     return {
       kind: "error",
       text: `Block "^${id}" resolved to line ${blockPos.startLine + 1} but it is inside a markdown table or fenced code block. Refusing to patch — replacing or splicing this region would corrupt the surrounding structure. Move the block id outside the table/code block to make it patchable.`,
+      errorCode: "block_not_patchable",
     };
   }
 

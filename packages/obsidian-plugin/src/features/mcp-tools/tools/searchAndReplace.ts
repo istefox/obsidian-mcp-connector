@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
+import { errorJson } from "../services/responseBuilders";
 
 /** Reads per batch: bounds memory while hiding vault.read latency. */
 const READ_BATCH_SIZE = 8;
@@ -72,20 +73,10 @@ export async function searchAndReplaceHandler(
       flags,
       error: msg,
     });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error: `Invalid regex: ${msg}`,
-            errorCode: "invalid_regex",
-            pattern,
-            flags,
-          }),
-        },
-      ],
-      isError: true,
-    };
+    return errorJson(`Invalid regex: ${msg}`, "invalid_regex", {
+      pattern,
+      flags,
+    });
   }
 
   // Reject patterns with nested quantifiers (ReDoS guard — Obsidian runs on main thread, no regex timeout).
@@ -93,20 +84,11 @@ export async function searchAndReplaceHandler(
     /\([^)]*[+*][^)]*\)[+*?]/.test(pattern) ||
     /\((?:[^()]*[+*?][^()]*\|)+[^()]+\)[+*?{]/.test(pattern)
   ) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error:
-              "Pattern contains nested quantifiers (ReDoS risk). Simplify the pattern.",
-            errorCode: "unsafe_regex",
-            pattern,
-          }),
-        },
-      ],
-      isError: true,
-    };
+    return errorJson(
+      "Pattern contains nested quantifiers (ReDoS risk). Simplify the pattern.",
+      "unsafe_regex",
+      { pattern },
+    );
   }
 
   const inScope = (path: string): boolean => {

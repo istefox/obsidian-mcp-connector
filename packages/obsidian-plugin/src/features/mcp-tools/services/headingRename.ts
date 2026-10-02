@@ -12,10 +12,10 @@
  *   hack, no UI driving.
  * - Tool surface: `{ path, from: { text, level? }, to }` → `{ ok,
  *   updatedFiles, linkRewriteCount }` on success; `errorCode` discriminator
- *   on failure (`heading-not-found`, `ambiguous-heading` with `candidates`,
- *   `heading-collision`).
+ *   on failure (`heading_not_found`, `ambiguous_heading` with `candidates`,
+ *   `heading_collision`).
  * - Seven edge cases triagged in the RFC close-out, all addressed here:
- *   (1) heading collision → `heading-collision`; (2) headings inside code
+ *   (1) heading collision → `heading_collision`; (2) headings inside code
  *   fences/callouts → skipped during the source scan via
  *   `isInsideTableOrFencedCode`; (3) case-sensitive heading match; (4)
  *   subheading-path links (`[[note#Parent > heading]]`) → rewrite the
@@ -33,7 +33,7 @@ import {
 /** Match descriptor for the heading the caller wants to rename. */
 export type HeadingFrom = {
   text: string;
-  /** When omitted, ambiguity across levels surfaces as `ambiguous-heading`. */
+  /** When omitted, ambiguity across levels surfaces as `ambiguous_heading`. */
   level?: number;
 };
 
@@ -46,16 +46,16 @@ export type HeadingCandidate = {
 
 export type RenameError =
   | {
-      errorCode: "heading-not-found";
+      errorCode: "heading_not_found";
       message: string;
     }
   | {
-      errorCode: "ambiguous-heading";
+      errorCode: "ambiguous_heading";
       message: string;
       candidates: HeadingCandidate[];
     }
   | {
-      errorCode: "heading-collision";
+      errorCode: "heading_collision";
       message: string;
     };
 
@@ -147,13 +147,13 @@ export function findSourceHeading(
     const levelClause =
       from.level !== undefined ? ` at level ${from.level}` : "";
     return {
-      errorCode: "heading-not-found",
+      errorCode: "heading_not_found",
       message: `Heading not found: "${from.text}"${levelClause}.`,
     };
   }
   if (matches.length > 1) {
     return {
-      errorCode: "ambiguous-heading",
+      errorCode: "ambiguous_heading",
       message: `Ambiguous heading match for "${from.text}": ${matches.length} candidates. Pass \`from.level\` to disambiguate.`,
       candidates: matches,
     };
@@ -183,7 +183,7 @@ export function checkHeadingCollision(
     if (isInsideTableOrFencedCodeAt(lines, h.position.start.line, fenceOpen))
       continue;
     return {
-      errorCode: "heading-collision",
+      errorCode: "heading_collision",
       message: `Heading collision: "${to}" already exists at level ${matchedLevel} on line ${h.position.start.line + 1}. Refusing to rename; resolve the collision first or rename the existing heading instead.`,
     };
   }
@@ -430,7 +430,7 @@ export type PlanRenameArgs = {
  * Produce a complete rewrite plan or return a single typed error.
  * Two-phase commit (RFC edge case #6) is the wrapper's responsibility:
  * this function only computes the plan; the wrapper applies it and
- * surfaces `partial-failure` on mid-walk write errors.
+ * surfaces `partial_failure` on mid-walk write errors.
  */
 export function planRename(args: PlanRenameArgs): RenamePlan | RenameError {
   const lines = args.sourceText.split("\n");
@@ -443,7 +443,7 @@ export function planRename(args: PlanRenameArgs): RenamePlan | RenameError {
   // updatedFiles contract.
   if (matched.text === args.to) {
     return {
-      errorCode: "heading-collision",
+      errorCode: "heading_collision",
       message: `Heading "${args.to}" is already the current heading text (line ${matched.line + 1}, level ${matched.level}). No-op rename.`,
     };
   }

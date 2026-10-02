@@ -1,9 +1,5 @@
 import { type } from "arktype";
-import {
-  errorJson,
-  errorText,
-  successText,
-} from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 import { checkWholeFilePrecondition } from "$/features/mcp-tools/services/wholeFilePrecondition";
@@ -40,7 +36,7 @@ export async function deleteActiveFileHandler(
   return withVaultWriteLock(async () => {
     const file = ctx.app.workspace.getActiveFile();
     if (!file) {
-      return errorText("No active file.");
+      return errorJson("No active file.", "no_active_file");
     }
     if (ctx.arguments.expectedContent !== undefined || requirePrecondition) {
       const current =

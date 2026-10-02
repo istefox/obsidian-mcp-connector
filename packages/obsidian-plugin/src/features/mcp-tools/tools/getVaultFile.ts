@@ -9,7 +9,11 @@ import {
   headingNotFoundError,
   withUriBlock,
 } from "../services/buildObsidianUri";
-import { successJson, successText } from "../services/responseBuilders";
+import {
+  errorJson,
+  successJson,
+  successText,
+} from "../services/responseBuilders";
 import { DEFAULT_MAX_TEXT_OUTPUT_KB } from "../types";
 
 /**
@@ -260,18 +264,13 @@ export async function getVaultFileHandler(ctx: GetVaultFileContext): Promise<{
 }> {
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
   if (!resolved.ok) {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            resolved.reason === "not_found"
-              ? `File not found: ${ctx.arguments.path}`
-              : `Path is a folder: ${ctx.arguments.path}`,
-        },
-      ],
-      isError: true,
-    };
+    return resolved.reason === "not_found"
+      ? errorJson(`File not found: ${ctx.arguments.path}`, "file_not_found", {
+          path: ctx.arguments.path,
+        })
+      : errorJson(`Path is a folder: ${ctx.arguments.path}`, "not_a_file", {
+          path: ctx.arguments.path,
+        });
   }
 
   const file = resolved.file;

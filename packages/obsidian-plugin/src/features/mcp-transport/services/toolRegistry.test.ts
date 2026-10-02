@@ -487,9 +487,12 @@ describe("ToolRegistry — issue #74 (registry-level isError envelope)", () => {
     // `.message` the way v1's McpError did, so the envelope now carries the
     // handler's text verbatim. Issue #74's intent is unchanged and better
     // served: no prefix at all cannot double-prefix.
-    expect(result.content[0]?.text).toBe(
-      "Refusing to overwrite array with scalar",
-    );
+    const payload = JSON.parse(result.content[0]?.text ?? "") as {
+      error: string;
+      errorCode: string;
+    };
+    expect(payload.error).toBe("Refusing to overwrite array with scalar");
+    expect(payload.errorCode).toBe("invalid_params");
     // Crucially: NOT the double-prefixed form (`MCP error -32602: MCP error -32602: ...`).
     expect(result.content[0]?.text).not.toMatch(
       /MCP error -\d+:\s+MCP error -\d+:/,
@@ -676,7 +679,12 @@ describe("ToolRegistry — split disable states (issue #353)", () => {
     // issue #354) at the exact scenario this describe block already sets
     // up, avoiding a near-duplicate test.
     expect(dispatchResult.content?.[0]?.text).toBe(
-      'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.',
+      JSON.stringify({
+        error:
+          'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.',
+        errorCode: "tool_inactive",
+        tool: "alpha",
+      }),
     );
 
     const entry = tools.listAll().find((e) => e.name === "alpha");
@@ -752,8 +760,12 @@ describe("ToolRegistry — split disable states (issue #353)", () => {
 });
 
 describe("ToolRegistry dispatch() — self-healing inactive tool error (issue #354)", () => {
-  const RECOVERY_MESSAGE =
-    'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.';
+  const RECOVERY_MESSAGE = JSON.stringify({
+    error:
+      'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.',
+    errorCode: "tool_inactive",
+    tool: "alpha",
+  });
 
   test("outcome (b): adaptive-disabled only returns isError:true with the exact recovery message", async () => {
     const { tools } = buildRegistryWithTwoTools();
@@ -1124,10 +1136,18 @@ describe("ToolRegistry name-keyed lookups", () => {
  * caller and test above this block keeps compiling and passing unchanged.
  */
 describe("ToolRegistry — per-client tool profiles (issue #348, ADR-0014)", () => {
-  const RECOVERY_MESSAGE =
-    'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.';
-  const ALLOWLIST_MESSAGE =
-    "Tool 'alpha' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.";
+  const RECOVERY_MESSAGE = JSON.stringify({
+    error:
+      'Tool \'alpha\' exists but is inactive. Call activate_tools({"names":["alpha"]}) first, then retry this call.',
+    errorCode: "tool_inactive",
+    tool: "alpha",
+  });
+  const ALLOWLIST_MESSAGE = JSON.stringify({
+    error:
+      "Tool 'alpha' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.",
+    errorCode: "not_allowed",
+    tool: "alpha",
+  });
 
   function scopeOf(
     active: readonly string[],
@@ -1444,7 +1464,12 @@ describe("dispatch() boolean argument coercion (#444)", () => {
       fakeContext,
     )) as { isError?: boolean; content: Array<{ text: string }> };
     expect(extra.isError).toBe(true);
-    expect(extra.content[0].text).toContain('Key "bogus" does not exist');
+    const refusal = JSON.parse(extra.content[0].text) as {
+      error: string;
+      errorCode: string;
+    };
+    expect(refusal.errorCode).toBe("invalid_params");
+    expect(refusal.error).toContain('Key "bogus" does not exist');
   });
 });
 

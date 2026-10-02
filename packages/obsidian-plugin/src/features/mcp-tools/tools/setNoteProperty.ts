@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
+import { errorJson } from "../services/responseBuilders";
 
 export const setNotePropertySchema = type({
   name: '"set_note_property"',
@@ -69,43 +70,14 @@ export async function setNotePropertyHandler(
   const { path, key, value } = ctx.arguments;
 
   if (isInvalidKey(key)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error: "Invalid frontmatter key",
-            errorCode: "invalid_key",
-            key,
-          }),
-        },
-      ],
-      isError: true,
-    };
+    return errorJson("Invalid frontmatter key", "invalid_key", { key });
   }
 
   const resolved = resolveTFile(ctx.app.vault, path);
   if (!resolved.ok) {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            resolved.reason === "not_found"
-              ? JSON.stringify({
-                  error: "File not found",
-                  errorCode: "file_not_found",
-                  path,
-                })
-              : JSON.stringify({
-                  error: "Path is a folder, not a file",
-                  errorCode: "not_a_file",
-                  path,
-                }),
-        },
-      ],
-      isError: true,
-    };
+    return resolved.reason === "not_found"
+      ? errorJson("File not found", "file_not_found", { path })
+      : errorJson("Path is a folder, not a file", "not_a_file", { path });
   }
   const file = resolved.file;
 

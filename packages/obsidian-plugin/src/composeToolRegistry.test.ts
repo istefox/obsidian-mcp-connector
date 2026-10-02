@@ -126,9 +126,10 @@ describe("composeToolRegistry — the seam is wired", () => {
     const absent = await call(registry, "get_vault_file", {
       path: "Nowhere/ghost.md",
     });
-    // Same shape, same wording; only the echoed path differs.
-    expect(hidden.replace(SECRET, "<P>")).toBe(
-      absent.replace("Nowhere/ghost.md", "<P>"),
+    // Same shape, same wording; only the echoed path differs (in the
+    // message and in the `path` field of the error body).
+    expect(hidden.split(SECRET).join("<P>")).toBe(
+      absent.split("Nowhere/ghost.md").join("<P>"),
     );
   });
 

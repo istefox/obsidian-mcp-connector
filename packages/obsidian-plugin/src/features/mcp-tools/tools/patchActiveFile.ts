@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import {
   applyPatch,
   type PatchArgs,
@@ -60,7 +60,7 @@ export async function patchActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return errorText("No active file.");
+    return errorJson("No active file.", "no_active_file");
   }
   return await applyPatch(ctx.app, file, ctx.arguments, {
     requirePrecondition: await resolveRequireWritePreconditions(ctx.plugin),

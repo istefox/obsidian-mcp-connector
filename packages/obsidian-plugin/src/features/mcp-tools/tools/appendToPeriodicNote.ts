@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import {
   DATE_REGEX_BY_PERIOD,
@@ -58,14 +58,14 @@ export async function appendToPeriodicNoteHandler(
 
   if (date !== undefined) {
     if (!DATE_REGEX_BY_PERIOD[period].test(date)) {
-      return errorPayload(
+      return errorJson(
         `Invalid date format for period '${period}' — expected ${describeFormat(period)}.`,
         "invalid_date_for_period",
         { period, date },
       );
     }
     if (!isValidPeriodicDate(period, date)) {
-      return errorPayload(
+      return errorJson(
         "Date is well-shaped but not a real calendar value (e.g. month 13, Feb 30, ISO-week 99).",
         "invalid_date_for_period",
         { period, date },
@@ -88,14 +88,14 @@ export async function appendToPeriodicNoteHandler(
       created = true;
     }
     if (!file) {
-      return errorPayload(
+      return errorJson(
         "Internal: periodic note resolved but not retrievable after create.",
         "internal_error",
         { period, path: resolved.path },
       );
     }
     if (!(file instanceof TFile)) {
-      return errorPayload(
+      return errorJson(
         "Internal: periodic note resolved to a folder, not a file.",
         "internal_error",
         { period, path: resolved.path },
@@ -151,7 +151,7 @@ export async function appendToPeriodicNoteHandler(
       });
 
       if (ambiguityMessage !== null) {
-        return errorPayload(ambiguityMessage, "ambiguous_heading", {
+        return errorJson(ambiguityMessage, "ambiguous_heading", {
           period,
           path: resolved.path,
           created,
@@ -164,7 +164,7 @@ export async function appendToPeriodicNoteHandler(
         // rollback an auto-created file (the file's existence is the
         // right end state regardless of this single append — see ADR-0002
         // Negatives + spec). Caller adds the heading and retries.
-        return errorPayload(
+        return errorJson(
           `Heading not found in periodic note: "${underHeading}".`,
           "heading_not_found",
           {
@@ -193,15 +193,4 @@ export async function appendToPeriodicNoteHandler(
       ],
     };
   });
-}
-
-function errorPayload(
-  message: string,
-  errorCode: string,
-  extras: Record<string, unknown>,
-): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }

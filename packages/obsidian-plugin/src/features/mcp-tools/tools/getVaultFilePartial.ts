@@ -7,10 +7,10 @@ import {
   splitHeadingPath,
 } from "../services/anchorTargets";
 import { resolveTFile } from "../services/resolveTFile";
-// Response envelopes shared across tools — aliased to the original local
-// names to keep this file's call sites stable.
+// Response envelopes shared across tools — the success ones aliased to the
+// original local names to keep this file's call sites stable.
 import {
-  errorText as errorResponse,
+  errorJson,
   successJson as jsonResponse,
   successText as textResponse,
 } from "../services/responseBuilders";
@@ -81,8 +81,12 @@ export async function getVaultFilePartialHandler(
   const resolved = resolveTFile(ctx.app.vault, filename);
   if (!resolved.ok) {
     return resolved.reason === "not_found"
-      ? errorResponse(`File not found: ${filename}`)
-      : errorResponse(`Path is a folder: ${filename}`);
+      ? errorJson(`File not found: ${filename}`, "file_not_found", {
+          path: filename,
+        })
+      : errorJson(`Path is a folder: ${filename}`, "not_a_file", {
+          path: filename,
+        });
   }
   const file = resolved.file;
 
@@ -98,19 +102,25 @@ export async function getVaultFilePartialHandler(
     mode !== "lines" &&
     (target === undefined || (mode !== "block" && !target.trim()))
   ) {
-    return errorResponse(
+    return errorJson(
       `Missing required \`target\` for mode "${mode}". The \`target\` argument is required for "frontmatter", "heading", and "block" modes.`,
+      "invalid_params",
+      { mode },
     );
   }
 
   if (mode === "lines" && (startLine === undefined || endLine === undefined)) {
-    return errorResponse(
+    return errorJson(
       `Missing required \`startLine\`/\`endLine\` for mode "lines". Both are required and 0-indexed.`,
+      "invalid_params",
+      { mode },
     );
   }
   if (mode === "lines" && startLine! > endLine!) {
-    return errorResponse(
+    return errorJson(
       `Invalid range: \`startLine\` (${startLine}) must be <= \`endLine\` (${endLine}).`,
+      "invalid_params",
+      { startLine, endLine },
     );
   }
 
@@ -141,16 +151,26 @@ export async function getVaultFilePartialHandler(
         blockHasContent = region.some((l) => l.trim() !== "");
       }
       if (blockHasContent) {
-        return errorResponse(
+        return errorJson(
           `Frontmatter block present in ${filename} but Obsidian's metadata cache exposed no fields — its YAML parser could not read it. Common cause: an unquoted scalar whose value contains ": " (e.g. \`key: a value with: a colon\`); quote the value (\`key: "a value with: a colon"\`). This tool reflects Obsidian's cache and does not re-parse YAML independently, so the source file must be fixed.`,
+          "frontmatter_unparsable",
+          { path: filename },
         );
       }
-      return errorResponse(`File has no frontmatter: ${filename}.`);
+      return errorJson(
+        `File has no frontmatter: ${filename}.`,
+        "no_frontmatter",
+        {
+          path: filename,
+        },
+      );
     }
     const key = target!.trim();
     if (!(key in fm)) {
-      return errorResponse(
+      return errorJson(
         `Frontmatter field not found: "${key}" in ${filename}.`,
+        "property_not_found",
+        { path: filename, key },
       );
     }
     return jsonResponse(fm[key]);
@@ -203,7 +223,9 @@ export async function getVaultFilePartialHandler(
   if (mode === "heading") {
     const headings = cache.headings ?? [];
     if (headings.length === 0) {
-      return errorResponse(`File has no headings: ${filename}.`);
+      return errorJson(`File has no headings: ${filename}.`, "no_headings", {
+        path: filename,
+      });
     }
     const delim = targetDelimiter ?? "::";
     const segments = splitHeadingPath(target!, delim);
@@ -214,12 +236,17 @@ export async function getVaultFilePartialHandler(
       delim,
     );
     if (result.kind === "not-found") {
-      return errorResponse(
+      return errorJson(
         `Heading not found: "${result.segment}" ${result.where}.`,
+        "heading_not_found",
+        { path: filename, target },
       );
     }
     if (result.kind === "ambiguous") {
-      return errorResponse(result.message);
+      return errorJson(result.message, "ambiguous_heading", {
+        path: filename,
+        target,
+      });
     }
     // `endLine` is the start line of the next same-or-higher-level heading
     // (exclusive) or `lines.length` for EOF. Slice [startLine, endLine).
@@ -232,12 +259,16 @@ export async function getVaultFilePartialHandler(
     const blocks = cache.blocks ?? {};
     const idResult = normalizeBlockId(target!);
     if (!idResult.ok) {
-      return errorResponse(idResult.error);
+      return errorJson(idResult.error, "invalid_block_id", { target });
     }
     const key = idResult.id;
     const entry = blocks[key];
     if (!entry) {
-      return errorResponse(`Block not found: "^${key}" in ${filename}.`);
+      return errorJson(
+        `Block not found: "^${key}" in ${filename}.`,
+        "block_not_found",
+        { path: filename, blockId: key },
+      );
     }
     // Block position uses inclusive end line in the metadata cache.
     const section = lines
@@ -247,5 +278,5 @@ export async function getVaultFilePartialHandler(
   }
 
   // Unreachable: arktype validates `mode` to the four-value union.
-  return errorResponse(`Unknown mode: "${mode}".`);
+  return errorJson(`Unknown mode: "${mode}".`, "invalid_params", { mode });
 }

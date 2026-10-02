@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { requestUrl } from "obsidian";
 import TurndownService from "turndown";
 
@@ -124,7 +124,9 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
 
   const urlError = validateFetchUrl(ctx.arguments.url);
   if (urlError) {
-    return errorText(`Fetch rejected: ${urlError}`);
+    return errorJson(`Fetch rejected: ${urlError}`, "url_rejected", {
+      url: ctx.arguments.url,
+    });
   }
 
   let response;
@@ -147,11 +149,15 @@ export async function fetchHandler(ctx: FetchContext): Promise<{
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message === "__FETCH_TIMEOUT__") {
-      return errorText(
+      return errorJson(
         `Fetch failed: request timed out after ${REQUEST_TIMEOUT_MS}ms.`,
+        "fetch_timeout",
+        { url: ctx.arguments.url, timeoutMs: REQUEST_TIMEOUT_MS },
       );
     }
-    return errorText(`Fetch failed: ${message}`);
+    return errorJson(`Fetch failed: ${message}`, "fetch_failed", {
+      url: ctx.arguments.url,
+    });
   }
 
   let body = response.text;

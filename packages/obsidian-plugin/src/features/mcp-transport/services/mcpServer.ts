@@ -121,21 +121,10 @@ function declaresUiExtension(
  * only here: this is a de-duplication of guidance, not the sole home of
  * a required argument's meaning.
  *
- * The error-shape line is deliberately worded as "often", not "always".
- * `responseBuilders.ts` has two error helpers: `errorJson` (an `errorCode`
- * field alongside the message) and `errorText` (free-form text, no
- * `errorCode` at all) — and `errorText` is still the one used by several
- * tools (e.g. `appendToActiveFile.ts`'s "No active file.",
- * `deleteVaultFile.ts`'s "File not found: <path>"). A universal "carries
- * an errorCode field" claim was therefore false for those tools' actual
- * responses. Standardizing every call site on `errorJson` was considered
- * and rejected here as disproportionate: it is 30+ call sites, several of
- * which already build their own ad hoc JSON body through `errorText`
- * rather than `errorJson` (see `renameHeading.ts`, `executeTemplate.ts`),
- * and inventing a stable `errorCode` for the plain-text ones risks
- * breaking an external client that pattern-matches on today's exact
- * message text — a materially bigger, riskier change than adjusting one
- * sentence of prose to describe reality.
+ * The error-shape line can say "always": every failure, from a tool
+ * handler or from the dispatcher itself, goes through `errorJson` in
+ * `responseBuilders.ts`, so the text is a JSON body with an `errorCode`.
+ * The code vocabulary is `docs/error-codes.md`.
  */
 const SERVER_INSTRUCTIONS = [
   "This server exposes an Obsidian vault.",
@@ -146,10 +135,10 @@ const SERVER_INSTRUCTIONS = [
   "  (e.g. 'Projects/Notes/idea.md'). There is no leading slash and no '~'.",
   "- Line numbers are 0-indexed, and a startLine/endLine range is inclusive",
   "  on both ends.",
-  "- A failure comes back as an ordinary result with isError: true. Check",
-  "  isError first; the text often then carries a JSON body with an",
-  "  errorCode field plus a human-readable message — match on errorCode when",
-  "  present, otherwise treat the text as a plain human-readable message.",
+  "- A failure comes back as an ordinary result with isError: true. Its",
+  "  text is a JSON body { error, errorCode, ... }: match on errorCode (a",
+  "  stable snake_case word such as file_not_found or stale_precondition)",
+  "  and show error, the human-readable message, when you need to.",
 ].join("\n");
 
 export type McpServiceConfig = {

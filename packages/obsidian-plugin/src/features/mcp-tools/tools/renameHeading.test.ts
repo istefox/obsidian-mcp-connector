@@ -21,14 +21,14 @@ describe("rename_heading tool", () => {
     );
   });
 
-  test("returns file-not-found when source path does not resolve", async () => {
+  test("returns file_not_found when source path does not resolve", async () => {
     const r = await renameHeadingHandler({
       arguments: { path: "missing.md", from: { text: "Foo" }, to: "Bar" },
       app: mockApp(),
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("file-not-found");
+    expect(payload.errorCode).toBe("file_not_found");
   });
 
   test("positive: rewrites the source heading and one backlinker", async () => {
@@ -54,7 +54,7 @@ describe("rename_heading tool", () => {
     expect(payload.linkRewriteCount).toBe(1);
   });
 
-  test("returns heading-not-found from the walker when no heading matches", async () => {
+  test("returns heading_not_found from the walker when no heading matches", async () => {
     setMockFile("source.md", "## Other");
     setMockMetadata("source.md", {
       headings: [{ heading: "Other", level: 2, line: 0 }],
@@ -66,10 +66,10 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("heading-not-found");
+    expect(payload.errorCode).toBe("heading_not_found");
   });
 
-  test("returns ambiguous-heading with candidates when level is omitted and multi-match", async () => {
+  test("returns ambiguous_heading with candidates when level is omitted and multi-match", async () => {
     setMockFile("source.md", "## Foo\n\n\n\n### Foo");
     setMockMetadata("source.md", {
       headings: [
@@ -84,7 +84,7 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("ambiguous-heading");
+    expect(payload.errorCode).toBe("ambiguous_heading");
     expect(payload.candidates).toHaveLength(2);
     expect(payload.candidates.map((c: { level: number }) => c.level)).toEqual([
       2, 3,
@@ -113,7 +113,7 @@ describe("rename_heading tool", () => {
     expect(payload.ok).toBe(true);
   });
 
-  test("returns heading-collision when `to` already exists at the same level", async () => {
+  test("returns heading_collision when `to` already exists at the same level", async () => {
     setMockFile("source.md", "## Old\n\n\n\n## Existing");
     setMockMetadata("source.md", {
       headings: [
@@ -132,7 +132,7 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("heading-collision");
+    expect(payload.errorCode).toBe("heading_collision");
   });
 
   test("rewrites self-references inside the source file (e.g. TOC entries)", async () => {
@@ -230,8 +230,8 @@ describe("rename_heading tool", () => {
     expect(payload.linkRewriteCount).toBe(2);
   });
 
-  // ── #143 hardening: partial-failure (M2) + TOCTOU guard (H3) ──────────
-  test("M2: a backlinker write failure surfaces partial-failure with both lists", async () => {
+  // ── #143 hardening: partial_failure (M2) + TOCTOU guard (H3) ──────────
+  test("M2: a backlinker write failure surfaces partial_failure with both lists", async () => {
     setMockFile("source.md", "## Old\nbody");
     setMockFile("ok.md", "Ref [[source#Old]].");
     setMockFile("bad.md", "Ref [[source#Old]].");
@@ -248,14 +248,14 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("partial-failure");
+    expect(payload.errorCode).toBe("partial_failure");
     expect(payload.updatedFiles.sort()).toEqual(["ok.md", "source.md"]);
     expect(payload.failedFiles.map((f: { path: string }) => f.path)).toEqual([
       "bad.md",
     ]);
   });
 
-  test("H3: a backlinker changed between plan and apply is not clobbered (partial-failure)", async () => {
+  test("H3: a backlinker changed between plan and apply is not clobbered (partial_failure)", async () => {
     setMockFile("source.md", "## Old\nbody");
     setMockFile("back.md", "Ref [[source#Old]].");
     setMockMetadata("source.md", {
@@ -271,7 +271,7 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("partial-failure");
+    expect(payload.errorCode).toBe("partial_failure");
     expect(payload.failedFiles.map((f: { path: string }) => f.path)).toEqual([
       "back.md",
     ]);
@@ -297,7 +297,7 @@ describe("rename_heading tool", () => {
     });
     expect(r.isError).toBe(true);
     const payload = JSON.parse(r.content[0].text);
-    expect(payload.errorCode).toBe("source-write-failed");
+    expect(payload.errorCode).toBe("source_write_failed");
     // back.md untouched — abort happened before the backlinker loop.
     const back = mockApp().vault.getAbstractFileByPath("back.md");
     expect(await mockApp().vault.read(back as never)).toBe(

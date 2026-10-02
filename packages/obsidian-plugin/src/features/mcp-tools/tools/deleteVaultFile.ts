@@ -1,10 +1,6 @@
 import { type } from "arktype";
 import { TFile, type App } from "obsidian";
-import {
-  errorJson,
-  errorText,
-  successText,
-} from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 import { checkWholeFilePrecondition } from "$/features/mcp-tools/services/wholeFilePrecondition";
 import { resolveRequireWritePreconditions } from "$/features/mcp-tools/services/writePreconditionSetting";
@@ -47,7 +43,13 @@ export async function deleteVaultFileHandler(
   return withVaultWriteLock(async () => {
     const file = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
     if (!file) {
-      return errorText(`File not found: ${ctx.arguments.path}`);
+      return errorJson(
+        `File not found: ${ctx.arguments.path}`,
+        "file_not_found",
+        {
+          path: ctx.arguments.path,
+        },
+      );
     }
     // `getAbstractFileByPath` resolves folders too, and `trashFile` accepts
     // any TAbstractFile — so without this guard a folder path would trash a

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 import {
@@ -68,8 +68,12 @@ export async function patchVaultFileHandler(
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
   if (!resolved.ok) {
     return resolved.reason === "not_found"
-      ? errorText(`File not found: ${ctx.arguments.path}`)
-      : errorText(`Path is a folder: ${ctx.arguments.path}`);
+      ? errorJson(`File not found: ${ctx.arguments.path}`, "file_not_found", {
+          path: ctx.arguments.path,
+        })
+      : errorJson(`Path is a folder: ${ctx.arguments.path}`, "not_a_file", {
+          path: ctx.arguments.path,
+        });
   }
   const file = resolved.file;
 

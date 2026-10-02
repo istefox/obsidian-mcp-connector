@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import { type App, type TFile } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
@@ -107,7 +107,7 @@ export async function executeTemplateHandler(
     if (coreTemplates?.enabled) {
       return runCoreTemplates(ctx, coreTemplates.instance?.options);
     }
-    return errorPayload(
+    return errorJson(
       "No template engine found. Install Templater for dynamic templates, or enable the core Templates plugin for basic {{title}}/{{date}}/{{time}} substitution.",
       "templater_not_installed",
       { templatePath: ctx.arguments.templatePath },
@@ -118,12 +118,12 @@ export async function executeTemplateHandler(
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.templatePath);
   if (!resolved.ok) {
     return resolved.reason === "not_found"
-      ? errorPayload(
+      ? errorJson(
           `Template not found: ${ctx.arguments.templatePath}`,
           "template_not_found",
           { templatePath: ctx.arguments.templatePath },
         )
-      : errorPayload(
+      : errorJson(
           `Template path is a folder: ${ctx.arguments.templatePath}`,
           "template_not_found",
           { templatePath: ctx.arguments.templatePath },
@@ -156,7 +156,7 @@ export async function executeTemplateHandler(
       },
     );
     if (created === "exists") {
-      return errorPayload(
+      return errorJson(
         `Target already exists: ${targetPath}. execute_template creates a new note and never overwrites one; delete or rename the existing file first, or pick another targetPath.`,
         "file_exists",
         { templatePath: ctx.arguments.templatePath, path: targetPath },
@@ -284,7 +284,7 @@ export async function executeTemplateHandler(
           await bookkeeping.end_templater_task?.(taskPath);
         }
       }
-      return errorPayload(
+      return errorJson(
         `Template execution failed: ${message}`,
         "template_execution_failed",
         {
@@ -314,12 +314,10 @@ async function runCoreTemplates(
   const resolved = resolveTFile(ctx.app.vault, templatePath);
   if (!resolved.ok) {
     return resolved.reason === "not_found"
-      ? errorPayload(
-          `Template not found: ${templatePath}`,
-          "template_not_found",
-          { templatePath },
-        )
-      : errorPayload(
+      ? errorJson(`Template not found: ${templatePath}`, "template_not_found", {
+          templatePath,
+        })
+      : errorJson(
           `Template path is a folder: ${templatePath}`,
           "template_not_found",
           { templatePath },
@@ -331,7 +329,7 @@ async function runCoreTemplates(
   try {
     raw = await ctx.app.vault.read(templateFile);
   } catch (err) {
-    return errorPayload(
+    return errorJson(
       `Core Templates could not read template file: ${err instanceof Error ? err.message : String(err)}`,
       "core_templates_execution_failed",
       { templatePath },
@@ -390,15 +388,4 @@ async function runCoreTemplates(
       },
     ],
   };
-}
-
-function errorPayload(
-  message: string,
-  errorCode: string,
-  extras: Record<string, unknown>,
-): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }

@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import type { App } from "obsidian";
 
 export const executeDataviewQuerySchema = type({
@@ -178,7 +178,7 @@ export async function executeDataviewQueryHandler(
   const plugin = pluginsBag?.["dataview"] as DataviewPlugin | undefined;
 
   if (!plugin) {
-    return errorPayload(
+    return errorJson(
       "The Dataview community plugin is not installed. Install it from Obsidian's community plugins and enable it, then retry.",
       "dataview_not_installed",
       { query },
@@ -189,7 +189,7 @@ export async function executeDataviewQueryHandler(
     // "not installed" because the fix is to wait, not to install. Dataview
     // fires `dataview:index-ready` when the index is ready — the agent
     // can simply retry shortly.
-    return errorPayload(
+    return errorJson(
       "Dataview is loaded but its index has not finished building yet. Retry shortly (Dataview fires `dataview:index-ready` when ready).",
       "dataview_not_ready",
       { query },
@@ -202,7 +202,7 @@ export async function executeDataviewQueryHandler(
   } catch (err) {
     // Dataview threw internally (broken index, torn-down plugin, etc.).
     // Convert to a structured isError response rather than an unhandled rejection.
-    return errorPayload(
+    return errorJson(
       String(err instanceof Error ? err.message : err),
       "dataview_query_failed",
       { query },
@@ -214,7 +214,7 @@ export async function executeDataviewQueryHandler(
     // so the caller sees exactly what Dataview rejected. DQL validation is
     // Dataview's job, not ours. Use String() in case the real plugin returns
     // an Error object rather than a plain string.
-    return errorPayload(String(result.error), "dataview_query_failed", {
+    return errorJson(String(result.error), "dataview_query_failed", {
       query,
     });
   }
@@ -226,7 +226,7 @@ export async function executeDataviewQueryHandler(
   try {
     text = JSON.stringify(serializeDataviewResult(result.value));
   } catch {
-    return errorPayload(
+    return errorJson(
       "Dataview result contains non-serialisable values (circular reference or BigInt). Add LIMIT or simplify the query to reduce result complexity.",
       "dataview_query_failed",
       { query },
@@ -238,15 +238,4 @@ export async function executeDataviewQueryHandler(
   return {
     content: [{ type: "text", text }],
   };
-}
-
-function errorPayload(
-  message: string,
-  errorCode: string,
-  extras: Record<string, unknown>,
-): {
-  content: Array<{ type: "text"; text: string }>;
-  isError: true;
-} {
-  return errorText(JSON.stringify({ error: message, errorCode, ...extras }));
 }

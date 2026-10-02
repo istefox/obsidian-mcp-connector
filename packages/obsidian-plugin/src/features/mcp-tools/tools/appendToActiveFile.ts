@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { normalizeAppendBody } from "$/features/mcp-tools/services/patchHelpers";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
@@ -28,7 +28,7 @@ export async function appendToActiveFileHandler(
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return errorText("No active file.");
+    return errorJson("No active file.", "no_active_file");
   }
   const normalized = normalizeAppendBody(ctx.arguments.content, "append");
   // Atomic append under the vault write lock — see vaultWriteLock.ts.

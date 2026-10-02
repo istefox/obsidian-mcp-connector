@@ -70,13 +70,6 @@ type ToolResult = {
   isError?: true;
 };
 
-function errorResult(text: string): ToolResult {
-  return {
-    content: [{ type: "text", text }],
-    isError: true,
-  };
-}
-
 /**
  * Estimate seconds remaining from elapsed build time and files-indexed
  * percent (#344). Returns `null` rather than a fabricated number when
@@ -176,8 +169,9 @@ export async function searchVaultSmartHandler(
 ): Promise<ToolResult> {
   const state = ctx.plugin.semanticSearchState;
   if (!state) {
-    return errorResult(
+    return errorJson(
       "Semantic search is not initialized yet. Reload the MCP Connector plugin and try again, or check the developer console for the setup error.",
+      "semantic_search_unavailable",
     );
   }
 
@@ -250,10 +244,11 @@ export async function searchVaultSmartHandler(
         { filesIndexed, filesTotal, percent, retryAfterSeconds },
       );
     }
-    return errorResult(
+    return errorJson(
       usingSmartConnections
         ? "Semantic search is not ready: the Smart Connections plugin is not loaded or has not finished indexing this vault. Wait for Smart Connections to finish loading, or open Settings → MCP Connector → Semantic Search to switch providers."
         : "Semantic search is not ready. The provider may still be loading the embedding model, or the configured backend is unavailable. Open Settings → MCP Connector → Semantic Search to choose or reconfigure a provider.",
+      "semantic_search_unavailable",
     );
   }
 
@@ -266,7 +261,10 @@ export async function searchVaultSmartHandler(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return errorResult(`Semantic search failed: ${message}`);
+    return errorJson(
+      `Semantic search failed: ${message}`,
+      "semantic_search_failed",
+    );
   }
 
   // Query-time exclusion (RFC #238, D3): drop hits in folders the user

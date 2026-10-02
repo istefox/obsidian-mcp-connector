@@ -2,7 +2,7 @@ import { type } from "arktype";
 import { type App } from "obsidian";
 import { resolveLinkTarget } from "../services/resolveLinkTarget";
 import { resolveTFile } from "../services/resolveTFile";
-import { errorText, successJson } from "../services/responseBuilders";
+import { errorJson, successJson } from "../services/responseBuilders";
 
 export const getOutgoingLinksSchema = type({
   name: '"get_outgoing_links"',
@@ -56,8 +56,12 @@ export async function getOutgoingLinksHandler(
   const resolved = resolveTFile(ctx.app.vault, sourcePath);
   if (!resolved.ok) {
     return resolved.reason === "not_found"
-      ? errorText(`File not found: ${sourcePath}`)
-      : errorText(`Path is a folder: ${sourcePath}`);
+      ? errorJson(`File not found: ${sourcePath}`, "file_not_found", {
+          path: sourcePath,
+        })
+      : errorJson(`Path is a folder: ${sourcePath}`, "not_a_file", {
+          path: sourcePath,
+        });
   }
   const file = resolved.file;
 

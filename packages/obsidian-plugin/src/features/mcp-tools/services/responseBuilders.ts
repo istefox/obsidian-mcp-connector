@@ -1,11 +1,17 @@
 /**
  * Shared MCP tool response builders.
  *
- * The same three shapes were copy-pasted (with drift) across the tool
- * handlers: a plain-text error, a JSON-stringified payload, and a plain
- * text success. Centralizing them keeps the wire format identical in
- * every tool. The exact message strings stay at the call sites — these
- * helpers only own the envelope.
+ * The same shapes were copy-pasted (with drift) across the tool handlers:
+ * a JSON error payload, a JSON success payload and a plain text success.
+ * Centralizing them keeps the wire format identical in every tool. The
+ * exact message strings stay at the call sites — these helpers only own
+ * the envelope.
+ *
+ * Every failure goes through {@link errorJson}: the text is always a JSON
+ * body `{ error, errorCode, ...extras }` with a stable snake_case
+ * `errorCode`, so a client branches on the code and shows the message.
+ * The code vocabulary is listed in `docs/error-codes.md`; reuse an
+ * existing code before inventing one.
  */
 
 export type ToolResponse = {
@@ -13,14 +19,6 @@ export type ToolResponse = {
   structuredContent?: Record<string, unknown>;
   isError?: true;
 };
-
-/** Plain-text error: `{ content: [text], isError: true }`. */
-export function errorText(message: string): ToolResponse & { isError: true } {
-  return {
-    content: [{ type: "text", text: message }],
-    isError: true,
-  };
-}
 
 /**
  * JSON error payload (compact, no indentation — consumers are LLMs,

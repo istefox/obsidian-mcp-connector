@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { resolveHeadingForUri } from "../services/anchorTargets";
 import {
   buildObsidianUri,
@@ -31,7 +31,7 @@ export async function getActiveFileHandler(ctx: GetActiveFileContext): Promise<{
 }> {
   const file = ctx.app.workspace.getActiveFile();
   if (!file) {
-    return errorText("No active file.");
+    return errorJson("No active file.", "no_active_file");
   }
 
   const content = await ctx.app.vault.read(file);

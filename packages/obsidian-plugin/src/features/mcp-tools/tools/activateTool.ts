@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ToolLoadingManager } from "$/features/adaptive-tool-loading/toolLoadingManager";
 import {
@@ -69,14 +69,18 @@ export async function activateToolHandler({
   const found = allEntries.find((e) => e.name === args.name);
 
   if (!found) {
-    return errorText(
+    return errorJson(
       `Unknown tool: '${args.name}'. Run tool_catalog to see available tools.`,
+      "unknown_tool",
+      { tool: args.name },
     );
   }
 
   if (found.userDisabled) {
-    return errorText(
+    return errorJson(
       `Tool '${args.name}' was disabled by the user and cannot be activated via MCP. Ask the user to re-enable it in the plugin's tool-toggle settings.`,
+      "tool_disabled",
+      { tool: args.name },
     );
   }
 
@@ -85,8 +89,10 @@ export async function activateToolHandler({
   // shape ADR-0010 introduced for user-disabled tools — with wording that
   // points at the vault owner rather than inviting a retry.
   if (scope && !isAllowedInScope(scope, args.name)) {
-    return errorText(
+    return errorJson(
       `Tool '${args.name}' is not available to this client. The token's allowed-tools list does not include it. Ask the vault owner to change it in the plugin's token settings.`,
+      "not_allowed",
+      { tool: args.name },
     );
   }
 

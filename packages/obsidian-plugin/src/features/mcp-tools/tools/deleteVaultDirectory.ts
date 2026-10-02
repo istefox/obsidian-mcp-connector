@@ -1,6 +1,6 @@
 import { type } from "arktype";
 import {
-  errorText,
+  errorJson,
   successJson,
   successText,
 } from "../services/responseBuilders";
@@ -49,8 +49,10 @@ export async function deleteVaultDirectoryHandler(
 }> {
   const trimmed = ctx.arguments.path.replace(/^\/+|\/+$/g, "");
   if (!trimmed) {
-    return errorText(
+    return errorJson(
       "Path is empty after normalisation; refusing to delete the vault root.",
+      "invalid_path",
+      { path: ctx.arguments.path },
     );
   }
 
@@ -65,8 +67,10 @@ export async function deleteVaultDirectoryHandler(
     const isFolder =
       (existing as { children?: unknown }).children !== undefined;
     if (!isFolder) {
-      return errorText(
+      return errorJson(
         `Path ${trimmed} is a file, not a directory. Use delete_vault_file instead.`,
+        "not_a_directory",
+        { path: trimmed },
       );
     }
   }
@@ -88,8 +92,10 @@ export async function deleteVaultDirectoryHandler(
 
   if (dryRun) {
     if (!existing) {
-      return errorText(
+      return errorJson(
         `Failed to delete directory ${trimmed}: directory does not exist`,
+        "folder_not_found",
+        { path: trimmed },
       );
     }
     const nonEmpty = files.length + folders.length > 0;
@@ -116,20 +122,26 @@ export async function deleteVaultDirectoryHandler(
     if (useTrash) {
       const folder = ctx.app.vault.getAbstractFileByPath(trimmed);
       if (!folder) {
-        return errorText(
+        return errorJson(
           `Failed to delete directory ${trimmed}: directory does not exist`,
+          "folder_not_found",
+          { path: trimmed },
         );
       }
       if (!recursive && files.length + folders.length > 0) {
-        return errorText(
+        return errorJson(
           `Failed to delete directory ${trimmed}: directory not empty (use recursive: true to delete it together with its contents)`,
+          "directory_not_empty",
+          { path: trimmed },
         );
       }
       try {
         await ctx.app.fileManager.trashFile(folder as TAbstractFile);
       } catch (e) {
-        return errorText(
+        return errorJson(
           `Failed to delete directory ${trimmed}: ${e instanceof Error ? e.message : String(e)}`,
+          "delete_failed",
+          { path: trimmed },
         );
       }
       return successText("OK");
@@ -147,25 +159,22 @@ export async function deleteVaultDirectoryHandler(
       // MCP client (it would expose $HOME / cloud-sync identifiers / vault
       // folder name). Unknown errors fall through to the original shape.
       const errno = (e as NodeJS.ErrnoException | undefined)?.code;
-      const msg =
+      const [msg, errorCode] =
         errno === "ENOTEMPTY"
-          ? "directory not empty (use recursive: true to delete it together with its contents)"
+          ? [
+              "directory not empty (use recursive: true to delete it together with its contents)",
+              "directory_not_empty",
+            ]
           : errno === "ENOENT"
-            ? "directory does not exist"
+            ? ["directory does not exist", "folder_not_found"]
             : errno === "EACCES" || errno === "EPERM"
-              ? "permission denied"
-              : e instanceof Error
-                ? e.message
-                : String(e);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Failed to delete directory ${trimmed}: ${msg}`,
-          },
-        ],
-        isError: true,
-      };
+              ? ["permission denied", "permission_denied"]
+              : [e instanceof Error ? e.message : String(e), "delete_failed"];
+      return errorJson(
+        `Failed to delete directory ${trimmed}: ${msg}`,
+        errorCode,
+        { path: trimmed },
+      );
     }
 
     return successText("OK");

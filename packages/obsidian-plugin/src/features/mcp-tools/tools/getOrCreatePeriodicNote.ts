@@ -7,6 +7,7 @@ import {
   type PeriodType,
   resolvePeriodicNote,
 } from "$/features/mcp-tools/services/periodicNotesDetector";
+import { errorJson } from "../services/responseBuilders";
 
 export const getOrCreatePeriodicNoteSchema = type({
   name: '"get_or_create_periodic_note"',
@@ -37,37 +38,18 @@ export async function getOrCreatePeriodicNoteHandler(
 
   if (date !== undefined) {
     if (!DATE_REGEX_BY_PERIOD[period].test(date)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error: `Invalid date format for period '${period}' — expected ${describeFormat(period)}.`,
-              errorCode: "invalid_date_for_period",
-              period,
-              date,
-            }),
-          },
-        ],
-        isError: true,
-      };
+      return errorJson(
+        `Invalid date format for period '${period}' — expected ${describeFormat(period)}.`,
+        "invalid_date_for_period",
+        { period, date },
+      );
     }
     if (!isValidPeriodicDate(period, date)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              error:
-                "Date is well-shaped but not a real calendar value (e.g. month 13, Feb 30, ISO-week 99).",
-              errorCode: "invalid_date_for_period",
-              period,
-              date,
-            }),
-          },
-        ],
-        isError: true,
-      };
+      return errorJson(
+        "Date is well-shaped but not a real calendar value (e.g. month 13, Feb 30, ISO-week 99).",
+        "invalid_date_for_period",
+        { period, date },
+      );
     }
   }
 
@@ -79,37 +61,18 @@ export async function getOrCreatePeriodicNoteHandler(
     created = true;
   }
   if (!file) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error:
-              "Internal: periodic note resolved but not retrievable after create.",
-            errorCode: "internal_error",
-            period,
-            path: resolved.path,
-          }),
-        },
-      ],
-      isError: true,
-    };
+    return errorJson(
+      "Internal: periodic note resolved but not retrievable after create.",
+      "internal_error",
+      { period, path: resolved.path },
+    );
   }
   if (!(file instanceof TFile)) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            error: "Internal: periodic note resolved to a folder, not a file.",
-            errorCode: "internal_error",
-            period,
-            path: resolved.path,
-          }),
-        },
-      ],
-      isError: true,
-    };
+    return errorJson(
+      "Internal: periodic note resolved to a folder, not a file.",
+      "internal_error",
+      { period, path: resolved.path },
+    );
   }
   const tfile = file;
   const content = await ctx.app.vault.cachedRead(tfile);

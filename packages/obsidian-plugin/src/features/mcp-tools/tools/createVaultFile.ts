@@ -1,9 +1,5 @@
 import { type } from "arktype";
-import {
-  errorJson,
-  errorText,
-  successText,
-} from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import { TFile, type App } from "obsidian";
 import { ensureParentFolderExists } from "$/features/mcp-tools/services/ensureFolderExists";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
@@ -63,7 +59,11 @@ export async function createVaultFileHandler(
     const existing = ctx.app.vault.getAbstractFileByPath(ctx.arguments.path);
     if (existing) {
       if (!(existing instanceof TFile)) {
-        return errorText(`Path ${ctx.arguments.path} is a folder, not a file.`);
+        return errorJson(
+          `Path ${ctx.arguments.path} is a folder, not a file.`,
+          "not_a_file",
+          { path: ctx.arguments.path },
+        );
       }
       let failureText: string | null = null;
       await ctx.app.vault.process(existing, (rawContent) => {

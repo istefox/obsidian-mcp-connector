@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
+import { errorJson } from "../services/responseBuilders";
 
 export const getNotePropertySchema = type({
   name: '"get_note_property"',
@@ -27,26 +28,13 @@ export async function getNotePropertyHandler(
 }> {
   const resolved = resolveTFile(ctx.app.vault, ctx.arguments.path);
   if (!resolved.ok) {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            resolved.reason === "not_found"
-              ? JSON.stringify({
-                  error: "File not found",
-                  errorCode: "file_not_found",
-                  path: ctx.arguments.path,
-                })
-              : JSON.stringify({
-                  error: "Path is a folder, not a file",
-                  errorCode: "not_a_file",
-                  path: ctx.arguments.path,
-                }),
-        },
-      ],
-      isError: true,
-    };
+    return resolved.reason === "not_found"
+      ? errorJson("File not found", "file_not_found", {
+          path: ctx.arguments.path,
+        })
+      : errorJson("Path is a folder, not a file", "not_a_file", {
+          path: ctx.arguments.path,
+        });
   }
   const file = resolved.file;
   const fm: Record<string, unknown> | undefined =

@@ -30,10 +30,10 @@ describe("headingRename — findSourceHeading", () => {
     expect(r).toMatchObject({ line: 0, level: 1, text: "Intro" });
   });
 
-  test("returns heading-not-found when no match", () => {
+  test("returns heading_not_found when no match", () => {
     const r = findSourceHeading([h("Foo", 1, 0)], ["# Foo"], { text: "Bar" });
     expect(r).toMatchObject({
-      errorCode: "heading-not-found",
+      errorCode: "heading_not_found",
     });
   });
 
@@ -44,14 +44,14 @@ describe("headingRename — findSourceHeading", () => {
     expect(r).toMatchObject({ line: 4, level: 3, text: "Title" });
   });
 
-  test("returns ambiguous-heading with candidates when multiple match", () => {
+  test("returns ambiguous_heading with candidates when multiple match", () => {
     const headings = [h("Section", 1, 0), h("Section", 2, 4)];
     const lines = ["# Section", "", "", "", "## Section"];
     const r = findSourceHeading(headings, lines, { text: "Section" });
     expect(r).toMatchObject({
-      errorCode: "ambiguous-heading",
+      errorCode: "ambiguous_heading",
     });
-    if ("errorCode" in r && r.errorCode === "ambiguous-heading") {
+    if ("errorCode" in r && r.errorCode === "ambiguous_heading") {
       expect(r.candidates).toHaveLength(2);
       expect(r.candidates.map((c) => c.line)).toEqual([0, 4]);
       expect(r.candidates.map((c) => c.level)).toEqual([1, 2]);
@@ -62,7 +62,7 @@ describe("headingRename — findSourceHeading", () => {
     const headings = [h("Section", 1, 0)];
     const lines = ["# Section"];
     const r = findSourceHeading(headings, lines, { text: "section" });
-    expect(r).toMatchObject({ errorCode: "heading-not-found" });
+    expect(r).toMatchObject({ errorCode: "heading_not_found" });
   });
 
   test("RFC edge case #2 — skips headings inside fenced code blocks", () => {
@@ -71,7 +71,7 @@ describe("headingRename — findSourceHeading", () => {
     const lines = ["```", "# Not a heading", "```", "# Real heading"];
     const headings = [h("Not a heading", 1, 1), h("Real heading", 1, 3)];
     const r = findSourceHeading(headings, lines, { text: "Not a heading" });
-    expect(r).toMatchObject({ errorCode: "heading-not-found" });
+    expect(r).toMatchObject({ errorCode: "heading_not_found" });
     const ok = findSourceHeading(headings, lines, { text: "Real heading" });
     expect(ok).toMatchObject({ line: 3 });
   });
@@ -82,7 +82,7 @@ describe("headingRename — checkHeadingCollision (RFC edge case #1)", () => {
     const headings = [h("From", 2, 0), h("To", 2, 4)];
     const lines = ["## From", "", "", "", "## To"];
     const r = checkHeadingCollision(headings, lines, "To", 2, 0);
-    expect(r).toMatchObject({ errorCode: "heading-collision" });
+    expect(r).toMatchObject({ errorCode: "heading_collision" });
   });
 
   test("allows when same text exists at a different level", () => {
@@ -498,7 +498,7 @@ describe("headingRename — planRename (integration)", () => {
     expect(r.linkRewriteCount).toBe(2);
   });
 
-  test("returns heading-not-found error before doing anything else", () => {
+  test("returns heading_not_found error before doing anything else", () => {
     const r = planRename({
       sourcePath: "source.md",
       sourceText: "# Other",
@@ -508,10 +508,10 @@ describe("headingRename — planRename (integration)", () => {
       backlinkers: { "a.md": "[[source#Missing]]" },
       resolve: resolveBasic,
     });
-    expect(r).toMatchObject({ errorCode: "heading-not-found" });
+    expect(r).toMatchObject({ errorCode: "heading_not_found" });
   });
 
-  test("returns ambiguous-heading error with candidates", () => {
+  test("returns ambiguous_heading error with candidates", () => {
     const r = planRename({
       sourcePath: "source.md",
       sourceText: "## Foo\n\n\n\n## Foo",
@@ -521,13 +521,13 @@ describe("headingRename — planRename (integration)", () => {
       backlinkers: {},
       resolve: resolveBasic,
     });
-    expect(r).toMatchObject({ errorCode: "ambiguous-heading" });
-    if ("errorCode" in r && r.errorCode === "ambiguous-heading") {
+    expect(r).toMatchObject({ errorCode: "ambiguous_heading" });
+    if ("errorCode" in r && r.errorCode === "ambiguous_heading") {
       expect(r.candidates).toHaveLength(2);
     }
   });
 
-  test("returns heading-collision error when `to` already exists at same level", () => {
+  test("returns heading_collision error when `to` already exists at same level", () => {
     const r = planRename({
       sourcePath: "source.md",
       sourceText: "## Old\n\n\n\n## Existing",
@@ -537,10 +537,10 @@ describe("headingRename — planRename (integration)", () => {
       backlinkers: {},
       resolve: resolveBasic,
     });
-    expect(r).toMatchObject({ errorCode: "heading-collision" });
+    expect(r).toMatchObject({ errorCode: "heading_collision" });
   });
 
-  test("returns heading-collision error on no-op rename (from === to)", () => {
+  test("returns heading_collision error on no-op rename (from === to)", () => {
     const r = planRename({
       sourcePath: "source.md",
       sourceText: "## Same",
@@ -550,7 +550,7 @@ describe("headingRename — planRename (integration)", () => {
       backlinkers: {},
       resolve: resolveBasic,
     });
-    expect(r).toMatchObject({ errorCode: "heading-collision" });
+    expect(r).toMatchObject({ errorCode: "heading_collision" });
   });
 
   test("emits an empty backlinkers list (and linkRewriteCount=0) when no file references the heading", () => {

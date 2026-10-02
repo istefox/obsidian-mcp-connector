@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import { apply as applyJsonLogic } from "json-logic-js";
 import { executeDataviewQueryHandler } from "./executeDataviewQuery";
@@ -34,8 +34,9 @@ export async function searchVaultHandler(ctx: SearchVaultContext): Promise<{
     try {
       rule = JSON.parse(query);
     } catch {
-      return errorText(
+      return errorJson(
         'JsonLogic query must be a valid JSON string. Example: {"==": [{"var": "frontmatter.status"}, "active"]}',
+        "invalid_query",
       );
     }
 

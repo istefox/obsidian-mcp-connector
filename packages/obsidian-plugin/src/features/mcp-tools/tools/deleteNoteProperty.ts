@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { successJson } from "../services/responseBuilders";
+import { errorJson, successJson } from "../services/responseBuilders";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 
@@ -29,26 +29,9 @@ export async function deleteNotePropertyHandler(
   const { path, key } = ctx.arguments;
   const resolved = resolveTFile(ctx.app.vault, path);
   if (!resolved.ok) {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            resolved.reason === "not_found"
-              ? JSON.stringify({
-                  error: "File not found",
-                  errorCode: "file_not_found",
-                  path,
-                })
-              : JSON.stringify({
-                  error: "Path is a folder, not a file",
-                  errorCode: "not_a_file",
-                  path,
-                }),
-        },
-      ],
-      isError: true,
-    };
+    return resolved.reason === "not_found"
+      ? errorJson("File not found", "file_not_found", { path })
+      : errorJson("Path is a folder, not a file", "not_a_file", { path });
   }
   const file = resolved.file;
 

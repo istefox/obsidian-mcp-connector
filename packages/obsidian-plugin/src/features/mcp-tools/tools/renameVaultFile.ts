@@ -1,5 +1,5 @@
 import { type } from "arktype";
-import { errorText } from "../services/responseBuilders";
+import { errorJson } from "../services/responseBuilders";
 import type { App, TAbstractFile } from "obsidian";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 
@@ -31,12 +31,11 @@ export async function renameVaultFileHandler(
   const { from, to } = ctx.arguments;
 
   if (from === to) {
-    return {
-      content: [
-        { type: "text", text: `Source and destination are identical: ${from}` },
-      ],
-      isError: true,
-    };
+    return errorJson(
+      `Source and destination are identical: ${from}`,
+      "same_path",
+      { from, to },
+    );
   }
 
   // Three existence checks followed by the rename are one logical operation
@@ -45,11 +44,15 @@ export async function renameVaultFileHandler(
   return withVaultWriteLock(async () => {
     const source = ctx.app.vault.getAbstractFileByPath(from);
     if (!source) {
-      return errorText(`Source file not found: ${from}`);
+      return errorJson(`Source file not found: ${from}`, "file_not_found", {
+        path: from,
+      });
     }
 
     if (ctx.app.vault.getAbstractFileByPath(to)) {
-      return errorText(`Destination already exists: ${to}`);
+      return errorJson(`Destination already exists: ${to}`, "already_exists", {
+        path: to,
+      });
     }
 
     // Fail-loud on missing destination parent. Mirrors the bias established
@@ -60,8 +63,10 @@ export async function renameVaultFileHandler(
     if (slash > 0) {
       const parent = to.slice(0, slash);
       if (!ctx.app.vault.getAbstractFileByPath(parent)) {
-        return errorText(
+        return errorJson(
           `Destination parent directory does not exist: ${parent}`,
+          "folder_not_found",
+          { path: parent },
         );
       }
     }
@@ -77,8 +82,10 @@ export async function renameVaultFileHandler(
         }
       ).renameFile(source, to);
     } catch (e) {
-      return errorText(
+      return errorJson(
         `Failed to rename: ${e instanceof Error ? e.message : String(e)}`,
+        "rename_failed",
+        { from, to },
       );
     }
 

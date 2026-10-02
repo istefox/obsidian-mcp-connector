@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { type App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
+import { errorJson } from "../services/responseBuilders";
 
 export const getNoteOutlineSchema = type({
   name: '"get_note_outline"',
@@ -25,26 +26,9 @@ export async function getNoteOutlineHandler(
   const { path } = ctx.arguments;
   const resolved = resolveTFile(ctx.app.vault, path);
   if (!resolved.ok) {
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            resolved.reason === "not_found"
-              ? JSON.stringify({
-                  error: `File not found: ${path}`,
-                  errorCode: "file_not_found",
-                  path,
-                })
-              : JSON.stringify({
-                  error: `Path is a folder: ${path}`,
-                  errorCode: "not_a_file",
-                  path,
-                }),
-        },
-      ],
-      isError: true,
-    };
+    return resolved.reason === "not_found"
+      ? errorJson(`File not found: ${path}`, "file_not_found", { path })
+      : errorJson(`Path is a folder: ${path}`, "not_a_file", { path });
   }
   const abstract = resolved.file;
 

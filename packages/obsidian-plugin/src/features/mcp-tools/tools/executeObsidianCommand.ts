@@ -22,15 +22,15 @@
  * the current vault, which surfaces as a "not found" error (not a
  * permission error).
  *
- * Error taxonomy:
- *  - `{ isError: true, content[0].text ~ /rate limit/ }` → window full
- *  - `{ isError: true, content[0].text ~ /denied|not allowed/ }` → permission denied
- *  - `{ isError: true, content[0].text ~ /not found/ }` → unknown command id
+ * Error taxonomy (`errorCode` in the JSON body, `isError: true`):
+ *  - `rate_limited` → window full (`retryAfterSeconds` says when to retry)
+ *  - `command_denied` → permission denied by the command-permissions policy
+ *  - `command_not_found` → unknown command id
  *  - `{ content: [{ type: "text", text: "OK" }] }` → success
  */
 
 import { type } from "arktype";
-import { errorText, successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { rateLimitTake } from "$/features/mcp-tools/services/rateLimit";
@@ -73,8 +73,10 @@ export async function executeObsidianCommandHandler(
   const rl = rateLimitTake();
   if (!rl.ok) {
     const waitSec = Math.ceil((rl.retryAfterMs ?? 0) / 1000);
-    return errorText(
+    return errorJson(
       `Rate limit exceeded: too many command executions in the last minute. Retry in ${waitSec}s.`,
+      "rate_limited",
+      { retryAfterSeconds: waitSec },
     );
   }
 
@@ -91,8 +93,9 @@ export async function executeObsidianCommandHandler(
   };
 
   if (typeof pluginWithPermCheck.checkCommandPermission !== "function") {
-    return errorText(
+    return errorJson(
       "Internal error: permission check not available on plugin.",
+      "internal_error",
     );
   }
 
@@ -104,7 +107,9 @@ export async function executeObsidianCommandHandler(
     const reason = decision.reason
       ? `: ${decision.reason}`
       : ". Command is denied or not allowed by plugin settings.";
-    return errorText(`Command denied${reason}`);
+    return errorJson(`Command denied${reason}`, "command_denied", {
+      commandId: ctx.arguments.commandId,
+    });
   }
 
   // --- 3. Execute ---
@@ -119,8 +124,10 @@ export async function executeObsidianCommandHandler(
   const success = commandsApi.executeCommandById(ctx.arguments.commandId);
 
   if (!success) {
-    return errorText(
+    return errorJson(
       `Command not found: '${ctx.arguments.commandId}'. Use list_obsidian_commands to discover available commands.`,
+      "command_not_found",
+      { commandId: ctx.arguments.commandId },
     );
   }
 

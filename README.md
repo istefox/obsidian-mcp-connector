@@ -452,7 +452,7 @@ Report vulnerabilities through [SECURITY.md](SECURITY.md), never in a public iss
 
 ## For developers
 
-Bun monorepo, feature-based. Full contract in [`docs/project-architecture.md`](docs/project-architecture.md).
+Bun monorepo, feature-based. Full contract in [`docs/project-architecture.md`](docs/project-architecture.md). Every failed tool call is `isError: true` with a JSON body `{ error, errorCode, ... }`; the code vocabulary is [`docs/error-codes.md`](docs/error-codes.md).
 
 ```
 packages/

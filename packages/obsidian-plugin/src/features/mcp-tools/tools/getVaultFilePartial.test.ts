@@ -98,8 +98,15 @@ describe("get_vault_file_partial tool", () => {
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toContain("Frontmatter field not found");
-      expect(r.content[0].text).toContain('"status"');
+      const payload = JSON.parse(r.content[0].text) as {
+        error: string;
+        errorCode: string;
+        key: string;
+      };
+      expect(payload.error).toContain("Frontmatter field not found");
+      expect(payload.error).toContain('"status"');
+      expect(payload.errorCode).toBe("property_not_found");
+      expect(payload.key).toBe("status");
     });
 
     test("returns isError when file has no frontmatter at all", async () => {
@@ -483,7 +490,12 @@ describe("get_vault_file_partial tool", () => {
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toContain(
+      const payload = JSON.parse(r.content[0].text) as {
+        error: string;
+        errorCode: string;
+      };
+      expect(payload.errorCode).toBe("heading_not_found");
+      expect(payload.error).toContain(
         'Heading not found: "Child" under "Parent".',
       );
     });
@@ -502,7 +514,12 @@ describe("get_vault_file_partial tool", () => {
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toContain(
+      const payload = JSON.parse(r.content[0].text) as {
+        error: string;
+        errorCode: string;
+      };
+      expect(payload.errorCode).toBe("heading_not_found");
+      expect(payload.error).toContain(
         'Heading not found: "Missing" in the file.',
       );
     });
@@ -600,8 +617,15 @@ describe("get_vault_file_partial tool", () => {
         app: mockApp(),
       });
       expect(r.isError).toBe(true);
-      expect(r.content[0].text).toContain("Block not found");
-      expect(r.content[0].text).toContain('"^missing"');
+      const payload = JSON.parse(r.content[0].text) as {
+        error: string;
+        errorCode: string;
+        blockId: string;
+      };
+      expect(payload.error).toContain("Block not found");
+      expect(payload.error).toContain('"^missing"');
+      expect(payload.errorCode).toBe("block_not_found");
+      expect(payload.blockId).toBe("missing");
     });
 
     test("returns isError when target collapses to empty after stripping `^`", async () => {

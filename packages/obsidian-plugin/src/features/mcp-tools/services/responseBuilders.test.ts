@@ -1,19 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-  errorJson,
-  errorText,
-  successJson,
-  successText,
-} from "./responseBuilders";
+import { errorJson, successJson, successText } from "./responseBuilders";
 
 describe("responseBuilders", () => {
-  test("errorText wraps the message and sets isError", () => {
-    expect(errorText("File not found: a.md")).toEqual({
-      content: [{ type: "text", text: "File not found: a.md" }],
-      isError: true,
-    });
-  });
-
   test("errorJson keeps the error/errorCode/extras key order", () => {
     const result = errorJson("File not found", "file_not_found", {
       path: "a.md",
@@ -101,10 +89,6 @@ describe("successJson — structuredContent dual-emit", () => {
 
   test("errorJson carries no structuredContent", () => {
     expect("structuredContent" in errorJson("e", "c")).toBe(false);
-  });
-
-  test("errorText carries no structuredContent", () => {
-    expect("structuredContent" in errorText("e")).toBe(false);
   });
 
   test("successText carries no structuredContent", () => {
