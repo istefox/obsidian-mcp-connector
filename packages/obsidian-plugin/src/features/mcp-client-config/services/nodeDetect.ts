@@ -287,16 +287,6 @@ export async function detectBrew(opts?: {
 }
 
 /**
- * Resolved absolute brew binary path (or `"brew"` when PATH-based
- * works), populated by the most recent `detectBrew()`. The brew
- * install action uses this so it does not depend on the inherited
- * PATH containing /opt/homebrew/bin.
- */
-export function getDetectedBrewPath(): string | null {
-  return cachedBrewPath;
-}
-
-/**
  * Run `brew install node` and stream progress via the optional
  * `onLine` callback. Returns success / failure for the UI.
  *

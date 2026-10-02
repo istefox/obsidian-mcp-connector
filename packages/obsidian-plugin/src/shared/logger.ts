@@ -12,8 +12,8 @@ export const LOGGER_CONFIG: InputLoggerConfig = {
   level: "DEBUG",
 };
 
-export const { filename: FULL_LOGGER_FILENAME } =
-  loggerConfigMorph.assert(LOGGER_CONFIG);
+// Validates LOGGER_CONFIG at module load; the morph's output is not used.
+loggerConfigMorph.assert(LOGGER_CONFIG);
 
 /**
  * In production, we use the console. During development, the logger writes logs to a file in the same folder as the server log file.

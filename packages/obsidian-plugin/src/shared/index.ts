@@ -1,5 +1,4 @@
-import type { App, Plugin } from "obsidian";
-import { distinct, interval, map, takeUntil, takeWhile, timer } from "rxjs";
+import type { App } from "obsidian";
 import type { SmartConnections, Templater } from "shared";
 import type McpToolsPlugin from "src/main";
 
@@ -74,108 +73,175 @@ interface SmartConnectionsV3Plugin {
   };
 }
 
-export const loadSmartSearchAPI = (plugin: McpToolsPlugin) =>
-  interval(200).pipe(
-    takeUntil(timer(5000)),
-    map((): Dependencies["smart-connections"] => {
-      const smartConnectionsPlugin = plugin.app.plugins.plugins[
-        "smart-connections"
-      ] as SmartConnectionsV3Plugin | undefined;
+/**
+ * One look at the Smart Connections plugin as it is right now: v3+ through
+ * `env.smart_sources` (wrapped back into the v2 `SmartSearch` shape), else
+ * v2 through `window.SmartSearch` or a plugin `env` that exposes a callable
+ * `search`. `installed` is true only when a usable API was found.
+ */
+export function detectSmartConnections(
+  plugin: McpToolsPlugin,
+): Dependencies["smart-connections"] {
+  const smartConnectionsPlugin = plugin.app.plugins.plugins[
+    "smart-connections"
+  ] as SmartConnectionsV3Plugin | undefined;
 
-      // Check for Smart Connections v3.0+ (uses smart environment)
-      const smartSources = smartConnectionsPlugin?.env?.smart_sources;
-      if (smartSources) {
-        // Create a compatibility wrapper that matches the old SmartSearch interface
-        const api: SmartConnections.SmartSearch = {
-          search: async (
-            search_text: string,
-            filter?: Record<string, string>,
-          ) => {
-            try {
-              // Use the new v3.0 lookup API
-              const results = await smartSources.lookup({
-                hypotheticals: [search_text],
-                filter: {
-                  limit: filter?.limit,
-                  key_starts_with_any: filter?.key_starts_with_any,
-                  exclude_key_starts_with_any:
-                    filter?.exclude_key_starts_with_any,
-                  exclude_key: filter?.exclude_key,
-                  exclude_keys: filter?.exclude_keys,
-                  exclude_key_starts_with: filter?.exclude_key_starts_with,
-                  exclude_key_includes: filter?.exclude_key_includes,
-                  key_ends_with: filter?.key_ends_with,
-                  key_starts_with: filter?.key_starts_with,
-                  key_includes: filter?.key_includes,
-                },
-              });
+  // Check for Smart Connections v3.0+ (uses smart environment)
+  const smartSources = smartConnectionsPlugin?.env?.smart_sources;
+  if (smartSources) {
+    // Create a compatibility wrapper that matches the old SmartSearch interface
+    const api: SmartConnections.SmartSearch = {
+      search: async (search_text: string, filter?: Record<string, string>) => {
+        try {
+          // Use the new v3.0 lookup API
+          const results = await smartSources.lookup({
+            hypotheticals: [search_text],
+            filter: {
+              limit: filter?.limit,
+              key_starts_with_any: filter?.key_starts_with_any,
+              exclude_key_starts_with_any: filter?.exclude_key_starts_with_any,
+              exclude_key: filter?.exclude_key,
+              exclude_keys: filter?.exclude_keys,
+              exclude_key_starts_with: filter?.exclude_key_starts_with,
+              exclude_key_includes: filter?.exclude_key_includes,
+              key_ends_with: filter?.key_ends_with,
+              key_starts_with: filter?.key_starts_with,
+              key_includes: filter?.key_includes,
+            },
+          });
 
-              // Transform results to match expected format
-              return results.map((result) => ({
-                item: {
-                  path: result.item.path,
-                  name:
-                    result.item.name ||
-                    result.item.key?.split("/").pop() ||
-                    result.item.key ||
-                    result.item.path,
-                  breadcrumbs: result.item.breadcrumbs || result.item.path,
-                  read: () => result.item.read(),
-                  key: result.item.key ?? result.item.path,
-                  file_path: result.item.path,
-                  link: result.item.link ?? "",
-                  size: result.item.size ?? 0,
-                },
-                score: result.score,
-              })) as unknown as Awaited<
-                ReturnType<SmartConnections.SmartSearch["search"]>
-              >;
-            } catch (error) {
-              console.error("Smart Connections v3.0 search error:", error);
-              return [];
-            }
-          },
-        };
-
-        return {
-          id: "smart-connections",
-          name: "Smart Connections",
-          required: false,
-          installed: true,
-          api,
-          plugin:
-            smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
-        };
-      }
-
-      // Try window.SmartSearch first (works on some platforms for v2.x)
-      let legacyApi = window.SmartSearch;
-
-      // Fallback to plugin system (fixes Linux/cross-platform detection issues).
-      // SC v4 removed window.SmartSearch; plugin.env exists but has no search().
-      // Guard: only accept env if it exposes a callable search() — otherwise keep
-      // legacyApi null so polling continues until the v3 path becomes ready.
-      if (!legacyApi && smartConnectionsPlugin?.env) {
-        const candidate =
-          smartConnectionsPlugin.env as unknown as SmartConnections.SmartSearch;
-        if (typeof candidate.search === "function") {
-          legacyApi = candidate;
-          window.SmartSearch = legacyApi;
+          // Transform results to match expected format
+          return results.map((result) => ({
+            item: {
+              path: result.item.path,
+              name:
+                result.item.name ||
+                result.item.key?.split("/").pop() ||
+                result.item.key ||
+                result.item.path,
+              breadcrumbs: result.item.breadcrumbs || result.item.path,
+              read: () => result.item.read(),
+              key: result.item.key ?? result.item.path,
+              file_path: result.item.path,
+              link: result.item.link ?? "",
+              size: result.item.size ?? 0,
+            },
+            score: result.score,
+          })) as unknown as Awaited<
+            ReturnType<SmartConnections.SmartSearch["search"]>
+          >;
+        } catch (error) {
+          console.error("Smart Connections v3.0 search error:", error);
+          return [];
         }
-      }
+      },
+    };
 
-      return {
-        id: "smart-connections",
-        name: "Smart Connections",
-        required: false,
-        installed: !!legacyApi,
-        api: legacyApi,
-        plugin:
-          smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
-      };
-    }),
-    takeWhile((dep) => typeof dep.api?.search !== "function", true),
-    distinct(({ installed }) => installed),
-  );
+    return {
+      id: "smart-connections",
+      name: "Smart Connections",
+      required: false,
+      installed: true,
+      api,
+      plugin:
+        smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
+    };
+  }
+
+  // Try window.SmartSearch first (works on some platforms for v2.x).
+  // `window` is absent outside a renderer (unit tests of the poll).
+  let legacyApi =
+    typeof window === "undefined" ? undefined : window.SmartSearch;
+
+  // Fallback to plugin system (fixes Linux/cross-platform detection issues).
+  // SC v4 removed window.SmartSearch; plugin.env exists but has no search().
+  // Guard: only accept env if it exposes a callable search() — otherwise keep
+  // legacyApi null so polling continues until the v3 path becomes ready.
+  if (!legacyApi && smartConnectionsPlugin?.env) {
+    const candidate =
+      smartConnectionsPlugin.env as unknown as SmartConnections.SmartSearch;
+    if (typeof candidate.search === "function") {
+      legacyApi = candidate;
+      window.SmartSearch = legacyApi;
+    }
+  }
+
+  return {
+    id: "smart-connections",
+    name: "Smart Connections",
+    required: false,
+    installed: !!legacyApi,
+    api: legacyApi,
+    plugin:
+      smartConnectionsPlugin as App["plugins"]["plugins"]["smart-connections"],
+  };
+}
+
+export type SmartSearchPollOptions = {
+  /** Called when `installed` changes, the first tick included. */
+  onNext: (dep: Dependencies["smart-connections"]) => void;
+  /** Called once: a usable API was found, the horizon passed, or a tick threw. */
+  onComplete: () => void;
+  /** Called before `onComplete` when a tick throws. */
+  onError?: (error: unknown) => void;
+  /** Tick period in ms. Default 200. */
+  intervalMs?: number;
+  /** Give-up horizon in ms. Default 5000. */
+  timeoutMs?: number;
+};
+
+/**
+ * Poll for the Smart Connections search API while Obsidian is still
+ * loading plugins. Ticks every `intervalMs` up to `timeoutMs`, reports a
+ * detection result whenever `installed` flips (so the first tick always
+ * reports), and stops right after the first result whose `api.search` is
+ * callable. Returns a cancel function for `onunload`: cancelling does not
+ * call `onComplete`.
+ *
+ * Plain timers on purpose. This was the one rxjs site in the plugin and
+ * carried the whole library (~330 KB unminified) into the bundle.
+ */
+export function loadSmartSearchAPI(
+  plugin: McpToolsPlugin,
+  options: SmartSearchPollOptions,
+): () => void {
+  const intervalMs = options.intervalMs ?? 200;
+  const timeoutMs = options.timeoutMs ?? 5000;
+  let lastInstalled: boolean | undefined;
+  let done = false;
+
+  const stop = () => {
+    done = true;
+    clearInterval(ticker);
+    clearTimeout(horizon);
+  };
+  const finish = () => {
+    if (done) return;
+    stop();
+    options.onComplete();
+  };
+
+  const ticker = setInterval(() => {
+    if (done) return;
+    let dep: Dependencies["smart-connections"];
+    try {
+      dep = detectSmartConnections(plugin);
+    } catch (error) {
+      options.onError?.(error);
+      finish();
+      return;
+    }
+    if (dep.installed !== lastInstalled) {
+      lastInstalled = dep.installed;
+      options.onNext(dep);
+    }
+    if (typeof dep.api?.search === "function") finish();
+  }, intervalMs);
+  const horizon = setTimeout(finish, timeoutMs);
+
+  return () => {
+    if (!done) stop();
+  };
+}
 
 export * from "./logger";

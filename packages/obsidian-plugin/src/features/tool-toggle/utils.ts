@@ -72,20 +72,3 @@ export function parseDisabledToolsCsv(raw: string | undefined): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
-
-/**
- * Format a list of disabled tool names as the exact string expected
- * by the `OBSIDIAN_DISABLED_TOOLS` env var. Returns `undefined` when
- * the list would be empty so callers can omit the env var entirely
- * rather than writing `OBSIDIAN_DISABLED_TOOLS: ""` to the client
- * config file.
- *
- * Exported for unit testing.
- */
-export function serializeDisabledToolsToEnv(
-  disabled: readonly string[],
-): string | undefined {
-  const cleaned = disabled.map((s) => s.trim()).filter((s) => s.length > 0);
-  if (cleaned.length === 0) return undefined;
-  return cleaned.join(", ");
-}

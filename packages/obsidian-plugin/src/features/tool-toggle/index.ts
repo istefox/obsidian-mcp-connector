@@ -7,7 +7,6 @@ export {
   DESTRUCTIVE_TOOL_NAMES,
   KNOWN_MCP_TOOL_NAMES,
   parseDisabledToolsCsv,
-  serializeDisabledToolsToEnv,
 } from "./utils";
 export {
   applyDisabledToolsFilter,

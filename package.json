@@ -28,7 +28,6 @@
     "zip": "bun --filter '*' zip"
   },
   "overrides": {
-    "vite": "5.4.11",
     "onnxruntime-web": "1.26.0",
     "hono": "^4.12.23",
     "fast-uri": "^3.1.2",
@@ -39,10 +38,6 @@
     "tmp": "^0.2.7",
     "adm-zip": "^0.6.0",
     "sharp": "^0.35.0"
-  },
-  "dependencies": {
-    "caniuse-lite": "^1.0.30001797",
-    "hono": "^4.12.25"
   },
   "devDependencies": {
     "prettier": "^3.8.4"

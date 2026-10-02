@@ -1,5 +1,4 @@
 import { Notice, Plugin } from "obsidian";
-import type { Subscription } from "rxjs";
 import { type SmartConnections } from "shared";
 import { checkCommandPermission as runCommandPermissionCheck } from "./features/command-permissions/services/checkCommandPermission";
 import {
@@ -44,7 +43,7 @@ export default class McpToolsPlugin extends Plugin {
 
   /**
    * Resolved Smart Connections search API, populated best-effort at
-   * onload from the reactive `loadSmartSearchAPI` loader. The
+   * onload by the `loadSmartSearchAPI` poll. The
    * SmartConnectionsProvider + provider factory read this field to
    * decide readiness and to dispatch `search_vault_smart` queries when
    * the user picks the "smart-connections" (or "auto") provider.
@@ -54,12 +53,12 @@ export default class McpToolsPlugin extends Plugin {
   smartSearch?: SmartConnections.SmartSearch;
 
   /**
-   * Subscription of the Smart Connections detection poll (up to 5s at
-   * onload). Kept so onunload can cancel it — without this, disabling
-   * the plugin inside the poll window leaves the timer running against
-   * an unloaded plugin instance.
+   * Cancels the Smart Connections detection poll (up to 5s at onload).
+   * Kept so onunload can stop it — without this, disabling the plugin
+   * inside the poll window leaves the timer running against an unloaded
+   * plugin instance.
    */
-  private smartSearchSub?: Subscription;
+  private cancelSmartSearchPoll?: () => void;
 
   /**
    * In-process permission check for `execute_obsidian_command`,
@@ -156,10 +155,10 @@ export default class McpToolsPlugin extends Plugin {
     // undefined and the provider can never become ready even with
     // Smart Connections fully loaded (#99). Best-effort, same shape as
     // the Local REST API binding above.
-    // Subscribed (not lastValueFrom) so onunload can cancel the poll if
-    // the plugin is disabled inside the 5s detection window.
-    this.smartSearchSub = loadSmartSearchAPI(this).subscribe({
-      next: (dep) => {
+    // The returned cancel function lets onunload stop the poll if the
+    // plugin is disabled inside the 5s detection window.
+    this.cancelSmartSearchPoll = loadSmartSearchAPI(this, {
+      onNext: (dep) => {
         this.smartSearch = dep.api;
         // #430: `wireSemanticSearch` above already cached a provider
         // choice before this binding could exist, so "auto" was pinned
@@ -172,7 +171,7 @@ export default class McpToolsPlugin extends Plugin {
           refreshAutoProvider(this.semanticSearchState);
         }
       },
-      complete: () => {
+      onComplete: () => {
         if (this.smartSearch) {
           logger.info(
             "Smart Connections detected — `search_vault_smart` can use it",
@@ -183,7 +182,7 @@ export default class McpToolsPlugin extends Plugin {
           );
         }
       },
-      error: (error: unknown) => {
+      onError: (error: unknown) => {
         logger.debug("Smart Connections load skipped", {
           error: error instanceof Error ? error.message : String(error),
         });
@@ -196,8 +195,8 @@ export default class McpToolsPlugin extends Plugin {
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Obsidian calls onunload synchronously; the returned Promise is not awaited by the plugin lifecycle
   async onunload() {
     disableSettingsReadCache(this);
-    this.smartSearchSub?.unsubscribe();
-    this.smartSearchSub = undefined;
+    this.cancelSmartSearchPoll?.();
+    this.cancelSmartSearchPoll = undefined;
     if (this.promptsState) {
       promptsTeardown(this.promptsState);
       this.promptsState = undefined;

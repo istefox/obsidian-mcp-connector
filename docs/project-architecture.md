@@ -1,4 +1,4 @@
-> Reflects the current in-process architecture (0.20.0 line). For exact versions, the tool list, and release detail, see README.md and CHANGELOG.md.
+> Reflects the current in-process architecture (2.x line). For exact versions, the tool list, and release detail, see README.md and CHANGELOG.md.
 
 # Project Architecture
 
@@ -127,7 +127,7 @@ POST /mcp
 - **`buildMcpServer(tokenId)` is the single construction site for both eras.** The legacy branch calls it directly; the modern branch reaches it through the SDK's `McpServerFactory`, which receives the token id as pass-through `AuthInfo.clientId` — never the bearer secret. Tool-scope resolution, registry wiring, prompt handlers and usage counting exist once, so per-token tool surfaces cannot drift between the two paths.
 - **Lifecycle differs by branch.** `buildMcpServer` closes nothing. The legacy branch owns its own `finally` teardown; on the modern branch the SDK entry owns the instance.
 - **`server/discover` is not hand-written.** The SDK's serving entry installs it on whatever instance the factory returns, and stamps server identity into every modern result's `_meta`. A hand-built `McpServer` answers `-32601` to it.
-- Each classified request is counted against its era in `mcpTransport.eraCounters`, batched in memory and flushed through `SettingsStore.updateSlice`. The counter is diagnostic: nothing reads it at runtime.
+- Each classified request is counted against its era in `mcpTransport.eraCounters`, batched in memory and flushed through `SettingsStore.updateSlice`. The counter is diagnostic: the Access Control settings section reads it to show per-era traffic; no request path depends on it.
 
 ## Resources Surface
 

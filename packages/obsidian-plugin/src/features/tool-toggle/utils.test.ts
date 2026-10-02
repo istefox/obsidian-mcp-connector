@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  KNOWN_MCP_TOOL_NAMES,
-  parseDisabledToolsCsv,
-  serializeDisabledToolsToEnv,
-} from "./utils";
+import { KNOWN_MCP_TOOL_NAMES, parseDisabledToolsCsv } from "./utils";
 
 describe("parseDisabledToolsCsv", () => {
   test("returns an empty array for undefined, empty, or whitespace-only input", () => {
@@ -37,26 +33,6 @@ describe("parseDisabledToolsCsv", () => {
     // The server logs each name it tries to disable, so duplicates
     // are harmless and diagnostically useful.
     expect(parseDisabledToolsCsv("a, a, b")).toEqual(["a", "a", "b"]);
-  });
-});
-
-describe("serializeDisabledToolsToEnv", () => {
-  test("returns undefined for an empty list", () => {
-    // Returning undefined (rather than "") lets callers omit the env
-    // var entirely, keeping the client config file tidy.
-    expect(serializeDisabledToolsToEnv([])).toBeUndefined();
-  });
-
-  test("returns undefined for a list with only whitespace entries", () => {
-    expect(serializeDisabledToolsToEnv(["", "   ", "\t"])).toBeUndefined();
-  });
-
-  test("joins names with ', ' and trims each entry", () => {
-    expect(serializeDisabledToolsToEnv(["a ", " b", "c"])).toBe("a, b, c");
-  });
-
-  test("drops whitespace-only entries from a mixed list", () => {
-    expect(serializeDisabledToolsToEnv(["a", "", "b", "  "])).toBe("a, b");
   });
 });
 

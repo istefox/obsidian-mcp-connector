@@ -8,8 +8,9 @@ declare module "obsidian" {
     toolToggle?: {
       /**
        * List of MCP tool names the user has chosen to disable. Persisted
-       * by `plugin.saveData()` and forwarded to the server binary as the
-       * `OBSIDIAN_DISABLED_TOOLS` env var at install time.
+       * by `plugin.saveData()` and applied in-process by
+       * `applyDisabledToolsFilter` at registry setup. (The former server
+       * binary read it as the `OBSIDIAN_DISABLED_TOOLS` env var.)
        */
       disabled?: string[];
     };

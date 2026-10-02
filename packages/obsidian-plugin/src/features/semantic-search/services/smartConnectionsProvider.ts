@@ -7,7 +7,7 @@
  * Lifted from the inline logic in `mcp-tools/tools/searchVaultSmart.ts`:
  *   - filter mapping camelCase → SmartSearch snake_case
  *   - lazy access to `plugin.smartSearch` (set by the existing
- *     `loadSmartSearchAPI` reactive loader; v2 `window.SmartSearch`
+ *     `loadSmartSearchAPI` poll; v2 `window.SmartSearch`
  *     and v3+ `smartEnv.smart_sources` both surface here)
  *   - result transformation from SC's `{ item: { path, breadcrumbs,
  *     read }, score }` to the unified `SearchResult` shape

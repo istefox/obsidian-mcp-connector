@@ -9,11 +9,7 @@ import {
   headingNotFoundError,
   withUriBlock,
 } from "../services/buildObsidianUri";
-import {
-  errorJson,
-  successJson,
-  successText,
-} from "../services/responseBuilders";
+import { errorJson, successJson } from "../services/responseBuilders";
 import { DEFAULT_MAX_TEXT_OUTPUT_KB } from "../types";
 
 /**

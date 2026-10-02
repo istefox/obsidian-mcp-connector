@@ -72,7 +72,6 @@ export {
   clearNodeDetectCache,
   detectBrew,
   detectNode,
-  getDetectedBrewPath,
   getDetectedNodeBinDir,
   getDetectedNodePath,
   getDetectedNpxPath,

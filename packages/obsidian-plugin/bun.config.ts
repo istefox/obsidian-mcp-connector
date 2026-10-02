@@ -65,6 +65,19 @@ const stubEmptyModulesPlugin: BunPlugin = {
       contents: "module.exports = require('onnxruntime-web/all');",
       loader: "js",
     }));
+    // turndown's browser build. The package maps its node build to a
+    // browser one through package.json's `browser` field MAP
+    // (`./lib/turndown.cjs.js` → `./lib/turndown.browser.cjs.js`); Bun
+    // honours the `browser` condition but not the map, so the node build
+    // and `@mixmark-io/domino`, the server-side DOM it requires (~450 KB
+    // unminified), were bundled although turndown only reaches for
+    // domino when no `DOMParser` exists, and Obsidian's renderer has one.
+    build.onResolve({ filter: /^turndown$/ }, () => ({
+      path: Bun.resolveSync(
+        "turndown/lib/turndown.browser.cjs.js",
+        import.meta.dir,
+      ),
+    }));
     // Stub sharp.
     build.onResolve({ filter: /^sharp$/ }, (args) => ({
       path: args.path,
