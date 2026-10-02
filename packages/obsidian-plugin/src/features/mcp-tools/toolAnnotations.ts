@@ -105,6 +105,9 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   set_note_property: { ...DESTRUCTIVE, idempotentHint: true },
   delete_note_property: DESTRUCTIVE,
 
+  // Workspace
+  get_workspace_state: READ_ONLY,
+
   // Periodic notes / misc
   get_recent_files: READ_ONLY,
   get_vault_overview: READ_ONLY,

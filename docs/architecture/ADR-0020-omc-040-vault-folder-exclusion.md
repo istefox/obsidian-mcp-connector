@@ -525,6 +525,23 @@ this route.
 
 ---
 
+## Addendum (2026-10-02): guarded leaves for `get_workspace_state`
+
+D2 refused every workspace member that yields a `WorkspaceLeaf`, with the note that whoever
+needed one "must decide how the leaf itself is guarded". `get_workspace_state` needed one. The
+decision: `iterateAllLeaves` and `iterateRootLeaves` are now GUARDED and hand out `guardLeaf`
+wrappers, a read-only facade over the leaf (`getViewState` minus the raw `group` leaf,
+`getDisplayText`, `getIcon`, `isDeferred`, `getRoot` as an identity-preserving container wrapper,
+`view` as a guarded view with a policy-checked `file`). Everything that opens, moves, pins or
+closes (`openFile`, `setViewState`, `detach`, ...) and every back-reference to raw objects
+(`parent`, `view.leaf`, `view.app`, container `children`) is refused with its own message. A leaf
+whose file is excluded, read from the loaded view or from the persisted state of a deferred one,
+is skipped by the iterators rather than blanked, so it is indistinguishable from a tab that is not
+open (D3). `getLastOpenFiles` is GUARDED and filtered; `layoutReady` and the three split roots are
+exposed, the roots as the same identity-only wrappers. `getLeaf`, `getMostRecentLeaf`,
+`getUnpinnedLeaf`, `getActiveViewOfType`, `getLeavesOfType`, `activeLeaf` and `activeEditor` stay
+refused: each yields a raw leaf or the raw `App`.
+
 ## References
 
 - Issue #499 — Vault-wide folder exclusion: no path policy reaches the tool surface (OMC-040)

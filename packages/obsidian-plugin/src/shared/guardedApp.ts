@@ -528,10 +528,10 @@ function guardMetadataCache(raw: object, policy: PolicySource): object {
 /* ------------------------------------------------------------------ */
 
 /**
- * A `WorkspaceLeaf` can open any file in the vault, so handing one out
- * would route around this facade entirely. No tool asks for one today.
- * Whoever needs one must decide how the leaf itself is guarded, and this
- * refusal is what makes them decide rather than inherit a hole.
+ * A `WorkspaceLeaf` can open any file in the vault, so a raw one is never
+ * handed out. The members that return one are refused; the two iterators
+ * `get_workspace_state` needs hand out `guardLeaf` wrappers instead, a
+ * read-only view that skips excluded files (ADR-0020 D2 addendum).
  */
 const WORKSPACE_LEAF_REASON =
   "It yields a WorkspaceLeaf, which can open any file and bypass the " +
@@ -539,15 +539,163 @@ const WORKSPACE_LEAF_REASON =
 
 const WORKSPACE_PASSTHROUGH = [
   "onLayoutReady",
+  "layoutReady",
   "on",
   "off",
   "offref",
   "trigger",
 ];
 
+/**
+ * The write half of a leaf. The snapshot `get_workspace_state` takes is
+ * read-only, so anything that opens, moves, pins or closes is refused
+ * rather than guarded: a guard would need to vet the file every one of
+ * these can reach, for a capability no tool asks for.
+ */
+const LEAF_WRITE_REASON =
+  "The guarded leaf is a read-only snapshot for get_workspace_state; it " +
+  "cannot open, move, pin or close anything (ADR-0020 D2 addendum).";
+
+const RAW_BACKREF_REASON =
+  "It is a back-reference to the unguarded workspace, leaf or App and " +
+  "would route around the facade (ADR-0020 D2 addendum).";
+
+const LEAF_PASSTHROUGH = [
+  "getDisplayText",
+  "getIcon",
+  "getEphemeralState",
+  "isDeferred",
+  "on",
+  "off",
+  "offref",
+  "trigger",
+];
+
+const VIEW_PASSTHROUGH = [
+  "getViewType",
+  "getDisplayText",
+  "getIcon",
+  "getMode",
+  "getState",
+  "getEphemeralState",
+  "navigation",
+  "editor",
+];
+
+/**
+ * Identity-preserving wrappers for the workspace containers (`rootSplit`,
+ * `leftSplit`, `rightSplit`, pop-out windows), so `leaf.getRoot() ===
+ * workspace.rootSplit` keeps meaning what it means on the raw objects.
+ * Nothing on a container is classified: `children` walks straight to raw
+ * leaves, and a snapshot only ever compares containers by identity.
+ */
+const guardedContainers = new WeakMap<object, object>();
+function guardContainer(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null) return raw;
+  let guarded = guardedContainers.get(raw);
+  if (!guarded) {
+    guarded = guardObject(raw, "workspace container", {}, [], {
+      children: RAW_BACKREF_REASON,
+      parent: RAW_BACKREF_REASON,
+      win: RAW_BACKREF_REASON,
+      doc: RAW_BACKREF_REASON,
+    });
+    guardedContainers.set(raw, guarded);
+  }
+  return guarded;
+}
+
+/** The vault path a leaf is showing, from its view or its persisted state. */
+function leafPath(leaf: object): string | undefined {
+  const view = (leaf as { view?: { file?: unknown } }).view;
+  if (view?.file) return pathOf(view.file);
+  const state = (
+    leaf as { getViewState?: () => { state?: unknown } }
+  ).getViewState?.()?.state;
+  const file = (state as { file?: unknown } | undefined)?.file;
+  return typeof file === "string" ? file : undefined;
+}
+
+function guardView(raw: object, policy: PolicySource): object {
+  const guards: Record<string, unknown> = {};
+  // `file` is read fresh each time: a view can navigate to another note
+  // after the wrapper was made.
+  Object.defineProperty(guards, "file", {
+    enumerable: true,
+    get: () => {
+      const file = (raw as { file?: unknown }).file;
+      return file && policy().isExcluded(pathOf(file)) ? null : file;
+    },
+  });
+  return guardObject(raw, "view", guards, VIEW_PASSTHROUGH, {
+    leaf: RAW_BACKREF_REASON,
+    app: RAW_BACKREF_REASON,
+    containerEl: RAW_BACKREF_REASON,
+    contentEl: RAW_BACKREF_REASON,
+    setState: LEAF_WRITE_REASON,
+    setEphemeralState: LEAF_WRITE_REASON,
+  });
+}
+
+/**
+ * A read-only leaf (ADR-0020 D2 addendum). The iterators below hand out
+ * nothing else, and skip any leaf whose file is excluded, so such a tab
+ * is indistinguishable from one that is not open.
+ */
+function guardLeaf(raw: object, policy: PolicySource): object {
+  const call = <A extends unknown[], R>(name: string) =>
+    (raw as unknown as Record<string, (...a: A) => R>)[name].bind(raw);
+  const guards: Record<string, unknown> = {
+    getRoot: () => guardContainer(call<[], unknown>("getRoot")()),
+    // `group` is a raw WorkspaceLeaf; everything else in a ViewState is
+    // plain data about this leaf.
+    getViewState: () => {
+      const { group: _group, ...rest } = call<
+        [],
+        Record<string, unknown> & { group?: unknown }
+      >("getViewState")();
+      return rest;
+    },
+  };
+  Object.defineProperty(guards, "view", {
+    enumerable: true,
+    get: () => {
+      const view = (raw as { view?: unknown }).view;
+      return typeof view === "object" && view !== null
+        ? guardView(view, policy)
+        : view;
+    },
+  });
+  return guardObject(raw, "leaf", guards, LEAF_PASSTHROUGH, {
+    parent: RAW_BACKREF_REASON,
+    hoverPopover: RAW_BACKREF_REASON,
+    openFile: LEAF_WRITE_REASON,
+    open: LEAF_WRITE_REASON,
+    setViewState: LEAF_WRITE_REASON,
+    setEphemeralState: LEAF_WRITE_REASON,
+    loadIfDeferred: LEAF_WRITE_REASON,
+    togglePinned: LEAF_WRITE_REASON,
+    setPinned: LEAF_WRITE_REASON,
+    setGroupMember: LEAF_WRITE_REASON,
+    setGroup: LEAF_WRITE_REASON,
+    detach: LEAF_WRITE_REASON,
+  });
+}
+
 function guardWorkspace(raw: object, policy: PolicySource): object {
   const call = <A extends unknown[], R>(name: string) =>
     (raw as unknown as Record<string, (...a: A) => R>)[name].bind(raw);
+
+  // Leaves showing an excluded file are skipped, not blanked: a blank
+  // entry would still say "a tab is open on something you cannot see".
+  const iterate =
+    (name: "iterateAllLeaves" | "iterateRootLeaves") =>
+    (callback: (leaf: object) => unknown) =>
+      call<[(leaf: object) => unknown], void>(name)((leaf) => {
+        const path = leafPath(leaf);
+        if (path !== undefined && policy().isExcluded(path)) return;
+        callback(guardLeaf(leaf, policy));
+      });
 
   const guards: Record<string, unknown> = {
     // `null`, so the whole active-file family answers "no active file"
@@ -571,13 +719,30 @@ function guardWorkspace(raw: object, policy: PolicySource): object {
         "openLinkText",
       )(linktext, sourcePath, ...rest);
     },
+    iterateAllLeaves: iterate("iterateAllLeaves"),
+    iterateRootLeaves: iterate("iterateRootLeaves"),
+    getLastOpenFiles: () => {
+      const current = policy();
+      return call<[], string[]>("getLastOpenFiles")().filter(
+        (path) => !current.isExcluded(path),
+      );
+    },
   };
+  for (const name of ["rootSplit", "leftSplit", "rightSplit"] as const) {
+    Object.defineProperty(guards, name, {
+      enumerable: true,
+      get: () => guardContainer((raw as Record<string, unknown>)[name]),
+    });
+  }
 
   return guardObject(raw, "workspace", guards, WORKSPACE_PASSTHROUGH, {
     getLeaf: WORKSPACE_LEAF_REASON,
     getMostRecentLeaf: WORKSPACE_LEAF_REASON,
     getUnpinnedLeaf: WORKSPACE_LEAF_REASON,
     getActiveViewOfType: WORKSPACE_LEAF_REASON,
+    getLeavesOfType: WORKSPACE_LEAF_REASON,
+    activeLeaf: WORKSPACE_LEAF_REASON,
+    activeEditor: RAW_BACKREF_REASON,
   });
 }
 

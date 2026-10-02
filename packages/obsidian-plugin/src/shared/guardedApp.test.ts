@@ -101,9 +101,30 @@ function makeRawApp() {
     tryTrigger: hit("metadataCache.tryTrigger", undefined),
   };
 
+  const rootSplit = { kind: "root" };
+  const makeLeaf = (file: { path: string }) => ({
+    view: { file, getViewType: () => "markdown", leaf: "raw-leaf" },
+    getViewState: () => ({
+      type: "markdown",
+      state: { file: file.path },
+      group: "raw-leaf",
+    }),
+    getDisplayText: () => file.path,
+    getRoot: () => rootSplit,
+    openFile: hit("leaf.openFile", Promise.resolve()),
+  });
+  const leaves = [makeLeaf(publicFile), makeLeaf(secretFile)];
   const workspace = {
     getActiveFile: () => secretFile as unknown,
     openLinkText: hit("workspace.openLinkText", Promise.resolve()),
+    rootSplit,
+    leftSplit: { kind: "left" },
+    rightSplit: { kind: "right" },
+    layoutReady: true,
+    iterateAllLeaves: (cb: (l: unknown) => void) => leaves.forEach(cb),
+    iterateRootLeaves: (cb: (l: unknown) => void) => leaves.forEach(cb),
+    getLastOpenFiles: () => [publicFile.path, secretFile.path],
+    activeLeaf: "raw-leaf",
     onLayoutReady: hit("workspace.onLayoutReady", undefined),
     on: hit("workspace.on", { id: 3 }),
     off: hit("workspace.off", undefined),
@@ -440,6 +461,41 @@ describe("guarded workspace and fileManager", () => {
     expect(reached.some((r) => r.startsWith("workspace.openLinkText"))).toBe(
       true,
     );
+  });
+
+  test("leaf iterators skip an excluded file and hand out read-only leaves", () => {
+    const { app, reached } = denySecret();
+    const seen: Record<string, unknown>[] = [];
+    app.workspace.iterateAllLeaves((l) => seen.push(l as never));
+    expect(seen.map((l) => (l.getDisplayText as () => string)())).toEqual([
+      publicFile.path,
+    ]);
+    const only = seen[0];
+    // Read side works, identity of the root is preserved for location checks.
+    expect((only.getRoot as () => unknown)()).toBe(app.workspace.rootSplit);
+    expect((only.getViewState as () => Record<string, unknown>)()).toEqual({
+      type: "markdown",
+      state: { file: publicFile.path },
+    });
+    expect(
+      ((only.view as Record<string, unknown>).file as { path: string }).path,
+    ).toBe(publicFile.path);
+    // Write side and back-references are refused, and nothing was reached.
+    expect(() => only.openFile).toThrow(/refused by policy/);
+    expect(() => (only.view as Record<string, unknown>).leaf).toThrow(
+      /refused by policy/,
+    );
+    expect(
+      () => (only.getRoot as () => Record<string, unknown>)().children,
+    ).toThrow(/refused by policy/);
+    expect(reached).toHaveLength(0);
+  });
+
+  test("getLastOpenFiles drops excluded paths; activeLeaf is refused", () => {
+    const { app } = denySecret();
+    expect(app.workspace.getLastOpenFiles()).toEqual([publicFile.path]);
+    const ws = app.workspace as unknown as Record<string, unknown>;
+    expect(() => ws.activeLeaf).toThrow(/refused by policy/);
   });
 
   test("fileManager refuses every excluded file", async () => {

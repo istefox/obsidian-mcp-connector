@@ -35,6 +35,10 @@ import {
   showFileInObsidianSchema,
 } from "./tools/showFileInObsidian";
 import {
+  getWorkspaceStateHandler,
+  getWorkspaceStateSchema,
+} from "./tools/getWorkspaceState";
+import {
   listVaultFilesHandler,
   listVaultFilesSchema,
 } from "./tools/listVaultFiles";
@@ -247,6 +251,9 @@ export async function registerTools(
   );
   registry.register(showFileInObsidianSchema, async ({ arguments: args }) =>
     showFileInObsidianHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(getWorkspaceStateSchema, async ({ arguments: args }) =>
+    getWorkspaceStateHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops
