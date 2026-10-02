@@ -8,6 +8,7 @@ import {
   mockPlugin,
   resetMockVault,
   setMockFile,
+  setMockFolder,
   setMockCoreTemplatesState,
 } from "$/test-setup";
 
@@ -20,14 +21,22 @@ beforeEach(() => resetMockVault());
 type FakeTemplaterCall = {
   method: string;
   templatePath: string;
+  /** Path of the `target_file` the running config carried (#541). */
+  targetPath: string;
+  runMode: unknown;
   processedContent: string;
 };
 
 function makeFakeTemplater(renderedContent = "RENDERED") {
   const calls: FakeTemplaterCall[] = [];
+  // Templater's own start/end task bookkeeping, recorded in order so a test
+  // can assert the render sat between them (that is what makes
+  // `on_all_templates_executed` hooks fire against the new note).
+  const taskLog: string[] = [];
 
   const fakeTemplater = {
     _calls: calls,
+    _taskLog: taskLog,
     functions_generator: {
       generate_object: async (
         _config: unknown,
@@ -38,20 +47,35 @@ function makeFakeTemplater(renderedContent = "RENDERED") {
     },
     create_running_config: (
       templateFile: unknown,
-      _targetFile: unknown,
-      _runMode: unknown,
+      targetFile: unknown,
+      runMode: unknown,
     ) => {
-      return { template_file: templateFile, target_file: templateFile };
+      return {
+        template_file: templateFile,
+        target_file: targetFile,
+        run_mode: runMode,
+      };
     },
     read_and_parse_template: async (config: {
       template_file: { path: string };
+      target_file: { path: string };
+      run_mode: unknown;
     }) => {
+      taskLog.push("render");
       calls.push({
         method: "read_and_parse_template",
         templatePath: config.template_file.path,
+        targetPath: config.target_file.path,
+        runMode: config.run_mode,
         processedContent: renderedContent,
       });
       return renderedContent;
+    },
+    start_templater_task: (path: string) => {
+      taskLog.push(`start:${path}`);
+    },
+    end_templater_task: async (path: string) => {
+      taskLog.push(`end:${path}`);
     },
   };
 
@@ -148,7 +172,7 @@ describe("execute_template tool", () => {
     expect(parsed.message).toMatch(/without creating/i);
   });
 
-  test("executes template and creates target file when createFile='true' and targetPath specified", async () => {
+  test("executes template and creates target file when createFile=true and targetPath specified", async () => {
     setMockFile("Templates/foo.md", "Hello {{name}}");
 
     const fakeTemplater = makeFakeTemplater("RENDERED_CONTENT");
@@ -158,7 +182,7 @@ describe("execute_template tool", () => {
       arguments: {
         templatePath: "Templates/foo.md",
         targetPath: "Output/note.md",
-        createFile: "true",
+        createFile: true,
       },
       app: plugin.app,
       plugin,
@@ -172,11 +196,181 @@ describe("execute_template tool", () => {
     expect(parsed.message).toMatch(/created successfully/i);
     // Issue #20: createFile success response includes the targetPath.
     expect(parsed.path).toBe("Output/note.md");
+    expect(parsed.requestedPath).toBeUndefined();
 
-    // Verify the file was actually created in the mock vault
+    // Verify the file was actually created in the mock vault, with the
+    // rendered content (not the empty placeholder the note starts as).
     const createdFile =
       plugin.app.vault.getAbstractFileByPath("Output/note.md");
     expect(createdFile).not.toBeNull();
+    expect(await plugin.app.vault.read(createdFile as never)).toBe(
+      "RENDERED_CONTENT",
+    );
+  });
+
+  // #541: Templater must render against the NEW note, not the template.
+  test("#541: the running config's target_file is the new note, created before the render", async () => {
+    setMockFile("Templates/T.md", "# <% tp.file.title %>");
+    const fakeTemplater = makeFakeTemplater("# My note");
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/T.md",
+        targetPath: "Notes/My note.md",
+        createFile: true,
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const [call] = fakeTemplater._calls;
+    expect(call?.templatePath).toBe("Templates/T.md");
+    expect(call?.targetPath).toBe("Notes/My note.md");
+    // Same mode as Templater's "Create new note from template" command.
+    expect(call?.runMode).toBe(0);
+    // The render is bracketed by Templater's task bookkeeping, keyed by the
+    // note's path, so on_all_templates_executed hooks fire for this run.
+    expect(fakeTemplater._taskLog).toEqual([
+      "start:Notes/My note.md",
+      "render",
+      "end:Notes/My note.md",
+    ]);
+  });
+
+  test("#541: without a target the template is the stand-in target_file (render-only), and no task is started", async () => {
+    setMockFile("Templates/T.md", "X");
+    const fakeTemplater = makeFakeTemplater("RENDERED");
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+
+    const result = await executeTemplateHandler({
+      arguments: { templatePath: "Templates/T.md" },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(fakeTemplater._calls[0]?.targetPath).toBe("Templates/T.md");
+    expect(fakeTemplater._taskLog).toEqual(["render"]);
+  });
+
+  test("#541: a render failure removes the empty note it had created and ends the task", async () => {
+    setMockFile("Templates/T.md", "X");
+    const fakeTemplater = makeFakeTemplater("RENDERED");
+    fakeTemplater.read_and_parse_template = async () => {
+      fakeTemplater._taskLog.push("render");
+      throw new Error("boom");
+    };
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/T.md",
+        targetPath: "Notes/new.md",
+        createFile: true,
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("template_execution_failed");
+    expect(payload.error).toContain("boom");
+    expect(payload.path).toBe("Notes/new.md");
+    expect(plugin.app.vault.getAbstractFileByPath("Notes/new.md")).toBeNull();
+    expect(fakeTemplater._taskLog).toEqual([
+      "start:Notes/new.md",
+      "render",
+      "end:Notes/new.md",
+    ]);
+  });
+
+  test("#541: an existing target is refused with file_exists and left untouched", async () => {
+    setMockFile("Templates/T.md", "X");
+    setMockFile("Notes/taken.md", "precious");
+    const fakeTemplater = makeFakeTemplater("RENDERED");
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/T.md",
+        targetPath: "Notes/taken.md",
+        createFile: true,
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.errorCode).toBe("file_exists");
+    expect(payload.path).toBe("Notes/taken.md");
+    // No render happened and the file is untouched.
+    expect(fakeTemplater._calls).toHaveLength(0);
+    const file = plugin.app.vault.getAbstractFileByPath("Notes/taken.md");
+    expect(await plugin.app.vault.read(file as never)).toBe("precious");
+  });
+
+  test("#541: `path` follows a tp.file.move() rename and `requestedPath` records the original", async () => {
+    setMockFile("Templates/T.md", "X");
+    setMockFolder("Moved");
+    const fakeTemplater = makeFakeTemplater("RENDERED");
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+    // Simulate `tp.file.move()`: the template renames the target during
+    // the render, as Templater does through fileManager.renameFile.
+    fakeTemplater.read_and_parse_template = async (config: {
+      template_file: { path: string };
+      target_file: { path: string };
+      run_mode: unknown;
+    }) => {
+      await plugin.app.fileManager.renameFile(
+        config.target_file as never,
+        "Moved/elsewhere.md",
+      );
+      return "RENDERED";
+    };
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/T.md",
+        targetPath: "Notes/new.md",
+        createFile: true,
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.path).toBe("Moved/elsewhere.md");
+    expect(parsed.requestedPath).toBe("Notes/new.md");
+    expect(plugin.app.vault.getAbstractFileByPath("Notes/new.md")).toBeNull();
+    const moved = plugin.app.vault.getAbstractFileByPath("Moved/elsewhere.md");
+    expect(await plugin.app.vault.read(moved as never)).toBe("RENDERED");
+  });
+
+  test("#541: an older Templater without the task bookkeeping methods still works", async () => {
+    setMockFile("Templates/T.md", "X");
+    const fakeTemplater = makeFakeTemplater("RENDERED");
+    const legacy = fakeTemplater as unknown as Record<string, unknown>;
+    delete legacy.start_templater_task;
+    delete legacy.end_templater_task;
+    const plugin = mockPluginWithTemplater(fakeTemplater);
+
+    const result = await executeTemplateHandler({
+      arguments: {
+        templatePath: "Templates/T.md",
+        targetPath: "Notes/new.md",
+        createFile: true,
+      },
+      app: plugin.app,
+      plugin,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(fakeTemplater._calls[0]?.targetPath).toBe("Notes/new.md");
   });
 
   test("does NOT create a file when createFile is omitted", async () => {
@@ -196,7 +390,10 @@ describe("execute_template tool", () => {
     expect(file).toBeNull();
   });
 
-  test("createFile coercion accepts string 'true'", async () => {
+  // The "true" / "false" STRING form is coerced to a boolean by the registry
+  // (`coerceBooleanParams`, exercised in toolRegistry.test.ts #444), not by
+  // the handler, which now takes a real boolean like every other tool.
+  test("createFile=true creates the file at a root-level targetPath", async () => {
     setMockFile("a.md", "X");
     const fakeTemplater = makeFakeTemplater("RENDERED");
     const plugin = mockPluginWithTemplater(fakeTemplater);
@@ -205,7 +402,7 @@ describe("execute_template tool", () => {
       arguments: {
         templatePath: "a.md",
         targetPath: "out.md",
-        createFile: "true",
+        createFile: true,
       },
       app: plugin.app,
       plugin,
@@ -216,7 +413,7 @@ describe("execute_template tool", () => {
     expect(file).not.toBeNull();
   });
 
-  test("createFile='false' does not create file even with targetPath", async () => {
+  test("createFile=false does not create file even with targetPath", async () => {
     setMockFile("a.md", "X");
     const fakeTemplater = makeFakeTemplater("RENDERED");
     const plugin = mockPluginWithTemplater(fakeTemplater);
@@ -225,7 +422,7 @@ describe("execute_template tool", () => {
       arguments: {
         templatePath: "a.md",
         targetPath: "out.md",
-        createFile: "false",
+        createFile: false,
       },
       app: plugin.app,
       plugin,
@@ -414,7 +611,7 @@ describe("execute_template — core Templates fallback", () => {
     expect(parsed.message).toMatch(/without creating/i);
   });
 
-  test("creates file via core Templates when createFile='true' and targetPath given", async () => {
+  test("creates file via core Templates when createFile=true and targetPath given", async () => {
     setMockCoreTemplatesState({ enabled: true });
     setMockFile("Templates/foo.md", "content");
     const plugin = mockPluginWithoutTemplater();
@@ -423,7 +620,7 @@ describe("execute_template — core Templates fallback", () => {
       arguments: {
         templatePath: "Templates/foo.md",
         targetPath: "Output/note.md",
-        createFile: "true",
+        createFile: true,
       },
       app: plugin.app,
       plugin,

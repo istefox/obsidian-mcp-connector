@@ -1430,6 +1430,12 @@ export function mockApp(): App {
       if (_mockState.activeFilePath === path) {
         _mockState.activeFilePath = newPath;
       }
+      // Real Obsidian renames the TFile IN PLACE: a caller holding the
+      // object sees the new path (execute_template relies on this to
+      // follow a `tp.file.move()` done mid-render, #541).
+      const live = file as unknown as { path: string; name: string };
+      live.path = newPath;
+      live.name = newPath.split("/").pop() ?? newPath;
     },
     /**
      * Mock of `app.fileManager.trashFile`. The real implementation
