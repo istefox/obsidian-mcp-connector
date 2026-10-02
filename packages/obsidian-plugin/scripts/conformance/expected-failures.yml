@@ -19,7 +19,7 @@ server:
   # Both drive a diagnostic tool named `test_missing_capability` that the
   # suite expects a server to expose. The SDK's
   # REQUIRED_CLIENT_CAPABILITIES_BY_METHOD is `{}`
-  # (@modelcontextprotocol/server@2.0.0, dist/src-CX2iR2pK.mjs:452), so no
+  # (@modelcontextprotocol/server@2.3.0, dist/src-Cqbh3MYc.mjs:475), so no
   # spec method carries a static client-capability requirement and only a
   # shipped fixture tool could satisfy these. That tool would appear in
   # tools/list in every user's vault, in every client's tool picker,

@@ -28,9 +28,9 @@ describe("buildSearchResultsHtml", () => {
     );
   });
 
-  // Unreachable with the currently pinned ext-apps@1.7.5 bundle (ADR-0018
-  // records it contains no "</script" sequence) — this is the guard for
-  // whatever a future 1.7.6 ships.
+  // Unreachable with the currently pinned ext-apps@2.0.3 bundle (ADR-0018
+  // recorded 1.7.5 contains no "</script" sequence; re-checked on 2.0.3,
+  // still none) — this is the guard for whatever a future release ships.
   test("throws when the bundle contains a </script sequence, naming the offending index", () => {
     const bundle = "before</script>after";
     expect(() => buildSearchResultsHtml(SHELL, bundle)).toThrow(/<\/script/);

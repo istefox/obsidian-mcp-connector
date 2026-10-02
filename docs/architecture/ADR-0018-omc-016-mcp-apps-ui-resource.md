@@ -32,6 +32,15 @@ same justification ADR-0017 used: 2.0 is the release allowed to move them.
 
 Read from `node_modules`, not from memory. Re-check if the version moves.
 
+> **Re-checked on the 2.3.0 upgrade (2026-10-02).** Every row below still holds. The chunk
+> names are build hashes and moved: `src-CX2iR2pK.mjs` → `src-Cqbh3MYc.mjs`, `mcp-DXXb3Vv3.mjs` →
+> `mcp-DIH4cS6P.mjs`. New anchors for the rows: `setResourceRequestHandlers()` at `mcp:1696`/`:1874`
+> with the `listChanged ?? true` rewrite at `:1879`; `mergeCapabilities` at `src:6934`; `extensions`
+> on both eras' `ServerCapabilities` at `src:820`/`:848`/`:2582`/`:2595`; the 2026 dispatch registry
+> admits the three `resources/*` methods at `src:3191-3193`; `Mcp-Name` mirroring at `src:5024-5047`;
+> `ResultMetaSchema = z.looseObject(...)` at `src:2935`; `if (!tool.outputSchema) return;` at
+> `mcp:1821`. The line numbers in the table are left as the 2.0.0 record they are.
+
 | Fact | Where |
 |---|---|
 | A declared `resources` capability makes the `McpServer` constructor call `setResourceRequestHandlers()`, which registers **all three** resource handlers and then `registerCapabilities({ resources: { listChanged: … ?? true } })` | `mcp-DXXb3Vv3.mjs:1350`, `:1497` |
@@ -58,6 +67,15 @@ explicit `false` survives the `??`, and the shallow merge means an explicit `sub
 declared alongside it survives too.
 
 ### What `@modelcontextprotocol/ext-apps@1.7.5` actually provides
+
+> **Re-checked on the 2.0.3 upgrade (2026-10-02).** ext-apps 2.0 moved to the SDK 2.x split
+> packages and zod 4 (its peers are now `@modelcontextprotocol/client` ^2 and `zod` ^4.2, both
+> hoisted by bun as devDependency peers; the plugin imports neither). The MCP Apps wire protocol is
+> unchanged and the release carries a cross-version test against 1.7.5 in both directions. The
+> `./app-with-deps` entry D7 relies on still exists, the regenerated bundle still contains no
+> `</script` sequence, and `registerAppTool` still mirrors `ui.resourceUri` and `"ui/resourceUri"`
+> (`dist/src/server/index.js`), so D4 holds. `main.js` after a clean build: see the generated
+> header in `searchResultsAppSource.ts`.
 
 Not installed at decision time. Verified by downloading and unpacking the published tarball
 (`registry.npmjs.org/@modelcontextprotocol/ext-apps/-/ext-apps-1.7.5.tgz`, 40 files,

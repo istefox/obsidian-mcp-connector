@@ -134,7 +134,7 @@ function checkOrigin(headers: RequestHeaders): CheckResult {
  * Whether a protocol revision belongs to the modern (2026-07-28+) era.
  *
  * Project-owned copy of the SDK's own `isModernProtocolVersion`
- * (`@modelcontextprotocol/server`, `dist/src-CX2iR2pK.mjs:553`), which is
+ * (`@modelcontextprotocol/server` 2.3.0, `dist/src-Cqbh3MYc.mjs:576`), which is
  * package-internal and exported from no public entry point. Revision
  * identifiers are ISO dates, so the SDK orders eras with a lexicographic
  * `>=` against FIRST_MODERN_PROTOCOL_VERSION and so does this copy. If the

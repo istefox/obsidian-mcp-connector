@@ -9,6 +9,14 @@
 
 ## Context
 
+> Chunk references of the form `src-CX2iR2pK.mjs:N` throughout this ADR are to
+> `@modelcontextprotocol/server` 2.0.0. The 2.3.0 upgrade (2026-10-02) renamed the chunk to
+> `src-Cqbh3MYc.mjs`; the constants cited (`REQUIRED_CLIENT_CAPABILITIES_BY_METHOD = {}` now at
+> `:475`, `FIRST_MODERN_PROTOCOL_VERSION` at `:567`, `isModernProtocolVersion` at `:576`) were
+> re-verified unchanged. Two 2.2.0 behaviour changes on this era are recorded in the CHANGELOG:
+> a 2026-envelope POST without `MCP-Protocol-Version` is answered `400`/`-32020`, and a
+> `subscriptions/listen` honouring none of its requested types is completed right after its ack.
+
 Protocol revision `2026-07-28` is not reachable through `initialize`. A client probes
 `server/discover`; a client that finds no such handler falls back to the handshake. That
 fallback lives in the client — the Python SDK's v2 `Client` defaults to `mode='auto'` and

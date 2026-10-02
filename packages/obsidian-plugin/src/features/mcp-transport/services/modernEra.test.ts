@@ -326,6 +326,12 @@ describe("modern path — server/discover (R-02, R-03)", () => {
  * `src-CX2iR2pK.mjs:4990`, `:5041` per ADR-0018) — omitting either is
  * rejected before the handler runs and would read as a handler bug
  * rather than the header it actually is.
+ *
+ * Line references above are to `@modelcontextprotocol/server` 2.0.0, whose
+ * core chunk was `src-CX2iR2pK.mjs`. 2.3.0 ships it as `src-Cqbh3MYc.mjs`
+ * (the name is a build hash); the facts cited were re-verified on that
+ * upgrade (2026-10-02) and the numbers were left as the historical record
+ * they are.
  */
 describe("modern path — resources/list and resources/read serve the ui:// application resource (R-02, R-03)", () => {
   const RESOURCE_URI = "ui://mcp-connector/search-results";
@@ -1076,8 +1082,17 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     const subscribed = await openListen(server.port, 100, {
       toolsListChanged: true,
     });
+    // The bystander asks for a type this server HONOURS but that the
+    // promotion does not publish. It must be an honoured type: since
+    // @modelcontextprotocol/server 2.2.0 (#2651) a listen whose requested
+    // types are all unhonoured is ended right after its ack with a
+    // `complete` result, so `resourcesListChanged` (declared `false` on
+    // this server) would hand the bystander a second frame for a reason
+    // unrelated to the fan-out filter. `promptsListChanged` is advertised
+    // `true` on the modern leg (ADR-0017), so that stream stays open and
+    // the timeout below measures the filter and nothing else.
     const bystander = await openListen(server.port, 200, {
-      resourcesListChanged: true,
+      promptsListChanged: true,
     });
 
     const subscribedFrames = collectFrames(subscribed, 2);
@@ -1134,6 +1149,36 @@ describe("modern path — tools/list_changed fans out to an open subscriptions/l
     // this process closes them. Leaving them to the shared afterEach was
     // enough on macOS and not on Linux.
     for (const c of listenAborts.splice(0)) c.abort();
+  });
+
+  // Pins the SDK contract the test above now leans on: a listen that asks
+  // only for types this server does not honour is acknowledged and then
+  // ended with a `complete` result, instead of staying open with nothing to
+  // deliver (@modelcontextprotocol/server 2.2.0, #2651). `resources.listChanged`
+  // is declared `false` here on purpose (ADR-0018 D1), so it is the natural
+  // unhonoured type. If this starts failing, either the capability changed or
+  // the SDK contract did — both are worth knowing before the fan-out test
+  // above silently loses its meaning.
+  test("a listen for only unhonoured types is acknowledged and then completed, not held open", async () => {
+    const { server } = await bootAdaptiveService();
+    const res = await openListen(server.port, 400, {
+      resourcesListChanged: true,
+    });
+    try {
+      const frames = await collectFrames(res, 2, 5_000);
+      expect(frames[0]?.method).toBe(
+        "notifications/subscriptions/acknowledged",
+      );
+      // The second frame is the graceful-close result for request 400, not
+      // a notification.
+      expect(frames[1]?.method).toBeUndefined();
+      expect(frames[1]?.id).toBe(400);
+      expect(
+        (frames[1]?.result as Record<string, unknown> | undefined)?._meta,
+      ).toMatchObject({ "io.modelcontextprotocol/subscriptionId": 400 });
+    } finally {
+      for (const c of listenAborts.splice(0)) c.abort();
+    }
   });
 });
 

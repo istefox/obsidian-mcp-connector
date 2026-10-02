@@ -40,11 +40,12 @@ export const SUPPORTED_PROTOCOL_VERSIONS = [
 
 // The first protocol revision of the modern era. Project-owned copy of the
 // SDK's FIRST_MODERN_PROTOCOL_VERSION
-// (node_modules/@modelcontextprotocol/server/dist/src-CX2iR2pK.mjs:544),
+// (node_modules/@modelcontextprotocol/server/dist/src-Cqbh3MYc.mjs:567,
+// server 2.3.0; the chunk name is a build hash and moves with the version),
 // copied for the same reason as the version list above: it lives in
 // core-internal and is exported from no public entry point. Revision
 // identifiers are ISO dates, so the SDK orders eras with a lexicographic
-// comparison against this value (`isModernProtocolVersion`, :553) and so
+// comparison against this value (`isModernProtocolVersion`, :576) and so
 // does middleware.ts. If the SDK ever moves the era boundary off that
 // comparison, both copies go stale silently (ADR-0016, Consequences).
 export const FIRST_MODERN_PROTOCOL_VERSION = "2026-07-28" as const;

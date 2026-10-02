@@ -917,9 +917,11 @@ describe("OMC-008 Task 3 — buildMcpServer is the single per-request factory, c
    * HTTP server and no `fetch` — `InMemoryTransport.createLinkedPair()` is
    * the SDK's own exported test seam for exactly this ("one should be
    * passed to a Client and one to a Server", `@modelcontextprotocol/server`
-   * `dist/src-CX2iR2pK.mjs`). One end is handed to the server under test;
-   * the other is driven by hand, since this project depends on `server` and
-   * `node` only — no `@modelcontextprotocol/client` package is installed.
+   * `dist/src-Cqbh3MYc.mjs` in 2.3.0). One end is handed to the server under
+   * test; the other is driven by hand, since this project's runtime deps are
+   * `server` and `node` only — `@modelcontextprotocol/client` is present in
+   * node_modules solely as a peer of the ext-apps devDependency and is not
+   * something the plugin may import.
    */
   async function listToolsDirect(server: McpServer): Promise<string[]> {
     const [clientTransport, serverTransport] =

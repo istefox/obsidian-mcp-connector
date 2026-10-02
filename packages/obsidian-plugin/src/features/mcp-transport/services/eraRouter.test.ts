@@ -172,11 +172,18 @@ describe("eraRouter — a modern-envelope request is classified separately from 
     // different cause. A test that passes for a reason other than the one it
     // names can keep passing while the thing it names breaks.
     //
-    // Deliberately no MCP-Protocol-Version header here: the point under
-    // test is the classifier alone, decoupled from the header rung
-    // (covered separately in middleware.test.ts). `Mcp-Method` is not the
-    // header rung — SEP-2243 makes it mandatory on every 2026-era request,
-    // so the modern leg carries it to be well-formed at all.
+    // The legacy request carries no MCP-Protocol-Version header, so its
+    // routing is decided by the classifier alone (the header rung is covered
+    // separately in middleware.test.ts). The modern request carries the
+    // header because @modelcontextprotocol/server 2.2.0 (#2590) rejects a
+    // 2026-07-28 POST that omits it with 400 / -32020 before any handler
+    // runs; a header-less modern request can no longer be served at all.
+    // What this test still proves: the envelope, not the header, is what
+    // separates the two requests — the legacy one has neither and lands on
+    // the legacy transport, the modern one has both and lands on the modern
+    // handler. `Mcp-Method` is not the header rung either — SEP-2243 makes
+    // it mandatory on every 2026-era request, so the modern leg carries it
+    // to be well-formed at all.
     const { startHttpServer } = await import("./httpServer");
     const svc = await createMcpService({
       app: mockApp(),
@@ -219,6 +226,7 @@ describe("eraRouter — a modern-envelope request is classified separately from 
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
           "mcp-method": "tools/list",
+          "mcp-protocol-version": "2026-07-28",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",

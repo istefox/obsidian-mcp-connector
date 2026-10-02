@@ -55,8 +55,10 @@ export function wireSearchResultsApp(
     };
   });
 
-  // Both key forms are written because registerAppTool in ext-apps@1.7.5
-  // does exactly that, and hosts are told to read either (ADR-0018 D4).
+  // Both key forms are written because registerAppTool in ext-apps does
+  // exactly that (re-read in 2.0.3: `dist/src/server/index.js` mirrors
+  // `ui.resourceUri` <-> `"ui/resourceUri"`), and hosts are told to read
+  // either (ADR-0018 D4).
   toolRegistry.setMeta({
     search_vault_simple: {
       ui: { resourceUri: SEARCH_RESULTS_RESOURCE_URI },

@@ -39,7 +39,8 @@ wired.
 
 ### What the installed SDK actually provides
 
-Verified by reading `@modelcontextprotocol/server@2.0.0`, not from the guide:
+Verified by reading `@modelcontextprotocol/server@2.0.0`, not from the guide (re-verified on 2.3.0,
+2026-10-02: the same `?? true` rewrite sits at `mcp-DIH4cS6P.mjs:1935`):
 
 - `mcp-DXXb3Vv3.mjs:1550` — `listChanged: this.server.getCapabilities().prompts?.listChanged ?? true`.
   An explicit `false` survives (`false ?? true` is `false`), so retracting is a literal, not a
