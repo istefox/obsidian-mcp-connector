@@ -27,6 +27,12 @@ export const searchVaultSmartSchema = type({
     "limit?": type("number.integer>=1").describe(
       "Maximum number of results to return. Default 10.",
     ),
+    "excerptLength?": type("number.integer>=0").describe(
+      "Truncate each excerpt to this many characters, adding an ellipsis when cut. 0 drops the excerpt. Omit for the full excerpt.",
+    ),
+    "compact?": type("boolean").describe(
+      "Return only filePath and score for each result, the shortest output. Takes precedence over excerptLength.",
+    ),
   },
 }).describe(
   "Semantic search through the configured provider, native Transformers.js or Smart Connections. Returns notes ranked by similarity to the query, each with the line the match starts at (null when unresolvable, e.g. under Smart Connections). While the index is still building, the error carries filesIndexed/filesTotal/percent and, when a build rate is known, an estimated retryAfterSeconds.",
@@ -37,6 +43,8 @@ export type SearchVaultSmartContext = {
     query: string;
     filter?: { includeFolders?: string[]; excludeFolders?: string[] };
     limit?: number;
+    excerptLength?: number;
+    compact?: boolean;
   };
   app: App;
   plugin: McpToolsPlugin;
@@ -140,6 +148,36 @@ async function maybeSendProgress(
   } catch {
     // Swallowed by design — see doc comment above.
   }
+}
+
+/**
+ * Wire shape of the text result. `compact` keeps only `filePath` and
+ * `score`; otherwise `excerptLength` shortens each excerpt (0 drops it).
+ * The MCP Apps payload is built from the untouched results, so the
+ * rendered view is unaffected by either option.
+ */
+function shapeWireResults(
+  results: ReadonlyArray<{ filePath: string; excerpt: string; score: number }>,
+  vaultName: string,
+  excerptLength: number | undefined,
+  compact: boolean | undefined,
+): Array<Record<string, unknown>> {
+  if (compact) {
+    return results.map((r) => ({ filePath: r.filePath, score: r.score }));
+  }
+  return results.map((r) => {
+    const base: Record<string, unknown> = {
+      ...r,
+      uri: buildObsidianUri(vaultName, r.filePath),
+    };
+    if (excerptLength === undefined) return base;
+    if (excerptLength === 0) {
+      delete base.excerpt;
+    } else if (r.excerpt.length > excerptLength) {
+      base.excerpt = `${r.excerpt.slice(0, excerptLength)}…`;
+    }
+    return base;
+  });
 }
 
 /**
@@ -278,10 +316,12 @@ export async function searchVaultSmartHandler(
   results = results.filter((r) => !isExcluded(r.filePath));
 
   const vaultName = ctx.app.vault.getName();
-  const wireResults = results.map((r) => ({
-    ...r,
-    uri: buildObsidianUri(vaultName, r.filePath),
-  }));
+  const wireResults = shapeWireResults(
+    results,
+    vaultName,
+    ctx.arguments.excerptLength,
+    ctx.arguments.compact,
+  );
   const result = successText(JSON.stringify({ results: wireResults }));
   // Same rule as `search_vault_simple` (R-09, ADR-0023 D9): only a
   // declared NON-support withholds the payload. `undefined` means "no

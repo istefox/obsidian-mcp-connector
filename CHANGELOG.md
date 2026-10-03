@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`search_vault_smart` gains `excerptLength` and `compact`** (#567, requested in discussion #543). With the rendered view off, a host shows the raw JSON of every hit, which gets long. `excerptLength` truncates each excerpt to that many characters with an ellipsis, and `0` drops it. `compact: true` returns only `filePath` and `score` per hit and wins over `excerptLength`. Both are optional, so the default output is unchanged. The rendered view always receives the full rows.
+
 ### Fixed
 
 - **The MCP Apps search-results view now initializes in hosts whose content-security-policy blocks `blob:` scripts** (#538, reported and first fixed by @AS-prog, #539). The view used to turn the embedded SDK into a Blob URL and import it at runtime, which a host policy of `script-src 'self' 'unsafe-inline'` (the default of `pi-mcp-adapter` 2.34.0) refuses, so the view showed "its interface bundle failed to import". The view and the SDK are now compiled into one inline module at build time: no Blob, no runtime import, no `eval`, no extra permission. Hosts must still allow the inline script, as before. A new browser test (`bun run test:mcp-app-browser`, own non-required CI job) serves the page under that policy in Chromium and checks initialization, rows, empty, error, cancel, theme and open-link; the drift guard on the generated page now asserts properties, so it holds on any Bun version.

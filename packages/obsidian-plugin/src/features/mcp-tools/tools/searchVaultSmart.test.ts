@@ -851,3 +851,80 @@ describe("search_vault_smart — file-level uri (ADR-0026, R-01, R-08, D10)", ()
     }
   });
 });
+
+describe("search_vault_smart — excerptLength and compact (#567)", () => {
+  const sample: SearchResult[] = [
+    {
+      filePath: "Notes/ml.md",
+      heading: "ML Notes",
+      excerpt: "ML Notes: introduction to gradient descent.",
+      line: 3,
+      score: 0.91,
+    },
+    {
+      filePath: "Notes/short.md",
+      heading: "Short",
+      excerpt: "tiny",
+      line: 1,
+      score: 0.5,
+    },
+  ];
+
+  async function run(args: Record<string, unknown>) {
+    const spy = fakeProvider({ ready: true, results: sample });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "ml", ...args },
+      app: mockApp(),
+      plugin,
+    });
+    const text = (result.content[0] as { text: string }).text;
+    return {
+      result,
+      rows: JSON.parse(text).results as Record<string, unknown>[],
+    };
+  }
+
+  test("excerptLength truncates long excerpts with an ellipsis and leaves short ones", async () => {
+    const { rows } = await run({ excerptLength: 8 });
+    expect(rows[0]!.excerpt).toBe("ML Notes…");
+    expect(rows[1]!.excerpt).toBe("tiny");
+    expect(rows[0]!.uri).toBeDefined();
+  });
+
+  test("excerptLength 0 drops the excerpt but keeps the other fields", async () => {
+    const { rows } = await run({ excerptLength: 0 });
+    expect("excerpt" in rows[0]!).toBe(false);
+    expect(rows[0]!.filePath).toBe("Notes/ml.md");
+    expect(rows[0]!.score).toBe(0.91);
+  });
+
+  test("compact returns only filePath and score, and wins over excerptLength", async () => {
+    const { rows } = await run({ compact: true, excerptLength: 100 });
+    expect(rows).toEqual([
+      { filePath: "Notes/ml.md", score: 0.91 },
+      { filePath: "Notes/short.md", score: 0.5 },
+    ]);
+  });
+
+  test("the MCP Apps payload keeps the full rows under compact", async () => {
+    const { result } = await run({ compact: true });
+    const meta = (
+      result as { _meta?: Record<string, { rows: Array<{ excerpt: string }> }> }
+    )._meta!;
+    const payload = Object.values(meta)[0]!;
+    expect(payload.rows[0]!.excerpt).toBe(
+      "ML Notes: introduction to gradient descent.",
+    );
+  });
+
+  test("omitting both options leaves the wire shape unchanged", async () => {
+    const { rows } = await run({});
+    expect(rows[0]!.excerpt).toBe(
+      "ML Notes: introduction to gradient descent.",
+    );
+    expect(rows[0]!.heading).toBe("ML Notes");
+  });
+});
