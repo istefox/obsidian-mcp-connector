@@ -19,6 +19,8 @@ export {
 export {
   claudeCodeAddCommand,
   claudeCodeConfig,
+  claudeCodeEnvConfig,
+  CLAUDE_CODE_TOKEN_ENV_VAR,
   claudeDesktopConfig,
   clientConfigInputSchema,
   clineConfig,

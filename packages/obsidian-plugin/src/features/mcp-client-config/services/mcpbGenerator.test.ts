@@ -128,7 +128,11 @@ describe("generateMcpb", () => {
       );
       expect(m.name).toBe("obsidian-mcp-connector-mock-vault");
       expect(m.display_name).toBe("Obsidian MCP Connector (Mock Vault)");
-      expect(mcpbBundleName("日記")).toBe("obsidian-mcp-connector");
+      expect(mcpbBundleName("日記")).toMatch(
+        /^obsidian-mcp-connector-[a-z0-9]{6}$/,
+      );
+      expect(mcpbBundleName("日記")).not.toBe(mcpbBundleName("日本"));
+      expect(mcpbBundleName("Società")).not.toBe(mcpbBundleName("Societ"));
       expect(m.description).toBeTruthy();
       expect(m.author.name).toBeTruthy();
     });
@@ -176,6 +180,24 @@ describe("generateMcpb", () => {
         }),
       );
       expect(m.user_config).toBeUndefined();
+    });
+
+    test("carries the optional marketplace fields of manifest spec 0.3", () => {
+      const m = getManifest(
+        generateMcpb({
+          version: VERSION,
+          vaultName: VAULT_NAME,
+          vaultPath: VAULT_PATH,
+          configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
+        }),
+      );
+      expect(m.compatibility.platforms).toEqual(["darwin", "win32"]);
+      expect(m.tools_generated).toBe(true);
+      expect(m.prompts_generated).toBe(true);
+      expect(m.repository.type).toBe("git");
+      expect(m.homepage).toStartWith("https://github.com/");
+      expect(m.license).toBe("MIT");
     });
 
     test("manifest matches the McpbManifest shape end-to-end", () => {

@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Added
 
+- **Claude Code `.mcp.json` copy button without the token.** **Claude Code (.mcp.json, no token)** on each token row copies a project-scoped entry whose `Authorization` header is `Bearer ${OBSIDIAN_MCP_TOKEN}`, so the file is safe to commit. Claude Code asks for approval the first time it loads a project `.mcp.json`.
+- **Codex can read the token from an environment variable.** A checkbox on the Codex row switches the snippet and the installer from a static `http_headers` block to `bearer_token_env_var = "OBSIDIAN_MCP_TOKEN"`, so the credential is not written to `config.toml`. Off by default, because a Codex started from a GUI may not inherit the variable. A new Codex entry also gets `startup_timeout_sec = 30`; an existing entry keeps the timeout it has.
+- **The `.mcpb` manifest declares its platforms and generated content**: `compatibility.platforms` (`darwin`, `win32`), `tools_generated`, `prompts_generated`, `repository`, `homepage` and `license`, optional fields of manifest spec 0.3 (checked against `anthropics/mcpb`).
 - **`list_tasks` gains `offset`** for paging, like `list_attachments`. The response now carries `offset`, and `truncated` means more tasks follow the returned page.
 
 ### Changed
@@ -19,6 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Fixed
 
+- **Vaults whose name has non-ASCII characters no longer share a client-config key.** The key kept only `[a-z0-9]`, so every vault named in Japanese or Cyrillic became `obsidian`, and "Società" collided with "Societ". Such names now get a 6-character hash appended (`obsidian_societ_1a2b3c`), also in the `.mcpb` name. ASCII-only names are unchanged. A vault with a non-ASCII name gets a new key, so paste a fresh copy and remove the old entry; the Claude Desktop sync writes the new key on its next run.
 - **`ensure_block_id` no longer writes into the YAML frontmatter.** A `line` inside the leading `---` block used to attach the id to the closing delimiter and corrupt the note. It is now refused with `invalid_params`, and the file is left untouched.
 - **CRLF notes work with the task and block-id tools.** `set_task_status` always answered `not_a_task` on a note with Windows line endings, and `list_tasks` fell back to the raw line (list marker included) as the task text. Both now parse the line without its carriage return and write it back with it. `ensure_block_id` also stops dropping the carriage return from the line it edits and gives the lines it inserts the file's line ending.
 - **`list_tasks` and `search_files_by_name` treat `folder: "/"` as the vault root**, as `list_attachments` already did; `list_tasks` used to return nothing for it. `search_files_by_name` now answers `folder_not_found` for a folder that does not exist instead of an empty result.

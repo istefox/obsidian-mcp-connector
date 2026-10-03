@@ -35,6 +35,8 @@
     startCodexDiscovery,
     type DiscoveryStatus,
     codexConfigSnippet,
+    CLAUDE_CODE_TOKEN_ENV_VAR,
+    type CodexConnection,
     CopyConfigMenu,
     detectNode,
     disableCodexDiscovery,
@@ -80,6 +82,13 @@
    */
   let autoWriteOwner: string | null = null;
   let codexDiscoveryOwner: string | null = null;
+  /**
+   * Codex reads the token from $OBSIDIAN_MCP_TOKEN instead of having it
+   * written into config.toml. Off by default: a Codex started from a GUI may
+   * not inherit the variable, and the connection would then fail to
+   * authenticate. A per-session choice, not persisted.
+   */
+  let codexTokenFromEnv = false;
   let discoveryStatus: DiscoveryStatus = { state: "stopped" };
   let unsubscribeDiscovery: (() => void) | undefined;
   let destroyed = false;
@@ -676,7 +685,19 @@
     const connection = await getCodexConnection(plugin);
     if (!connection)
       throw new Error("Enable the Codex connection for this vault first.");
-    return codexConfigSnippet(connection);
+    return codexConfigSnippet(withCodexOptions(connection));
+  }
+
+  function withCodexOptions(
+    connection: CodexConnection,
+    startupTimeout = true,
+  ): CodexConnection {
+    return {
+      ...connection,
+      // A cold start of the broker can take longer than Codex's 10 s default.
+      ...(startupTimeout ? { startupTimeoutSec: 30 } : {}),
+      ...(codexTokenFromEnv ? { bearerTokenEnvVar: CLAUDE_CODE_TOKEN_ENV_VAR } : {}),
+    };
   }
 
   async function handleCopyCodexConfig(): Promise<void> {
@@ -694,7 +715,14 @@
       const connection = await getCodexConnection(plugin);
       if (!connection)
         throw new Error("Enable the Codex connection for this vault first.");
-      const preview = await inspectCodexInstall(connection);
+      // An existing entry keeps whatever startup timeout its owner set; only a
+      // fresh entry gets the longer default.
+      let options = withCodexOptions(connection, false);
+      let preview = await inspectCodexInstall(options);
+      if (preview.action === "add") {
+        options = withCodexOptions(connection);
+        preview = await inspectCodexInstall(options);
+      }
       if (preview.action === "unchanged") {
         new Notice(`Codex config is already installed at ${preview.configPath}.`);
         return;
@@ -704,11 +732,11 @@
         `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}\n\nA timestamped backup will be created before an existing file is changed.`,
       );
       if (!confirmed) return;
-      const result = await installCodexConfig(connection, {
+      const result = await installCodexConfig(options, {
         expectedRevision: preview.revision,
       });
       new Notice(
-        `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. Restart Codex once.`,
+        `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. ${codexTokenFromEnv ? `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} before starting Codex. ` : ""}Restart Codex once.`,
       );
     } catch (err) {
       noticeFailure("installing the Codex config", err);
@@ -912,6 +940,18 @@
             Enable Codex connection for this vault
           </label>
           {#if codexDiscoveryOwner === token.id}
+            <label class="token-hint">
+              <input type="checkbox" bind:checked={codexTokenFromEnv} />
+              Keep the token out of <code>config.toml</code> (Codex reads
+              <code>${CLAUDE_CODE_TOKEN_ENV_VAR}</code>)
+            </label>
+            {#if codexTokenFromEnv}
+              <p class="token-hint">
+                Export <code>{CLAUDE_CODE_TOKEN_ENV_VAR}</code> with the token
+                before starting Codex. A Codex launched from a GUI may not
+                inherit it.
+              </p>
+            {/if}
             <div class="token-actions">
               <button
                 type="button"

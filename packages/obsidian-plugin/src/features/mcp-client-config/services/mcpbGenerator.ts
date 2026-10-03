@@ -1,7 +1,7 @@
 import { zipSync, strToU8 } from "fflate";
 import { ICON_PNG_B64 } from "../assets/iconPng";
 import { CONNECTOR_SHIM_SOURCE } from "../assets/connectorShimSource";
-import { vaultNameWords } from "./generators";
+import { vaultNameDisambiguator, vaultNameWords } from "./generators";
 
 export type McpbGeneratorInput = {
   version: string;
@@ -55,6 +55,12 @@ export interface McpbManifest {
     entry_point: string;
     mcp_config: { command: string; args: string[] };
   };
+  compatibility: { platforms: Array<"darwin" | "win32" | "linux"> };
+  tools_generated: true;
+  prompts_generated: true;
+  repository: { type: "git"; url: string };
+  homepage: string;
+  license: string;
   user_config?: never;
 }
 
@@ -98,9 +104,11 @@ function buildShim(input: McpbGeneratorInput): string {
  * name with no ASCII alphanumerics keeps the plain name.
  */
 export function mcpbBundleName(vaultName: string): string {
-  const words = vaultNameWords(vaultName);
-  return words.length > 0
-    ? `obsidian-mcp-connector-${words.join("-")}`
+  const parts = [...vaultNameWords(vaultName)];
+  const tag = vaultNameDisambiguator(vaultName);
+  if (tag) parts.push(tag);
+  return parts.length > 0
+    ? `obsidian-mcp-connector-${parts.join("-")}`
     : "obsidian-mcp-connector";
 }
 
@@ -121,6 +129,17 @@ function buildManifest(input: McpbGeneratorInput): McpbManifest {
       // data.json at spawn time — no secret embedded in this manifest.
       mcp_config: { command: "node", args: ["${__dirname}/server/index.js"] },
     },
+    // The tool list depends on the token profile and the plugin version, so
+    // it is generated at runtime rather than declared in the manifest.
+    compatibility: { platforms: ["darwin", "win32"] },
+    tools_generated: true,
+    prompts_generated: true,
+    repository: {
+      type: "git",
+      url: "https://github.com/istefox/obsidian-mcp-connector",
+    },
+    homepage: "https://github.com/istefox/obsidian-mcp-connector",
+    license: "MIT",
   };
 }
 
