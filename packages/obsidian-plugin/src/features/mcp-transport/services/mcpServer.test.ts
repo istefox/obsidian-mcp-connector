@@ -299,6 +299,38 @@ describe("end-to-end: HTTP → McpServer", () => {
         .map((t) => t.name);
       expect(missingAnnotations).toEqual([]);
 
+      // #444 / #508: a boolean-shaped argument declared as the string pair
+      // `"true" | "false"` rejects a real JSON boolean, because
+      // `coerceBooleanParams` only repairs a string arriving where the
+      // schema says boolean. Such a field advertises as a string enum, so
+      // this walk catches the class on any tool, current or future.
+      const stringBooleanFields: string[] = [];
+      const walk = (node: unknown, path: string): void => {
+        if (Array.isArray(node)) {
+          node.forEach((n, i) => walk(n, `${path}[${i}]`));
+          return;
+        }
+        if (node === null || typeof node !== "object") return;
+        const rec = node as Record<string, unknown>;
+        const values = Array.isArray(rec.enum)
+          ? rec.enum
+          : Array.isArray(rec.anyOf)
+            ? (rec.anyOf as Array<Record<string, unknown>>).map((m) => m.const)
+            : [];
+        if (
+          values.length === 2 &&
+          values.includes("true") &&
+          values.includes("false")
+        ) {
+          stringBooleanFields.push(path);
+        }
+        for (const [k, v] of Object.entries(rec)) walk(v, `${path}.${k}`);
+      };
+      for (const t of tools as Array<{ name: string; inputSchema: unknown }>) {
+        walk(t.inputSchema, t.name);
+      }
+      expect(stringBooleanFields).toEqual([]);
+
       // Client-facing metadata (toolClientMeta.ts): the three meta-tools
       // stay loaded under Claude Code's tool search, the large-output
       // tools raise its inline threshold, and the two MCP Apps tools carry
