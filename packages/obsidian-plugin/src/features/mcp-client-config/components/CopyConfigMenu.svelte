@@ -2,7 +2,9 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import {
+    CLAUDE_CODE_TOKEN_ENV_VAR,
     claudeCodeAddCommand,
+    claudeCodeEnvConfig,
     claudeDesktopConfig,
     clineConfig,
     streamableHttpConfig,
@@ -72,6 +74,19 @@
     );
   }
 
+  // A project `.mcp.json` is committed, so the token is a ${VAR} reference
+  // rather than the value. Claude Code asks for approval the first time it
+  // loads a project-scoped server.
+  function copyClaudeCodeProject(): Promise<void> {
+    new Notice(
+      `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} with this token before starting Claude Code. It asks you to approve a project .mcp.json once.`,
+    );
+    return copyJson(
+      wrapInMcpServers(claudeCodeEnvConfig({ url }), serverId),
+      "Claude Code .mcp.json",
+    );
+  }
+
   function copyStreamableHttp(): Promise<void> {
     return copyJson(
       wrapInMcpServers(streamableHttpConfig({ url, token }), serverId),
@@ -120,6 +135,14 @@
     aria-label="Copy the claude mcp add command for Claude Code"
   >
     Claude Code
+  </button>
+  <button
+    type="button"
+    on:click={copyClaudeCodeProject}
+    disabled={!url}
+    aria-label="Copy a project .mcp.json entry for Claude Code that reads the token from an environment variable"
+  >
+    Claude Code (.mcp.json, no token)
   </button>
   <button
     type="button"

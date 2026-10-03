@@ -50,6 +50,38 @@ describe("Codex config snippet", () => {
     expect(snippet).not.toContain("27200");
   });
 
+  test("env-var mode writes the variable name, not the token", () => {
+    const snippet = codexConfigSnippet({
+      ...connection,
+      bearerTokenEnvVar: "OBSIDIAN_MCP_TOKEN",
+    });
+    expect(snippet).toContain('bearer_token_env_var = "OBSIDIAN_MCP_TOKEN"');
+    expect(snippet).not.toContain("http_headers");
+    expect(snippet).not.toContain("stable-broker-token");
+    const parsed = Bun.TOML.parse(snippet) as {
+      mcp_servers: { obsidian_neonhades2: Record<string, unknown> };
+    };
+    expect(parsed.mcp_servers.obsidian_neonhades2.bearer_token_env_var).toBe(
+      "OBSIDIAN_MCP_TOKEN",
+    );
+  });
+
+  test("refuses an environment variable name that is not an identifier", () => {
+    expect(() =>
+      codexConfigSnippet({ ...connection, bearerTokenEnvVar: 'X"; rm' }),
+    ).toThrow();
+  });
+
+  test("startupTimeoutSec is emitted only when asked for", () => {
+    expect(codexConfigSnippet(connection)).not.toContain("startup_timeout_sec");
+    expect(
+      codexConfigSnippet({ ...connection, startupTimeoutSec: 30 }),
+    ).toContain("startup_timeout_sec = 30");
+    expect(() =>
+      codexConfigSnippet({ ...connection, startupTimeoutSec: 0 }),
+    ).toThrow();
+  });
+
   test("refuses a vault name that cannot form a stable id", () => {
     expect(() => codexServerId("---")).toThrow();
   });
@@ -554,5 +586,59 @@ describe("explicit Codex config installer", () => {
     ]);
 
     expect(ownerStillHeldLock).toBe(true);
+  });
+});
+
+describe("Codex install with token and timeout options", () => {
+  test("switching to env-var mode replaces the static header and keeps policy keys", async () => {
+    await fsp.writeFile(
+      configPath,
+      [
+        "[mcp_servers.obsidian_neonhades2]",
+        'url = "old"',
+        'http_headers = { Authorization = "Bearer old" }',
+        'enabled_tools = ["read_only"]',
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const env = { ...connection, bearerTokenEnvVar: "OBSIDIAN_MCP_TOKEN" };
+    await installCodexConfig(env, { configPath });
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written).toContain('bearer_token_env_var = "OBSIDIAN_MCP_TOKEN"');
+    expect(written).not.toContain("http_headers");
+    expect(written).not.toContain("stable-broker-token");
+    expect(written).toContain('enabled_tools = ["read_only"]');
+    Bun.TOML.parse(written);
+  });
+
+  test("an explicit startupTimeoutSec overrides the old value without duplicating the key", async () => {
+    await fsp.writeFile(
+      configPath,
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nstartup_timeout_sec = 5\n',
+      "utf8",
+    );
+    await installCodexConfig(
+      { ...connection, startupTimeoutSec: 30 },
+      { configPath },
+    );
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written.match(/startup_timeout_sec/g)).toHaveLength(1);
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: { obsidian_neonhades2: Record<string, unknown> };
+    };
+    expect(parsed.mcp_servers.obsidian_neonhades2.startup_timeout_sec).toBe(30);
+  });
+
+  test("without the option an existing startup_timeout_sec is kept", async () => {
+    await fsp.writeFile(
+      configPath,
+      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nstartup_timeout_sec = 5\n',
+      "utf8",
+    );
+    await installCodexConfig(connection, { configPath });
+    expect(await fsp.readFile(configPath, "utf8")).toContain(
+      "startup_timeout_sec = 5",
+    );
   });
 });

@@ -105,6 +105,24 @@ export function claudeCodeConfig(input: ClientConfigInput): ClaudeCodeEntry {
   };
 }
 
+/** Name of the environment variable the token-free Claude Code entry reads. */
+export const CLAUDE_CODE_TOKEN_ENV_VAR = "OBSIDIAN_MCP_TOKEN";
+
+/**
+ * Claude Code entry for a project `.mcp.json` that is safe to commit: the
+ * token is a `${VAR}` reference Claude Code expands from the environment, so
+ * the secret never lands in a file in the repository. Needs
+ * `OBSIDIAN_MCP_TOKEN` exported where Claude Code starts, and a project
+ * `.mcp.json` asks for approval the first time Claude Code loads it.
+ */
+export function claudeCodeEnvConfig(input: { url: string }): ClaudeCodeEntry {
+  return {
+    type: "http",
+    url: input.url,
+    headers: { Authorization: `Bearer \${${CLAUDE_CODE_TOKEN_ENV_VAR}}` },
+  };
+}
+
 /** Where `claude mcp add` stores the entry (code.claude.com/docs/en/mcp). */
 export type ClaudeCodeScope = "user" | "project" | "local";
 
@@ -193,18 +211,40 @@ export function vaultNameWords(vaultName: string): string[] {
 }
 
 /**
+ * Short stable suffix for a vault name whose ASCII words do not identify it:
+ * the name is empty of ASCII alphanumerics ("日記") or lost characters on the
+ * way ("Società" and "Societ" both give `societ`). Null for a name the words
+ * carry fully, so those ids keep their plain form.
+ */
+export function vaultNameDisambiguator(vaultName: string): string | null {
+  const lossy = /[^\x00-\x7f]/.test(vaultName);
+  if (!lossy) return null;
+  // FNV-1a over UTF-16 code units: sync, dependency-free, stable across
+  // platforms. A collision would need two lossy names to collide on 32 bits.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < vaultName.length; i++) {
+    hash ^= vaultName.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36).padStart(6, "0").slice(-6);
+}
+
+/**
  * The client-config key for this vault: `obsidian_<vault>`, words joined
  * by `_`, so "My Vault" is `obsidian_my_vault`. A fixed key made every vault
- * paste over every other one in a client that holds several. A vault name
- * with no ASCII alphanumerics falls back to plain `obsidian`.
+ * paste over every other one in a client that holds several. A name with
+ * non-ASCII characters gets a short hash appended (`obsidian_societ_1a2b3c`,
+ * `obsidian_1a2b3c` for "日記"), so two such vaults never share a key.
  *
  * Codex keeps its own merged form (`codexServerId`): its vault-named
  * entries exist only for settings older than the route id, and renaming
  * them would orphan the entry already in `config.toml` (ADR-0021).
  */
 export function vaultServerId(vaultName: string): string {
-  const words = vaultNameWords(vaultName);
-  return words.length > 0 ? `obsidian_${words.join("_")}` : "obsidian";
+  const parts = [...vaultNameWords(vaultName)];
+  const tag = vaultNameDisambiguator(vaultName);
+  if (tag) parts.push(tag);
+  return parts.length > 0 ? `obsidian_${parts.join("_")}` : "obsidian";
 }
 
 // ---------------------------------------------------------------------------

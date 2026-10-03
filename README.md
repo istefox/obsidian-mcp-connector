@@ -367,7 +367,7 @@ Native HTTP transport, registered through the CLI. **Claude Code** on the token'
 claude mcp add --transport http --scope user obsidian-mcp-connector http://127.0.0.1:27200/mcp --header "Authorization: Bearer YOUR_TOKEN"
 ```
 
-`--scope user` makes the vault available in every project; drop it for the default local scope (this project only). Both are stored in `~/.claude.json`, which the CLI owns, so do not hand-edit it. To share the server with a team without sharing the secret, commit a project-scoped `.mcp.json` at the repository root and let each person export the token:
+`--scope user` makes the vault available in every project; drop it for the default local scope (this project only). Both are stored in `~/.claude.json`, which the CLI owns, so do not hand-edit it. To share the server with a team without sharing the secret, commit a project-scoped `.mcp.json` at the repository root and let each person export the token. **Claude Code (.mcp.json, no token)** on the token's row copies this entry with the token as a `${OBSIDIAN_MCP_TOKEN}` reference; Claude Code asks you to approve a project `.mcp.json` the first time it loads it:
 
 ```json
 {
@@ -400,6 +400,8 @@ Port changes and token regeneration do not require a Codex config change or anot
 1. On a token row, tick **Enable Codex connection for this vault**.
 2. Click **Install Codex config…** to preview and approve a one-time edit, or click **Copy Codex config** and paste the snippet yourself.
 3. Keep this vault open, then restart Codex after the initial config change.
+
+By default the snippet carries the broker credential in an `http_headers` block. To keep it out of `config.toml`, tick **Keep the token out of config.toml** on the row before copying or installing: the entry then reads `bearer_token_env_var = "OBSIDIAN_MCP_TOKEN"`, and you export that variable with the broker credential before starting Codex. It is off by default because a Codex launched from a GUI may not inherit your shell's environment, and the connection would then fail to authenticate. A new entry also gets `startup_timeout_sec = 30`, since Codex's 10 s default is tight for a cold broker start; an existing entry keeps the timeout it already has.
 
 Two Codex limits worth knowing. Codex logs `tools/list_changed` but does not refetch the catalog, so a tool promoted by `activate_tools` reaches a Codex session only after it reconnects; give a token used by Codex a non-adaptive profile (`core`, or `full`) unless the first catalog is enough. Codex also has no MCP prompts support, so the vault's `#mcp-tools-prompt` notes are invisible to it.
 

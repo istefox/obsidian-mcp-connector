@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   claudeCodeAddCommand,
+  CLAUDE_CODE_TOKEN_ENV_VAR,
   claudeCodeConfig,
+  claudeCodeEnvConfig,
   claudeDesktopConfig,
   clineConfig,
   streamableHttpConfig,
@@ -110,8 +112,21 @@ describe("vaultServerId", () => {
     expect(codexServerId("My Vault")).toBe("obsidian_myvault");
   });
 
-  test("falls back to a plain key when the name has no ASCII alphanumerics", () => {
-    expect(vaultServerId("日記")).toBe("obsidian");
+  test("a name with no ASCII alphanumerics still gets a key of its own", () => {
+    expect(vaultServerId("日記")).toMatch(/^obsidian_[a-z0-9]{6}$/);
+    expect(vaultServerId("日記")).not.toBe(vaultServerId("日本"));
+    expect(vaultServerId("日記")).toBe(vaultServerId("日記"));
+  });
+
+  test("a name that loses characters is told apart from its ASCII twin", () => {
+    expect(vaultServerId("Società")).toMatch(/^obsidian_societ_[a-z0-9]{6}$/);
+    expect(vaultServerId("Società")).not.toBe(vaultServerId("Societ"));
+    expect(vaultServerId("Societ")).toBe("obsidian_societ");
+  });
+
+  test("an ASCII-only name keeps the plain form", () => {
+    expect(vaultServerId("My Vault!")).toBe("obsidian_my_vault");
+    expect(vaultServerId("")).toBe("obsidian");
   });
 });
 
@@ -138,5 +153,18 @@ describe("wrapInMcpServers", () => {
         },
       },
     });
+  });
+});
+
+describe("claudeCodeEnvConfig", () => {
+  test("references the token by environment variable, never by value", () => {
+    const entry = claudeCodeEnvConfig({ url: URL });
+    expect(CLAUDE_CODE_TOKEN_ENV_VAR).toBe("OBSIDIAN_MCP_TOKEN");
+    expect(entry).toEqual({
+      type: "http",
+      url: URL,
+      headers: { Authorization: "Bearer ${OBSIDIAN_MCP_TOKEN}" },
+    });
+    expect(JSON.stringify(entry)).not.toContain(TOKEN);
   });
 });

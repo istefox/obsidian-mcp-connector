@@ -14,6 +14,15 @@ export type CodexConnection = {
   accessToken: string;
   brokerPort: number;
   serverId?: string;
+  /**
+   * Name of an environment variable Codex reads the bearer token from. When
+   * set, the snippet carries `bearer_token_env_var` instead of a static
+   * `http_headers` block, so the token is not written to `config.toml`. Codex
+   * must then be started with that variable set.
+   */
+  bearerTokenEnvVar?: string;
+  /** Emitted as `startup_timeout_sec`; replaces a value already in the entry. */
+  startupTimeoutSec?: number;
 };
 
 export type CodexConfigLocation =
@@ -56,12 +65,21 @@ export function codexServerId(vaultName: string, routeId?: string): string {
 export function codexConfigSnippet(input: CodexConnection): string {
   const serverId = connectionServerId(input);
   const url = `http://127.0.0.1:${input.brokerPort}/v1/${input.routeId}/mcp`;
+  const envVar = input.bearerTokenEnvVar?.trim();
+  if (envVar !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar))
+    throw new Error("Invalid environment variable name");
+  const timeout = input.startupTimeoutSec;
+  if (timeout !== undefined && !(Number.isInteger(timeout) && timeout > 0))
+    throw new Error("startupTimeoutSec must be a positive integer");
   return [
     `[mcp_servers.${serverId}]`,
     `url = ${tomlString(url)}`,
-    `http_headers = { Authorization = ${tomlString(`Bearer ${input.accessToken}`)} }`,
+    envVar
+      ? `bearer_token_env_var = ${tomlString(envVar)}`
+      : `http_headers = { Authorization = ${tomlString(`Bearer ${input.accessToken}`)} }`,
     "enabled = true",
     "required = false",
+    ...(timeout !== undefined ? [`startup_timeout_sec = ${timeout}`] : []),
   ].join("\n");
 }
 
@@ -441,6 +459,11 @@ function scanTomlStructure(raw: string): {
   return { headers, multilineStrings };
 }
 
+/** The bare key a `key = value` line sets, or "" when it is not one. */
+function rootKeyOf(line: string): string {
+  return /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line)?.[1] ?? "";
+}
+
 function planEntryEdit(
   raw: string,
   serverId: string,
@@ -514,6 +537,13 @@ function planEntryEdit(
   const root = roots[0];
   const rootEnd = headers[headers.indexOf(root) + 1]?.start ?? raw.length;
   const { preserved, comments } = splitRootBody(raw.slice(root.start, rootEnd));
+  const snippetKeys = new Set(
+    snippet
+      .split("\n")
+      .slice(1)
+      .map(rootKeyOf)
+      .filter((key) => key !== ""),
+  );
   let content = "";
   let cursor = 0;
   let inserted = false;
@@ -523,8 +553,11 @@ function planEntryEdit(
       if (range.start === 0 && raw.startsWith("\uFEFF")) content += "\uFEFF";
       content += `${normalizedSnippet}${newline}`;
       for (const line of comments) content += `${line}${newline}`;
-      for (const segment of preserved)
+      for (const segment of preserved) {
+        // A key the new snippet states explicitly wins over the old value.
+        if (snippetKeys.has(rootKeyOf(segment[0]))) continue;
         for (const line of segment) content += `${line}${newline}`;
+      }
       content += newline;
       inserted = true;
     }
