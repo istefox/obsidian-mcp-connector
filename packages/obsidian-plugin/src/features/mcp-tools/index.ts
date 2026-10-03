@@ -50,6 +50,10 @@ import {
 import { renameTagHandler, renameTagSchema } from "./tools/renameTag";
 import { getFileInfoHandler, getFileInfoSchema } from "./tools/getFileInfo";
 import {
+  ensureBlockIdHandler,
+  ensureBlockIdSchema,
+} from "./tools/ensureBlockId";
+import {
   listAttachmentsHandler,
   listAttachmentsSchema,
 } from "./tools/listAttachments";
@@ -308,6 +312,9 @@ export async function registerTools(
   );
   registry.register(listAttachmentsSchema, async ({ arguments: args }) =>
     listAttachmentsHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(ensureBlockIdSchema, async ({ arguments: args }) =>
+    ensureBlockIdHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops

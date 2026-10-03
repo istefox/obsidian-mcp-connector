@@ -80,6 +80,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   search_vault_smart: READ_ONLY,
   search_and_replace: DESTRUCTIVE,
   rename_tag: DESTRUCTIVE,
+  // Appends ` ^id` or an own-line `^id`; never removes or rewrites text.
+  ensure_block_id: { ...SAFE_WRITE, idempotentHint: true },
 
   // Network
   fetch: { readOnlyHint: true, openWorldHint: true },

@@ -229,6 +229,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "delete_note_property",
         "delete_vault_directory",
         "delete_vault_file",
+        "ensure_block_id",
         "execute_dataview_query",
         "execute_obsidian_command",
         "execute_template",
@@ -277,7 +278,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "update_canvas_node",
         "update_note_properties",
       ]);
-      expect(names).toHaveLength(62);
+      expect(names).toHaveLength(63);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.

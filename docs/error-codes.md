@@ -35,12 +35,15 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `permission_denied` | The file system refused the operation. | `path` |
 | `delete_failed`, `rename_failed` | The underlying Obsidian call threw; `error` carries its message. | `path` / `from`, `to` |
 | `stale_precondition` | The file no longer matches the caller's `expectedContent` (ADR-0019, ADR-0022), or for `set_task_status` the task text differs from `expectedText`. | `targetType`, `target` or the read tool to re-check with |
-| `write_failed` | `set_task_status`'s atomic `vault.process` threw; `error` carries its message. | `path`, `line` |
+| `write_failed` | `set_task_status`'s or `ensure_block_id`'s atomic `vault.process` threw; `error` carries its message. | `path`, `line` |
 
 ## Note anatomy
 
 | Code | Meaning | Extra fields |
 | --- | --- | --- |
+| `empty_section` | `ensure_block_id`: the heading has no content block under it. | `path`, `heading` |
+| `unsupported_block` | `ensure_block_id`: the target line is a heading; link to it with `[[note#Heading]]`. | `path`, `line` |
+| `block_id_taken` | `ensure_block_id`: the requested `id` already identifies another block in the file. | `path`, `id` |
 | `heading_not_found` | No heading matches the target. | `path`, `target` or `heading` |
 | `ambiguous_heading` | More than one heading matches; narrow the target. `rename_heading` adds the candidates. | `candidates` (`rename_heading`), `path`, `target` |
 | `ambiguous_section` | The heading has no H1 parent while the file has an H1 elsewhere, so its section end is undefined. Pass `allowRootHeadings: true`. | `targetType`, `target` |
