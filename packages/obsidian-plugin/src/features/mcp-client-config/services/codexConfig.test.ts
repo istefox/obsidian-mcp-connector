@@ -52,8 +52,27 @@ describe("Codex config snippet", () => {
   });
   test("route identity keeps names without ASCII alphanumerics usable", () => {
     expect(codexServerId("日記", connection.routeId)).toBe(
-      "obsidian_123e4567e89b42d3a456426614174000",
+      "obsidian_vault_123e4567e89b42d3a456426614174000",
     );
+  });
+  test("long vault names leave room for readable Codex tool names", () => {
+    const vaultName = "A".repeat(80);
+    const serverId = codexServerId(vaultName, connection.routeId);
+    expect(serverId).toBe(
+      `obsidian_${"a".repeat(32)}_123e4567e89b42d3a456426614174000`,
+    );
+    expect(
+      `mcp__${serverId}__create_vault_binary_file`.length,
+    ).toBeLessThanOrEqual(128);
+    expect(serverId).not.toBe(
+      codexServerId(vaultName, "123e4567-e89b-42d3-a456-426614174001"),
+    );
+    const snippet = codexConfigSnippet({
+      ...connection,
+      vaultName,
+      serverId: undefined,
+    });
+    expect(snippet.split("\n")[0]).toBe(`[mcp_servers.${serverId}]`);
   });
   test("uses one stable broker URL instead of the live vault port or token", () => {
     expect(codexServerId(connection.vaultName)).toBe("obsidian_neonhades2");
@@ -356,16 +375,17 @@ describe("explicit Codex config installer", () => {
     expect(await fsp.readFile(configPath, "utf8")).toBe(changed);
   });
 
-  test("installing a readable entry preserves the old UUID-only entry and its policy", async () => {
+  test("installing a readable entry migrates the UUID-only entry and its policy", async () => {
     const oldId = "obsidian_123e4567e89b42d3a456426614174000";
     const namedId = "obsidian_neon_hades_2_123e4567e89b42d3a456426614174000";
-    const previous = `[mcp_servers.${oldId}]\nurl = "http://old"\nenabled_tools = ["read_only"]\n`;
+    const previous = `${codexConfigSnippet({ ...connection, serverId: oldId })}\nenabled_tools = ["read_only"]\ndisabled_tools = ["write_file"]\ndefault_tools_approval_mode = "approve"\n\n[mcp_servers.${oldId}.tools.read_only]\napproval_mode = "approve"\n`;
     const namedConnection = { ...connection, serverId: undefined };
     await fsp.writeFile(configPath, previous, "utf8");
 
     const preview = await inspectCodexInstall(namedConnection, { configPath });
     expect(preview.serverId).toBe(namedId);
-    expect(preview.action).toBe("add");
+    expect(preview.action).toBe("migrate");
+    expect(preview.previousServerId).toBe(oldId);
     expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
     const result = await installCodexConfig(namedConnection, {
       configPath,
@@ -373,22 +393,114 @@ describe("explicit Codex config installer", () => {
     });
     expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
     const written = await fsp.readFile(configPath, "utf8");
-    expect(written.startsWith(previous)).toBe(true);
+    expect(result.action).toBe("migrate");
+    expect(result.previousServerId).toBe(oldId);
+    expect(written).toBe(previous.split(oldId).join(namedId));
     const parsed = Bun.TOML.parse(written) as {
       mcp_servers: Record<string, Record<string, unknown>>;
     };
-    expect(parsed.mcp_servers[oldId]).toEqual({
-      url: "http://old",
-      enabled_tools: ["read_only"],
-    });
+    expect(parsed.mcp_servers[oldId]).toBeUndefined();
+    expect(Object.keys(parsed.mcp_servers)).toEqual([namedId]);
     expect(parsed.mcp_servers[namedId]).toMatchObject({
       url: `http://127.0.0.1:27206/v1/${connection.routeId}/mcp`,
       http_headers: { Authorization: `Bearer ${connection.accessToken}` },
+      enabled_tools: ["read_only"],
+      disabled_tools: ["write_file"],
+      default_tools_approval_mode: "approve",
+      tools: { read_only: { approval_mode: "approve" } },
     });
     expect(
       (await inspectCodexInstall(namedConnection, { configPath })).action,
     ).toBe("unchanged");
   });
+
+  test("migration renames quoted nested headers without changing values, comments or CRLF", async () => {
+    const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+    const namedConnection = { ...connection, serverId: undefined };
+    const namedId = codexServerId(connection.vaultName, connection.routeId);
+    const previous = [
+      `\uFEFF[ mcp_servers.'${oldId}' ] # Keep header comment`,
+      `url = "http://127.0.0.1:27206/v1/${connection.routeId}/mcp"`,
+      "enabled = false",
+      "required = true",
+      `name = '${oldId}' # This value is not a table key`,
+      "",
+      `[mcp_servers.'${oldId}'.http_headers]`,
+      `Authorization = "Bearer ${connection.accessToken}"`,
+      `[mcp_servers.'${oldId}'.tools.'read.file']`,
+      'approval_mode = "approve"',
+      'description = """',
+      `[mcp_servers.${oldId}.tools.fake]`,
+      '"""',
+      `[mcp_servers.'${oldId}'.oauth]`,
+      'resource = "synthetic-resource"',
+      "[mcp_servers.other]",
+      `name = '${oldId}'`,
+      "",
+    ].join("\r\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+    const result = await installCodexConfig(namedConnection, { configPath });
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(result.action).toBe("migrate");
+    expect(
+      written.startsWith(
+        `\uFEFF[mcp_servers.${namedId}] # Keep header comment`,
+      ),
+    ).toBe(true);
+    expect(written.replace(/\r\n/g, "")).not.toContain("\n");
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+    expect(parsed.mcp_servers[oldId]).toBeUndefined();
+    expect(parsed.mcp_servers[namedId]).toMatchObject({
+      enabled: false,
+      required: true,
+      name: oldId,
+      http_headers: { Authorization: `Bearer ${connection.accessToken}` },
+      tools: {
+        "read.file": {
+          approval_mode: "approve",
+          description: expect.stringContaining(
+            `[mcp_servers.${oldId}.tools.fake]`,
+          ),
+        },
+      },
+      oauth: { resource: "synthetic-resource" },
+    });
+    expect(parsed.mcp_servers.other).toEqual({ name: oldId });
+    expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
+  });
+
+  test.each([
+    "duplicate roots",
+    "nested table without root",
+    "array table",
+    "old and new entries",
+  ])(
+    "refuses ambiguous migration with %s without changing the file",
+    async (scenario) => {
+      const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+      const namedConnection = { ...connection, serverId: undefined };
+      const oldSnippet = codexConfigSnippet({ ...connection, serverId: oldId });
+      const previous =
+        scenario === "duplicate roots"
+          ? `${oldSnippet}\n${oldSnippet}\n`
+          : scenario === "nested table without root"
+            ? `[mcp_servers.${oldId}.tools.read_file]\napproval_mode = "approve"\n`
+            : scenario === "array table"
+              ? `[[mcp_servers.${oldId}]]\nurl = "http://synthetic"\n`
+              : `${oldSnippet}\n${codexConfigSnippet(namedConnection)}\n`;
+      await fsp.writeFile(configPath, previous, "utf8");
+      await expect(
+        inspectCodexInstall(namedConnection, { configPath }),
+      ).rejects.toThrow(/ambiguous|both/);
+      await expect(
+        installCodexConfig(namedConnection, { configPath }),
+      ).rejects.toThrow(/ambiguous|both/);
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+      expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+    },
+  );
 
   test("identifies and replaces an earlier entry while preserving unrelated TOML", async () => {
     const previous = [

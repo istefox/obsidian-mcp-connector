@@ -727,16 +727,20 @@
         new Notice(`Codex config is already installed at ${preview.configPath}.`);
         return;
       }
-      const action = preview.action === "add" ? "Add" : "Replace";
+      const action = preview.action === "migrate"
+        ? `Rename [mcp_servers.${preview.previousServerId}] to [mcp_servers.${preview.serverId}] (all existing settings and nested tables are kept)`
+        : `${preview.action === "add" ? "Add" : "Replace"} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}`;
       const confirmed = confirm(
-        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}\n\nA timestamped backup will be created before an existing file is changed.`,
+        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action}\n\nA timestamped backup will be created before an existing file is changed.`,
       );
       if (!confirmed) return;
       const result = await installCodexConfig(options, {
         expectedRevision: preview.revision,
       });
       new Notice(
-        `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. ${codexTokenFromEnv ? `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} before starting Codex. ` : ""}Restart Codex once.`,
+        result.action === "migrate"
+          ? "Renamed the existing Codex MCP entry and kept all its settings. Restart Codex once."
+          : `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. ${codexTokenFromEnv ? `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} before starting Codex. ` : ""}Restart Codex once.`,
       );
     } catch (err) {
       noticeFailure("installing the Codex config", err);
@@ -1007,7 +1011,7 @@
           Use after duplicating a vault with its <code>.obsidian</code> folder.
           Run this in the copy to replace all token secrets, reset Codex if
           enabled, and turn off Claude Desktop sync
-          {#if codexDiscoveryOwner !== null}
+          {#if codexDiscoveryOwner !== null && discoveryStatus.locationChanged}
             <p>
               If you moved the vault instead, use <strong>This vault was moved</strong>
               to keep its existing connection

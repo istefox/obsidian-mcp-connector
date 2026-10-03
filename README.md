@@ -199,7 +199,7 @@ The vault holds a **list** of tokens, not one. The token on the request identifi
 
 There is deliberately **no vault-wide export**. A credential always leaves the plugin naming the client it belongs to.
 
-![Access Control settings: The Default token row with its secret masked, a Codex badge, per-client copy buttons, .mcpb export, Replace secret and Revoke, then the Codex connection status, the Copied this vault? row, server port, requests served and fixed port](docs/images/access-control.png)
+![Access Control settings: A token row with its secret masked, per-client configuration buttons and a Codex badge, followed by connection status, Set up a copied vault, Advanced resets and server settings](docs/images/access-control.png)
 
 *One row per client. The label, profile, role badges and tool count are on the row, and the buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: The Codex connection status, vault copy and reset controls, the live endpoint, the request counts and **Fixed port**. A blank fixed port means the automatic 27200-27205 range, and saving one restarts the server, which clears non-persisted promotions. **Server name**, further down, is how this vault identifies itself in a client that lists several servers*
 
@@ -404,18 +404,21 @@ Port changes and token regeneration do not require a Codex config change or anot
 By default the snippet carries the broker credential in an `http_headers` block. To keep it out of `config.toml`, tick **Keep the token out of config.toml** on the row before copying or installing: the entry then reads `bearer_token_env_var = "OBSIDIAN_MCP_TOKEN"`, and you export that variable with the broker credential before starting Codex. It is off by default because a Codex launched from a GUI may not inherit your shell's environment, and the connection would then fail to authenticate. A new entry also gets `startup_timeout_sec = 30`, since Codex's 10 s default is tight for a cold broker start; an existing entry keeps the timeout it already has.
 
 New entries include the vault name and full route UUID, such as `obsidian_my_vault_123e4567e89b42d3a456426614174000`.
-The name uses the same vault key as the other client configs, followed by the route UUID.
+The name uses the same lowercase words joined by `_` as the other client configs, capped at 32 characters before the full UUID to leave room for readable Codex tool names.
+Names without ASCII letters or digits use `obsidian_vault_<route-uuid>`
 The UUID keeps equally named vaults separate, and the saved entry name stays stable after a vault rename
 
 Older UUID-only entries gain the vault name the next time you copy or install their config.
-Their existing client entries keep working because the URL and credential stay the same. Copy any custom policy settings to the replacement, then remove the old UUID-only entry after installing it to avoid connecting to the vault twice.
+Their existing client entries keep working because the URL and credential stay the same.
+When installing over a matching UUID-only entry, the installer previews a rename and keeps all existing settings and nested tables, including tool restrictions and approvals. If both names already exist, it refuses to change either entry and asks you to keep one and transfer its policy settings manually.
+If you paste the copied snippet by hand instead, copy any custom policy settings to it and remove the old UUID-only entry to avoid connecting to the vault twice
 Legacy vault-named entries retain their existing names, and the plugin never edits a client config automatically
 
 Two Codex limits worth knowing. Codex logs `tools/list_changed` but does not refetch the catalog, so a tool promoted by `activate_tools` reaches a Codex session only after it reconnects; give a token used by Codex a non-adaptive profile (`core`, or `full`) unless the first catalog is enough. Codex also has no MCP prompts support, so the vault's `#mcp-tools-prompt` notes are invisible to it.
 
 The installer uses `$CODEX_HOME/config.toml` when `CODEX_HOME` is set.
 Otherwise, it uses `~/.codex/config.toml` only when the `~/.codex` directory exists.
-It shows the exact path and whether it will add or replace the vault's `[mcp_servers.<entry-name>]` table before asking for confirmation
+It shows the exact path and whether it will add, replace or rename the vault's `[mcp_servers.<entry-name>]` table before asking for confirmation
 Replacing an entry also removes its old nested transport settings while preserving per-tool approval settings.
 The installer creates a timestamped backup, writes atomically, and reads back the expected bytes
 It checks for changes after preview and backup, but cannot lock out unrelated editors
@@ -437,7 +440,7 @@ The connection status distinguishes connected, retrying, stopped and route-confl
 Routes are held in broker memory and the executable is stored outside the system temporary directory
 After updating an older broker, update the other open vaults and close their old connections before retrying
 
-If a vault location changes, choose **This vault was moved** to keep its Codex route
+If a vault location changes, **This vault was moved** appears under Connection. Choose it to keep the vault's Codex route
 For a copied vault, choose **Make this copy independent** in the copy. It replaces every token secret, gives the Codex connection a new route and turns off the Claude Desktop sync in that vault, without editing any client config file
 Afterwards, paste the new secrets into clients you set up by hand, install the new Codex entry and remove the old one
 **Advanced resets** separates the two actions for an existing vault:

@@ -236,7 +236,8 @@ export function vaultNameDisambiguator(vaultName: string): string | null {
  * non-ASCII characters gets a short hash appended (`obsidian_societ_1a2b3c`,
  * `obsidian_1a2b3c` for "日記"), so two such vaults never share a key.
  *
- * New Codex keys append the full route UUID for uniqueness. Existing
+ * New Codex keys cap the name at 32 characters and append the full route
+ * UUID for uniqueness, using `vault` when the words are empty. Existing
  * vault-named Codex keys retain their saved form (ADR-0021).
  */
 export function vaultServerId(vaultName: string): string {

@@ -450,6 +450,38 @@ test.each(["enable", "start"])(
   },
 );
 
+test.each(["日記", "Журнал", "---"])(
+  "a new entry for %s keeps its saved name after an ASCII vault rename",
+  async (vaultName) => {
+    const plugin = fakePlugin(withTokens("a"));
+    plugin.app.vault.getName = () => vaultName;
+    const opts = {
+      rootDir: tempDir,
+      dataPath,
+      ensureBroker: async () => {},
+      connectRegistration,
+    };
+    const first = await enableCodexDiscovery(plugin, "a", opts);
+    const before = await getCodexConnection(plugin);
+    const expectedId = `obsidian_vault_${before!.routeId.replace(/-/g, "")}`;
+    expect(before?.serverId).toBe(expectedId);
+    await first.stop();
+    plugin.app.vault.getName = () => "Journal";
+    const second = await startCodexDiscovery(plugin, opts);
+    try {
+      const after = await getCodexConnection(plugin);
+      expect(after?.serverId).toBe(expectedId);
+      expect(after?.routeId).toBe(before?.routeId);
+      expect(after?.accessToken).toBe(before?.accessToken);
+      expect(codexConfigSnippet(after!).split("\n")[0]).toBe(
+        `[mcp_servers.${expectedId}]`,
+      );
+    } finally {
+      await second?.stop();
+    }
+  },
+);
+
 test("real registration transport recovers after broker loss and isolates a copied vault", async () => {
   const require = createRequire(import.meta.url);
   const broker = require("../../../../scripts/discoveryBroker.js") as {
