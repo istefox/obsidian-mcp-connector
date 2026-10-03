@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Fixed
 
+- **Access control explains when to reset a connection or separate a copied vault.** The copied-vault action explains its combined changes and points moved vaults to **This vault was moved**. **Advanced resets** gives the token-secret and Codex-only actions separate descriptions. **New Codex route** is now **Reset Codex connection**, and its confirmation explains that it changes the address and credential without changing other client token secrets or Claude Desktop sync
+
 - **Copied Codex config entries include the vault name.** New connections and route resets use `obsidian_<vault>_<route-uuid>`, keeping the full UUID to distinguish vaults whose names reduce to the same words. Existing UUID-only entries gain the vault-name prefix when copied, installed or next started. Legacy vault-named entries keep their existing names, and saved names remain stable after a vault rename. URLs and credentials are unchanged, and no external config is edited automatically. After installing the readable replacement, remove the old UUID-only entry to avoid duplicate connections
 
 ## [2.11.0] — 2026-10-03

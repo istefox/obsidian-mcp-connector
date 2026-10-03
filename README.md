@@ -201,7 +201,7 @@ There is deliberately **no vault-wide export**. A credential always leaves the p
 
 ![Access Control settings: The Default token row with its secret masked, a Codex badge, per-client copy buttons, .mcpb export, Replace secret and Revoke, then the Codex connection status, the Copied this vault? row, server port, requests served and fixed port](docs/images/access-control.png)
 
-*One row per client. The label, profile, role badges and tool count are on the row, and the four buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: The Codex connection status, **Copied this vault?** with its **Advanced** steps, the live endpoint, the request counts and **Fixed port**. A blank fixed port means the automatic 27200-27205 range, and saving one restarts the server, which clears non-persisted promotions. **Server name**, further down, is how this vault identifies itself in a client that lists several servers*
+*One row per client. The label, profile, role badges and tool count are on the row, and the buttons under the secret each produce a config for one client family, all authenticating as this token. Below the list: The Codex connection status, vault copy and reset controls, the live endpoint, the request counts and **Fixed port**. A blank fixed port means the automatic 27200-27205 range, and saving one restarts the server, which clears non-persisted promotions. **Server name**, further down, is how this vault identifies itself in a client that lists several servers*
 
 | Action | Effect |
 |---|---|
@@ -440,7 +440,13 @@ After updating an older broker, update the other open vaults and close their old
 If a vault location changes, choose **This vault was moved** to keep its Codex route
 For a copied vault, choose **Make this copy independent** in the copy. It replaces every token secret, gives the Codex connection a new route and turns off the Claude Desktop sync in that vault, without editing any client config file
 Afterwards, paste the new secrets into clients you set up by hand, install the new Codex entry and remove the old one
-**Advanced** holds **Replace all token secrets** and **New Codex route** for doing only one part
+**Advanced resets** separates the two actions for an existing vault:
+
+- **Replace all token secrets** replaces every client token secret while preserving token labels, tool permissions and the Codex connection. Update clients where you pasted a secret by hand
+- **Reset Codex connection** replaces only the Codex connection address and credential. Other client token secrets and Claude Desktop sync stay the same. Install or copy the new Codex entry and remove the old one for this vault
+
+![Copied-vault setup and the separate token-secret and Codex connection reset controls](docs/images/connection-resets.png)
+
 Legacy settings bind to their current location on first upgraded use, so a pre-upgrade copy opened alone cannot be identified automatically
 
 ### Verifying

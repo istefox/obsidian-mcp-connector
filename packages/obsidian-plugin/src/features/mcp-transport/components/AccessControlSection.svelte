@@ -561,7 +561,7 @@
   async function handleConnectionRecovery(action: "retry" | "move" | "reset"): Promise<void> {
     if (busy) return;
     if (action === "move" && !confirm("Keep this Codex route at the new vault location? Choose this only for a moved vault, not a copy")) return;
-    if (action === "reset" && !confirm("Give this vault a new Codex route?\n\nThe route and broker credential change, so the current Codex entry stops working. Install or copy the new entry and remove the old one\n\nToken secrets do not change. Make this copy independent replaces those too")) return;
+    if (action === "reset" && !confirm("Reset only this vault's Codex connection?\n\nIts connection address and credential change. Install or copy the new Codex entry and remove the old one for this vault\n\nOther client token secrets and Claude Desktop sync do not change. For a copied vault, use Make this copy independent instead")) return;
     busy = true;
     try {
       const runtime = plugin.codexDiscoveryState;
@@ -572,7 +572,7 @@
         plugin.codexDiscoveryState = await startCodexDiscovery(plugin) ?? undefined;
       }
       await refreshTokens();
-      if (action === "reset") new Notice("New Codex route created. Install or copy the new Codex entry and remove the old one");
+      if (action === "reset") new Notice("Codex connection reset. Install or copy the new Codex entry and remove the old one for this vault");
     } catch (err) {
       noticeFailure("recovering the connection", err);
       // All three branches above stop the previous runtime before the step
@@ -1000,38 +1000,20 @@
       enabling it.
     </p>
 
-    <!-- Kept below the Codex hint, which describes the checkbox in the row
-         above, and with Advanced inside the row so both indent alike. -->
     <div class="setting-item">
       <div class="setting-item-info">
-        <div class="setting-item-name">Copied this vault?</div>
+        <div class="setting-item-name">Set up a copied vault</div>
         <div class="setting-item-description">
-          A copied <code>.obsidian</code> folder carries the original vault's
-          {codexDiscoveryOwner !== null ? "token secrets and Codex route" : "token secrets"},
-          so both vaults accept the same credentials. Run this in the copy
+          Use after duplicating a vault with its <code>.obsidian</code> folder.
+          Run this in the copy to replace all token secrets, reset Codex if
+          enabled, and turn off Claude Desktop sync
+          {#if codexDiscoveryOwner !== null}
+            <p>
+              If you moved the vault instead, use <strong>This vault was moved</strong>
+              to keep its existing connection
+            </p>
+          {/if}
         </div>
-        <details class="token-advanced">
-          <summary>Advanced</summary>
-          <p class="token-hint">Each of these does one part of the step above</p>
-          <div class="token-actions">
-            <button
-              type="button"
-              disabled={busy}
-              on:click={() => void handleResetVaultCredentials()}
-            >
-              Replace all token secrets
-            </button>
-            {#if codexDiscoveryOwner !== null}
-              <button
-                type="button"
-                disabled={busy}
-                on:click={() => void handleConnectionRecovery("reset")}
-              >
-                New Codex route
-              </button>
-            {/if}
-          </div>
-        </details>
       </div>
       <div class="setting-item-control">
         <button
@@ -1043,6 +1025,50 @@
         </button>
       </div>
     </div>
+
+    <details class="token-advanced">
+      <summary>Advanced resets</summary>
+      <div class="setting-item">
+        <div class="setting-item-info">
+          <div class="setting-item-name">Replace client token secrets</div>
+          <div class="setting-item-description">
+            Use to replace this vault's token secrets without resetting its
+            Codex connection. Token labels and tool permissions stay the same.
+            Update clients where you pasted a secret by hand
+          </div>
+        </div>
+        <div class="setting-item-control">
+          <button
+            type="button"
+            disabled={busy}
+            on:click={() => void handleResetVaultCredentials()}
+          >
+            Replace all token secrets
+          </button>
+        </div>
+      </div>
+      {#if codexDiscoveryOwner !== null}
+        <div class="setting-item">
+          <div class="setting-item-info">
+            <div class="setting-item-name">Reset only Codex</div>
+            <div class="setting-item-description">
+              Use to replace only this vault's Codex connection address and
+              credential. Other client token secrets and Claude Desktop sync
+              stay the same. Install or copy the new Codex entry afterwards
+            </div>
+          </div>
+          <div class="setting-item-control">
+            <button
+              type="button"
+              disabled={busy}
+              on:click={() => void handleConnectionRecovery("reset")}
+            >
+              Reset Codex connection
+            </button>
+          </div>
+        </div>
+      {/if}
+    </details>
   {/if}
 
   <div class="setting-item">
@@ -1246,10 +1272,6 @@
 
   .token-advanced {
     margin-top: 0.5em;
-  }
-
-  .token-advanced .token-hint {
-    margin-bottom: 0.5em;
   }
 
   .token-advanced summary {
