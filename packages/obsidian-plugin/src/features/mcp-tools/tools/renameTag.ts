@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App, TFile } from "obsidian";
 import { errorJson, successJson } from "../services/responseBuilders";
 import { withVaultWriteLock } from "../services/vaultWriteLock";
+import { comparePaths } from "../services/pathUtils";
 
 export const renameTagSchema = type({
   name: '"rename_tag"',
@@ -199,6 +200,13 @@ export function renameFrontmatterValue(
   return { value, count: 0 };
 }
 
+/**
+ * Per-file entries listed in the response. A tag used across thousands of
+ * notes would otherwise return one line per note; the totals above stay
+ * exact and `detailsTruncated` says the list was cut.
+ */
+const MAX_DETAILS = 200;
+
 export async function renameTagHandler(ctx: RenameTagContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -206,8 +214,7 @@ export async function renameTagHandler(ctx: RenameTagContext): Promise<{
   const from = normalizeTag(ctx.arguments.tag);
   const to = normalizeTag(ctx.arguments.newTag);
   const includeNested = ctx.arguments.includeNested ?? true;
-  const dryRun =
-    (ctx.arguments.dry_run ?? false) ? true : ctx.arguments.dry_run !== false;
+  const dryRun = ctx.arguments.dry_run !== false;
   const scope = ctx.arguments.scope;
 
   if (!isValidTag(from)) {
@@ -246,13 +253,12 @@ export async function renameTagHandler(ctx: RenameTagContext): Promise<{
   const failed: Array<{ path: string; error: string }> = [];
   let totalInline = 0;
   let totalFrontmatter = 0;
+  let filesMatched = 0;
 
   const files: TFile[] = ctx.app.vault
     .getMarkdownFiles()
     .filter((f) => inScope(f.path))
-    .sort((a, b) =>
-      a.path.localeCompare(b.path, "en", { sensitivity: "variant" }),
-    );
+    .sort((a, b) => comparePaths(a.path, b.path));
 
   for (const file of files) {
     const cache = ctx.app.metadataCache.getFileCache(file) as {
@@ -335,7 +341,10 @@ export async function renameTagHandler(ctx: RenameTagContext): Promise<{
     }
     totalInline += inline;
     totalFrontmatter += frontmatter;
-    details.push({ path: file.path, inline, frontmatter });
+    filesMatched += 1;
+    if (details.length < MAX_DETAILS) {
+      details.push({ path: file.path, inline, frontmatter });
+    }
   }
 
   const body = {
@@ -343,14 +352,15 @@ export async function renameTagHandler(ctx: RenameTagContext): Promise<{
     tag: `#${from}`,
     newTag: `#${to}`,
     includeNested,
-    files_matched: details.length,
+    files_matched: filesMatched,
     inline_replacements: totalInline,
     frontmatter_replacements: totalFrontmatter,
+    ...(filesMatched > details.length ? { detailsTruncated: true } : {}),
     details,
   };
   if (failed.length > 0) {
     return errorJson(
-      `rename_tag updated ${details.length} file(s) but ${failed.length} write(s) failed.`,
+      `rename_tag updated ${filesMatched} file(s) but ${failed.length} write(s) failed.`,
       "partial_failure",
       { ...body, failedFiles: failed },
     );

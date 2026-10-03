@@ -112,6 +112,25 @@ export function countBacklinks(
   return out;
 }
 
+/**
+ * The backlink count of ONE file: the same figure `countBacklinks` holds for
+ * it, without building the vault-wide map to read a single entry.
+ */
+export function countBacklinksFor(
+  resolvedLinks: Record<string, Record<string, number>>,
+  target: string,
+): { files: number; references: number } {
+  let files = 0;
+  let references = 0;
+  for (const targets of Object.values(resolvedLinks)) {
+    const count = targets[target] ?? 0;
+    if (count <= 0) continue;
+    files += 1;
+    references += count;
+  }
+  return { files, references };
+}
+
 export function readResolvedLinks(
   metadataCache: unknown,
 ): Record<string, Record<string, number>> {

@@ -1,6 +1,8 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
+import { readResolvedLinks, readUnresolvedLinks } from "../services/fileKind";
+import { comparePaths } from "../services/pathUtils";
 
 export const getBacklinksSchema = type({
   name: '"get_backlinks"',
@@ -32,19 +34,11 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
   const target = ctx.arguments.path;
   const includeUnresolved = ctx.arguments.includeUnresolved ?? false;
 
-  const compareName = (a: string, b: string): number =>
-    a.localeCompare(b, "en", { sensitivity: "variant" });
-
   // Per-source aggregated count → resolved + (optionally) unresolved
   // matches collapse into a single count for that source.
   const aggregated = new Map<string, number>();
 
-  const resolvedLinks =
-    (
-      ctx.app.metadataCache as unknown as {
-        resolvedLinks?: Record<string, Record<string, number>>;
-      }
-    ).resolvedLinks ?? {};
+  const resolvedLinks = readResolvedLinks(ctx.app.metadataCache);
   for (const [source, targets] of Object.entries(resolvedLinks)) {
     const count = targets[target] ?? 0;
     if (count > 0) {
@@ -53,12 +47,7 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
   }
 
   if (includeUnresolved) {
-    const unresolvedLinks =
-      (
-        ctx.app.metadataCache as unknown as {
-          unresolvedLinks?: Record<string, Record<string, number>>;
-        }
-      ).unresolvedLinks ?? {};
+    const unresolvedLinks = readUnresolvedLinks(ctx.app.metadataCache);
     // Match by full path, by path without `.md`, or by filename — that
     // covers the common shapes of what an unresolved link looks like.
     const targetWithoutExt = target.replace(/\.md$/, "");
@@ -84,7 +73,7 @@ export async function getBacklinksHandler(ctx: GetBacklinksContext): Promise<{
   }));
   backlinks.sort((a, b) => {
     if (b.count !== a.count) return b.count - a.count;
-    return compareName(a.path, b.path);
+    return comparePaths(a.path, b.path);
   });
 
   const limit = Math.min(

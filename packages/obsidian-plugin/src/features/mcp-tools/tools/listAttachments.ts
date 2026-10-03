@@ -7,7 +7,7 @@ import {
   NOTE_EXTENSIONS,
   readResolvedLinks,
 } from "../services/fileKind";
-import { folderPrefix } from "../services/pathUtils";
+import { comparePaths, folderPrefix } from "../services/pathUtils";
 import { resolveTFile } from "../services/resolveTFile";
 import { errorJson, successJson } from "../services/responseBuilders";
 
@@ -62,9 +62,6 @@ type Attachment = {
   references: number;
 };
 
-const comparePath = (a: string, b: string): number =>
-  a.localeCompare(b, "en", { sensitivity: "variant" });
-
 export function isAttachment(file: TFile): boolean {
   return !NOTE_EXTENSIONS.has(file.extension.toLowerCase());
 }
@@ -92,7 +89,6 @@ export async function listAttachmentsHandler(
 
   const isUserIgnored = createExclusionFilter(ctx.app);
   const resolvedLinks = readResolvedLinks(ctx.app.metadataCache);
-  const backlinks = countBacklinks(resolvedLinks);
 
   const describe = (
     file: TFile,
@@ -154,6 +150,8 @@ export async function listAttachmentsHandler(
       }
     }
     scope = folder === undefined ? {} : { folder };
+    // Only the vault-wide listing needs every file's backlink count.
+    const backlinks = countBacklinks(resolvedLinks);
     attachments = ctx.app.vault
       .getFiles()
       .filter(isAttachment)
@@ -176,7 +174,7 @@ export async function listAttachmentsHandler(
   attachments.sort((a, b) => {
     if (sortBy === "size" && b.size !== a.size) return b.size - a.size;
     if (sortBy === "mtime" && b.mtime !== a.mtime) return b.mtime - a.mtime;
-    return comparePath(a.path, b.path);
+    return comparePaths(a.path, b.path);
   });
 
   const total = attachments.length;

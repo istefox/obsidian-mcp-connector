@@ -2,6 +2,7 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import { resolveTFile } from "../services/resolveTFile";
 import { errorJson, successJson } from "../services/responseBuilders";
+import { coerceJsonEncodedArray, isInvalidKey } from "../services/propertyKeys";
 
 const propertyValue = type(
   "string | number | boolean | string[] | number[] | null",
@@ -38,36 +39,6 @@ export type UpdateNotePropertiesContext = {
   };
   app: App;
 };
-
-// Same rule as set_note_property: a colon, any newline, or a leading `#`
-// cannot appear in a plain top-level YAML key.
-function isInvalidKey(key: string): boolean {
-  return (
-    key.length === 0 || /[:\n\r]/.test(key) || key.trimStart().startsWith("#")
-  );
-}
-
-// LLM clients sometimes send a list as its JSON text ('["a","b"]'). Unwrap
-// a homogeneous string/number array so the note gets a YAML list, not a
-// quoted string. Mirrors set_note_property.
-function coerceJsonEncodedArray(value: PropertyValue): PropertyValue {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("[")) return value;
-  try {
-    const parsed: unknown = JSON.parse(trimmed);
-    if (!Array.isArray(parsed) || parsed.length === 0) return value;
-    if (parsed.every((item): item is string => typeof item === "string")) {
-      return parsed;
-    }
-    if (parsed.every((item): item is number => typeof item === "number")) {
-      return parsed;
-    }
-  } catch {
-    // not JSON: keep the string
-  }
-  return value;
-}
 
 export async function updateNotePropertiesHandler(
   ctx: UpdateNotePropertiesContext,

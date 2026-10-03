@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`list_tasks` gains `offset`** for paging, like `list_attachments`. The response now carries `offset`, and `truncated` means more tasks follow the returned page.
+
+### Changed
+
+- **`list_tasks` reads only the files behind the returned page.** `totalTasks` and the `status` filter come from Obsidian's metadata cache, so a vault with thousands of tasks no longer reads every note once `limit` is reached.
+- **`list_attachments` builds the vault-wide backlink map only for the folder/vault listing**, not when a single note's attachments are requested. `get_file_info` counts the backlinks of its one file instead of mapping the whole vault.
+- **`rename_tag` lists at most 200 files in `details`.** `files_matched` and the replacement totals stay exact, and `detailsTruncated: true` says the list was cut.
+- **`delete_note_property` is annotated `idempotentHint`**: removing a key that is already gone succeeds.
+- The path comparator, the property-key validation and the link-map readers used by the tools are shared instead of copied per tool. Ordering and behavior are unchanged.
+
 ### Fixed
 
 - **`ensure_block_id` no longer writes into the YAML frontmatter.** A `line` inside the leading `---` block used to attach the id to the closing delimiter and corrupt the note. It is now refused with `invalid_params`, and the file is left untouched.

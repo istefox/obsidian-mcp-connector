@@ -14,6 +14,7 @@ import {
   successJson as jsonResponse,
   successText as textResponse,
 } from "../services/responseBuilders";
+import { comparePaths } from "../services/pathUtils";
 
 export const getVaultFilePartialSchema = type({
   name: '"get_vault_file_partial"',
@@ -181,9 +182,6 @@ export async function getVaultFilePartialHandler(
     // Pinned locale + sensitivity for cross-platform deterministic order on
     // the frontmatter-key list and the block-id list (matches the contract
     // used by `list_tags` / `get_files_by_tag` / `get_recent_files`).
-    const compareName = (a: string, b: string): number =>
-      a.localeCompare(b, "en", { sensitivity: "variant" });
-
     const headings = (cache.headings ?? []).map((h) => ({
       heading: h.heading,
       level: h.level,
@@ -191,10 +189,10 @@ export async function getVaultFilePartialHandler(
     }));
     const blocks = Object.keys(cache.blocks ?? {})
       .slice()
-      .sort(compareName);
+      .sort(comparePaths);
     const frontmatterKeys = Object.keys(cache.frontmatter ?? {})
       .slice()
-      .sort(compareName);
+      .sort(comparePaths);
 
     return jsonResponse({
       path: file.path,

@@ -2,7 +2,7 @@ import { type } from "arktype";
 import type { App } from "obsidian";
 import { buildObsidianUri } from "../services/buildObsidianUri";
 import {
-  countBacklinks,
+  countBacklinksFor,
   describeFileKind,
   readResolvedLinks,
   readUnresolvedLinks,
@@ -64,10 +64,7 @@ export async function getFileInfoHandler(ctx: GetFileInfoContext): Promise<{
 
   const resolvedLinks = readResolvedLinks(ctx.app.metadataCache);
   const unresolvedLinks = readUnresolvedLinks(ctx.app.metadataCache);
-  const backlinks = countBacklinks(resolvedLinks).get(file.path) ?? {
-    files: 0,
-    references: 0,
-  };
+  const backlinks = countBacklinksFor(resolvedLinks, file.path);
   const sum = (record: Record<string, number> | undefined): number =>
     Object.values(record ?? {}).reduce((a, b) => a + (b > 0 ? b : 0), 0);
   const outgoingLinks = {

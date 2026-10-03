@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
+import { comparePaths } from "../services/pathUtils";
 
 export const listTagsSchema = type({
   name: '"list_tags"',
@@ -95,17 +96,14 @@ export async function listTagsHandler(
   // Pin locale + sensitivity so the order is identical across platforms;
   // the default `Intl.Collator` reads the OS locale, which can shift
   // Unicode ordering between macOS / Linux / Windows test runs.
-  const compareName = (a: string, b: string): number =>
-    a.localeCompare(b, "en", { sensitivity: "variant" });
-
   const all = tagCounts.slice().sort((a, b) => {
-    if (sortMode === "name") return compareName(a.tag, b.tag);
+    if (sortMode === "name") return comparePaths(a.tag, b.tag);
     // Count desc with name-asc tiebreaker. Engine sort-stability is
     // guaranteed by ES2019 (V8/Bun honour it), but an explicit
     // tiebreaker keeps the contract independent of that guarantee
     // and gives equal-count tags a deterministic, alphabetical order.
     if (b.count !== a.count) return b.count - a.count;
-    return compareName(a.tag, b.tag);
+    return comparePaths(a.tag, b.tag);
   });
 
   const limit = Math.min(

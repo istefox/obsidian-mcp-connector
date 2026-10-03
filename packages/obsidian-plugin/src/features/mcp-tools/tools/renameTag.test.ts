@@ -253,3 +253,26 @@ describe("rename_tag", () => {
     expect(await content("a.md")).toBe(A);
   });
 });
+
+describe("rename_tag: details cap", () => {
+  test("files_matched is the true total and details are capped", async () => {
+    for (let i = 0; i < 205; i++) {
+      const path = `n${String(i).padStart(3, "0")}.md`;
+      setMockFile(path, "text #bulk end");
+      setMockMetadata(path, { tags: [{ tag: "#bulk" }] });
+    }
+    const { data } = await run({ tag: "bulk", newTag: "mass" });
+    expect(data.dry_run).toBe(true);
+    expect(data.files_matched).toBe(205);
+    expect(data.details).toHaveLength(200);
+    expect(data.detailsTruncated).toBe(true);
+  });
+
+  test("a small rename carries no detailsTruncated flag", async () => {
+    setMockFile("a.md", "x #bulk");
+    setMockMetadata("a.md", { tags: [{ tag: "#bulk" }] });
+    const { data } = await run({ tag: "bulk", newTag: "mass" });
+    expect(data.files_matched).toBe(1);
+    expect(data.detailsTruncated).toBeUndefined();
+  });
+});
