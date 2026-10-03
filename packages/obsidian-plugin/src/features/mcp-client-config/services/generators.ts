@@ -236,9 +236,8 @@ export function vaultNameDisambiguator(vaultName: string): string | null {
  * non-ASCII characters gets a short hash appended (`obsidian_societ_1a2b3c`,
  * `obsidian_1a2b3c` for "日記"), so two such vaults never share a key.
  *
- * Codex keeps its own merged form (`codexServerId`): its vault-named
- * entries exist only for settings older than the route id, and renaming
- * them would orphan the entry already in `config.toml` (ADR-0021).
+ * New Codex keys append the full route UUID for uniqueness. Existing
+ * vault-named Codex keys retain their saved form (ADR-0021).
  */
 export function vaultServerId(vaultName: string): string {
   const parts = [...vaultNameWords(vaultName)];

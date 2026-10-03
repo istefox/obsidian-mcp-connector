@@ -89,16 +89,24 @@ type Registration = {
 class RegistrationConflict extends Error {}
 
 /**
- * Prefer the stable, human-readable vault-name id; fall back to the
- * route-derived id only when the vault name has no ASCII alphanumerics
- * (codexServerId(name) would otherwise throw). Never used where an id
- * derived from the route is the deliberate choice (e.g. identity reset).
+ * Add the vault name to old UUID-only keys while preserving other saved keys.
+ * Settings without a saved key retain their legacy vault-name form, falling
+ * back to the route when the name contains no ASCII alphanumerics.
  */
-function safeCodexServerId(vaultName: string, routeId: string): string {
+function storedCodexServerId(
+  vaultName: string,
+  settings: DiscoverySettings,
+): string {
+  const opaqueId = `obsidian_${settings.routeId.replace(/-/g, "")}`;
+  if (settings.serverId) {
+    return settings.serverId === opaqueId
+      ? codexServerId(vaultName, settings.routeId)
+      : settings.serverId;
+  }
   try {
     return codexServerId(vaultName);
   } catch {
-    return codexServerId(vaultName, routeId);
+    return codexServerId(vaultName, settings.routeId);
   }
 }
 
@@ -166,9 +174,7 @@ export async function getCodexConnection(
     routeId: settings.routeId,
     accessToken: settings.accessToken,
     brokerPort: DISCOVERY_BROKER_PORT,
-    serverId:
-      settings.serverId ??
-      safeCodexServerId(plugin.app.vault.getName(), settings.routeId),
+    serverId: storedCodexServerId(plugin.app.vault.getName(), settings),
   };
 }
 
@@ -187,11 +193,9 @@ export async function enableCodexDiscovery(
     routeId: current?.routeId ?? randomUUID(),
     accessToken: current?.accessToken ?? generateToken(),
     tokenId,
-    serverId:
-      current?.serverId ??
-      (current
-        ? safeCodexServerId(plugin.app.vault.getName(), current.routeId)
-        : undefined),
+    serverId: current
+      ? storedCodexServerId(plugin.app.vault.getName(), current)
+      : undefined,
   }));
   if (!settings.serverId) {
     settings.serverId = codexServerId(
@@ -460,15 +464,15 @@ async function startRuntime(
     });
     return runtime;
   }
-  if (!settings.dataPath || !settings.serverId) {
-    const fallbackServerId = safeCodexServerId(
-      plugin.app.vault.getName(),
-      settings.routeId,
-    );
+  const serverId = storedCodexServerId(plugin.app.vault.getName(), settings);
+  if (!settings.dataPath || settings.serverId !== serverId) {
     settings = await updateSettings(plugin, (current) => ({
       ...(current ?? settings),
       dataPath,
-      serverId: (current ?? settings).serverId ?? fallbackServerId,
+      serverId: storedCodexServerId(
+        plugin.app.vault.getName(),
+        current ?? settings,
+      ),
     }));
   }
   try {

@@ -3,6 +3,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { logger } from "$/shared/logger";
+import { vaultServerId } from "./generators";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
@@ -52,7 +53,8 @@ export class CodexInstallError extends Error {
 }
 
 export function codexServerId(vaultName: string, routeId?: string): string {
-  if (routeId) return `obsidian_${routeId.replace(/-/g, "")}`;
+  if (routeId)
+    return `${vaultServerId(vaultName)}_${routeId.replace(/-/g, "")}`;
   const suffix = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (suffix.length === 0) {
     throw new Error(

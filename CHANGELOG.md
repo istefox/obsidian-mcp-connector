@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **Copied Codex config entries include the vault name.** New connections and route resets use `obsidian_<vault>_<route-uuid>`, keeping the full UUID to distinguish vaults whose names reduce to the same words. Existing UUID-only entries gain the vault-name prefix when copied, installed or next started. Legacy vault-named entries keep their existing names, and saved names remain stable after a vault rename. URLs and credentials are unchanged, and no external config is edited automatically. After installing the readable replacement, remove the old UUID-only entry to avoid duplicate connections
+
 ## [2.11.0] — 2026-10-03
 
 ### Added

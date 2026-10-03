@@ -32,12 +32,27 @@ afterEach(async () => {
 });
 
 describe("Codex config snippet", () => {
-  test("new entries use route identity instead of colliding display names", () => {
+  test("new entries include the vault name without colliding display names", () => {
     expect(codexServerId("Vault-A", connection.routeId)).not.toBe(
       codexServerId("Vault A", "123e4567-e89b-42d3-a456-426614174001"),
     );
     expect(codexServerId("Vault-A", connection.routeId)).toBe(
-      codexServerId("Renamed", connection.routeId),
+      "obsidian_vault_a_123e4567e89b42d3a456426614174000",
+    );
+  });
+  test("new snippets name the vault in the copied TOML header", () => {
+    const snippet = codexConfigSnippet({
+      ...connection,
+      vaultName: "My Vault",
+      serverId: undefined,
+    });
+    expect(snippet.split("\n")[0]).toBe(
+      "[mcp_servers.obsidian_my_vault_123e4567e89b42d3a456426614174000]",
+    );
+  });
+  test("route identity keeps names without ASCII alphanumerics usable", () => {
+    expect(codexServerId("日記", connection.routeId)).toBe(
+      "obsidian_123e4567e89b42d3a456426614174000",
     );
   });
   test("uses one stable broker URL instead of the live vault port or token", () => {
@@ -339,6 +354,40 @@ describe("explicit Codex config installer", () => {
       }),
     ).rejects.toThrow(/changed after the preview/);
     expect(await fsp.readFile(configPath, "utf8")).toBe(changed);
+  });
+
+  test("installing a readable entry preserves the old UUID-only entry and its policy", async () => {
+    const oldId = "obsidian_123e4567e89b42d3a456426614174000";
+    const namedId = "obsidian_neon_hades_2_123e4567e89b42d3a456426614174000";
+    const previous = `[mcp_servers.${oldId}]\nurl = "http://old"\nenabled_tools = ["read_only"]\n`;
+    const namedConnection = { ...connection, serverId: undefined };
+    await fsp.writeFile(configPath, previous, "utf8");
+
+    const preview = await inspectCodexInstall(namedConnection, { configPath });
+    expect(preview.serverId).toBe(namedId);
+    expect(preview.action).toBe("add");
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    const result = await installCodexConfig(namedConnection, {
+      configPath,
+      expectedRevision: preview.revision,
+    });
+    expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
+    const written = await fsp.readFile(configPath, "utf8");
+    expect(written.startsWith(previous)).toBe(true);
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+    expect(parsed.mcp_servers[oldId]).toEqual({
+      url: "http://old",
+      enabled_tools: ["read_only"],
+    });
+    expect(parsed.mcp_servers[namedId]).toMatchObject({
+      url: `http://127.0.0.1:27206/v1/${connection.routeId}/mcp`,
+      http_headers: { Authorization: `Bearer ${connection.accessToken}` },
+    });
+    expect(
+      (await inspectCodexInstall(namedConnection, { configPath })).action,
+    ).toBe("unchanged");
   });
 
   test("identifies and replaces an earlier entry while preserving unrelated TOML", async () => {

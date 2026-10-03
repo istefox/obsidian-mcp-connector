@@ -71,7 +71,14 @@ The first upgraded start records the canonical settings-file location and retain
 Legacy settings contain no prior location, so a copy made before that first binding cannot be distinguished from its original when opened alone
 Later location changes require an explicit choice between keeping identity for a move and resetting identity for a copy
 Resetting identity rotates the route, broker credential and client-entry name, requiring updated client configuration
-New entry names use the full route UUID rather than a lossy vault-name conversion
+
+New entry names use `obsidian_<vault>_<route-uuid>`, with lowercase vault-name words joined by underscores and the full route UUID without hyphens.
+Names without ASCII letters or digits use `obsidian_<route-uuid>`.
+The full UUID keeps colliding vault names separate, and the saved entry name stays stable when the vault is renamed
+
+Existing UUID-only entry names gain the vault-name prefix on their next enabled start, while copy and install previews also resolve that prefix before a start.
+Legacy vault-named entries and other saved names retain their existing form.
+The URL and credential remain unchanged, so old client entries keep working. Installing the new name adds a separate entry, and the user should remove the old UUID-only entry to avoid duplicate connections.
 No reset edits another vault or an external client configuration automatically
 
 Copying `.obsidian` also copies the vault's MCP token secrets
