@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { KNOWN_MCP_TOOL_NAMES, parseDisabledToolsCsv } from "./utils";
+import { TOOL_ANNOTATIONS } from "$/features/mcp-tools/toolAnnotations";
+import { ALWAYS_ACTIVE_TOOLS } from "$/features/adaptive-tool-loading/constants";
+import {
+  DESTRUCTIVE_TOOL_NAMES,
+  KNOWN_MCP_TOOL_NAMES,
+  parseDisabledToolsCsv,
+} from "./utils";
 
 describe("parseDisabledToolsCsv", () => {
   test("returns an empty array for undefined, empty, or whitespace-only input", () => {
@@ -37,13 +43,19 @@ describe("parseDisabledToolsCsv", () => {
 });
 
 describe("KNOWN_MCP_TOOL_NAMES", () => {
-  test("contains exactly 20 tool names (matching the in-process registry)", () => {
-    // 0.4.0: 20 tools, including list_obsidian_commands and
-    // execute_obsidian_command (these were not exposed as MCP tools
-    // in 0.3.x — issue #29 added them). If this number changes,
-    // update both the list in utils.ts and the MCP surface section
-    // in CLAUDE.md.
-    expect(KNOWN_MCP_TOOL_NAMES.length).toBe(20);
+  test("is every annotated tool except the adaptive-loading meta-tools", () => {
+    // The annotation table is the registry's shadow (the mcpServer
+    // full-registry test fails when a tool is registered without an
+    // entry), so deriving from it keeps the settings grid in step with
+    // the server without a hand-maintained count.
+    const expected = Object.keys(TOOL_ANNOTATIONS).filter(
+      (name) => !ALWAYS_ACTIVE_TOOLS.includes(name),
+    );
+    expect([...KNOWN_MCP_TOOL_NAMES]).toEqual(expected);
+    expect(KNOWN_MCP_TOOL_NAMES.length).toBeGreaterThanOrEqual(57);
+    for (const meta of ALWAYS_ACTIVE_TOOLS) {
+      expect(KNOWN_MCP_TOOL_NAMES).not.toContain(meta);
+    }
   });
 
   test("has no duplicate entries", () => {
@@ -54,11 +66,37 @@ describe("KNOWN_MCP_TOOL_NAMES", () => {
 
   test("includes the expected critical tools", () => {
     // Spot-check a few well-known names that must never be renamed
-    // without coordinating this list with the server registry.
+    // without coordinating the annotation table with the server registry.
     expect(KNOWN_MCP_TOOL_NAMES).toContain("get_server_info");
     expect(KNOWN_MCP_TOOL_NAMES).toContain("patch_vault_file");
     expect(KNOWN_MCP_TOOL_NAMES).toContain("search_vault_smart");
     expect(KNOWN_MCP_TOOL_NAMES).toContain("execute_template");
     expect(KNOWN_MCP_TOOL_NAMES).toContain("fetch");
+    expect(KNOWN_MCP_TOOL_NAMES).toContain("rename_tag");
+    expect(KNOWN_MCP_TOOL_NAMES).toContain("delete_canvas_node");
+  });
+});
+
+describe("DESTRUCTIVE_TOOL_NAMES", () => {
+  test("is exactly the non-read-only subset of the toggleable tools", () => {
+    for (const name of KNOWN_MCP_TOOL_NAMES) {
+      const writer = TOOL_ANNOTATIONS[name]?.readOnlyHint !== true;
+      expect(DESTRUCTIVE_TOOL_NAMES.includes(name), name).toBe(writer);
+    }
+  });
+
+  test("covers additive writers as well as destructive ones", () => {
+    // The preset promises a read-only surface, so SAFE_WRITE tools are in.
+    expect(DESTRUCTIVE_TOOL_NAMES).toContain("append_to_vault_file");
+    expect(DESTRUCTIVE_TOOL_NAMES).toContain("create_vault_directory");
+    expect(DESTRUCTIVE_TOOL_NAMES).toContain("delete_vault_file");
+    expect(DESTRUCTIVE_TOOL_NAMES).toContain("execute_obsidian_command");
+  });
+
+  test("leaves read-only tools alone", () => {
+    expect(DESTRUCTIVE_TOOL_NAMES).not.toContain("get_vault_file");
+    expect(DESTRUCTIVE_TOOL_NAMES).not.toContain("search_vault_simple");
+    expect(DESTRUCTIVE_TOOL_NAMES).not.toContain("fetch");
+    expect(DESTRUCTIVE_TOOL_NAMES).not.toContain("get_workspace_state");
   });
 });

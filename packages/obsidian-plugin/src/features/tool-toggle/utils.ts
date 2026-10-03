@@ -1,60 +1,36 @@
-/**
- * Canonical list of MCP tool names exposed by the in-process server.
- * Authoritative source for the settings UI checkbox grid; the runtime
- * filter in `mcp-tools/index.ts:registerTools` reads
- * `toolToggle.disabled` and skips matching `registry.register()`
- * calls, so the client's `tools/list` only returns the enabled
- * subset.
- *
- * If the registry adds or removes a tool, update this list and the
- * matching `ifEnabled(...)` block in `mcp-tools/index.ts`.
- */
-export const KNOWN_MCP_TOOL_NAMES: readonly string[] = [
-  // Health
-  "get_server_info",
-  // Active-file ops (features/mcp-tools/tools/*ActiveFile.ts)
-  "get_active_file",
-  "update_active_file",
-  "append_to_active_file",
-  "patch_active_file",
-  "delete_active_file",
-  "show_file_in_obsidian",
-  // Vault-file ops (features/mcp-tools/tools/*VaultFile.ts)
-  "list_vault_files",
-  "get_vault_file",
-  "create_vault_file",
-  "append_to_vault_file",
-  "patch_vault_file",
-  "delete_vault_file",
-  // Search (features/mcp-tools/tools/searchVault*.ts)
-  "search_vault",
-  "search_vault_simple",
-  "search_vault_smart",
-  // Obsidian command execution (features/mcp-tools/tools/*ObsidianCommand.ts)
-  "list_obsidian_commands",
-  "execute_obsidian_command",
-  // Web fetch + Templater (features/mcp-tools/tools/{fetch,executeTemplate}.ts)
-  "fetch",
-  "execute_template",
-] as const;
+import { TOOL_ANNOTATIONS } from "$/features/mcp-tools/toolAnnotations";
+import { ALWAYS_ACTIVE_TOOLS } from "$/features/adaptive-tool-loading/constants";
 
 /**
- * Tools that mutate the vault or the host system. Surfaced in the
- * settings UI as a one-click "Disable destructive operations" preset
- * for users who want a read-only MCP surface.
+ * Tool names the settings UI lets the user disable, derived from the
+ * annotation table rather than maintained by hand. The mcpServer
+ * full-registry test enforces that every registered tool has an
+ * annotations entry, so the table is the one list that cannot drift
+ * from the registry.
+ *
+ * The adaptive-loading meta-tools (`tool_catalog`, `activate_tool`,
+ * `activate_tools`) are left out: they are the mechanism a client uses
+ * to reach every other tool, and disabling them would silently break
+ * the adaptive mode without disabling any vault capability. The runtime
+ * filter in `tool-toggle/services/applyFilter.ts` still honours any
+ * name a user wrote into `data.json` by hand.
  */
-export const DESTRUCTIVE_TOOL_NAMES: readonly string[] = [
-  "delete_active_file",
-  "delete_vault_file",
-  "update_active_file",
-  "append_to_active_file",
-  "patch_active_file",
-  "create_vault_file",
-  "append_to_vault_file",
-  "patch_vault_file",
-  "execute_obsidian_command",
-  "execute_template",
-] as const;
+export const KNOWN_MCP_TOOL_NAMES: readonly string[] = Object.keys(
+  TOOL_ANNOTATIONS,
+).filter((name) => !ALWAYS_ACTIVE_TOOLS.includes(name));
+
+/**
+ * Tools that can write to the vault or the host system: every tool
+ * whose annotations do not carry `readOnlyHint: true`. Additive writers
+ * (append, create directory, periodic-note creation) count as well,
+ * since the preset promises a read-only MCP surface, not merely a
+ * non-destructive one. Surfaced in the settings UI as the one-click
+ * "Disable write operations" preset.
+ */
+export const DESTRUCTIVE_TOOL_NAMES: readonly string[] =
+  KNOWN_MCP_TOOL_NAMES.filter(
+    (name) => TOOL_ANNOTATIONS[name]?.readOnlyHint !== true,
+  );
 
 /**
  * Parse the comma-or-newline-separated list of tool names the user

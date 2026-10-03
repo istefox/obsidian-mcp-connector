@@ -14,15 +14,16 @@
    * no typing, no typos.
    *
    * The runtime filter lives in
-   * `mcp-tools/index.ts:registerTools`. It reads the same
-   * `toolToggle.disabled` slice once at registration time and skips
-   * `registry.register()` for matching names. Disabling a tool here
+   * `tool-toggle/services/applyFilter.ts`. It reads the same
+   * `toolToggle.disabled` slice once at registration time and flips
+   * each matching tool to user-disabled in the registry. Disabling a tool here
    * therefore takes effect on the NEXT plugin reload (or transport
    * restart, which fires automatically on token regenerate).
    *
    * Two presets are exposed:
-   *  - "Disable destructive operations" — adds every entry in
-   *    `DESTRUCTIVE_TOOL_NAMES` to the disabled set (read-only MCP).
+   *  - "Disable write operations" — adds every entry in
+   *    `DESTRUCTIVE_TOOL_NAMES` (every tool without `readOnlyHint`) to
+   *    the disabled set, leaving a read-only MCP surface.
    *  - "Enable all" — clears the disabled set entirely.
    */
 
@@ -108,9 +109,9 @@
       type="button"
       on:click={disableDestructive}
       disabled={busy}
-      aria-label="Disable destructive operations"
+      aria-label="Disable write operations"
     >
-      Disable destructive operations ({DESTRUCTIVE_TOOL_NAMES.length})
+      Disable write operations ({DESTRUCTIVE_TOOL_NAMES.length})
     </button>
     <button
       type="button"

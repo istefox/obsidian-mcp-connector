@@ -253,21 +253,23 @@ systemNodeTest("the broker source starts under system Node.js", async () => {
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (chunk) => (stderr += chunk));
   try {
+    // Node on the Windows runner has needed well over the old 1 s
+    // (50 x 20 ms) to bind the port; give it 5 s, but stop as soon as
+    // the child exits, since no later attempt can succeed then.
+    const deadline = Date.now() + 5_000;
     let healthy = false;
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    while (!healthy && Date.now() < deadline && child.exitCode === null) {
       try {
         const response = await request(port, {
           path: "/_obsidian_mcp_broker/health",
         });
-        if (response.status === 200) {
-          healthy = true;
-          break;
-        }
+        healthy = response.status === 200;
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        // Not listening yet.
       }
+      if (!healthy) await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    expect(healthy, stderr).toBe(true);
+    expect(healthy, `exitCode=${child.exitCode} stderr=${stderr}`).toBe(true);
   } finally {
     if (child.exitCode === null) {
       const exited = new Promise<void>((resolve) =>

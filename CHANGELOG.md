@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **The "Tools available" settings grid now lists every tool.** The checkbox list was a hand-maintained array frozen at the 20 tools of 0.4.0, so the 40 tools added since could only be switched off by editing `data.json`. The grid and the one-click preset are now derived from the tool annotation table, which the test suite already keeps in step with the registry, so a new tool appears in the grid the moment it is registered. The preset is renamed **Disable write operations** and covers every tool without `readOnlyHint` (57 tools listed, 28 in the preset at this release); the three adaptive-loading meta-tools are deliberately not listed, since disabling them would break adaptive mode without removing any vault capability.
+
+### Fixed
+
+- **The discovery-broker start-up test no longer fails on a slow Windows runner.** It gave Node 1 s to bind the port; it now waits up to 5 s and stops as soon as the child process exits.
+
 ## [2.8.0] — 2026-10-03
 
 ### Added
