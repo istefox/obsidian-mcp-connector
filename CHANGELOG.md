@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-10-03
+
 ### Added
 
 - **`search_vault_smart` gains `excerptLength` and `compact`** (#567, requested in discussion #543). With the rendered view off, a host shows the raw JSON of every hit, which gets long. `excerptLength` truncates each excerpt to that many characters with an ellipsis, and `0` drops it. `compact: true` returns only `filePath` and `score` per hit and wins over `excerptLength`. Both are optional, so the default output is unchanged. The rendered view always receives the full rows.
