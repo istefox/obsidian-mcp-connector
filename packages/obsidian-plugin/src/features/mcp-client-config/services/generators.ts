@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 /**
  * Pure generators for the MCP client families the plugin targets. The

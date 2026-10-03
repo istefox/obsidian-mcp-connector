@@ -9,6 +9,7 @@ import {
   wrapInMcpServers,
 } from "./generators";
 import { codexServerId } from "./codexConfig";
+import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 /**
  * Generators are pure functions — these tests are structural

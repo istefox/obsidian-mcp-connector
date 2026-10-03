@@ -80,7 +80,10 @@
   }
 
   function copyCline(): Promise<void> {
-    return copyJson(wrapInMcpServers(clineConfig({ url, token })), "Cline");
+    return copyJson(
+      wrapInMcpServers(clineConfig({ url, token }), serverId),
+      "Cline",
+    );
   }
 
   async function handleDownloadMcpb(): Promise<void> {
