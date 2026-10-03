@@ -3,6 +3,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { logger } from "$/shared/logger";
+import { vaultNameWords } from "./generators";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
@@ -32,7 +33,8 @@ export type CodexConfigLocation =
 export type CodexInstallPreview = {
   configPath: string;
   serverId: string;
-  action: "add" | "replace" | "unchanged";
+  action: "add" | "replace" | "migrate" | "unchanged";
+  previousServerId?: string;
   snippet: string;
   revision: string;
 };
@@ -51,8 +53,15 @@ export class CodexInstallError extends Error {
   }
 }
 
+/** Keep new names readable within Codex's tool-name budget and retain legacy IDs. */
 export function codexServerId(vaultName: string, routeId?: string): string {
-  if (routeId) return `obsidian_${routeId.replace(/-/g, "")}`;
+  if (routeId) {
+    // The route UUID already separates vaults, so the non-ASCII hash that
+    // `vaultServerId` appends is left out.
+    const name = vaultNameWords(vaultName).join("_");
+    const prefix = name.slice(0, 32).replace(/_+$/, "") || "vault";
+    return `obsidian_${prefix}_${routeId.replace(/-/g, "")}`;
+  }
   const suffix = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (suffix.length === 0) {
     throw new Error(
@@ -133,11 +142,19 @@ export async function inspectCodexInstall(
   const previous = await readOptional(configPath);
   const raw = previous ?? "";
   const snippet = codexConfigSnippet(input);
-  const edit = planEntryEdit(raw, connectionServerId(input), snippet);
+  const edit = planEntryEdit(
+    raw,
+    connectionServerId(input),
+    snippet,
+    input.routeId,
+  );
   return {
     configPath,
     serverId: connectionServerId(input),
     action: edit.action,
+    ...(edit.previousServerId
+      ? { previousServerId: edit.previousServerId }
+      : {}),
     snippet,
     revision: configRevision(previous),
   };
@@ -171,7 +188,12 @@ export async function installCodexConfig(
         "Codex config changed after the preview. Review the installer action again.",
       );
     }
-    const edit = planEntryEdit(previous ?? "", serverId, snippet);
+    const edit = planEntryEdit(
+      previous ?? "",
+      serverId,
+      snippet,
+      input.routeId,
+    );
     if (edit.action === "unchanged") {
       return {
         configPath,
@@ -218,6 +240,9 @@ export async function installCodexConfig(
       configPath,
       serverId,
       action: edit.action,
+      ...(edit.previousServerId
+        ? { previousServerId: edit.previousServerId }
+        : {}),
       snippet,
       revision,
       backupPath,
@@ -260,15 +285,24 @@ async function assertSafeConfigPath(configPath: string): Promise<void> {
   }
 }
 
-type Header = { start: number; parts: string[]; array: boolean };
+type Header = {
+  start: number;
+  keyRanges: { start: number; end: number }[];
+  parts: string[];
+  array: boolean;
+};
 type MultilineStringRange = { start: number; end: number };
 
-function parseDottedKey(value: string): string[] | null {
+function parseDottedKey(
+  value: string,
+  ranges?: { start: number; end: number }[],
+): string[] | null {
   const parts: string[] = [];
   let cursor = 0;
   while (cursor < value.length) {
     while (/\s/.test(value[cursor] ?? "")) cursor += 1;
     if (cursor >= value.length) return null;
+    const partStart = cursor;
     const quote =
       value[cursor] === '"' || value[cursor] === "'" ? value[cursor++] : null;
     let part = "";
@@ -285,6 +319,7 @@ function parseDottedKey(value: string): string[] | null {
       cursor += part.length;
     }
     parts.push(part);
+    ranges?.push({ start: partStart, end: cursor });
     while (/\s/.test(value[cursor] ?? "")) cursor += 1;
     if (cursor === value.length) return parts;
     if (value[cursor++] !== ".") return null;
@@ -408,10 +443,16 @@ function scanTomlStructure(raw: string): {
     if (/^\s*\[/.test(text)) {
       const match = /^\s*(\[\[|\[)([^\]\r\n]+)(\]\]|\])\s*(?:#.*)?$/.exec(text);
       if (match && (match[1] === "[[") === (match[3] === "]]")) {
-        const parts = parseDottedKey(match[2]);
+        const ranges: { start: number; end: number }[] = [];
+        const parts = parseDottedKey(match[2], ranges);
         if (parts) {
+          const keyStart = line.index + textOffset + match[0].indexOf(match[2]);
           headers.push({
             start: line.index,
+            keyRanges: ranges.map((range) => ({
+              start: keyStart + range.start,
+              end: keyStart + range.end,
+            })),
             parts,
             array: match[1] === "[[",
           });
@@ -424,9 +465,16 @@ function scanTomlStructure(raw: string): {
       );
     }
     const opening = findMultilineStart(text);
+    const currentTable = headers[headers.length - 1]?.parts;
+    // Assignments directly under [mcp_servers] define inline or dotted entries.
+    // Refuse them before adding a named entry that would omit their policy.
     if (
-      headers.length === 0 &&
-      /^\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*[.=]/.test(text)
+      (headers.length === 0 &&
+        /^\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*[.=]/.test(text)) ||
+      (currentTable?.length === 1 &&
+        currentTable[0] === "mcp_servers" &&
+        text.trim() !== "" &&
+        !text.trimStart().startsWith("#"))
     ) {
       throw new Error(
         "Client configuration uses inline or dotted server tables. Copy the snippet instead",
@@ -468,7 +516,12 @@ function planEntryEdit(
   raw: string,
   serverId: string,
   snippet: string,
-): { action: CodexInstallPreview["action"]; content: string } {
+  routeId: string,
+): {
+  action: CodexInstallPreview["action"];
+  content: string;
+  previousServerId?: string;
+} {
   const newline = raw.includes("\r\n") ? "\r\n" : "\n";
   const normalizedSnippet = snippet.replace(/\n/g, newline);
   const { headers, multilineStrings } = scanTomlStructure(raw);
@@ -476,6 +529,37 @@ function planEntryEdit(
     (header) =>
       header.parts[0] === "mcp_servers" && header.parts[1] === serverId,
   );
+  const previousServerId = `obsidian_${routeId.replace(/-/g, "")}`;
+  const legacy = headers.filter(
+    (header) =>
+      previousServerId !== serverId &&
+      header.parts[0] === "mcp_servers" &&
+      header.parts[1] === previousServerId,
+  );
+  if (legacy.length > 0) {
+    if (owned.length > 0) {
+      throw new Error(
+        `Codex config contains both '${previousServerId}' and '${serverId}'. Keep one entry and transfer any policy settings manually before installing again.`,
+      );
+    }
+    if (
+      legacy.some((header) => header.array) ||
+      legacy.filter((header) => header.parts.length === 2).length !== 1
+    ) {
+      throw new Error(
+        `Codex config contains an ambiguous entry for '${previousServerId}'. Copy the snippet and edit the file manually.`,
+      );
+    }
+    // Only replace the server ID token. Other key spellings and all values
+    // stay intact, including quoted nested keys and multiline values.
+    let content = raw;
+    for (const header of [...legacy].reverse()) {
+      const range = header.keyRanges[1];
+      content =
+        content.slice(0, range.start) + serverId + content.slice(range.end);
+    }
+    return { action: "migrate", content, previousServerId };
+  }
   const roots = owned.filter(
     (header) => header.parts.length === 2 && !header.array,
   );
