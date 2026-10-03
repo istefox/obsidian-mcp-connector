@@ -3,6 +3,7 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { logger } from "$/shared/logger";
+import { vaultServerId } from "./generators";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
@@ -32,7 +33,8 @@ export type CodexConfigLocation =
 export type CodexInstallPreview = {
   configPath: string;
   serverId: string;
-  action: "add" | "replace" | "unchanged";
+  action: "add" | "replace" | "migrate" | "unchanged";
+  previousServerId?: string;
   snippet: string;
   revision: string;
 };
@@ -51,15 +53,25 @@ export class CodexInstallError extends Error {
   }
 }
 
-export function codexServerId(vaultName: string, routeId?: string): string {
-  if (routeId) return `obsidian_${routeId.replace(/-/g, "")}`;
-  const suffix = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (suffix.length === 0) {
-    throw new Error(
-      "The vault name must contain at least one letter or number.",
+/** Use the same vault-name normalization as Claude Code. Routing stays in the URL. */
+export function codexServerId(vaultName: string): string {
+  return vaultServerId(vaultName);
+}
+
+/** Recognize only the generated UUID forms for this route, including saved old names. */
+export function legacyCodexServerIdPrefix(
+  serverId: string,
+  routeId: string,
+): string | null {
+  const suffix = routeId.replace(/-/g, "");
+  if (serverId === `obsidian_${suffix}`) return "";
+  const match =
+    /^obsidian_([a-z0-9](?:[a-z0-9_]{0,30}[a-z0-9])?)_([0-9a-fA-F]{32})$/.exec(
+      serverId,
     );
-  }
-  return `obsidian_${suffix}`;
+  return match && match[2].toLowerCase() === suffix.toLowerCase()
+    ? `obsidian_${match[1]}`
+    : null;
 }
 
 export function codexConfigSnippet(input: CodexConnection): string {
@@ -84,7 +96,7 @@ export function codexConfigSnippet(input: CodexConnection): string {
 }
 
 function connectionServerId(input: CodexConnection): string {
-  const id = input.serverId ?? codexServerId(input.vaultName, input.routeId);
+  const id = input.serverId ?? codexServerId(input.vaultName);
   if (!/^[a-zA-Z0-9_-]+$/.test(id))
     throw new Error("Invalid connection entry identity");
   return id;
@@ -133,11 +145,19 @@ export async function inspectCodexInstall(
   const previous = await readOptional(configPath);
   const raw = previous ?? "";
   const snippet = codexConfigSnippet(input);
-  const edit = planEntryEdit(raw, connectionServerId(input), snippet);
+  const edit = planEntryEdit(
+    raw,
+    connectionServerId(input),
+    snippet,
+    input.routeId,
+  );
   return {
     configPath,
     serverId: connectionServerId(input),
     action: edit.action,
+    ...(edit.previousServerId
+      ? { previousServerId: edit.previousServerId }
+      : {}),
     snippet,
     revision: configRevision(previous),
   };
@@ -171,7 +191,12 @@ export async function installCodexConfig(
         "Codex config changed after the preview. Review the installer action again.",
       );
     }
-    const edit = planEntryEdit(previous ?? "", serverId, snippet);
+    const edit = planEntryEdit(
+      previous ?? "",
+      serverId,
+      snippet,
+      input.routeId,
+    );
     if (edit.action === "unchanged") {
       return {
         configPath,
@@ -218,6 +243,9 @@ export async function installCodexConfig(
       configPath,
       serverId,
       action: edit.action,
+      ...(edit.previousServerId
+        ? { previousServerId: edit.previousServerId }
+        : {}),
       snippet,
       revision,
       backupPath,
@@ -260,15 +288,24 @@ async function assertSafeConfigPath(configPath: string): Promise<void> {
   }
 }
 
-type Header = { start: number; parts: string[]; array: boolean };
+type Header = {
+  start: number;
+  keyRanges: { start: number; end: number }[];
+  parts: string[];
+  array: boolean;
+};
 type MultilineStringRange = { start: number; end: number };
 
-function parseDottedKey(value: string): string[] | null {
+function parseDottedKey(
+  value: string,
+  ranges?: { start: number; end: number }[],
+): string[] | null {
   const parts: string[] = [];
   let cursor = 0;
   while (cursor < value.length) {
     while (/\s/.test(value[cursor] ?? "")) cursor += 1;
     if (cursor >= value.length) return null;
+    const partStart = cursor;
     const quote =
       value[cursor] === '"' || value[cursor] === "'" ? value[cursor++] : null;
     let part = "";
@@ -285,6 +322,7 @@ function parseDottedKey(value: string): string[] | null {
       cursor += part.length;
     }
     parts.push(part);
+    ranges?.push({ start: partStart, end: cursor });
     while (/\s/.test(value[cursor] ?? "")) cursor += 1;
     if (cursor === value.length) return parts;
     if (value[cursor++] !== ".") return null;
@@ -408,10 +446,16 @@ function scanTomlStructure(raw: string): {
     if (/^\s*\[/.test(text)) {
       const match = /^\s*(\[\[|\[)([^\]\r\n]+)(\]\]|\])\s*(?:#.*)?$/.exec(text);
       if (match && (match[1] === "[[") === (match[3] === "]]")) {
-        const parts = parseDottedKey(match[2]);
+        const ranges: { start: number; end: number }[] = [];
+        const parts = parseDottedKey(match[2], ranges);
         if (parts) {
+          const keyStart = line.index + textOffset + match[0].indexOf(match[2]);
           headers.push({
             start: line.index,
+            keyRanges: ranges.map((range) => ({
+              start: keyStart + range.start,
+              end: keyStart + range.end,
+            })),
             parts,
             array: match[1] === "[[",
           });
@@ -424,9 +468,16 @@ function scanTomlStructure(raw: string): {
       );
     }
     const opening = findMultilineStart(text);
+    const currentTable = headers[headers.length - 1]?.parts;
+    // Assignments directly under [mcp_servers] define inline or dotted entries.
+    // Refuse them before adding a named entry that would omit their policy.
     if (
-      headers.length === 0 &&
-      /^\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*[.=]/.test(text)
+      (headers.length === 0 &&
+        /^\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*[.=]/.test(text)) ||
+      (currentTable?.length === 1 &&
+        currentTable[0] === "mcp_servers" &&
+        text.trim() !== "" &&
+        !text.trimStart().startsWith("#"))
     ) {
       throw new Error(
         "Client configuration uses inline or dotted server tables. Copy the snippet instead",
@@ -468,7 +519,12 @@ function planEntryEdit(
   raw: string,
   serverId: string,
   snippet: string,
-): { action: CodexInstallPreview["action"]; content: string } {
+  routeId: string,
+): {
+  action: CodexInstallPreview["action"];
+  content: string;
+  previousServerId?: string;
+} {
   const newline = raw.includes("\r\n") ? "\r\n" : "\n";
   const normalizedSnippet = snippet.replace(/\n/g, newline);
   const { headers, multilineStrings } = scanTomlStructure(raw);
@@ -476,6 +532,51 @@ function planEntryEdit(
     (header) =>
       header.parts[0] === "mcp_servers" && header.parts[1] === serverId,
   );
+  const previousIds = new Set(
+    headers
+      .filter(
+        (header) =>
+          header.parts[0] === "mcp_servers" &&
+          header.parts[1] !== serverId &&
+          legacyCodexServerIdPrefix(header.parts[1], routeId) !== null,
+      )
+      .map((header) => header.parts[1]),
+  );
+  if (previousIds.size > 1) {
+    throw new Error(
+      "Codex config contains multiple generated entries for this route. Keep one entry and transfer any policy settings manually before installing again.",
+    );
+  }
+  const previousServerId = [...previousIds][0];
+  const legacy = headers.filter(
+    (header) =>
+      previousServerId !== undefined &&
+      header.parts[0] === "mcp_servers" &&
+      header.parts[1] === previousServerId,
+  );
+  if (legacy.length > 0) {
+    if (owned.length > 0) {
+      throw new Error(
+        `Codex config contains both '${previousServerId}' and '${serverId}'. Keep one entry and transfer any policy settings manually before installing again.`,
+      );
+    }
+    const legacyRoots = legacy.filter((header) => header.parts.length === 2);
+    if (legacy.some((header) => header.array) || legacyRoots.length !== 1) {
+      throw new Error(
+        `Codex config contains an ambiguous entry for '${previousServerId}'. Copy the snippet and edit the file manually.`,
+      );
+    }
+    assertEntryRoute(raw, headers, multilineStrings, legacyRoots[0], routeId);
+    // Only replace the server ID token. Other key spellings and all values
+    // stay intact, including quoted nested keys and multiline values.
+    let content = raw;
+    for (const header of [...legacy].reverse()) {
+      const range = header.keyRanges[1];
+      content =
+        content.slice(0, range.start) + serverId + content.slice(range.end);
+    }
+    return { action: "migrate", content, previousServerId };
+  }
   const roots = owned.filter(
     (header) => header.parts.length === 2 && !header.array,
   );
@@ -537,6 +638,7 @@ function planEntryEdit(
   const root = roots[0];
   const rootEnd = headers[headers.indexOf(root) + 1]?.start ?? raw.length;
   const { preserved, comments } = splitRootBody(raw.slice(root.start, rootEnd));
+  assertEntryRoute(raw, headers, multilineStrings, root, routeId);
   const snippetKeys = new Set(
     snippet
       .split("\n")
@@ -573,6 +675,45 @@ function planEntryEdit(
     action: content === raw ? "unchanged" : "replace",
     content,
   };
+}
+
+/** A shared name is not proof of ownership, so never replace another vault's entry. */
+function assertEntryRoute(
+  raw: string,
+  headers: Header[],
+  multilineStrings: MultilineStringRange[],
+  root: Header,
+  routeId: string,
+): void {
+  const end = headers[headers.indexOf(root) + 1]?.start ?? raw.length;
+  const urls = [
+    ...raw
+      .slice(root.start, end)
+      .matchAll(
+        /^[\t ]*(?:url|"url"|'url')\s*=\s*(?:"([^"\\\r\n]*)"|'([^'\r\n]*)')\s*(?:#.*)?$/gm,
+      ),
+  ].filter((match) => {
+    const start = root.start + (match.index ?? 0);
+    return !multilineStrings.some(
+      (range) => start >= range.start && start < range.end,
+    );
+  });
+  if (urls.length === 1) {
+    try {
+      const url = new URL(urls[0][1] ?? urls[0][2]);
+      if (
+        url.protocol === "http:" &&
+        url.hostname === "127.0.0.1" &&
+        url.pathname === `/v1/${routeId}/mcp`
+      )
+        return;
+    } catch {
+      // An unrecognized URL cannot establish that this is the same vault.
+    }
+  }
+  throw new Error(
+    `Codex entry '${root.parts[1]}' does not identify this vault's route. Use a distinct server name for equally named vaults. After a route reset, remove this vault's old entry manually. Copy the snippet to edit the config without overwriting another vault.`,
+  );
 }
 
 // Emitted by the generated snippet, so any existing value is overwritten.

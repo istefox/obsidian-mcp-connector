@@ -106,10 +106,8 @@ describe("vaultServerId", () => {
     expect(vaultServerId("Work")).not.toBe(vaultServerId("Personal"));
   });
 
-  test("leaves the Codex id in its merged form", () => {
-    // Codex's vault-named entries predate the route id and already sit in
-    // users' config.toml under this name.
-    expect(codexServerId("My Vault")).toBe("obsidian_myvault");
+  test("uses the same id for Codex and Claude Code", () => {
+    expect(codexServerId("My Vault")).toBe(vaultServerId("My Vault"));
   });
 
   test("a name with no ASCII alphanumerics still gets a key of its own", () => {

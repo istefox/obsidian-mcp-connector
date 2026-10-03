@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **Access Control distinguishes copied-vault setup from token-secret and Codex-only resets.** Updated labels, confirmations and documentation explain which credentials change and how to update clients afterwards, including keeping the original vault's Codex entry when setting up a copy
+- **Codex config entries use the same vault-name key as Claude Code.** The route UUID stays in the URL. Existing UUID-only and name-plus-UUID keys upgrade after vault location checks, with a confirmed installer rename that preserves settings and policies. Custom saved names and names from before a vault rename are retained. Equally named vaults need distinct config keys, and the installer refuses to overwrite a different route. Ambiguous or unsupported layouts require a manual edit, and no external config is changed automatically
+
 ## [2.11.0] — 2026-10-03
 
 ### Added
