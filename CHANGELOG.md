@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.9.0] — 2026-10-03
+
 ### Added
 
 - **New tools `get_file_info` and `list_attachments`** (audit 2026-10-02 § 9.1 #5). `get_file_info` answers "what is this file" without reading it: name, extension, `kind` (markdown, canvas, base, text, image, audio, video, pdf, document, archive, binary), MIME type, size, `ctime`/`mtime`, the `obsidian://` URI, how many files link to it and how many links it holds, and for a note the metadata-cache counts (frontmatter keys, headings, tags, links, embeds, list items, open and done tasks). `list_attachments` lists every non-note file (`.md`, `.canvas` and `.base` are notes) vault-wide, under one folder or linked from one note, each with `kind`, `mime`, `size`, `mtime` and the number of files and references pointing at it; `unreferencedOnly` returns the orphaned attachments, `extensions` filters by type, `sortBy` orders by path, size or recency, and `offset`/`limit` page through the result with `totalBytes` for the whole set. Both read-only, metadata cache only.
