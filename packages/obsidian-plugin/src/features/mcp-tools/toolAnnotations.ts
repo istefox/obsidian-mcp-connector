@@ -54,6 +54,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   get_vault_file: READ_ONLY,
   get_vault_files: READ_ONLY,
   get_vault_file_partial: READ_ONLY,
+  get_file_info: READ_ONLY,
+  list_attachments: READ_ONLY,
   // Overwrites when the path already exists (documented behavior).
   // idempotentHint describes the default (no-precondition) path only: with
   // expectedContent set, or requireWritePreconditions on, a repeated call

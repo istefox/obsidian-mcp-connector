@@ -48,6 +48,11 @@ import {
   updateNotePropertiesSchema,
 } from "./tools/updateNoteProperties";
 import { renameTagHandler, renameTagSchema } from "./tools/renameTag";
+import { getFileInfoHandler, getFileInfoSchema } from "./tools/getFileInfo";
+import {
+  listAttachmentsHandler,
+  listAttachmentsSchema,
+} from "./tools/listAttachments";
 import {
   updateCanvasNodeHandler,
   updateCanvasNodeSchema,
@@ -295,6 +300,14 @@ export async function registerTools(
   );
   registry.register(renameTagSchema, async ({ arguments: args }) =>
     renameTagHandler({ arguments: args, app: ctx.app }),
+  );
+
+  // File metadata without the body
+  registry.register(getFileInfoSchema, async ({ arguments: args }) =>
+    getFileInfoHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(listAttachmentsSchema, async ({ arguments: args }) =>
+    listAttachmentsHandler({ arguments: args, app: ctx.app }),
   );
 
   // Vault file ops
