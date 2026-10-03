@@ -561,7 +561,7 @@
   async function handleConnectionRecovery(action: "retry" | "move" | "reset"): Promise<void> {
     if (busy) return;
     if (action === "move" && !confirm("Keep this Codex route at the new vault location? Choose this only for a moved vault, not a copy")) return;
-    if (action === "reset" && !confirm("Reset only this vault's Codex connection?\n\nIts connection address and credential change. Install or copy the new Codex entry and remove the old one for this vault\n\nOther client token secrets and Claude Desktop sync do not change. For a copied vault, use Make this copy independent instead")) return;
+    if (action === "reset" && !confirm("Reset only this vault's Codex connection?\n\nIts connection address and credential change. Remove this vault's old entry before reinstalling under the same name, or replace it manually with the copied snippet and keep its policies\n\nOther client token secrets and Claude Desktop sync do not change. For a copied vault, use Make this copy independent instead")) return;
     busy = true;
     try {
       const runtime = plugin.codexDiscoveryState;
@@ -572,7 +572,7 @@
         plugin.codexDiscoveryState = await startCodexDiscovery(plugin) ?? undefined;
       }
       await refreshTokens();
-      if (action === "reset") new Notice("Codex connection reset. Install or copy the new Codex entry and remove the old one for this vault");
+      if (action === "reset") new Notice("Codex connection reset. Remove this vault's old entry before reinstalling under the same name, or replace it manually with the copied snippet and keep its policies");
     } catch (err) {
       noticeFailure("recovering the connection", err);
       // All three branches above stop the previous runtime before the step
@@ -642,7 +642,7 @@
     if (codexOn) changes.push("gives the Codex connection a new route");
     if (syncOn) changes.push("turns off the Claude Desktop config sync in this vault");
     const redo = ["Paste the new secrets into clients you set up by hand for this vault"];
-    if (codexOn) redo.push("Install or copy the new Codex entry and remove the old one");
+    if (codexOn) redo.push("Install or copy a new Codex entry for this copy using a distinct name. Keep the original vault's entry");
     if (syncOn) redo.push("Turn the Claude Desktop sync back on if you want it for this vault");
     const message = [
       "Make this vault independent of the vault it was copied from? Run this in the copy, not the original",
@@ -681,11 +681,13 @@
     }
   }
 
-  async function connectionSnippet(): Promise<string> {
+  async function configurationConnection() {
+    if (discoveryStatus.locationChanged)
+      throw new Error("Resolve the vault location change before copying or installing Codex config. Confirm a move or make this copy independent first.");
     const connection = await getCodexConnection(plugin);
     if (!connection)
-      throw new Error("Enable the Codex connection for this vault first.");
-    return codexConfigSnippet(withCodexOptions(connection));
+      throw new Error("The Codex entry is not initialized. Enable or retry the connection after resolving any vault location change.");
+    return connection;
   }
 
   function withCodexOptions(
@@ -701,8 +703,13 @@
   }
 
   async function handleCopyCodexConfig(): Promise<void> {
+    if (busy) return;
     try {
-      await copyToClipboard(await connectionSnippet());
+      const connection = await configurationConnection();
+      await copyToClipboard(
+        codexConfigSnippet(withCodexOptions(connection)),
+        "Copied Codex config. When replacing this vault's entry, transfer its tool restrictions and approvals and remove its superseded entry. Equally named vaults need distinct table keys. For a copy, keep the original vault's entry.",
+      );
     } catch (err) {
       noticeFailure("copying the Codex config", err);
     }
@@ -712,9 +719,7 @@
     if (busy) return;
     busy = true;
     try {
-      const connection = await getCodexConnection(plugin);
-      if (!connection)
-        throw new Error("Enable the Codex connection for this vault first.");
+      const connection = await configurationConnection();
       // An existing entry keeps whatever startup timeout its owner set; only a
       // fresh entry gets the longer default.
       let options = withCodexOptions(connection, false);
@@ -728,7 +733,7 @@
         return;
       }
       const action = preview.action === "migrate"
-        ? `Rename [mcp_servers.${preview.previousServerId}] to [mcp_servers.${preview.serverId}] (all existing settings and nested tables are kept)`
+        ? `Rename [mcp_servers.${preview.previousServerId}] to [mcp_servers.${preview.serverId}] (settings in this entry and its nested tables are kept. Server-name references elsewhere are not changed)`
         : `${preview.action === "add" ? "Add" : "Replace"} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}`;
       const confirmed = confirm(
         `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action}\n\nA timestamped backup will be created before an existing file is changed.`,
@@ -739,7 +744,7 @@
       });
       new Notice(
         result.action === "migrate"
-          ? "Renamed the existing Codex MCP entry and kept all its settings. Restart Codex once."
+          ? "Renamed the Codex MCP entry and kept settings in this entry. Update any server-name references elsewhere, then restart Codex once."
           : `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry. ${codexTokenFromEnv ? `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} before starting Codex. ` : ""}Restart Codex once.`,
       );
     } catch (err) {
@@ -755,10 +760,13 @@
    * Args:
    *   value: The string to copy.
    */
-  async function copyToClipboard(value: string): Promise<void> {
+  async function copyToClipboard(
+    value: string,
+    noticeText = "Copied to clipboard.",
+  ): Promise<void> {
     try {
       await navigator.clipboard.writeText(value);
-      new Notice("Copied to clipboard.");
+      new Notice(noticeText);
     } catch (err) {
       // Silence here is worse than usual: the user walks away believing
       // the secret is on the clipboard. Same shape as CopyConfigMenu's
@@ -960,14 +968,14 @@
               <button
                 type="button"
                 on:click={() => void handleCopyCodexConfig()}
-                disabled={busy}
+                disabled={busy || discoveryStatus.locationChanged}
               >
                 Copy Codex config
               </button>
               <button
                 type="button"
                 on:click={() => void handleInstallCodexConfig()}
-                disabled={busy}
+                disabled={busy || discoveryStatus.locationChanged}
               >
                 Install Codex config…
               </button>
@@ -1001,9 +1009,9 @@
       Codex connects through the shared local broker using the selected token
       and this vault's current port. This checkbox does not edit
       <code>config.toml</code>. Use one of the configuration actions after
-      enabling it.
+      enabling it. Entry names follow Claude Code's vault-name format.
+      Equally named vaults need distinct table keys when pasting a config.
     </p>
-
     <div class="setting-item">
       <div class="setting-item-info">
         <div class="setting-item-name">Set up a copied vault</div>
@@ -1038,7 +1046,8 @@
           <div class="setting-item-description">
             Use to replace this vault's token secrets without resetting its
             Codex connection. Token labels and tool permissions stay the same.
-            Update clients where you pasted a secret by hand
+            Update clients where you pasted a secret by hand. If Claude Desktop
+            sync is on, replace its token's secret afterwards to update its config
           </div>
         </div>
         <div class="setting-item-control">
@@ -1058,7 +1067,9 @@
             <div class="setting-item-description">
               Use to replace only this vault's Codex connection address and
               credential. Other client token secrets and Claude Desktop sync
-              stay the same. Install or copy the new Codex entry afterwards
+              stay the same. Remove this vault's old entry before reinstalling
+              under the same name, or replace it manually with the copied
+              snippet and keep its policies
             </div>
           </div>
           <div class="setting-item-control">

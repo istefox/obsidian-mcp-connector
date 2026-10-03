@@ -10,6 +10,7 @@ import {
   locateCodexConfig,
   type CodexConnection,
 } from "./codexConfig";
+import { vaultServerId } from "./generators";
 
 const connection: CodexConnection = {
   vaultName: "Neon Hades-2",
@@ -32,13 +33,30 @@ afterEach(async () => {
 });
 
 describe("Codex config snippet", () => {
-  test("new entries include the vault name without colliding display names", () => {
-    expect(codexServerId("Vault-A", connection.routeId)).not.toBe(
-      codexServerId("Vault A", "123e4567-e89b-42d3-a456-426614174001"),
-    );
-    expect(codexServerId("Vault-A", connection.routeId)).toBe(
-      "obsidian_vault_a_123e4567e89b42d3a456426614174000",
-    );
+  test.each(["My Vault", "Vault-A", "日記", "Società", "---", "A".repeat(80)])(
+    "normalizes %s exactly like Claude Code without a route suffix",
+    (vaultName) => {
+      expect(codexServerId(vaultName)).toBe(vaultServerId(vaultName));
+      expect(codexServerId(vaultName)).not.toContain(
+        connection.routeId.replace(/-/g, ""),
+      );
+    },
+  );
+  test("equal normalized names share a key but keep separate routing URLs", () => {
+    expect(codexServerId("Vault-A")).toBe(codexServerId("Vault A"));
+    const first = codexConfigSnippet({
+      ...connection,
+      vaultName: "Vault-A",
+      serverId: undefined,
+    });
+    const second = codexConfigSnippet({
+      ...connection,
+      vaultName: "Vault A",
+      serverId: undefined,
+      routeId: "123e4567-e89b-42d3-a456-426614174001",
+    });
+    expect(first.split("\n")[0]).toBe(second.split("\n")[0]);
+    expect(first).not.toBe(second);
   });
   test("new snippets name the vault in the copied TOML header", () => {
     const snippet = codexConfigSnippet({
@@ -46,36 +64,15 @@ describe("Codex config snippet", () => {
       vaultName: "My Vault",
       serverId: undefined,
     });
-    expect(snippet.split("\n")[0]).toBe(
-      "[mcp_servers.obsidian_my_vault_123e4567e89b42d3a456426614174000]",
-    );
+    expect(snippet.split("\n")[0]).toBe("[mcp_servers.obsidian_my_vault]");
   });
-  test("route identity keeps names without ASCII alphanumerics usable", () => {
-    expect(codexServerId("日記", connection.routeId)).toBe(
-      "obsidian_vault_123e4567e89b42d3a456426614174000",
-    );
-  });
-  test("long vault names leave room for readable Codex tool names", () => {
-    const vaultName = "A".repeat(80);
-    const serverId = codexServerId(vaultName, connection.routeId);
-    expect(serverId).toBe(
-      `obsidian_${"a".repeat(32)}_123e4567e89b42d3a456426614174000`,
-    );
-    expect(
-      `mcp__${serverId}__create_vault_binary_file`.length,
-    ).toBeLessThanOrEqual(128);
-    expect(serverId).not.toBe(
-      codexServerId(vaultName, "123e4567-e89b-42d3-a456-426614174001"),
-    );
-    const snippet = codexConfigSnippet({
-      ...connection,
-      vaultName,
-      serverId: undefined,
-    });
-    expect(snippet.split("\n")[0]).toBe(`[mcp_servers.${serverId}]`);
+  test("non-ASCII names retain the shared deterministic hash", () => {
+    expect(codexServerId("日記")).toMatch(/^obsidian_[a-z0-9]{6}$/);
+    expect(codexServerId("日記")).not.toBe(codexServerId("日本"));
+    expect(codexServerId("Società")).toMatch(/^obsidian_societ_[a-z0-9]{6}$/);
   });
   test("uses one stable broker URL instead of the live vault port or token", () => {
-    expect(codexServerId(connection.vaultName)).toBe("obsidian_neonhades2");
+    expect(codexServerId(connection.vaultName)).toBe("obsidian_neon_hades_2");
     const snippet = codexConfigSnippet(connection);
     expect(snippet).toContain(
       'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
@@ -116,8 +113,14 @@ describe("Codex config snippet", () => {
     ).toThrow();
   });
 
-  test("refuses a vault name that cannot form a stable id", () => {
-    expect(() => codexServerId("---")).toThrow();
+  test("preserves a saved custom key independently of the vault name", () => {
+    expect(
+      codexConfigSnippet({
+        ...connection,
+        vaultName: "Renamed",
+        serverId: "my_custom_vault",
+      }).split("\n")[0],
+    ).toBe("[mcp_servers.my_custom_vault]");
   });
 });
 
@@ -143,10 +146,221 @@ describe("Codex config location", () => {
 });
 
 describe("explicit Codex config installer", () => {
+  test.each(["Vault-A", "Vault A"])(
+    "refuses a same-name entry for a different vault when installing %s",
+    async (vaultName) => {
+      const original = {
+        ...connection,
+        vaultName: "Vault-A",
+        serverId: undefined,
+      };
+      await installCodexConfig(original, { configPath });
+      const previous = await fsp.readFile(configPath, "utf8");
+      const copy = {
+        ...original,
+        vaultName,
+        routeId: "123e4567-e89b-42d3-a456-426614174001",
+      };
+      await expect(inspectCodexInstall(copy, { configPath })).rejects.toThrow(
+        /does not identify this vault's route/,
+      );
+      await expect(installCodexConfig(copy, { configPath })).rejects.toThrow(
+        /distinct server name/,
+      );
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+      expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+      await installCodexConfig(
+        { ...copy, serverId: "obsidian_vault_a_copy" },
+        { configPath },
+      );
+      const parsed = Bun.TOML.parse(await fsp.readFile(configPath, "utf8")) as {
+        mcp_servers: Record<string, unknown>;
+      };
+      expect(Object.keys(parsed.mcp_servers)).toEqual([
+        "obsidian_vault_a",
+        "obsidian_vault_a_copy",
+      ]);
+      expect(parsed.mcp_servers.obsidian_vault_a).toEqual(
+        (Bun.TOML.parse(previous) as typeof parsed).mcp_servers
+          .obsidian_vault_a,
+      );
+    },
+  );
+
+  test.each([
+    'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174001/mcp"',
+    'url = "http://127.0.0.1:27200/mcp"',
+    'command = "node"\nargs = ["another-vault.js"]',
+  ])(
+    "refuses to replace an entry whose ownership cannot be established: %s",
+    async (transport) => {
+      const previous = `[mcp_servers.${connection.serverId}]\n${transport}\n`;
+      await fsp.writeFile(configPath, previous, "utf8");
+      await expect(
+        inspectCodexInstall(connection, { configPath }),
+      ).rejects.toThrow(/does not identify this vault's route/);
+      await expect(
+        installCodexConfig(connection, { configPath }),
+      ).rejects.toThrow(/does not identify this vault's route/);
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+      expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+    },
+  );
+
+  test.each([
+    "obsidian_123e4567e89b42d3a456426614174000",
+    "obsidian_notes_123e4567e89b42d3a456426614174000",
+  ])(
+    "refuses to migrate generated key %s when it points to another route",
+    async (oldId) => {
+      const previous = codexConfigSnippet({
+        ...connection,
+        serverId: oldId,
+        routeId: "123e4567-e89b-42d3-a456-426614174001",
+      });
+      await fsp.writeFile(configPath, previous, "utf8");
+      const next = { ...connection, serverId: undefined };
+      await expect(inspectCodexInstall(next, { configPath })).rejects.toThrow(
+        /does not identify this vault's route/,
+      );
+      await expect(installCodexConfig(next, { configPath })).rejects.toThrow(
+        /does not identify this vault's route/,
+      );
+      expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+      expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+    },
+  );
+
+  test("refuses multiple generated entries for the same route", async () => {
+    const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+    const previous = `${codexConfigSnippet({ ...connection, serverId: oldId })}\n${codexConfigSnippet({ ...connection, serverId: `obsidian_notes_${connection.routeId.replace(/-/g, "")}` })}\n`;
+    await fsp.writeFile(configPath, previous, "utf8");
+    const next = { ...connection, serverId: undefined };
+    await expect(inspectCodexInstall(next, { configPath })).rejects.toThrow(
+      /multiple generated entries/,
+    );
+    await expect(installCodexConfig(next, { configPath })).rejects.toThrow(
+      /multiple generated entries/,
+    );
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+  });
+
+  test("a URL inside a multiline policy string does not establish migration ownership", async () => {
+    const oldId = `obsidian_notes_${connection.routeId.replace(/-/g, "")}`;
+    const previous = [
+      `[mcp_servers.${oldId}]`,
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174001/mcp"',
+      "description = '''",
+      `url = "http://127.0.0.1:27206/v1/${connection.routeId}/mcp"`,
+      "'''",
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+    const next = { ...connection, serverId: undefined };
+    await expect(inspectCodexInstall(next, { configPath })).rejects.toThrow(
+      /does not identify this vault's route/,
+    );
+    await expect(installCodexConfig(next, { configPath })).rejects.toThrow(
+      /does not identify this vault's route/,
+    );
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+  });
+
+  test("migration keeps environment-token auth and startup timeout verbatim", async () => {
+    const oldId = `obsidian_notes_${connection.routeId.replace(/-/g, "")}`;
+    const previous = `${codexConfigSnippet({ ...connection, serverId: oldId, bearerTokenEnvVar: "CUSTOM_TOKEN", startupTimeoutSec: 75 })}\nenabled_tools = ["read_only"]\n`;
+    await fsp.writeFile(configPath, previous, "utf8");
+    const next = {
+      ...connection,
+      serverId: undefined,
+      bearerTokenEnvVar: "OBSIDIAN_MCP_TOKEN",
+      startupTimeoutSec: 30,
+    };
+    const result = await installCodexConfig(next, { configPath });
+    expect(result.action).toBe("migrate");
+    expect(await fsp.readFile(configPath, "utf8")).toBe(
+      previous.replace(oldId, vaultServerId(connection.vaultName)),
+    );
+    expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
+  });
+
+  test.each(["inline", "dotted"])(
+    "refuses %s entries under the server parent table before name migration",
+    async (form) => {
+      const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+      const namedConnection = { ...connection, serverId: undefined };
+      const body =
+        form === "inline"
+          ? `'${oldId}' = { url = "http://synthetic", enabled_tools = ["read_only"], default_tools_approval_mode = "approve" }`
+          : `'${oldId}'.url = "http://synthetic"\n'${oldId}'.enabled_tools = ["read_only"]\n'${oldId}'.default_tools_approval_mode = "approve"`;
+      for (const header of [
+        "[mcp_servers]",
+        '[ "mcp_servers" ]',
+        "[ 'mcp_servers' ]",
+      ]) {
+        const previous = `model = "synthetic-model"\n${header}\n${body}\n`;
+        expect(Bun.TOML.parse(previous)).toMatchObject({
+          mcp_servers: {
+            [oldId]: {
+              enabled_tools: ["read_only"],
+              default_tools_approval_mode: "approve",
+            },
+          },
+        });
+        await fsp.writeFile(configPath, previous, "utf8");
+        await expect(
+          inspectCodexInstall(namedConnection, { configPath }),
+        ).rejects.toThrow(/inline or dotted server tables/);
+        await expect(
+          installCodexConfig(namedConnection, { configPath }),
+        ).rejects.toThrow(/inline or dotted server tables/);
+        expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+        expect(await fsp.readdir(tempDir)).toEqual(["config.toml"]);
+      }
+    },
+  );
+
+  test("permits an empty server parent table and ignores unrelated lookalikes", async () => {
+    const previous = [
+      "[mcp_servers]",
+      '# existing = { url = "http://synthetic" }',
+      "",
+      "[mcp_servers.other]",
+      'url = "http://synthetic"',
+      "",
+      "[features]",
+      "mcp_servers = { unrelated = true }",
+      "documentation = '''",
+      "[mcp_servers]",
+      'existing = { url = "http://synthetic" }',
+      "'''",
+      "",
+    ].join("\n");
+    await fsp.writeFile(configPath, previous, "utf8");
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.action).toBe("add");
+    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
+    const result = await installCodexConfig(connection, { configPath });
+    expect(result.action).toBe("add");
+    expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
+    const written = await fsp.readFile(configPath, "utf8");
+    const parsed = Bun.TOML.parse(written) as {
+      mcp_servers: Record<string, unknown>;
+    };
+    expect(written.startsWith(previous)).toBe(true);
+    expect(parsed).toMatchObject(Bun.TOML.parse(previous));
+    expect(Object.keys(parsed.mcp_servers)).toEqual([
+      "other",
+      preview.serverId,
+    ]);
+  });
+
   test("refuses inline server tables and preserves additional entry policies", async () => {
     for (const previous of [
       'mcp_servers = { existing = { url = "http://localhost" } }\n',
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nnot_a_real_codex_key = ["read_only"]\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nnot_a_real_codex_key = ["read_only"]\n',
     ]) {
       await fsp.writeFile(configPath, previous);
       await expect(
@@ -157,7 +371,7 @@ describe("explicit Codex config installer", () => {
   });
   test("refuses an unrecognized quoted table without deleting unrelated configuration", async () => {
     const previous =
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\n[mcp_servers."other]name"]\nurl = "preserve-me"\n';
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\n[mcp_servers."other]name"]\nurl = "preserve-me"\n';
     await fsp.writeFile(configPath, previous);
     await expect(
       installCodexConfig(connection, { configPath }),
@@ -166,7 +380,7 @@ describe("explicit Codex config installer", () => {
   });
   test("replaces an entry that sets Codex's genuine extra config keys instead of refusing", async () => {
     const previous =
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nenabled_tools = ["read_only"]\nstartup_timeout_sec = 5\n[mcp_servers.obsidian_neonhades2.oauth]\nclient_id = "keep-me"\n';
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nenabled_tools = ["read_only"]\nstartup_timeout_sec = 5\n[mcp_servers.obsidian_neonhades2.oauth]\nclient_id = "keep-me"\n';
     await fsp.writeFile(configPath, previous, "utf8");
 
     const preview = await inspectCodexInstall(connection, { configPath });
@@ -185,6 +399,7 @@ describe("explicit Codex config installer", () => {
   test("carries Codex policy keys through a replace instead of discarding them", async () => {
     const previous = [
       "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
       'command = "node"',
       'args = ["old.js"]',
       'cwd = "/tmp"',
@@ -245,7 +460,7 @@ describe("explicit Codex config installer", () => {
   test("keeps an OAuth pairing intact across a replace", async () => {
     const previous = [
       "[mcp_servers.obsidian_neonhades2]",
-      'url = "http://old"',
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
       'auth = "ema_auth"',
       'scopes = ["a", "b"]',
       'oauth_resource = "https://example/resource"',
@@ -271,7 +486,7 @@ describe("explicit Codex config installer", () => {
   test("preserves a multi-line array value verbatim, including its inline comment", async () => {
     const previous = [
       "[mcp_servers.obsidian_neonhades2]",
-      'url = "http://old"',
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
       "enabled_tools = [",
       '  "read_only", # keep this note',
       '  "search",',
@@ -311,7 +526,7 @@ describe("explicit Codex config installer", () => {
   test("is idempotent after a replace that preserves policy keys", async () => {
     const previous = [
       "[mcp_servers.obsidian_neonhades2]",
-      'url = "http://old"',
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
       "enabled_tools = [",
       '  "read_only",',
       "]",
@@ -329,8 +544,8 @@ describe("explicit Codex config installer", () => {
 
   test("still refuses an unrecognized root key, including a multi-line one", async () => {
     for (const previous of [
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nmystery = [\n  1,\n]\n',
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nmystery = [\n  1,\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nmystery = [\n  1,\n]\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nmystery = [\n  1,\n',
     ]) {
       await fsp.writeFile(configPath, previous, "utf8");
       await expect(
@@ -375,9 +590,11 @@ describe("explicit Codex config installer", () => {
     expect(await fsp.readFile(configPath, "utf8")).toBe(changed);
   });
 
-  test("installing a readable entry migrates the UUID-only entry and its policy", async () => {
-    const oldId = "obsidian_123e4567e89b42d3a456426614174000";
-    const namedId = "obsidian_neon_hades_2_123e4567e89b42d3a456426614174000";
+  test.each([
+    "obsidian_123e4567e89b42d3a456426614174000",
+    "obsidian_neon_hades_2_123e4567e89b42d3a456426614174000",
+  ])("migrates generated entry %s and its policy", async (oldId) => {
+    const namedId = "obsidian_neon_hades_2";
     const previous = `${codexConfigSnippet({ ...connection, serverId: oldId })}\nenabled_tools = ["read_only"]\ndisabled_tools = ["write_file"]\ndefault_tools_approval_mode = "approve"\n\n[mcp_servers.${oldId}.tools.read_only]\napproval_mode = "approve"\n`;
     const namedConnection = { ...connection, serverId: undefined };
     await fsp.writeFile(configPath, previous, "utf8");
@@ -417,7 +634,7 @@ describe("explicit Codex config installer", () => {
   test("migration renames quoted nested headers without changing values, comments or CRLF", async () => {
     const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
     const namedConnection = { ...connection, serverId: undefined };
-    const namedId = codexServerId(connection.vaultName, connection.routeId);
+    const namedId = codexServerId(connection.vaultName);
     const previous = [
       `\uFEFF[ mcp_servers.'${oldId}' ] # Keep header comment`,
       `url = "http://127.0.0.1:27206/v1/${connection.routeId}/mcp"`,
@@ -444,7 +661,7 @@ describe("explicit Codex config installer", () => {
     expect(result.action).toBe("migrate");
     expect(
       written.startsWith(
-        `\uFEFF[mcp_servers.${namedId}] # Keep header comment`,
+        `\uFEFF[ mcp_servers.${namedId} ] # Keep header comment`,
       ),
     ).toBe(true);
     expect(written.replace(/\r\n/g, "")).not.toContain("\n");
@@ -470,6 +687,46 @@ describe("explicit Codex config installer", () => {
     expect(parsed.mcp_servers.other).toEqual({ name: oldId });
     expect(await fsp.readFile(result.backupPath!, "utf8")).toBe(previous);
   });
+
+  test.each(['a"b', String.raw`C:\x`, "read.file"])(
+    "migration preserves the spelling of nested key %s and allows later installs",
+    async (toolName) => {
+      const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+      const namedConnection = { ...connection, serverId: undefined };
+      const namedId = codexServerId(connection.vaultName);
+      const previous = `${codexConfigSnippet({ ...connection, serverId: oldId })}\n[ 'mcp_servers' . '${oldId}' . tools . '${toolName}' ] # Preserve this spelling\napproval_mode = "approve"\n`;
+      await fsp.writeFile(configPath, previous, "utf8");
+      const result = await installCodexConfig(namedConnection, { configPath });
+      const written = await fsp.readFile(configPath, "utf8");
+      expect(result.action).toBe("migrate");
+      expect(written).toContain(
+        `[ 'mcp_servers' . ${namedId} . tools . '${toolName}' ] # Preserve this spelling`,
+      );
+      const parsed = Bun.TOML.parse(written) as {
+        mcp_servers: Record<
+          string,
+          { tools: Record<string, { approval_mode: string }> }
+        >;
+      };
+      expect(parsed.mcp_servers[namedId].tools[toolName].approval_mode).toBe(
+        "approve",
+      );
+      expect(
+        (await inspectCodexInstall(namedConnection, { configPath })).action,
+      ).toBe("replace");
+      expect(
+        (await installCodexConfig(namedConnection, { configPath })).action,
+      ).toBe("replace");
+      const refreshed = await fsp.readFile(configPath, "utf8");
+      expect(refreshed).toContain(
+        `[ 'mcp_servers' . ${namedId} . tools . '${toolName}' ] # Preserve this spelling`,
+      );
+      expect(Bun.TOML.parse(refreshed)).toEqual(parsed);
+      expect(
+        (await installCodexConfig(namedConnection, { configPath })).action,
+      ).toBe("unchanged");
+    },
+  );
 
   test.each([
     "duplicate roots",
@@ -502,11 +759,12 @@ describe("explicit Codex config installer", () => {
     },
   );
 
-  test("identifies and replaces an earlier entry while preserving unrelated TOML", async () => {
+  test("replaces transport settings for the same route while preserving unrelated TOML", async () => {
     const previous = [
       'model = "gpt-5"',
       "",
       "[mcp_servers.obsidian_neonhades2]",
+      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
       'command = "node"',
       'args = ["old-bridge.js"]',
       "",
@@ -558,7 +816,7 @@ describe("explicit Codex config installer", () => {
   test("preserves a UTF-8 BOM while replacing the first table", async () => {
     await fsp.writeFile(
       configPath,
-      '\uFEFF[mcp_servers.obsidian_neonhades2]\nurl = "http://old"\n',
+      '\uFEFF[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\n',
       "utf8",
     );
     await installCodexConfig(connection, { configPath });
@@ -756,7 +1014,7 @@ describe("Codex install with token and timeout options", () => {
       configPath,
       [
         "[mcp_servers.obsidian_neonhades2]",
-        'url = "old"',
+        'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
         'http_headers = { Authorization = "Bearer old" }',
         'enabled_tools = ["read_only"]',
         "",
@@ -776,7 +1034,7 @@ describe("Codex install with token and timeout options", () => {
   test("an explicit startupTimeoutSec overrides the old value without duplicating the key", async () => {
     await fsp.writeFile(
       configPath,
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nstartup_timeout_sec = 5\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nstartup_timeout_sec = 5\n',
       "utf8",
     );
     await installCodexConfig(
@@ -794,7 +1052,7 @@ describe("Codex install with token and timeout options", () => {
   test("without the option an existing startup_timeout_sec is kept", async () => {
     await fsp.writeFile(
       configPath,
-      '[mcp_servers.obsidian_neonhades2]\nurl = "old"\nstartup_timeout_sec = 5\n',
+      '[mcp_servers.obsidian_neonhades2]\nurl = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"\nstartup_timeout_sec = 5\n',
       "utf8",
     );
     await installCodexConfig(connection, { configPath });

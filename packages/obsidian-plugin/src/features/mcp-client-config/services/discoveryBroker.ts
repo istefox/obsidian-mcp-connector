@@ -12,7 +12,12 @@ import { logger } from "$/shared/logger";
 import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
 import { detectNode, getDetectedNodePath } from "./nodeDetect";
-import { codexServerId, type CodexConnection } from "./codexConfig";
+import { vaultNameWords } from "./generators";
+import {
+  codexServerId,
+  legacyCodexServerIdPrefix,
+  type CodexConnection,
+} from "./codexConfig";
 
 export const DISCOVERY_BROKER_PORT = 27206;
 export const DISCOVERY_PROTOCOL_VERSION = 2;
@@ -89,25 +94,33 @@ type Registration = {
 class RegistrationConflict extends Error {}
 
 /**
- * Add the vault name to old UUID-only keys while preserving other saved keys.
- * Settings without a saved key retain their legacy vault-name form, falling
- * back to the route when the name contains no ASCII alphanumerics.
+ * Remove generated route suffixes while preserving custom names and names
+ * saved before a vault rename. UUID-only keys use the current vault name.
  */
 function storedCodexServerId(
   vaultName: string,
   settings: DiscoverySettings,
 ): string {
-  const opaqueId = `obsidian_${settings.routeId.replace(/-/g, "")}`;
-  if (settings.serverId) {
-    return settings.serverId === opaqueId
-      ? codexServerId(vaultName, settings.routeId)
-      : settings.serverId;
+  const name = codexServerId(vaultName);
+  if (!settings.serverId) {
+    // Before saved IDs, Codex used this spelling without word separators.
+    // Retain it so installing again does not duplicate the existing entry.
+    const legacyName = vaultName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return legacyName ? `obsidian_${legacyName}` : name;
   }
-  try {
-    return codexServerId(vaultName);
-  } catch {
-    return codexServerId(vaultName, settings.routeId);
-  }
+  const prefix = legacyCodexServerIdPrefix(settings.serverId, settings.routeId);
+  if (prefix === null) return settings.serverId;
+  const oldPrefixes = [
+    name.slice("obsidian_".length),
+    // Generated names from before the shared non-ASCII hash was introduced.
+    vaultNameWords(vaultName).join("_"),
+  ].map((value) => value.slice(0, 32).replace(/_+$/, "") || "vault");
+  if (
+    prefix === "" ||
+    oldPrefixes.some((value) => prefix === `obsidian_${value}`)
+  )
+    return name;
+  return prefix;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -168,13 +181,13 @@ export async function getCodexConnection(
   plugin: DiscoveryPlugin,
 ): Promise<CodexConnection | null> {
   const settings = await readSettings(plugin);
-  if (!settings) return null;
+  if (!settings?.serverId) return null;
   return {
     vaultName: plugin.app.vault.getName(),
     routeId: settings.routeId,
     accessToken: settings.accessToken,
     brokerPort: DISCOVERY_BROKER_PORT,
-    serverId: storedCodexServerId(plugin.app.vault.getName(), settings),
+    serverId: settings.serverId,
   };
 }
 
@@ -187,26 +200,19 @@ export async function enableCodexDiscovery(
   if (!tokens.some((token) => token.id === tokenId)) {
     throw new Error(`Token '${tokenId}' is no longer configured.`);
   }
-  const settings = await updateSettings(plugin, (current) => ({
-    ...current,
-    enabled: true,
-    routeId: current?.routeId ?? randomUUID(),
-    accessToken: current?.accessToken ?? generateToken(),
-    tokenId,
-    serverId: current
-      ? storedCodexServerId(plugin.app.vault.getName(), current)
-      : undefined,
-  }));
-  if (!settings.serverId) {
-    settings.serverId = codexServerId(
-      plugin.app.vault.getName(),
-      settings.routeId,
-    );
-    await updateSettings(plugin, (current) => ({
-      ...(current ?? settings),
-      serverId: settings.serverId,
-    }));
-  }
+  const settings = await updateSettings(plugin, (current) => {
+    const routeId = current?.routeId ?? randomUUID();
+    return {
+      ...current,
+      enabled: true,
+      routeId,
+      accessToken: current?.accessToken ?? generateToken(),
+      tokenId,
+      serverId: current
+        ? current.serverId
+        : codexServerId(plugin.app.vault.getName()),
+    };
+  });
   return startRuntime(plugin, settings, opts);
 }
 
@@ -249,7 +255,7 @@ export async function resetDiscoveryIdentity(
     tokenId: current?.tokenId ?? null,
     routeId,
     accessToken: generateToken(),
-    serverId: codexServerId(plugin.app.vault.getName(), routeId),
+    serverId: codexServerId(plugin.app.vault.getName()),
     dataPath,
   }));
   return settings.enabled && settings.tokenId !== null
