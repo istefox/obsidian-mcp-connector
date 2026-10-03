@@ -2,6 +2,7 @@ import { type } from "arktype";
 import { successText } from "../services/responseBuilders";
 import type { App, TFile } from "obsidian";
 import { createExclusionFilter } from "$/shared/isUserIgnored";
+import { comparePaths } from "../services/pathUtils";
 
 export const getRecentFilesSchema = type({
   name: '"get_recent_files"',
@@ -48,9 +49,6 @@ export function getSortedVisibleMarkdownFiles(app: App): TFile[] {
   // `get_files_by_tag`). Without this, the default `Intl.Collator`
   // reads the OS locale, which can shift Unicode ordering between
   // macOS / Linux / Windows test runs.
-  const comparePath = (a: string, b: string): number =>
-    a.localeCompare(b, "en", { sensitivity: "variant" });
-
   return visible.sort((a, b) => {
     // Primary: mtime descending (most-recent first).
     if (b.stat.mtime !== a.stat.mtime) return b.stat.mtime - a.stat.mtime;
@@ -59,7 +57,7 @@ export function getSortedVisibleMarkdownFiles(app: App): TFile[] {
     // contract should not rely on that — an explicit tiebreaker keeps
     // the API deterministic across repeat calls when several files
     // share an `mtime` (common on bulk imports / sync events).
-    return comparePath(a.path, b.path);
+    return comparePaths(a.path, b.path);
   });
 }
 

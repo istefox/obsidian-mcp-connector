@@ -3,6 +3,7 @@ import { type App } from "obsidian";
 import { successText } from "../services/responseBuilders";
 import { getTagCounts } from "./listTags";
 import { getSortedVisibleMarkdownFiles } from "./getRecentFiles";
+import { comparePaths } from "../services/pathUtils";
 
 const DEFAULT_TOP_TAGS_LIMIT = 20;
 const DEFAULT_RECENT_FILES_LIMIT = 10;
@@ -40,9 +41,6 @@ export async function getVaultOverviewHandler(
   const recentFilesLimit =
     ctx.arguments.recentFilesLimit ?? DEFAULT_RECENT_FILES_LIMIT;
 
-  const compareName = (a: string, b: string): number =>
-    a.localeCompare(b, "en", { sensitivity: "variant" });
-
   const activeFile = ctx.app.workspace.getActiveFile()?.path ?? null;
 
   const markdownFiles = ctx.app.vault.getMarkdownFiles();
@@ -59,14 +57,14 @@ export async function getVaultOverviewHandler(
   }))
     .sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
-      return compareName(a.folder, b.folder);
+      return comparePaths(a.folder, b.folder);
     })
     .slice(0, TOP_FOLDERS_CAP);
 
   const topTags = getTagCounts(ctx.app)
     .sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
-      return compareName(a.tag, b.tag);
+      return comparePaths(a.tag, b.tag);
     })
     .slice(0, topTagsLimit);
 

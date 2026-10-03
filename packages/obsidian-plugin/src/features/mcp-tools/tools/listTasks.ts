@@ -1,7 +1,7 @@
 import { type } from "arktype";
 import type { App, TFile } from "obsidian";
 import { createExclusionFilter } from "$/shared/isUserIgnored";
-import { folderPrefix } from "../services/pathUtils";
+import { comparePaths, folderPrefix } from "../services/pathUtils";
 import { resolveTFile } from "../services/resolveTFile";
 import { errorJson, successJson } from "../services/responseBuilders";
 import { parseTaskLine, taskStatus } from "../services/taskLine";
@@ -18,8 +18,11 @@ export const listTasksSchema = type({
     "status?": type('"open" | "done" | "all"').describe(
       "`open` = `[ ]` only; `done` = any other marker (`[x]`, `[/]`, `[-]`, ...); `all` (default) = both.",
     ),
+    "offset?": type("number.integer>=0").describe(
+      "Tasks to skip before the first returned one (default 0), for paging. Combine with `limit` and `totalTasks`.",
+    ),
     "limit?": type("1<=number.integer<=1000").describe(
-      "Maximum number of tasks to return (1-1000, default 200). `truncated: true` says the vault has more.",
+      "Maximum number of tasks to return (1-1000, default 200). `truncated: true` says more follow the returned page.",
     ),
   },
 }).describe(
@@ -31,6 +34,7 @@ export type ListTasksContext = {
     path?: string;
     folder?: string;
     status?: "open" | "done" | "all";
+    offset?: number;
     limit?: number;
   };
   app: App;
@@ -52,9 +56,6 @@ type ListItemLike = {
   position: { start: { line: number } };
 };
 
-const comparePath = (a: string, b: string): number =>
-  a.localeCompare(b, "en", { sensitivity: "variant" });
-
 export async function listTasksHandler(ctx: ListTasksContext): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -62,6 +63,7 @@ export async function listTasksHandler(ctx: ListTasksContext): Promise<{
   const { path, folder } = ctx.arguments;
   const wanted = ctx.arguments.status ?? "all";
   const limit = ctx.arguments.limit ?? 200;
+  const offset = ctx.arguments.offset ?? 0;
 
   let files: TFile[];
   if (path !== undefined) {
@@ -89,7 +91,7 @@ export async function listTasksHandler(ctx: ListTasksContext): Promise<{
       .getMarkdownFiles()
       .filter((f) => !isUserIgnored(f.path))
       .filter((f) => prefix === null || f.path.startsWith(prefix))
-      .sort((a, b) => comparePath(a.path, b.path));
+      .sort((a, b) => comparePaths(a.path, b.path));
     if (prefix !== null && files.length === 0) {
       const dir = ctx.app.vault.getAbstractFileByPath(prefix.slice(0, -1));
       if (!dir) {
@@ -100,41 +102,47 @@ export async function listTasksHandler(ctx: ListTasksContext): Promise<{
     }
   }
 
-  const tasks: TaskEntry[] = [];
-  let total = 0;
+  // Select the page from the metadata cache alone: it already carries each
+  // task's marker, so the total needs no file read. Only the files that own
+  // a task on the requested page are then read for their text.
+  const selected: Array<{ file: TFile; item: ListItemLike; line: number }> = [];
   for (const file of files) {
     const cache = ctx.app.metadataCache.getFileCache(file);
     const items = (cache as { listItems?: ListItemLike[] } | null)?.listItems;
     if (!items?.length) continue;
-    const taskItems = items.filter((i) => i.task !== undefined);
-    if (taskItems.length === 0) continue;
-
-    // One read per file that has tasks: the cache knows the line, not
-    // the text. `cachedRead` is the cheap path for a read-only tool.
-    const lines = (await ctx.app.vault.cachedRead(file)).split("\n");
-    for (const item of taskItems) {
-      const line = item.position.start.line;
-      const parsed = parseTaskLine(lines[line] ?? "");
-      // The cache is authoritative for "is a task"; the line is the
-      // source of truth for text and marker. A line the parser cannot
-      // read (cache a beat behind an edit) falls back to the cache's
-      // marker and the trimmed line.
-      const marker = parsed?.marker ?? item.task ?? " ";
-      const status = taskStatus(marker);
-      if (wanted !== "all" && status !== wanted) continue;
-      total++;
-      if (tasks.length >= limit) continue;
-      tasks.push({
-        path: file.path,
-        line,
-        status,
-        marker,
-        text: parsed?.text.trimEnd() ?? (lines[line] ?? "").trim(),
-        ...(item.parent !== undefined && item.parent >= 0
-          ? { parentLine: item.parent }
-          : {}),
-      });
+    for (const item of items) {
+      if (item.task === undefined) continue;
+      if (wanted !== "all" && taskStatus(item.task) !== wanted) continue;
+      selected.push({ file, item, line: item.position.start.line });
     }
+  }
+
+  const total = selected.length;
+  const page = selected.slice(offset, offset + limit);
+  const linesByPath = new Map<string, string[]>();
+  const tasks: TaskEntry[] = [];
+  for (const { file, item, line } of page) {
+    let lines = linesByPath.get(file.path);
+    if (lines === undefined) {
+      // `cachedRead` is the cheap path for a read-only tool.
+      lines = (await ctx.app.vault.cachedRead(file)).split("\n");
+      linesByPath.set(file.path, lines);
+    }
+    const parsed = parseTaskLine(lines[line] ?? "");
+    // The cache is authoritative for "is a task"; the line is the source of
+    // truth for text and marker. A line the parser cannot read (cache a beat
+    // behind an edit) falls back to the cache's marker and the trimmed line.
+    const marker = parsed?.marker ?? item.task ?? " ";
+    tasks.push({
+      path: file.path,
+      line,
+      status: taskStatus(marker),
+      marker,
+      text: parsed?.text.trimEnd() ?? (lines[line] ?? "").trim(),
+      ...(item.parent !== undefined && item.parent >= 0
+        ? { parentLine: item.parent }
+        : {}),
+    });
   }
 
   return successJson({
@@ -142,7 +150,8 @@ export async function listTasksHandler(ctx: ListTasksContext): Promise<{
     ...(path !== undefined ? { path } : {}),
     ...(folder !== undefined && path === undefined ? { folder } : {}),
     totalTasks: total,
-    ...(total > tasks.length ? { truncated: true } : {}),
+    offset,
+    ...(offset + tasks.length < total ? { truncated: true } : {}),
     tasks,
   });
 }

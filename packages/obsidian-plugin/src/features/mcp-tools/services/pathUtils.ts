@@ -20,3 +20,13 @@ export function folderPrefix(folder: string | undefined): string | null {
   const trimmed = trimSlashes(folder);
   return trimmed === "" ? null : `${trimmed}/`;
 }
+
+/**
+ * The order every listing tool uses for paths and names: English collation,
+ * case- and accent-sensitive, so the output does not depend on the host's
+ * locale across macOS, Linux and Windows.
+ */
+export const comparePaths: (a: string, b: string) => number = new Intl.Collator(
+  "en",
+  { sensitivity: "variant" },
+).compare;

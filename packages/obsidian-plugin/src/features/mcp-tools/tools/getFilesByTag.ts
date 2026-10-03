@@ -1,6 +1,7 @@
 import { type } from "arktype";
 import { errorJson, successText } from "../services/responseBuilders";
 import type { App } from "obsidian";
+import { comparePaths } from "../services/pathUtils";
 
 export const getFilesByTagSchema = type({
   name: '"get_files_by_tag"',
@@ -42,9 +43,6 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
 
   // Pinned locale + sensitivity for cross-platform deterministic order
   // (matches the contract used by `list_tags`).
-  const compareName = (a: string, b: string): number =>
-    a.localeCompare(b, "en", { sensitivity: "variant" });
-
   // Count occurrences directly from `cache.tags` (per-occurrence, not
   // deduped) and `cache.frontmatter.tags` so that the resulting
   // `count` represents how many times the tag actually appears in the
@@ -87,7 +85,7 @@ export async function getFilesByTagHandler(ctx: GetFilesByTagContext): Promise<{
 
   counts.sort((a, b) => {
     if (b.count !== a.count) return b.count - a.count;
-    return compareName(a.path, b.path);
+    return comparePaths(a.path, b.path);
   });
 
   const limit = Math.min(

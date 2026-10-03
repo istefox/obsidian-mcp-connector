@@ -219,3 +219,56 @@ describe("list_tasks: vault root and CRLF", () => {
     ]);
   });
 });
+
+describe("list_tasks: paging", () => {
+  test("offset skips tasks and truncated tracks the remainder", async () => {
+    seed();
+    const all = (await run({})).data.tasks as Array<{ path: string }>;
+    const { data } = await run({ offset: 2, limit: 2 });
+    expect(data.totalTasks).toBe(5);
+    expect(data.offset).toBe(2);
+    expect(data.tasks).toEqual(all.slice(2, 4));
+    expect(data.truncated).toBe(true);
+    const last = (await run({ offset: 4, limit: 2 })).data;
+    expect(last.tasks).toHaveLength(1);
+    expect(last.truncated).toBeUndefined();
+  });
+
+  test("an offset past the end returns no tasks but the real total", async () => {
+    seed();
+    const { data } = await run({ offset: 50 });
+    expect(data.tasks).toEqual([]);
+    expect(data.totalTasks).toBe(5);
+  });
+
+  test("the status filter counts from the cache, before paging", async () => {
+    seed();
+    const { data } = await run({ status: "open", limit: 1 });
+    expect(data.totalTasks).toBe(2);
+    expect(data.tasks).toHaveLength(1);
+    expect(data.truncated).toBe(true);
+  });
+
+  test("only files owning a returned task are read", async () => {
+    seed();
+    const app = mockApp();
+    const read: string[] = [];
+    const original = app.vault.cachedRead.bind(app.vault);
+    app.vault.cachedRead = async (f: never) => {
+      read.push((f as { path: string }).path);
+      return original(f);
+    };
+    const r = await listTasksHandler({
+      arguments: { limit: 1 },
+      app,
+    });
+    expect(JSON.parse(r.content[0].text).totalTasks).toBe(5);
+    expect(read).toEqual(["Home/chores.md"]);
+  });
+
+  test("schema accepts offset and rejects a negative one", () => {
+    const args = listTasksSchema.get("arguments");
+    expect(() => args.assert({ offset: 3 })).not.toThrow();
+    expect(() => args.assert({ offset: -1 })).toThrow();
+  });
+});

@@ -111,7 +111,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
   set_note_property: { ...DESTRUCTIVE, idempotentHint: true },
   get_note_properties: READ_ONLY,
   update_note_properties: { ...DESTRUCTIVE, idempotentHint: true },
-  delete_note_property: DESTRUCTIVE,
+  // Removing a key that is already gone succeeds as a no-op.
+  delete_note_property: { ...DESTRUCTIVE, idempotentHint: true },
 
   // Workspace
   get_workspace_state: READ_ONLY,
