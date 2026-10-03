@@ -3,6 +3,7 @@ import type { App } from "obsidian";
 import { logger } from "$/shared/logger";
 import { withVaultWriteLock } from "$/features/mcp-tools/services/vaultWriteLock";
 import { errorJson } from "../services/responseBuilders";
+import { compileSafeRegex, makeScopeFilter } from "../services/safeRegex";
 
 /** Reads per batch: bounds memory while hiding vault.read latency. */
 const READ_BATCH_SIZE = 8;
@@ -62,44 +63,22 @@ export async function searchAndReplaceHandler(
   const rawFlags = ctx.arguments.flags ?? "g";
   const flags = rawFlags.includes("g") ? rawFlags : `g${rawFlags}`;
 
-  // Validate regex before touching any file.
-  let regex: RegExp;
-  try {
-    regex = new RegExp(pattern, flags);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.warn("search_and_replace: invalid regex", {
-      pattern,
-      flags,
-      error: msg,
-    });
-    return errorJson(`Invalid regex: ${msg}`, "invalid_regex", {
-      pattern,
-      flags,
-    });
+  // Validate regex before touching any file (shared ReDoS guard).
+  const compiled = compileSafeRegex(pattern, flags);
+  if (!compiled.ok) {
+    if (compiled.errorCode === "invalid_regex") {
+      logger.warn("search_and_replace: invalid regex", {
+        pattern,
+        flags,
+        error: compiled.message,
+      });
+      return errorJson(compiled.message, "invalid_regex", { pattern, flags });
+    }
+    return errorJson(compiled.message, "unsafe_regex", { pattern });
   }
+  const regex = compiled.regex;
 
-  // Reject patterns with nested quantifiers (ReDoS guard — Obsidian runs on main thread, no regex timeout).
-  if (
-    /\([^)]*[+*][^)]*\)[+*?]/.test(pattern) ||
-    /\((?:[^()]*[+*?][^()]*\|)+[^()]+\)[+*?{]/.test(pattern)
-  ) {
-    return errorJson(
-      "Pattern contains nested quantifiers (ReDoS risk). Simplify the pattern.",
-      "unsafe_regex",
-      { pattern },
-    );
-  }
-
-  const inScope = (path: string): boolean => {
-    if (!scope || scope.length === 0) return true;
-    return scope.some(
-      (s) =>
-        path === s ||
-        path === `${s}.md` ||
-        path.startsWith(s.endsWith("/") ? s : `${s}/`),
-    );
-  };
+  const inScope = makeScopeFilter(scope);
 
   const files = ctx.app.vault.getMarkdownFiles().filter((f) => inScope(f.path));
 

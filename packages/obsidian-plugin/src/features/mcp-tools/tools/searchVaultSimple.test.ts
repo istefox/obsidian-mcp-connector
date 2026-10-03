@@ -346,3 +346,98 @@ describe("search_vault_simple — _meta payload gated on declared UI capability 
     expect(result._meta?.[PAYLOAD_KEY]).toBeDefined();
   });
 });
+
+describe("search_vault_simple — regex, caseSensitive and scope", () => {
+  async function run(args: Record<string, unknown>) {
+    const r = await searchVaultSimpleHandler({
+      arguments: args as { query: string },
+      app: mockApp(),
+    });
+    return { r, data: JSON.parse(r.content[0].text as string) };
+  }
+
+  test("caseSensitive narrows a literal search", async () => {
+    setMockFile("a.md", "Fox and fox");
+    const loose = await run({ query: "fox" });
+    expect(loose.data.results[0].matches).toHaveLength(2);
+    const strict = await run({ query: "fox", caseSensitive: true });
+    expect(strict.data.results[0].matches).toHaveLength(1);
+    expect(strict.data.results[0].matches[0].line).toBe(0);
+  });
+
+  test("regex matches variable-length text and reports it, with context sized to the match", async () => {
+    setMockFile("a.md", "id-1 then id-22 end");
+    const { r, data } = await run({
+      query: "id-\\d+",
+      regex: true,
+      contextLength: 1,
+    });
+    expect(r.isError).toBeUndefined();
+    expect(data.results[0].matches).toEqual([
+      { context: "id-1 ", line: 0, text: "id-1" },
+      { context: " id-22 ", line: 0, text: "id-22" },
+    ]);
+  });
+
+  test("regex is case-insensitive unless caseSensitive", async () => {
+    setMockFile("a.md", "TODO todo");
+    expect(
+      (await run({ query: "^todo", regex: true })).data.results[0].matches,
+    ).toHaveLength(1);
+    expect(
+      (await run({ query: "todo", regex: true, caseSensitive: true })).data
+        .results[0].matches,
+    ).toHaveLength(1);
+    expect(
+      (await run({ query: "todo", regex: true })).data.results[0].matches,
+    ).toHaveLength(2);
+  });
+
+  test("an empty regex match cannot loop and metacharacters are literal without regex", async () => {
+    setMockFile("a.md", "a.b axb");
+    const empty = await run({ query: "x*", regex: true, maxMatchesPerFile: 3 });
+    expect(empty.data.results[0].matches).toHaveLength(3);
+    expect(empty.data.results[0].moreMatches).toBe(true);
+    const literal = await run({ query: "a.b" });
+    expect(literal.data.results[0].matches).toHaveLength(1);
+    const asRegex = await run({ query: "a.b", regex: true });
+    expect(asRegex.data.results[0].matches).toHaveLength(2);
+  });
+
+  test("invalid and unsafe regexes are typed errors", async () => {
+    setMockFile("a.md", "x");
+    const invalid = await run({ query: "(", regex: true });
+    expect(invalid.r.isError).toBe(true);
+    expect(invalid.data).toMatchObject({
+      errorCode: "invalid_regex",
+      pattern: "(",
+      flags: "gi",
+    });
+    const unsafe = await run({
+      query: "(a+)+",
+      regex: true,
+      caseSensitive: true,
+    });
+    expect(unsafe.data).toMatchObject({
+      errorCode: "unsafe_regex",
+      flags: "g",
+    });
+  });
+
+  test("scope restricts the search to files and folders", async () => {
+    setMockFile("Notes/a.md", "hit");
+    setMockFile("Notes/sub/b.md", "hit");
+    setMockFile("Other/c.md", "hit");
+    setMockFile("d.md", "hit");
+    const { data } = await run({ query: "hit", scope: ["Notes", "d"] });
+    expect(
+      data.results.map((x: { filename: string }) => x.filename).sort(),
+    ).toEqual(["Notes/a.md", "Notes/sub/b.md", "d.md"]);
+  });
+
+  test("a regex search without the option behaves exactly as before (no text key)", async () => {
+    setMockFile("a.md", "fox");
+    const { data } = await run({ query: "fox" });
+    expect(data.results[0].matches[0]).toEqual({ context: "fox", line: 0 });
+  });
+});

@@ -339,3 +339,80 @@ describe("rename_heading tool", () => {
     );
   });
 });
+
+describe("rename_heading — dry_run", () => {
+  test("returns the plan with per-file rewrite counts and writes nothing", async () => {
+    setMockFile("source.md", "## Old heading\nbody");
+    setMockFile(
+      "back.md",
+      "See [[source#Old heading]] and [[source#Old heading|x]].",
+    );
+    setMockFile("other.md", "See [[source#Old heading]].");
+    setMockMetadata("source.md", {
+      headings: [{ heading: "Old heading", level: 2, line: 0 }],
+    });
+    setMockResolvedLinks("back.md", { "source.md": 2 });
+    setMockResolvedLinks("other.md", { "source.md": 1 });
+    const app = mockApp();
+    const r = await renameHeadingHandler({
+      arguments: {
+        path: "source.md",
+        from: { text: "Old heading" },
+        to: "New heading",
+        dry_run: true,
+      },
+      app,
+    });
+    expect(r.isError).toBeUndefined();
+    const data = JSON.parse(r.content[0].text);
+    expect(data).toEqual({
+      ok: true,
+      dryRun: true,
+      updatedFiles: ["source.md", "back.md", "other.md"],
+      linkRewriteCount: 3,
+      files: [
+        { path: "source.md", headingRenamed: true, linkRewrites: 0 },
+        { path: "back.md", headingRenamed: false, linkRewrites: 2 },
+        { path: "other.md", headingRenamed: false, linkRewrites: 1 },
+      ],
+    });
+    const source = app.vault.getAbstractFileByPath("source.md");
+    expect(await app.vault.read(source as never)).toBe("## Old heading\nbody");
+    const back = app.vault.getAbstractFileByPath("back.md");
+    expect(await app.vault.read(back as never)).toContain("Old heading");
+  });
+
+  test("dry_run still fails loud on a missing heading and a collision", async () => {
+    setMockFile("source.md", "## A\n## B\n");
+    setMockMetadata("source.md", {
+      headings: [
+        { heading: "A", level: 2, line: 0 },
+        { heading: "B", level: 2, line: 1 },
+      ],
+    });
+    const missing = await renameHeadingHandler({
+      arguments: {
+        path: "source.md",
+        from: { text: "Z" },
+        to: "Q",
+        dry_run: true,
+      },
+      app: mockApp(),
+    });
+    expect(JSON.parse(missing.content[0].text).errorCode).toBe(
+      "heading_not_found",
+    );
+    const collision = await renameHeadingHandler({
+      arguments: {
+        path: "source.md",
+        from: { text: "A" },
+        to: "B",
+        dry_run: true,
+      },
+      app: mockApp(),
+    });
+    expect(JSON.parse(collision.content[0].text).errorCode).toBe(
+      "heading_collision",
+    );
+  });
+});

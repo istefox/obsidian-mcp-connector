@@ -69,7 +69,7 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `invalid_params` | The arguments failed schema validation, carry an undeclared key, or a required argument for the chosen mode is missing. | `tool`, or `mode` |
 | `invalid_arguments`, `too_many_paths`, `missing_argument` | Tool-specific argument refusals (`get_vault_files`, canvas tools). | per tool |
 | `invalid_query` | `search_vault`'s JsonLogic query is not valid JSON. | |
-| `invalid_regex`, `unsafe_regex` | `search_and_replace`'s pattern does not compile, or has nested quantifiers (ReDoS guard). | `pattern`, `flags` |
+| `invalid_regex`, `unsafe_regex` | `search_and_replace`'s pattern, or `search_vault_simple`'s `query` with `regex: true`, does not compile or has nested quantifiers (ReDoS guard). | `pattern`, `flags` |
 | `invalid_tag` | The tag is empty after stripping `#`, or (`rename_tag`) uses characters outside letters, digits, `_`, `-`, `/`, or is all digits. | `tag` |
 | `invalid_base64` | `create_vault_binary_file`'s content does not decode. | `path` |
 | `invalid_date_for_period` | The periodic-note date does not match the period's format or is not a real date. | `period`, `date` |

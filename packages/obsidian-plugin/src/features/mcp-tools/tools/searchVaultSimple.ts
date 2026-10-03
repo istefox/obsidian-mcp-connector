@@ -1,5 +1,6 @@
 import { type } from "arktype";
-import { successText } from "../services/responseBuilders";
+import { errorJson, successText } from "../services/responseBuilders";
+import { compileSafeRegex, makeScopeFilter } from "../services/safeRegex";
 import type { App } from "obsidian";
 import {
   projectSimpleSearchResults,
@@ -15,7 +16,16 @@ export const searchVaultSimpleSchema = type({
   name: '"search_vault_simple"',
   arguments: {
     query: type("string>0").describe(
-      "Substring to search for (case-insensitive).",
+      "Text to search for. A literal substring by default; a JavaScript regex source (no surrounding `/`) when `regex` is `true`.",
+    ),
+    "regex?": type("boolean").describe(
+      "When `true`, `query` is a JavaScript regular expression (`g` is added for you; `i` unless `caseSensitive`). Patterns with nested quantifiers are refused (`unsafe_regex`). Default `false`.",
+    ),
+    "caseSensitive?": type("boolean").describe(
+      "When `true`, letter case must match. Default `false`.",
+    ),
+    "scope?": type("string[]").describe(
+      "Restrict the search to these vault-relative file paths (with or without `.md`) or folders (recursive). Omitted: the whole vault.",
     ),
     "contextLength?": type("number.integer>=0").describe(
       "Characters of context to include before/after each match. Default 100.",
@@ -28,12 +38,15 @@ export const searchVaultSimpleSchema = type({
     ),
   },
 }).describe(
-  "Plain-text substring search across all markdown files in the vault. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at.",
+  "Text search across the markdown files of the vault, or of a `scope` of files and folders: a case-insensitive literal substring by default, case-sensitive with `caseSensitive`, a JavaScript regex with `regex`. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at and, for regex searches, the matched `text`.",
 );
 
 export type SearchVaultSimpleContext = {
   arguments: {
     query: string;
+    regex?: boolean;
+    caseSensitive?: boolean;
+    scope?: string[];
     contextLength?: number;
     limit?: number;
     maxMatchesPerFile?: number;
@@ -67,6 +80,8 @@ type FileResult = {
     context: string;
     /** 0-indexed line the match starts at. */
     line: number;
+    /** The matched text; present for regex searches only, where it varies. */
+    text?: string;
   }>;
 };
 
@@ -92,15 +107,31 @@ function escapeRegExp(literal: string): string {
  */
 export async function searchVaultSimpleHandler(
   ctx: SearchVaultSimpleContext,
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}> {
   const query = ctx.arguments.query;
+  const isRegex = ctx.arguments.regex ?? false;
+  const caseSensitive = ctx.arguments.caseSensitive ?? false;
   const contextLength = ctx.arguments.contextLength ?? DEFAULT_CONTEXT;
   const limit = ctx.arguments.limit ?? DEFAULT_LIMIT;
   const maxMatchesPerFile =
     ctx.arguments.maxMatchesPerFile ?? DEFAULT_MAX_MATCHES_PER_FILE;
-  const patternSource = escapeRegExp(query);
+  const flags = caseSensitive ? "g" : "gi";
+  const patternSource = isRegex ? query : escapeRegExp(query);
+  if (isRegex) {
+    const compiled = compileSafeRegex(patternSource, flags);
+    if (!compiled.ok) {
+      return errorJson(compiled.message, compiled.errorCode, {
+        pattern: query,
+        flags,
+      });
+    }
+  }
 
-  const files = ctx.app.vault.getMarkdownFiles();
+  const inScope = makeScopeFilter(ctx.arguments.scope);
+  const files = ctx.app.vault.getMarkdownFiles().filter((f) => inScope(f.path));
   const results: FileResult[] = [];
 
   for (
@@ -118,7 +149,7 @@ export async function searchVaultSimpleHandler(
         // shared regex would race on lastIndex.
         let m: RegExpExecArray | null;
         let moreMatches = false;
-        const scanner = new RegExp(patternSource, "gi");
+        const scanner = new RegExp(patternSource, flags);
         while ((m = scanner.exec(content)) !== null) {
           // One match past the cap is enough to know there are more: stop
           // scanning there instead of collecting a file's worth of hits
@@ -128,18 +159,22 @@ export async function searchVaultSimpleHandler(
             break;
           }
           const idx = m.index;
+          // A literal pattern always matches exactly `query.length`
+          // characters; a regex match varies and may be empty.
+          const matchLength = isRegex ? m[0].length : query.length;
           const start = Math.max(0, idx - contextLength);
           const end = Math.min(
             content.length,
-            idx + query.length + contextLength,
+            idx + matchLength + contextLength,
           );
           matches.push({
             context: content.slice(start, end),
             line: content.slice(0, idx).split("\n").length - 1,
+            ...(isRegex ? { text: m[0] } : {}),
           });
-          // Match length equals query length (literal pattern), so this
-          // mirrors the previous `idx += query.length` stepping.
-          scanner.lastIndex = idx + query.length;
+          // Step past the match (at least one character, so an empty
+          // regex match cannot loop forever).
+          scanner.lastIndex = idx + Math.max(1, matchLength);
         }
 
         if (matches.length === 0) return null;

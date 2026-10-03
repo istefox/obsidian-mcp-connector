@@ -28,9 +28,12 @@ export const renameHeadingSchema = type({
     to: type("string>0").describe(
       "New heading text. Must not match an existing same-level heading in the file (fail-loud per `heading_collision`).",
     ),
+    "dry_run?": type("boolean").describe(
+      "When `true`, computes the full plan (the files that would change and how many links each would have rewritten) and writes nothing. Default `false`.",
+    ),
   },
 }).describe(
-  "Renames a heading in a vault file and rewrites every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault to keep link integrity. Two-phase commit: dry-run plan first, then apply atomically. Fails loud on missing heading, multi-match ambiguity, or destination collision. Frontmatter aliases are not rewritten. Backlinks inside hidden folders are left untouched and uncounted.",
+  "Renames a heading in a vault file and rewrites every backlinking reference (wikilinks, markdown links, subheading-path links) across the vault to keep link integrity. Two-phase commit: plan first, then apply atomically; `dry_run: true` returns the plan alone. Fails loud on missing heading, multi-match ambiguity, or destination collision. Frontmatter aliases are not rewritten. Backlinks inside hidden folders are left untouched and uncounted.",
 );
 
 export type RenameHeadingContext = {
@@ -38,6 +41,7 @@ export type RenameHeadingContext = {
     path: string;
     from: { text: string; level?: number };
     to: string;
+    dry_run?: boolean;
   };
   app: App;
 };
@@ -156,6 +160,28 @@ async function renameHeadingLocked(ctx: RenameHeadingContext): Promise<{
 
   if ("errorCode" in plan) {
     return renameErrorToResponse(plan);
+  }
+
+  if (ctx.arguments.dry_run) {
+    return successText(
+      JSON.stringify({
+        ok: true,
+        dryRun: true,
+        updatedFiles: [
+          plan.source.path,
+          ...plan.backlinkers.map((b) => b.path),
+        ],
+        linkRewriteCount: plan.linkRewriteCount,
+        files: [
+          { path: plan.source.path, headingRenamed: true, linkRewrites: 0 },
+          ...plan.backlinkers.map((b) => ({
+            path: b.path,
+            headingRenamed: false,
+            linkRewrites: b.rewriteCount,
+          })),
+        ],
+      }),
+    );
   }
 
   // ── 5. Phase-2 apply: write source, then each backlinker patch ──────────
