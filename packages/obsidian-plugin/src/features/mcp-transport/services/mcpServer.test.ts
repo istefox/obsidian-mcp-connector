@@ -267,6 +267,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "rename_tag",
         "rename_vault_file",
         "search_and_replace",
+        "search_files_by_name",
         "search_vault",
         "search_vault_simple",
         "search_vault_smart",
@@ -278,7 +279,7 @@ describe("end-to-end: HTTP → McpServer", () => {
         "update_canvas_node",
         "update_note_properties",
       ]);
-      expect(names).toHaveLength(63);
+      expect(names).toHaveLength(64);
 
       // Annotations completeness: every exposed tool must carry MCP
       // annotations with an explicit readOnlyHint and openWorldHint.

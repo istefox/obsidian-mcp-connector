@@ -217,6 +217,69 @@ void mock.module("obsidian", () => {
   }
 
   /**
+   * Mock of Obsidian's `prepareFuzzySearch`: case-insensitive subsequence
+   * match. `score` is 0 for a text equal to the query and gets more
+   * negative the wider the span the query characters are spread over, the
+   * later the match starts and the longer the text (the real scorer also
+   * prefers tight, early matches; only the ordering matters to callers). `matches` are the
+   * `[from, to]` ranges of consecutive matched characters.
+   */
+  function prepareFuzzySearch(
+    query: string,
+  ): (
+    text: string,
+  ) => { score: number; matches: Array<[number, number]> } | null {
+    const q = query.toLowerCase();
+    return (text: string) => {
+      if (q.length === 0) return { score: 0, matches: [] };
+      const t = text.toLowerCase();
+      const matches: Array<[number, number]> = [];
+      let ti = 0;
+      for (const ch of q) {
+        const at = t.indexOf(ch, ti);
+        if (at === -1) return null;
+        const last = matches[matches.length - 1];
+        if (last && last[1] === at) last[1] = at + 1;
+        else matches.push([at, at + 1]);
+        ti = at + 1;
+      }
+      const span = matches[matches.length - 1][1] - matches[0][0];
+      const score =
+        -(span - q.length) - matches[0][0] / 10 - (t.length - q.length) / 100;
+      return { score, matches };
+    };
+  }
+
+  /** Mock of Obsidian's `sortSearchResults`: higher score first, stable. */
+  function sortSearchResults(
+    results: Array<{ match: { score: number } }>,
+  ): void {
+    results.sort((a, b) => b.match.score - a.match.score);
+  }
+
+  /**
+   * Mock of Obsidian's `parseFrontMatterAliases`: `aliases` or `alias`,
+   * as an array of strings or one comma-separated string; `null` when
+   * the note declares none.
+   */
+  function parseFrontMatterAliases(
+    frontmatter: Record<string, unknown> | null,
+  ): string[] | null {
+    if (!frontmatter) return null;
+    const out: string[] = [];
+    for (const key of ["aliases", "alias"]) {
+      const v = frontmatter[key];
+      if (Array.isArray(v)) {
+        for (const a of v)
+          if (typeof a === "string" && a.trim()) out.push(a.trim());
+      } else if (typeof v === "string") {
+        for (const a of v.split(",")) if (a.trim()) out.push(a.trim());
+      }
+    }
+    return out.length === 0 ? null : out;
+  }
+
+  /**
    * Mock of Obsidian's `parseLinktext`: splits a linktext into its file
    * portion and subpath on the first `#`. The subpath keeps its leading
    * `#`, matching the real API.
@@ -295,6 +358,9 @@ void mock.module("obsidian", () => {
     Modal,
     Platform,
     getAllTags,
+    prepareFuzzySearch,
+    sortSearchResults,
+    parseFrontMatterAliases,
     parseLinktext,
     resolveSubpath,
     // Obsidian re-exports the `moment` library at runtime; pin to the real
