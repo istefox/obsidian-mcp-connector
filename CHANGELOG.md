@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-10-03
+
 ### Added
 
 - **New tool `get_workspace_state`** (audit 2026-10-02 § 9.1 #1): what is open in Obsidian right now. Every tab with its location (`main`, `popout`, and the two sidebars when `includeSidebars` is set), view type, title, file, editor mode, pin state, active flag and whether Obsidian has deferred loading it, plus the active file and the recently opened files. Read-only, no I/O. A tab on a note inside an excluded folder (ADR-0020) is simply absent, and the leaves the tool reads through are a read-only facade that cannot open, move or close anything.
