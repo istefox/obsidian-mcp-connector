@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-10-03
+
 ### Added
 
 - **Claude Code `.mcp.json` copy button without the token.** **Claude Code (.mcp.json, no token)** on each token row copies a project-scoped entry whose `Authorization` header is `Bearer ${OBSIDIAN_MCP_TOKEN}`, so the file is safe to commit. Claude Code asks for approval the first time it loads a project `.mcp.json`.
