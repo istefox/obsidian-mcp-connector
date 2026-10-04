@@ -1,5 +1,6 @@
 import { describe, expect, test, beforeEach } from "bun:test";
 import {
+  groupBestPerFile,
   searchVaultSmartHandler,
   searchVaultSmartSchema,
 } from "./searchVaultSmart";
@@ -926,5 +927,113 @@ describe("search_vault_smart — excerptLength and compact (#567)", () => {
       "ML Notes: introduction to gradient descent.",
     );
     expect(rows[0]!.heading).toBe("ML Notes");
+  });
+});
+
+describe("search_vault_smart — groupByFile", () => {
+  const chunk = (
+    filePath: string,
+    score: number,
+    heading = "H",
+  ): SearchResult => ({
+    filePath,
+    heading,
+    excerpt: `${filePath} ${heading}`,
+    line: 1,
+    score,
+  });
+  const sample: SearchResult[] = [
+    chunk("A.md", 0.9, "a1"),
+    chunk("A.md", 0.8, "a2"),
+    chunk("B.md", 0.85, "b1"),
+    chunk("A.md", 0.7, "a3"),
+    chunk("C.md", 0.6, "c1"),
+  ];
+
+  async function run(args: Record<string, unknown>, results = sample) {
+    const spy = fakeProvider({ ready: true, results });
+    const plugin = mockPlugin({
+      semanticSearchState: { provider: spy.provider },
+    } as never);
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "q", ...args },
+      app: mockApp(),
+      plugin,
+    });
+    const text = (result.content[0] as { text: string }).text;
+    return {
+      result,
+      spy,
+      rows: JSON.parse(text).results as Record<string, unknown>[],
+    };
+  }
+
+  test("keeps the best chunk per file, ranked by score", async () => {
+    const { rows } = await run({ groupByFile: true });
+    expect(rows.map((r) => [r.filePath, r.heading])).toEqual([
+      ["A.md", "a1"],
+      ["B.md", "b1"],
+      ["C.md", "c1"],
+    ]);
+  });
+
+  test("limit counts notes and the provider is asked for a larger pool", async () => {
+    const { rows, spy } = await run({ groupByFile: true, limit: 2 });
+    expect(rows.map((r) => r.filePath)).toEqual(["A.md", "B.md"]);
+    expect(spy.calls()[0]!.opts.limit).toBe(8);
+  });
+
+  test("the pool never drops below the requested limit", async () => {
+    const { spy } = await run({ groupByFile: true, limit: 200 });
+    expect(spy.calls()[0]!.opts.limit).toBe(200);
+  });
+
+  test("the pool is capped at 100 chunks", async () => {
+    const { spy } = await run({ groupByFile: true, limit: 50 });
+    expect(spy.calls()[0]!.opts.limit).toBe(100);
+  });
+
+  test("compact + groupByFile returns one filePath/score pair per note", async () => {
+    const { rows } = await run({ groupByFile: true, compact: true });
+    expect(rows).toEqual([
+      { filePath: "A.md", score: 0.9 },
+      { filePath: "B.md", score: 0.85 },
+      { filePath: "C.md", score: 0.6 },
+    ]);
+  });
+
+  test("an excluded file does not take a slot", async () => {
+    setMockIgnored("A.md");
+    const { rows } = await run({ groupByFile: true, limit: 2 });
+    expect(rows.map((r) => r.filePath)).toEqual(["B.md", "C.md"]);
+  });
+
+  test("the MCP Apps payload is grouped too", async () => {
+    const { result } = await run({ groupByFile: true });
+    const meta = (
+      result as {
+        _meta?: Record<string, { rows: Array<{ filePath: string }> }>;
+      }
+    )._meta!;
+    const payload = Object.values(meta)[0]!;
+    expect(payload.rows.map((r) => r.filePath)).toEqual([
+      "A.md",
+      "B.md",
+      "C.md",
+    ]);
+  });
+
+  test("without the flag, chunks of the same file stay separate and limit is forwarded untouched", async () => {
+    const { rows, spy } = await run({ limit: 5 });
+    expect(rows).toHaveLength(5);
+    expect(spy.calls()[0]!.opts.limit).toBe(5);
+  });
+
+  test("groupBestPerFile returns fewer than limit when the pool has fewer files", () => {
+    expect(groupBestPerFile(sample, 10).map((r) => r.filePath)).toEqual([
+      "A.md",
+      "B.md",
+      "C.md",
+    ]);
   });
 });
