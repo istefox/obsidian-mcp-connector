@@ -11,6 +11,15 @@ export type McpbGeneratorInput = {
    * instead of replacing each other.
    */
   vaultName: string;
+  /**
+   * The user's configured MCP server name (`mcpTransport.serverName`), when
+   * they set one. Becomes the extension's `display_name`, which Claude
+   * Desktop turns into the tool prefix, so saved prompts and skills keep
+   * working under a name the user picked. Blank or absent keeps
+   * `Obsidian MCP Connector (<vault>)`. Only `display_name` follows it:
+   * `name` stays per-vault so a re-exported bundle replaces the installed one.
+   */
+  displayName?: string;
   /** Absolute filesystem path to the vault root (`FileSystemAdapter.getBasePath()`). */
   vaultPath: string;
   /**
@@ -116,7 +125,9 @@ function buildManifest(input: McpbGeneratorInput): McpbManifest {
   return {
     manifest_version: "0.3",
     name: mcpbBundleName(input.vaultName),
-    display_name: `Obsidian MCP Connector (${input.vaultName})`,
+    display_name:
+      input.displayName?.trim() ||
+      `Obsidian MCP Connector (${input.vaultName})`,
     version: input.version,
     description:
       "Access your Obsidian vault (semantic search, notes, Templater prompts) via MCP.",

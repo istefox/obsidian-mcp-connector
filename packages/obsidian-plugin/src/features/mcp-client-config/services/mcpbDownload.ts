@@ -6,6 +6,7 @@ import type McpToolsPlugin from "$/main";
 // re-exports that component, so the barrel would close a cycle.
 // `tokenStore.ts` imports nothing from this feature, so this edge does not.
 import { readTokens } from "$/features/mcp-transport/services/tokenStore";
+import { SettingsStore } from "$/shared/settingsStore";
 import { generateMcpb, mcpbBundleName } from "./mcpbGenerator";
 
 /**
@@ -106,9 +107,20 @@ export async function downloadMcpb(
 
   const vaultName = plugin.app.vault.getName();
   const filename = `${mcpbBundleName(vaultName)}.mcpb`;
+  // The raw setting, not `resolveServerName`: its "Obsidian - <vault>"
+  // fallback is for the handshake, and an unset name must leave the bundle's
+  // `display_name` as it has always been.
+  const transport = (await new SettingsStore(plugin).readSlice(
+    "mcpTransport",
+  )) as { serverName?: unknown } | undefined;
+  const displayName =
+    typeof transport?.serverName === "string"
+      ? transport.serverName
+      : undefined;
   const bytes = generateMcpb({
     version: plugin.manifest.version,
     vaultName,
+    displayName,
     vaultPath: adapter.getBasePath(),
     configDir: plugin.app.vault.configDir,
     tokenId: id,

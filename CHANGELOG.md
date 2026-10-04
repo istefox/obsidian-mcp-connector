@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **The `.mcpb` export uses the configured Server name as its `display_name`** (#585). Claude Desktop builds the tool prefix from that field, so 2.10.0's fixed `Obsidian MCP Connector (<Vault>)` broke prompts, skills and scheduled tasks that referenced tools by an older name such as `mcp__obsidian-trabajo__get_vault_file`. Set **Server name** in Access Control to the name you want and export the bundle again. With no Server name set, the display name is unchanged, and `name` stays per-vault so a re-exported bundle still replaces the installed one.
+
 ## [2.12.0] — 2026-10-04
 
 ### Added
