@@ -1011,7 +1011,9 @@ describe("search_vault_smart — groupByFile", () => {
   test("the MCP Apps payload is grouped too", async () => {
     const { result } = await run({ groupByFile: true });
     const meta = (
-      result as { _meta?: Record<string, { rows: Array<{ filePath: string }> }> }
+      result as {
+        _meta?: Record<string, { rows: Array<{ filePath: string }> }>;
+      }
     )._meta!;
     const payload = Object.values(meta)[0]!;
     expect(payload.rows.map((r) => r.filePath)).toEqual([
