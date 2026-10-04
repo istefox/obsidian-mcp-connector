@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **`search_vault_smart` takes `groupByFile`.** With `true`, only the best-scoring chunk of each note is returned, so `limit` counts notes instead of chunks and a broad search no longer spends several slots on one file. The provider is asked for up to four chunks per requested note (capped at 100), so a very concentrated query can return fewer notes than `limit`. The MCP Apps view shows the grouped list too. Off by default. The `query` description now says a full sentence ranks better than a list of keywords.
+
 ## [2.11.0] — 2026-10-03
 
 ### Added

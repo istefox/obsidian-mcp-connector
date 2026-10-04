@@ -14,7 +14,7 @@ export const searchVaultSmartSchema = type({
   name: '"search_vault_smart"',
   arguments: {
     query: type("string>0").describe(
-      "Natural-language search phrase. Returns notes ranked by semantic similarity.",
+      "Natural-language search phrase. Returns notes ranked by semantic similarity. Write a full sentence describing what you are looking for: it ranks better than a list of keywords.",
     ),
     "filter?": {
       "includeFolders?": type("string[]").describe(
@@ -25,7 +25,10 @@ export const searchVaultSmartSchema = type({
       ),
     },
     "limit?": type("number.integer>=1").describe(
-      "Maximum number of results to return. Default 10.",
+      "Maximum number of results to return. Default 10. Counts chunks, or notes when groupByFile is true.",
+    ),
+    "groupByFile?": type("boolean").describe(
+      "Keep only the best-scoring chunk of each note, so limit counts notes instead of chunks. Default false.",
     ),
     "excerptLength?": type("number.integer>=0").describe(
       "Truncate each excerpt to this many characters, adding an ellipsis when cut. 0 drops the excerpt. Omit for the full excerpt.",
@@ -43,6 +46,7 @@ export type SearchVaultSmartContext = {
     query: string;
     filter?: { includeFolders?: string[]; excludeFolders?: string[] };
     limit?: number;
+    groupByFile?: boolean;
     excerptLength?: number;
     compact?: boolean;
   };
@@ -148,6 +152,28 @@ async function maybeSendProgress(
   } catch {
     // Swallowed by design — see doc comment above.
   }
+}
+
+const DEFAULT_LIMIT = 10;
+/** `groupByFile` asks the provider for this many chunks per requested note. */
+const GROUP_POOL_FACTOR = 4;
+const GROUP_POOL_CAP = 100;
+
+/**
+ * Keep the best-scoring chunk of each file, ranked by score descending,
+ * and cut to `limit` files. Returns fewer than `limit` when the pool holds
+ * fewer distinct files.
+ */
+export function groupBestPerFile<T extends { filePath: string; score: number }>(
+  results: readonly T[],
+  limit: number,
+): T[] {
+  const best = new Map<string, T>();
+  for (const r of results) {
+    const current = best.get(r.filePath);
+    if (!current || r.score > current.score) best.set(r.filePath, r);
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 /**
@@ -290,12 +316,20 @@ export async function searchVaultSmartHandler(
     );
   }
 
+  const groupByFile = ctx.arguments.groupByFile === true;
+  const requestedLimit = ctx.arguments.limit ?? DEFAULT_LIMIT;
   let results;
   try {
     results = await provider.search(ctx.arguments.query, {
       folders: ctx.arguments.filter?.includeFolders,
       excludeFolders: ctx.arguments.filter?.excludeFolders,
-      limit: ctx.arguments.limit,
+      // Grouping drops chunks, so over-fetch to still fill `limit` notes.
+      limit: groupByFile
+        ? Math.max(
+            requestedLimit,
+            Math.min(requestedLimit * GROUP_POOL_FACTOR, GROUP_POOL_CAP),
+          )
+        : ctx.arguments.limit,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -314,6 +348,8 @@ export async function searchVaultSmartHandler(
   // index) so the exclusion setting is honoured regardless of backend.
   const isExcluded = createExclusionFilter(ctx.app);
   results = results.filter((r) => !isExcluded(r.filePath));
+  // After the exclusion filter, so an excluded file never takes a slot.
+  if (groupByFile) results = groupBestPerFile(results, requestedLimit);
 
   const vaultName = ctx.app.vault.getName();
   const wireResults = shapeWireResults(
