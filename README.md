@@ -9,7 +9,7 @@
 
 Your Obsidian vault, exposed to AI clients over the [Model Context Protocol](https://modelcontextprotocol.io). The MCP server runs **inside Obsidian**, on loopback, with no binary to download and no cloud round-trip. Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf and VS Code all connect to the same endpoint.
 
-[What's new](#whats-new-in-20x) · [Quick start](#quick-start) · [Tools](#what-it-can-do) · [Rendered search results](#rendered-search-results-mcp-apps) · [Adaptive tool loading](#adaptive-tool-loading) · [Per-client tokens](#per-client-tokens) · [Prompts](#prompts) · [Protocol](#protocol-status) · [Clients](#connecting-a-client) · [Troubleshooting](#troubleshooting) · [Security](#security) · [For developers](#for-developers)
+[What's new](#whats-new-in-28-to-212) · [Quick start](#quick-start) · [Tools](#what-it-can-do) · [Rendered search results](#rendered-search-results-mcp-apps) · [Adaptive tool loading](#adaptive-tool-loading) · [Per-client tokens](#per-client-tokens) · [Prompts](#prompts) · [Protocol](#protocol-status) · [Clients](#connecting-a-client) · [Troubleshooting](#troubleshooting) · [Security](#security) · [For developers](#for-developers)
 
 ---
 
@@ -20,7 +20,7 @@ Obsidian (Electron)                          your AI client
 ┌──────────────────────────────┐
 │ MCP Connector plugin         │             Claude Code, Cursor, Cline,
 │  ├─ MCP server (in-process)  │◄──HTTP──►   Continue, Windsurf, VS Code
-│  ├─ 52 tools                 │  POST only
+│  ├─ 64 tools                 │  POST only
 │  ├─ prompt renderer          │
 │  └─ on-device embeddings     │◄──stdio─►   Claude Desktop
 └──────────────────────────────┘  via .mcpb shim
@@ -33,6 +33,21 @@ Four things follow from that shape:
 - **No binary ships from this repo.** The server is plugin code running in Obsidian's renderer, which removes the supply-chain surface of downloading and executing a prebuilt executable.
 - **Semantic search is on-device.** Transformers.js runs the embedding model locally. No API key, no Smart Connections requirement.
 - **Every request carries its own credentials.** The transport keeps no session state, which is what makes per-client tool surfaces possible.
+
+## What's new in 2.8 to 2.12
+
+Five releases followed a code and protocol audit ([`docs/audit-2026-10-02.md`](docs/audit-2026-10-02.md)). The tool count went from 52 to 64, writes got safer, and search got shorter and more precise.
+
+| Change | Why it matters |
+|---|---|
+| **12 new tools** (2.8.0, 2.9.0) | `get_workspace_state`, `list_tasks`, `set_task_status`, `get_note_properties`, `update_note_properties`, `rename_tag`, `update_canvas_node` and `delete_canvas_node` in 2.8.0. `get_file_info`, `list_attachments`, `ensure_block_id` and `search_files_by_name` in 2.9.0. |
+| **Safer writes** (2.8.0, 2.9.0) | `update_active_file`, `delete_vault_file` and `delete_active_file` take `expectedContent`. `delete_vault_directory` has `dry_run` and `trash`, `rename_heading` has `dry_run`. `delete_vault_file` refuses a folder, and `show_file_in_obsidian` no longer creates a missing file unless you pass `createIfMissing`. |
+| **Search that fits a conversation** (2.9.0 to 2.12.0) | `search_vault_simple` takes `regex`, `caseSensitive` and `scope`. `search_vault_smart` takes `excerptLength` and `compact` (2.10.0), and `groupByFile` (2.12.0), which keeps the best chunk of each note so `limit` counts notes. A full sentence ranks better than a list of keywords. |
+| **Rendered search view has an off switch** (2.8.0) | Turn it off for the whole vault, or per token, for hosts that show the view fully expanded. |
+| **Client configs are named after the vault** (2.10.0, 2.11.0) | Entries are `obsidian_<vault>`, with a hash for non-ASCII vault names. Claude Code gets a token-free `.mcp.json` entry and Codex can read the token from `OBSIDIAN_MCP_TOKEN`, so the secret stays out of committed files. |
+| **Copying a vault no longer shares credentials** (2.10.0) | **Make this copy independent**, **Replace all token secrets** and **Reset Codex connection** each change only what their label says. |
+| **Lighter and faster** (2.8.0 to 2.11.0) | `main.js` went from 3.19 MB to 2.80 MB, settings are read once per request, and `list_tasks` pages with `offset` without reading every note. |
+| **Fixes worth knowing** | The rendered view works in hosts that block `blob:` scripts ([#538](https://github.com/istefox/obsidian-mcp-connector/issues/538), [@AS-prog](https://github.com/AS-prog)). `execute_template` renders against the note it creates ([#541](https://github.com/istefox/obsidian-mcp-connector/issues/541)). |
 
 ## What's new in 2.0.x
 
