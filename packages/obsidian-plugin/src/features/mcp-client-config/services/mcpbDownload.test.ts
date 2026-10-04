@@ -65,6 +65,14 @@ function bakedTokenId(bytes: ArrayBuffer): string {
   return match[1];
 }
 
+/** The `display_name` declared by the bundle's manifest.json. */
+function bundleDisplayName(bytes: ArrayBuffer): string {
+  const files = unzipSync(new Uint8Array(bytes));
+  const manifest = files["manifest.json"];
+  if (!manifest) throw new Error("manifest.json missing from zip");
+  return JSON.parse(strFromU8(manifest)).display_name;
+}
+
 describe("downloadMcpb", () => {
   test.each([
     ["default", '"default"'],
@@ -81,6 +89,34 @@ describe("downloadMcpb", () => {
         "obsidian-mcp-connector-mock-vault.mcpb",
       );
       expect(bakedTokenId(adapter.writes[0].bytes)).toBe(baked);
+    },
+  );
+
+  test("the configured server name becomes the bundle's display_name (#585)", async () => {
+    const data = twoTokenData();
+    (data.mcpTransport as Record<string, unknown>).serverName =
+      "  obsidian-trabajo ";
+    const { plugin, adapter } = makePlugin(data);
+
+    await downloadMcpb(plugin, "default");
+
+    expect(bundleDisplayName(adapter.writes[0].bytes)).toBe("obsidian-trabajo");
+  });
+
+  test.each([undefined, "", "   "])(
+    "an unset or blank server name (%p) keeps the per-vault display_name",
+    async (serverName) => {
+      const data = twoTokenData();
+      if (serverName !== undefined) {
+        (data.mcpTransport as Record<string, unknown>).serverName = serverName;
+      }
+      const { plugin, adapter } = makePlugin(data);
+
+      await downloadMcpb(plugin, "default");
+
+      expect(bundleDisplayName(adapter.writes[0].bytes)).toBe(
+        "Obsidian MCP Connector (Mock Vault)",
+      );
     },
   );
 

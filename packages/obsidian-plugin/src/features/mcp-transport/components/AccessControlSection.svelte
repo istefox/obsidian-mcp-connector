@@ -1149,7 +1149,9 @@
       <div class="setting-item-name">Server name</div>
       <div class="setting-item-description">
         Shown as this server's identity in MCP clients that list multiple
-        servers. Leave blank to use "Obsidian - &lt;vault name&gt;".
+        servers. Leave blank to use "Obsidian - &lt;vault name&gt;". Also the
+        name of an exported .mcpb extension, which Claude Desktop turns into
+        the tool prefix: export the bundle again after changing it.
       </div>
     </div>
     <div class="setting-item-control token-control">

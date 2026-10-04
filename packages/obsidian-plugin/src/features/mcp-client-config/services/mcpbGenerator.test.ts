@@ -137,6 +137,38 @@ describe("generateMcpb", () => {
       expect(m.author.name).toBeTruthy();
     });
 
+    test("displayName replaces display_name and leaves name per-vault", () => {
+      const m = getManifest(
+        generateMcpb({
+          version: VERSION,
+          vaultName: VAULT_NAME,
+          displayName: "  obsidian-trabajo  ",
+          vaultPath: VAULT_PATH,
+          configDir: CONFIG_DIR,
+          tokenId: TOKEN_ID,
+        }),
+      );
+      expect(m.display_name).toBe("obsidian-trabajo");
+      expect(m.name).toBe("obsidian-mcp-connector-mock-vault");
+    });
+
+    test.each([undefined, "", "   "])(
+      "a blank displayName (%p) keeps the per-vault default",
+      (displayName) => {
+        const m = getManifest(
+          generateMcpb({
+            version: VERSION,
+            vaultName: VAULT_NAME,
+            displayName,
+            vaultPath: VAULT_PATH,
+            configDir: CONFIG_DIR,
+            tokenId: TOKEN_ID,
+          }),
+        );
+        expect(m.display_name).toBe("Obsidian MCP Connector (Mock Vault)");
+      },
+    );
+
     test("icon field points to icon.png", () => {
       const m = getManifest(
         generateMcpb({
