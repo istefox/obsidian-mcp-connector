@@ -38,6 +38,8 @@ Four things follow from that shape:
 
 Five releases followed a code and protocol audit ([`docs/audit-2026-10-02.md`](docs/audit-2026-10-02.md)). The tool count went from 52 to 64, writes got safer, and search got shorter and more precise.
 
+Every release is announced on the [Obsidian forum thread](https://forum.obsidian.md/t/mcp-connector-an-mcp-server-that-runs-inside-obsidian/117465), where questions and ideas are welcome too.
+
 | Change | Why it matters |
 |---|---|
 | **12 new tools** (2.8.0, 2.9.0) | `get_workspace_state`, `list_tasks`, `set_task_status`, `get_note_properties`, `update_note_properties`, `rename_tag`, `update_canvas_node` and `delete_canvas_node` in 2.8.0. `get_file_info`, `list_attachments`, `ensure_block_id` and `search_files_by_name` in 2.9.0. |
