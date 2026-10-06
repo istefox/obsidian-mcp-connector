@@ -1,6 +1,6 @@
 # ADR-0021: Shared local discovery broker
 
-- **Status:** Accepted, amended by ADR-0027 (hosting, port, Codex-only scope)
+- **Status:** Accepted, amended by ADR-0027 (hosting, port, Codex-only scope, Codex entry names)
 - **Date:** 2026-08-22
 - **Scope:** Dynamic Streamable HTTP discovery for Codex without one process per client session
 
@@ -8,6 +8,7 @@
 > The broker now runs inside one vault's Obsidian renderer on `127.0.0.1:27200` instead of as a detached Node.js process on `127.0.0.1:27206`.
 > It needs no system Node.js installation, has no idle exit and keeps no executable in application data.
 > Every vault registers a route, not only vaults with Codex enabled, and the broker serves every HTTP client.
+> Codex entries use the same `obsidian_<vault>` key as every other client, and the Codex config installer is removed, so the naming and installer rules below no longer apply.
 > The sections below record the original decision
 
 ## Context
