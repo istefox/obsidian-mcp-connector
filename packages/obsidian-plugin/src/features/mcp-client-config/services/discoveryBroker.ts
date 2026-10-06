@@ -1,47 +1,61 @@
-import { createHash, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import fsp from "fs/promises";
 import http from "http";
-import os from "os";
 import path from "path";
-import { spawn } from "child_process";
-import { FileSystemAdapter } from "obsidian";
-import { DISCOVERY_BROKER_SOURCE } from "../assets/discoveryBrokerSource";
+import { FileSystemAdapter, Notice } from "obsidian";
+import { BIND_HOST, BROKER_PORT } from "$/features/mcp-transport/constants";
 import { readTokens } from "$/features/mcp-transport/services/tokenStore";
 import { generateToken } from "$/features/mcp-transport/services/token";
 import { logger } from "$/shared/logger";
 import { SettingsStore } from "$/shared/settingsStore";
 import type { PluginDataLike } from "$/shared/types";
-import { detectNode, getDetectedNodePath } from "./nodeDetect";
+import {
+  BROKER_NAME,
+  BROKER_PROTOCOL_VERSION,
+  HEALTH_PATH,
+  LEASE_HEADER,
+  REGISTRATION_PATH,
+  startBrokerServer,
+  type BrokerRegistration,
+  type BrokerServer,
+} from "./brokerServer";
 import { codexServerId, type CodexConnection } from "./codexConfig";
 
-export const DISCOVERY_BROKER_PORT = 27206;
-export const DISCOVERY_PROTOCOL_VERSION = 2;
 const DISCOVERY_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 30_000;
+const FAILOVER_JITTER_MIN_MS = 50;
+const FAILOVER_JITTER_MAX_MS = 250;
+// The storage key predates routes for every client. It is kept so existing
+// routes, credentials and Codex entries survive without a data migration.
 const DATA_KEY = "mcpClientConfig";
 const SETTINGS_KEY = "codexDiscovery";
-const BROKER_NAME = "obsidian-mcp-discovery-broker";
 const ROUTE_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type DiscoverySettings = {
+  /** Codex credential swap on; the route exists either way. */
   enabled: boolean;
   routeId: string;
+  /** The route credential, also the Codex bearer. */
   accessToken: string;
   tokenId: string | null;
   dataPath?: string;
   serverId?: string;
 };
 
-type DiscoveryPlugin = PluginDataLike & {
+/** A plugin whose own `data.json` location can be resolved. */
+export type LocatedPlugin = PluginDataLike & {
   app: {
     vault: {
       adapter: unknown;
       configDir: string;
-      getName(): string;
     };
   };
   manifest: { id: string };
+};
+
+type DiscoveryPlugin = LocatedPlugin & {
+  app: { vault: { getName(): string } };
 };
 
 export type DiscoveryRuntime = {
@@ -63,30 +77,33 @@ type RegistrationControl = {
 };
 
 type RuntimeOptions = {
-  rootDir?: string;
-  brokerPort?: number;
+  /** The plugin's broker host, shared by every runtime it starts. */
+  host: BrokerHost;
+  /**
+   * The vault's running MCP transport port, sent with every registration of
+   * this runtime. The broker forwards the route there. A transport restart
+   * stops the runtime and starts a new one with the new port.
+   */
+  transportPort: number;
   dataPath?: string;
-  ensureBroker?: (rootDir: string, port: number) => Promise<void>;
   connectRegistration?: (
     port: number,
     routeId: string,
-    accessToken: string,
+    credential: string,
     leaseId: string,
-    registration: Registration,
+    registration: BrokerRegistration,
   ) => Promise<RegistrationControl>;
   reconnectMs?: number;
-};
-
-type Registration = {
-  version: number;
-  routeId: string;
-  dataPath: string;
-  tokenId: string | null;
-  accessTokenHash: string;
-  leaseId: string;
+  /** Delay before re-electing after a dropped control connection. */
+  failoverDelayMs?: () => number;
+  /** Shows a message the user has to act on. Defaults to a Notice. */
+  notify?: (message: string) => void;
 };
 
 class RegistrationConflict extends Error {}
+
+/** The broker port is held by something this plugin cannot reuse. */
+class BrokerUnavailable extends Error {}
 
 /**
  * Add the vault name to old UUID-only keys while preserving other saved keys.
@@ -134,14 +151,14 @@ function parseSettings(value: unknown): DiscoverySettings | null {
 }
 
 async function readSettings(
-  plugin: DiscoveryPlugin,
+  plugin: PluginDataLike,
 ): Promise<DiscoverySettings | null> {
   const slice = await new SettingsStore(plugin).readSlice(DATA_KEY);
   return parseSettings(isRecord(slice) ? slice[SETTINGS_KEY] : undefined);
 }
 
 async function updateSettings(
-  plugin: DiscoveryPlugin,
+  plugin: PluginDataLike,
   recipe: (current: DiscoverySettings | null) => DiscoverySettings,
 ): Promise<DiscoverySettings> {
   let result!: DiscoverySettings;
@@ -153,8 +170,21 @@ async function updateSettings(
   return result;
 }
 
+/** A new route identity with the Codex swap off and its entry name ready. */
+function mintSettings(vaultName: string, dataPath: string): DiscoverySettings {
+  const routeId = randomUUID();
+  return {
+    enabled: false,
+    routeId,
+    accessToken: generateToken(),
+    tokenId: null,
+    serverId: codexServerId(vaultName, routeId),
+    dataPath,
+  };
+}
+
 export async function resolveCodexDiscoveryOwner(
-  plugin: DiscoveryPlugin,
+  plugin: PluginDataLike,
 ): Promise<string | null> {
   const settings = await readSettings(plugin);
   if (!settings?.enabled || settings.tokenId === null) return null;
@@ -173,21 +203,24 @@ export async function getCodexConnection(
     vaultName: plugin.app.vault.getName(),
     routeId: settings.routeId,
     accessToken: settings.accessToken,
-    brokerPort: DISCOVERY_BROKER_PORT,
+    brokerPort: BROKER_PORT,
     serverId: settings.serverId,
   };
 }
 
+/**
+ * Let the Codex credential stand in for `tokenId` on this vault's route.
+ * The broker reads this per request, so no connection restarts.
+ */
 export async function enableCodexDiscovery(
   plugin: DiscoveryPlugin,
   tokenId: string,
-  opts?: RuntimeOptions,
-): Promise<DiscoveryRuntime> {
+): Promise<void> {
   const tokens = await readTokens(plugin);
   if (!tokens.some((token) => token.id === tokenId)) {
     throw new Error(`Token '${tokenId}' is no longer configured.`);
   }
-  const settings = await updateSettings(plugin, (current) => {
+  await updateSettings(plugin, (current) => {
     const routeId = current?.routeId ?? randomUUID();
     return {
       ...current,
@@ -200,25 +233,12 @@ export async function enableCodexDiscovery(
         : codexServerId(plugin.app.vault.getName(), routeId),
     };
   });
-  return startRuntime(plugin, settings, opts);
 }
 
-export async function startCodexDiscovery(
-  plugin: DiscoveryPlugin,
-  opts?: RuntimeOptions,
-): Promise<DiscoveryRuntime | null> {
-  const settings = await readSettings(plugin);
-  if (!settings?.enabled || settings.tokenId === null) return null;
-  const tokens = await readTokens(plugin);
-  if (!tokens.some((token) => token.id === settings.tokenId)) return null;
-  return startRuntime(plugin, settings, opts);
-}
-
+/** Turn off only the Codex credential swap. The route stays for every other client */
 export async function disableCodexDiscovery(
-  plugin: DiscoveryPlugin,
-  runtime?: DiscoveryRuntime,
+  plugin: PluginDataLike,
 ): Promise<void> {
-  if (runtime) await runtime.stop();
   await updateSettings(plugin, (current) => ({
     ...current,
     enabled: false,
@@ -228,16 +248,35 @@ export async function disableCodexDiscovery(
   }));
 }
 
-/** Rotate only this vault's broker identity; existing client configuration must be replaced */
+/**
+ * Replace only the Codex credential. The route, its address and every other
+ * client config stay, and the installed Codex entry needs the new value
+ */
+export async function resetCodexCredential(
+  plugin: PluginDataLike,
+): Promise<void> {
+  await updateSettings(plugin, (current) => {
+    if (!current) {
+      throw new Error(
+        "This vault has no broker route yet. Retry the connection first",
+      );
+    }
+    return { ...current, accessToken: generateToken() };
+  });
+}
+
+/**
+ * Rotate this vault's whole broker identity in its saved settings: route,
+ * credential and Codex entry name. Every client config that uses the
+ * broker must be replaced. Run with the route stopped, see replaceRoute.
+ */
 export async function resetDiscoveryIdentity(
   plugin: DiscoveryPlugin,
-  runtime?: DiscoveryRuntime,
-  opts?: RuntimeOptions,
-): Promise<DiscoveryRuntime | null> {
-  await runtime?.stop();
+  opts?: { dataPath?: string },
+): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
   const routeId = randomUUID();
-  const settings = await updateSettings(plugin, (current) => ({
+  await updateSettings(plugin, (current) => ({
     enabled: current?.enabled ?? false,
     tokenId: current?.tokenId ?? null,
     routeId,
@@ -245,33 +284,47 @@ export async function resetDiscoveryIdentity(
     serverId: codexServerId(plugin.app.vault.getName(), routeId),
     dataPath,
   }));
-  return settings.enabled && settings.tokenId !== null
-    ? startRuntime(plugin, settings, opts)
-    : null;
 }
 
-/** Explicitly accept a vault move without rotating identity or editing client configuration */
+/**
+ * Explicitly accept a vault move in the saved settings without rotating
+ * identity or editing client configuration. Run with the route stopped,
+ * see replaceRoute.
+ */
 export async function acceptDiscoveryMove(
   plugin: DiscoveryPlugin,
-  runtime?: DiscoveryRuntime,
-  opts?: RuntimeOptions,
-): Promise<DiscoveryRuntime | null> {
-  await runtime?.stop();
-  const current = await readSettings(plugin);
-  if (!current) return null;
+  opts?: { dataPath?: string },
+): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
-  const settings = await updateSettings(plugin, (latest) => ({
-    ...(latest ?? current),
-    dataPath,
-  }));
-  return settings.enabled && settings.tokenId !== null
-    ? startRuntime(plugin, settings, opts)
-    : null;
+  await updateSettings(plugin, (latest) =>
+    latest
+      ? { ...latest, dataPath }
+      : mintSettings(plugin.app.vault.getName(), dataPath),
+  );
+}
+
+/**
+ * True while the saved route belongs to another location: The vault was
+ * moved or copied, and neither a confirmed move nor a new identity has
+ * resolved it. Read from the saved settings, so it holds whether or not a
+ * route runs. Fails closed when the location cannot be read.
+ */
+export async function isLocationUnresolved(
+  plugin: LocatedPlugin,
+  opts?: { dataPath?: string },
+): Promise<boolean> {
+  const saved = (await readSettings(plugin))?.dataPath;
+  if (saved === undefined) return false;
+  try {
+    return saved !== (await canonicalDataPath(plugin, opts));
+  } catch {
+    return true;
+  }
 }
 
 async function canonicalDataPath(
-  plugin: DiscoveryPlugin,
-  opts?: RuntimeOptions,
+  plugin: LocatedPlugin,
+  opts?: { dataPath?: string },
 ): Promise<string> {
   const file = opts?.dataPath ?? resolveDataPath(plugin);
   const resolved = path.join(
@@ -281,26 +334,12 @@ async function canonicalDataPath(
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function brokerDirectory(): string {
-  const base =
-    process.platform === "win32"
-      ? (process.env.LOCALAPPDATA ??
-        path.join(os.homedir(), "AppData", "Local"))
-      : process.platform === "darwin"
-        ? path.join(os.homedir(), "Library", "Application Support")
-        : (process.env.XDG_DATA_HOME ??
-          path.join(os.homedir(), ".local", "share"));
-  return path.join(base, "obsidian-mcp-connector", "broker-v2");
-}
-
 export async function releaseCodexDiscoveryOwner(
-  plugin: DiscoveryPlugin,
+  plugin: PluginDataLike,
   tokenId: string,
-  runtime?: DiscoveryRuntime,
 ): Promise<boolean> {
   const current = await readSettings(plugin);
   if (!current || current.tokenId !== tokenId) return false;
-  if (runtime) await runtime.stop();
   await updateSettings(plugin, () => ({
     ...current,
     enabled: false,
@@ -309,49 +348,87 @@ export async function releaseCodexDiscoveryOwner(
   return true;
 }
 
+/**
+ * Register this vault's route with the shared broker and keep it
+ * registered. Every vault has a route, minted on first start, whether or
+ * not Codex is enabled.
+ */
+export async function startDiscovery(
+  plugin: DiscoveryPlugin,
+  opts: RuntimeOptions,
+): Promise<DiscoveryRuntime> {
+  const dataPath = await canonicalDataPath(plugin, opts);
+  const settings =
+    (await readSettings(plugin)) ??
+    (await updateSettings(
+      plugin,
+      (current) =>
+        current ?? mintSettings(plugin.app.vault.getName(), dataPath),
+    ));
+  return startRuntime(plugin, settings, dataPath, opts);
+}
+
+function failoverJitter(): number {
+  return (
+    FAILOVER_JITTER_MIN_MS +
+    Math.floor(
+      Math.random() * (FAILOVER_JITTER_MAX_MS - FAILOVER_JITTER_MIN_MS + 1),
+    )
+  );
+}
+
 async function startRuntime(
   plugin: DiscoveryPlugin,
   settings: DiscoverySettings,
-  opts?: RuntimeOptions,
+  dataPath: string,
+  opts: RuntimeOptions,
 ): Promise<DiscoveryRuntime> {
-  const rootDir = opts?.rootDir ?? brokerDirectory();
-  const dataPath = await canonicalDataPath(plugin, opts);
-  const brokerPort = opts?.brokerPort ?? DISCOVERY_BROKER_PORT;
+  const { host } = opts;
+  const routeId = settings.routeId;
   const leaseId = randomUUID();
-  const ensureBrokerRunning = opts?.ensureBroker ?? ensureBroker;
-  const openRegistration = opts?.connectRegistration ?? connectRegistration;
-  const reconnectMs = opts?.reconnectMs ?? DISCOVERY_RECONNECT_MS;
+  const openRegistration = opts.connectRegistration ?? connectRegistration;
+  const reconnectMs = opts.reconnectMs ?? DISCOVERY_RECONNECT_MS;
+  const failoverDelay = opts.failoverDelayMs ?? failoverJitter;
+  const notify =
+    opts.notify ??
+    ((message: string) => new Notice(`MCP Connector: ${message}`));
   let stopped = false;
   let control: RegistrationControl | null = null;
   let recovery: Promise<void> | null = null;
   let cancelReconnectDelay: (() => void) | null = null;
   let status: DiscoveryStatus = { state: "connecting" };
-  let currentDelay = reconnectMs;
+  let backoff = reconnectMs;
   let lastLoggedMessage: string | null = null;
+  let notified = false;
   const listeners = new Set<(status: DiscoveryStatus) => void>();
   const setStatus = (next: DiscoveryStatus) => {
     status = next;
     for (const listener of listeners) listener(next);
   };
 
-  const registration: Registration = {
-    version: DISCOVERY_PROTOCOL_VERSION,
-    routeId: settings.routeId,
+  const registration: BrokerRegistration = {
+    version: BROKER_PROTOCOL_VERSION,
+    routeId,
     dataPath,
-    tokenId: settings.tokenId,
-    accessTokenHash: createHash("sha256")
-      .update(settings.accessToken, "utf8")
-      .digest("hex"),
     leaseId,
+    port: opts.transportPort,
   };
 
   const establishControl = async () => {
-    await ensureBrokerRunning(rootDir, brokerPort);
+    await host.ensure();
     if (stopped) return;
+    // Read on every attempt: a Codex credential reset rotates the route
+    // credential without restarting this runtime.
+    const current = await readSettings(plugin);
+    if (current?.routeId !== routeId) {
+      throw new Error(
+        "This vault's broker route changed. Retry the connection",
+      );
+    }
     const next = await openRegistration(
-      brokerPort,
-      settings.routeId,
-      settings.accessToken,
+      host.port,
+      routeId,
+      current.accessToken,
       leaseId,
       registration,
     );
@@ -361,40 +438,56 @@ async function startRuntime(
       return;
     }
     control = next;
-    currentDelay = reconnectMs;
+    backoff = reconnectMs;
     lastLoggedMessage = null;
     setStatus({ state: "connected" });
     void next.closed.then(() => {
       if (control === next) control = null;
-      if (!stopped) scheduleRecovery();
+      // The host may have gone: re-elect promptly, with jitter so the
+      // remaining vaults do not all race for the port at once.
+      if (!stopped) scheduleRecovery(failoverDelay());
     });
   };
 
-  async function recover(): Promise<void> {
+  function nextDelay(): number {
+    const delay = backoff;
+    backoff = Math.min(backoff * 2, MAX_RECONNECT_MS);
+    return delay;
+  }
+
+  function recordFailure(error: unknown): void {
+    if (stopped) return;
+    const message =
+      error instanceof Error ? error.message : "Connection failed";
+    if (error instanceof RegistrationConflict) {
+      setStatus({ state: "conflict", message });
+      return;
+    }
+    setStatus({ state: "retrying", message });
+    if (error instanceof BrokerUnavailable && !notified) {
+      notified = true;
+      notify(message);
+    }
+    // Log on every distinct failure reason, not just the first, so a
+    // changing cause during a long outage is still visible in the logs.
+    if (message !== lastLoggedMessage) {
+      logger.warn("Broker connection recovery failed", { error: message });
+      lastLoggedMessage = message;
+    }
+  }
+
+  async function recover(firstDelay: number): Promise<void> {
+    let delay = firstDelay;
     while (!stopped && control === null) {
+      await waitToReconnect(delay);
+      if (stopped) return;
       try {
         await establishControl();
         return;
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Connection failed";
-        if (error instanceof RegistrationConflict) {
-          setStatus({ state: "conflict", message });
-          return;
-        }
-        setStatus({ state: "retrying", message });
-        // Log on every distinct failure reason, not just the first, so a
-        // changing cause during a long outage is still visible in the logs.
-        if (message !== lastLoggedMessage) {
-          logger.warn("Codex discovery connection recovery failed", {
-            error: message,
-          });
-          lastLoggedMessage = message;
-        }
-        if (!stopped) {
-          await waitToReconnect(currentDelay);
-          currentDelay = Math.min(currentDelay * 2, MAX_RECONNECT_MS);
-        }
+        recordFailure(error);
+        if (status.state === "conflict") return;
+        delay = nextDelay();
       }
     }
   }
@@ -413,18 +506,20 @@ async function startRuntime(
     });
   }
 
-  function scheduleRecovery(): void {
+  function scheduleRecovery(firstDelay: number): void {
     if (stopped || recovery !== null) return;
     setStatus({ state: "retrying" });
-    recovery = recover().finally(() => {
+    recovery = recover(firstDelay).finally(() => {
       recovery = null;
+      // Only a control that dropped before this recovery settled gets
+      // here, so it fails over like any other dropped control.
       if (!stopped && control === null && status.state !== "conflict")
-        scheduleRecovery();
+        scheduleRecovery(failoverDelay());
     });
   }
 
   const runtime: DiscoveryRuntime = {
-    routeId: settings.routeId,
+    routeId,
     get status() {
       return status;
     },
@@ -435,6 +530,7 @@ async function startRuntime(
         listeners.delete(listener);
       };
     },
+    /** Closes the control connection and cancels any retry before its first await. */
     async stop() {
       if (stopped) return;
       stopped = true;
@@ -449,17 +545,17 @@ async function startRuntime(
     },
   };
   if (settings.dataPath && settings.dataPath !== dataPath) {
-    setStatus({
-      state: "conflict",
-      locationChanged: true,
-      message:
-        "Vault location changed. Confirm a move or create a new identity for this copy",
-    });
+    const message =
+      "Vault location changed. Confirm a move or make this copy independent";
+    setStatus({ state: "conflict", locationChanged: true, message });
+    notify(
+      `${message} in Access Control. Until then, client configs that use the shared broker cannot reach this vault`,
+    );
     return runtime;
   }
   const serverId = storedCodexServerId(plugin.app.vault.getName(), settings);
   if (!settings.dataPath || settings.serverId !== serverId) {
-    settings = await updateSettings(plugin, (current) => ({
+    await updateSettings(plugin, (current) => ({
       ...(current ?? settings),
       dataPath,
       serverId: storedCodexServerId(
@@ -471,9 +567,8 @@ async function startRuntime(
   try {
     await establishControl();
   } catch (error) {
-    if (error instanceof RegistrationConflict)
-      setStatus({ state: "conflict", message: error.message });
-    else scheduleRecovery();
+    recordFailure(error);
+    if (status.state !== "conflict") scheduleRecovery(nextDelay());
   }
   return runtime;
 }
@@ -481,9 +576,9 @@ async function startRuntime(
 async function connectRegistration(
   port: number,
   routeId: string,
-  accessToken: string,
+  credential: string,
   leaseId: string,
-  registration: Registration,
+  registration: BrokerRegistration,
 ): Promise<RegistrationControl> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -493,15 +588,15 @@ async function connectRegistration(
     }, 2_000);
     const request = http.request(
       {
-        host: "127.0.0.1",
+        host: BIND_HOST,
         port,
-        path: `/_obsidian_mcp_broker/register/${routeId}`,
+        path: `${REGISTRATION_PATH}/${routeId}`,
         method: "POST",
         headers: {
-          authorization: `Bearer ${accessToken}`,
+          authorization: `Bearer ${credential}`,
           "content-type": "application/json",
           "content-length": String(Buffer.byteLength(body)),
-          "x-obsidian-mcp-lease-id": leaseId,
+          [LEASE_HEADER]: leaseId,
         },
       },
       (response) => {
@@ -511,10 +606,10 @@ async function connectRegistration(
           reject(
             response.statusCode === 409
               ? new RegistrationConflict(
-                  "This Codex route is already in use by another open vault. In the copied vault, use Make this copy independent",
+                  "This vault's broker route is already in use by another open vault. In the copied vault, use Make this copy independent",
                 )
               : new Error(
-                  `Discovery broker rejected registration with HTTP ${response.statusCode ?? 0}`,
+                  `The shared broker rejected registration with HTTP ${response.statusCode ?? 0}`,
                 ),
           );
           return;
@@ -550,10 +645,10 @@ async function connectRegistration(
   });
 }
 
-function resolveDataPath(plugin: DiscoveryPlugin): string {
+function resolveDataPath(plugin: LocatedPlugin): string {
   const adapter = plugin.app.vault.adapter;
   if (!(adapter instanceof FileSystemAdapter)) {
-    throw new Error("Codex discovery requires a desktop vault.");
+    throw new Error("The shared broker requires a desktop vault.");
   }
   return path.join(
     adapter.getBasePath(),
@@ -564,29 +659,138 @@ function resolveDataPath(plugin: DiscoveryPlugin): string {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Broker hosting
+// ---------------------------------------------------------------------------
+
+export type BrokerHost = {
+  readonly port: number;
+  /** True while this vault's renderer serves the broker. */
+  readonly hosting: boolean;
+  /**
+   * Make sure a compatible broker answers on `port`: reuse a healthy one,
+   * or host it when the port is free. Concurrent calls share one attempt.
+   */
+  ensure(): Promise<void>;
+  /**
+   * Stop hosting and cancel any election in progress. The listener starts
+   * closing before this returns; the promise settles once it is gone.
+   */
+  close(): Promise<void>;
+};
+
 type ProbeResult = "healthy" | "free" | "occupied" | "incompatible";
 
-async function probeBroker(port: number): Promise<ProbeResult> {
+/**
+ * One per plugin instance, so restarting a vault's route (retry, move,
+ * reset) never takes the broker away from the other vaults. `pluginId` is
+ * the manifest ID, which every registered `data.json` path must name.
+ */
+export function createBrokerHost(opts: {
+  pluginId: string;
+  port?: number;
+}): BrokerHost {
+  const port = opts.port ?? BROKER_PORT;
+  let hosted: BrokerServer | null = null;
+  let election: Promise<void> | null = null;
+  let closed = false;
+  const cancelProbes = new Set<() => void>();
+  const closedError = () => new Error("The broker host was closed");
+
+  async function elect(): Promise<void> {
+    let result = await probeBroker(port, cancelProbes);
+    if (closed) throw closedError();
+    if (result === "free") {
+      try {
+        const server = await startBrokerServer({
+          port,
+          pluginId: opts.pluginId,
+        });
+        if (closed) {
+          await server.close();
+          throw closedError();
+        }
+        hosted = server;
+        void server.closed.then(() => {
+          if (hosted === server) hosted = null;
+        });
+        logger.info("Hosting the shared MCP broker", { port });
+        return;
+      } catch (error) {
+        if (closed) throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "EADDRINUSE") {
+          throw new BrokerUnavailable(
+            `The shared broker could not listen on port ${port} (${code ?? String(error)}). Client configs that use it cannot connect. Direct vault ports keep working`,
+          );
+        }
+        // Another vault bound the port between the probe and this listen
+        result = await probeBroker(port, cancelProbes);
+        if (closed) throw closedError();
+      }
+    }
+    if (result === "healthy") return;
+    throw new BrokerUnavailable(
+      result === "incompatible"
+        ? "Another open vault runs the shared broker with a different MCP Connector version. Update the plugin in every open vault. Direct vault ports keep working"
+        : `Port ${port} is used by another program or by a vault server, such as a vault running an older MCP Connector version or a vault whose fixed port is ${port}. Client configs that use the shared broker cannot connect until it is free: Update or close that vault, or change its fixed port. Direct vault ports keep working`,
+    );
+  }
+
+  return {
+    port,
+    get hosting() {
+      return hosted !== null;
+    },
+    ensure() {
+      if (closed) return Promise.reject(closedError());
+      if (hosted) return Promise.resolve();
+      election ??= elect().finally(() => {
+        election = null;
+      });
+      return election;
+    },
+    close() {
+      closed = true;
+      for (const cancel of [...cancelProbes]) cancel();
+      const server = hosted;
+      hosted = null;
+      const pending = election;
+      return Promise.all([
+        server?.close(),
+        // A listen still in flight closes its server before settling
+        pending?.catch(() => undefined),
+      ]).then(() => undefined);
+    },
+  };
+}
+
+function probeBroker(
+  port: number,
+  cancels: Set<() => void>,
+): Promise<ProbeResult> {
   return new Promise((resolve) => {
+    let settled = false;
     const finish = (result: ProbeResult) => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(deadline);
+      cancels.delete(cancel);
       resolve(result);
     };
-    const deadline = window.setTimeout(() => {
-      req.destroy();
-      finish("occupied");
-    }, 750);
     const req = http.get(
       {
-        host: "127.0.0.1",
+        host: BIND_HOST,
         port,
-        path: "/_obsidian_mcp_broker/health",
+        path: HEALTH_PATH,
         timeout: 400,
+        // A pooled socket would outlive the probe, and the broker it reached
+        headers: { connection: "close" },
       },
       (res) => {
         let body = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
+        res.on("data", (chunk: string) => {
           body += chunk;
           if (body.length > 4096) {
             res.destroy();
@@ -602,7 +806,7 @@ async function probeBroker(port: number): Promise<ProbeResult> {
               res.statusCode === 200 &&
                 isRecord(value) &&
                 value.name === BROKER_NAME &&
-                value.version === DISCOVERY_PROTOCOL_VERSION
+                value.version === BROKER_PROTOCOL_VERSION
                 ? "healthy"
                 : isRecord(value) && value.name === BROKER_NAME
                   ? "incompatible"
@@ -614,97 +818,15 @@ async function probeBroker(port: number): Promise<ProbeResult> {
         });
       },
     );
-    req.on("timeout", () => {
+    const cancel = () => {
       req.destroy();
       finish("occupied");
-    });
+    };
+    const deadline = window.setTimeout(cancel, 750);
+    cancels.add(cancel);
+    req.on("timeout", cancel);
     req.on("error", (error: NodeJS.ErrnoException) => {
       finish(error.code === "ECONNREFUSED" ? "free" : "occupied");
     });
   });
-}
-
-async function ensureBroker(rootDir: string, port: number): Promise<void> {
-  const initial = await probeBroker(port);
-  if (initial === "healthy") return;
-  if (initial === "incompatible") {
-    throw new Error(
-      "An older broker is running. Update the plugin in the open vaults, close their connections, then retry. No process was replaced",
-    );
-  }
-  if (initial === "occupied") {
-    throw new Error(`Port ${port} is in use by another process.`);
-  }
-
-  const node = await detectNode();
-  const nodePath = getDetectedNodePath();
-  if (!node.found || nodePath === null) {
-    throw new Error("Node.js is required for the shared discovery broker.");
-  }
-  await ensurePrivateDirectory(rootDir);
-  const scriptPath = path.join(rootDir, "discoveryBroker.js");
-  await writeBrokerSource(scriptPath);
-  const child = spawn(
-    nodePath,
-    [scriptPath, "--root", rootDir, "--port", String(port)],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    },
-  );
-  // A holder object, not a bare `let`: TypeScript narrows a `let` assigned
-  // only inside a callback to its initial `null`, which would type the
-  // `throw` below as `never`.
-  const spawnState: { error: Error | null } = { error: null };
-  child.on("error", (error) => {
-    spawnState.error = error;
-  });
-  child.unref();
-
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => window.setTimeout(resolve, 100));
-    const failure = spawnState.error;
-    if (failure) throw failure;
-    const result = await probeBroker(port);
-    if (result === "healthy") return;
-    if (result === "occupied") break;
-  }
-  throw new Error(`The discovery broker did not start on port ${port}.`);
-}
-
-async function writeBrokerSource(scriptPath: string): Promise<void> {
-  try {
-    if ((await fsp.readFile(scriptPath, "utf8")) === DISCOVERY_BROKER_SOURCE)
-      return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  await ensurePrivateDirectory(path.dirname(scriptPath));
-  const tempPath = `${scriptPath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await fsp.writeFile(tempPath, DISCOVERY_BROKER_SOURCE, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await fsp.rename(tempPath, scriptPath);
-  } finally {
-    await fsp.rm(tempPath, { force: true });
-  }
-}
-
-async function ensurePrivateDirectory(directoryPath: string): Promise<void> {
-  await fsp.mkdir(directoryPath, { recursive: true, mode: 0o700 });
-  const stat = await fsp.lstat(directoryPath);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) {
-    throw new Error(
-      `Discovery path is not a private directory: ${directoryPath}`,
-    );
-  }
-  try {
-    await fsp.chmod(directoryPath, 0o700);
-  } catch (error) {
-    if (process.platform !== "win32") throw error;
-    // Windows enforces access through ACLs rather than POSIX mode bits.
-  }
 }

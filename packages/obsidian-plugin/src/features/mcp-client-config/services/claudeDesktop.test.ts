@@ -35,6 +35,10 @@ import {
  *  7. Removal helper drops both legacy and new keys cleanly.
  */
 
+/** The writer takes the resolver's URL verbatim (see endpoint.ts). */
+const ROUTE_URL =
+  "http://127.0.0.1:27200/v1/123e4567-e89b-42d3-a456-426614174000/mcp";
+
 describe("updateClaudeDesktopConfig", () => {
   let tmpRoot: string;
   let configPath: string;
@@ -54,7 +58,11 @@ describe("updateClaudeDesktopConfig", () => {
   });
 
   test("creates a new config file when none exists", async () => {
-    await updateClaudeDesktopConfig({ port: 27200, token: "abc", configPath });
+    await updateClaudeDesktopConfig({
+      url: ROUTE_URL,
+      token: "abc",
+      configPath,
+    });
 
     const content = await fsp.readFile(configPath, "utf8");
     const parsed = JSON.parse(content);
@@ -64,7 +72,7 @@ describe("updateClaudeDesktopConfig", () => {
       args: [
         "-y",
         "mcp-remote",
-        "http://127.0.0.1:27200/mcp",
+        ROUTE_URL,
         "--header",
         "Authorization: Bearer abc",
       ],
@@ -72,7 +80,11 @@ describe("updateClaudeDesktopConfig", () => {
   });
 
   test("does NOT write a backup when the config did not exist", async () => {
-    await updateClaudeDesktopConfig({ port: 27200, token: "abc", configPath });
+    await updateClaudeDesktopConfig({
+      url: ROUTE_URL,
+      token: "abc",
+      configPath,
+    });
     const backupExists = await fsp
       .stat(`${configPath}.backup`)
       .then(() => true)
@@ -91,7 +103,11 @@ describe("updateClaudeDesktopConfig", () => {
       }),
     );
 
-    await updateClaudeDesktopConfig({ port: 27200, token: "tok", configPath });
+    await updateClaudeDesktopConfig({
+      url: ROUTE_URL,
+      token: "tok",
+      configPath,
+    });
 
     const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
     expect(parsed.mcpServers["other-mcp"]).toEqual({
@@ -119,7 +135,7 @@ describe("updateClaudeDesktopConfig", () => {
       }),
     );
 
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
 
     const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
     expect(parsed.mcpServers[LEGACY_PLUGIN_ID]).toBeUndefined();
@@ -141,7 +157,7 @@ describe("updateClaudeDesktopConfig", () => {
 
     await updateClaudeDesktopConfig({
       pluginId: "obsidian_my_vault",
-      port: 27200,
+      url: ROUTE_URL,
       token: "t",
       configPath,
     });
@@ -149,9 +165,7 @@ describe("updateClaudeDesktopConfig", () => {
     const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
     expect(parsed.mcpServers[LEGACY_PLUGIN_ID]).toBeUndefined();
     expect(parsed.mcpServers[FORK_PLUGIN_ID]).toBeUndefined();
-    expect(parsed.mcpServers.obsidian_my_vault.args).toContain(
-      "http://127.0.0.1:27200/mcp",
-    );
+    expect(parsed.mcpServers.obsidian_my_vault.args).toContain(ROUTE_URL);
     expect(parsed.mcpServers.obsidian_othervault).toEqual({
       command: "npx",
       args: ["other"],
@@ -169,7 +183,7 @@ describe("updateClaudeDesktopConfig", () => {
     );
 
     await updateClaudeDesktopConfig({
-      port: 27200,
+      url: ROUTE_URL,
       token: "t",
       configPath,
       removeLegacyKey: false,
@@ -188,7 +202,7 @@ describe("updateClaudeDesktopConfig", () => {
     });
     await fsp.writeFile(configPath, original);
 
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
 
     const backupContent = await fsp.readFile(`${configPath}.backup`, "utf8");
     expect(backupContent).toBe(original);
@@ -198,7 +212,7 @@ describe("updateClaudeDesktopConfig", () => {
     await fsp.writeFile(configPath, '{"mcpServers":{}}');
 
     await updateClaudeDesktopConfig({
-      port: 27200,
+      url: ROUTE_URL,
       token: "t",
       configPath,
       backupBeforeWrite: false,
@@ -212,10 +226,10 @@ describe("updateClaudeDesktopConfig", () => {
   });
 
   test("idempotent: running twice produces identical content (modulo unchanged file)", async () => {
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
     const first = await fsp.readFile(configPath, "utf8");
 
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
     const second = await fsp.readFile(configPath, "utf8");
 
     expect(second).toBe(first);
@@ -226,7 +240,11 @@ describe("updateClaudeDesktopConfig", () => {
 
     let threw = false;
     try {
-      await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+      await updateClaudeDesktopConfig({
+        url: ROUTE_URL,
+        token: "t",
+        configPath,
+      });
     } catch (e) {
       threw = true;
       expect((e as Error).message).toMatch(/malformed/i);
@@ -240,7 +258,7 @@ describe("updateClaudeDesktopConfig", () => {
 
   test("custom pluginId override is honored", async () => {
     await updateClaudeDesktopConfig({
-      port: 27200,
+      url: ROUTE_URL,
       token: "t",
       pluginId: "custom-plugin-id",
       configPath,
@@ -253,7 +271,7 @@ describe("updateClaudeDesktopConfig", () => {
 
   test("config file with empty mcpServers gets the new entry added", async () => {
     await fsp.writeFile(configPath, JSON.stringify({ mcpServers: {} }));
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
 
     const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
     expect(parsed.mcpServers[FORK_PLUGIN_ID]).toBeDefined();
@@ -266,7 +284,7 @@ describe("updateClaudeDesktopConfig", () => {
       JSON.stringify({ globalShortcut: "Ctrl+Shift+M", theme: "dark" }),
     );
 
-    await updateClaudeDesktopConfig({ port: 27200, token: "t", configPath });
+    await updateClaudeDesktopConfig({ url: ROUTE_URL, token: "t", configPath });
 
     const parsed = JSON.parse(await fsp.readFile(configPath, "utf8"));
     expect(parsed.globalShortcut).toBe("Ctrl+Shift+M");

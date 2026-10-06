@@ -5,6 +5,17 @@ import { BIND_HOST, PORT_RANGE } from "../constants";
 import { PortNumber } from "../types";
 
 /**
+ * The user's fixed port when `configured` is a valid one, else undefined
+ * for the automatic range. Pure and silent: the client endpoint resolver
+ * calls it on every copy, and resolvePorts owns the warning.
+ */
+export function fixedPort(configured: unknown): number | undefined {
+  if (configured === undefined) return undefined;
+  const validated = PortNumber(configured);
+  return validated instanceof type.errors ? undefined : validated;
+}
+
+/**
  * Resolve the port list to try when starting the HTTP server: a single
  * user-configured port when valid, else the default range. A configured
  * port is deliberately never combined with the range — falling back to
@@ -13,18 +24,29 @@ import { PortNumber } from "../types";
  * Invalid/corrupt persisted data (not a valid port at all) is a
  * different failure mode and safely falls back to the range, logging a
  * warning, same as SettingsStore.loadSlice does for other settings.
+ *
+ * The range starts at the vault's last bound port (`livePort`) when that
+ * port is inside it, then tries the rest in order. Open order then stops
+ * deciding which vault lands where, so a vault usually keeps its port
+ * across restarts. Nothing reserves it: another vault may still take it
+ * first, which is why client configs go through the broker (ADR-0027).
  */
-export function resolvePorts(configured: unknown): readonly number[] {
-  if (configured === undefined) return PORT_RANGE;
-  const validated = PortNumber(configured);
-  if (validated instanceof type.errors) {
+export function resolvePorts(
+  configured: unknown,
+  livePort?: unknown,
+): readonly number[] {
+  if (configured !== undefined) {
+    const validated = PortNumber(configured);
+    if (!(validated instanceof type.errors)) return [validated];
     logger.warn("configured mcp port is invalid, using default range", {
       configured,
       summary: validated.summary,
     });
-    return PORT_RANGE;
   }
-  return [validated];
+  const preferred = PORT_RANGE.find((port) => port === livePort);
+  return preferred === undefined
+    ? PORT_RANGE
+    : [preferred, ...PORT_RANGE.filter((port) => port !== preferred)];
 }
 
 /**

@@ -145,7 +145,7 @@ jobs:
       - name: Tests — MCP App in browser under restrictive CSP
         run: cd packages/obsidian-plugin && bun run test:mcp-app-browser
 
-  # The discovery broker owns files, sockets, and a detached Node.js process.
+  # The shared broker owns sockets, an election and per-request data reads.
   # Run its focused contract on every supported desktop operating system.
   discovery-broker-tests:
     strategy:
@@ -173,4 +173,4 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Tests — discovery broker
-        run: bun test packages/obsidian-plugin/scripts/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexConfig.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/nodeDetect.test.ts
+        run: bun test packages/obsidian-plugin/src/features/mcp-client-config/services/brokerServer.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexConfig.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/endpoint.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/routeLifecycle.test.ts

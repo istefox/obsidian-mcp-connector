@@ -3,11 +3,14 @@ import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import { logger } from "$/shared/logger";
+import { brokerRouteUrl } from "./endpoint";
 import { vaultNameWords } from "./generators";
 
 const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 50;
 const LOCK_STALE_MS = 30_000;
+// Where the detached broker listened before it moved into Obsidian (ADR-0027)
+const LEGACY_BROKER_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost):27206\//i;
 
 export type CodexConnection = {
   vaultName: string;
@@ -37,6 +40,12 @@ export type CodexInstallPreview = {
   previousServerId?: string;
   snippet: string;
   revision: string;
+  /**
+   * Set by the preview when this vault's existing entry still points at
+   * the old detached broker port. Installing replaces it; nothing else
+   * writes the file.
+   */
+  legacyBroker?: boolean;
 };
 
 export type CodexInstallResult = CodexInstallPreview & {
@@ -73,7 +82,7 @@ export function codexServerId(vaultName: string, routeId?: string): string {
 
 export function codexConfigSnippet(input: CodexConnection): string {
   const serverId = connectionServerId(input);
-  const url = `http://127.0.0.1:${input.brokerPort}/v1/${input.routeId}/mcp`;
+  const url = brokerRouteUrl(input.routeId, input.brokerPort);
   const envVar = input.bearerTokenEnvVar?.trim();
   if (envVar !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envVar))
     throw new Error("Invalid environment variable name");
@@ -157,7 +166,35 @@ export async function inspectCodexInstall(
       : {}),
     snippet,
     revision: configRevision(previous),
+    legacyBroker: pointsAtLegacyBroker(raw, [
+      connectionServerId(input),
+      `obsidian_${input.routeId.replace(/-/g, "")}`,
+    ]),
   };
+}
+
+/**
+ * Whether one of this vault's entries, under its current or UUID-only
+ * name, still sends Codex to the old detached broker port. A rename keeps
+ * that URL, so a migrated entry stays flagged until it is replaced.
+ */
+function pointsAtLegacyBroker(raw: string, serverIds: string[]): boolean {
+  const { headers } = scanTomlStructure(raw);
+  return headers.some((header, index) => {
+    if (
+      header.array ||
+      header.parts.length !== 2 ||
+      header.parts[0] !== "mcp_servers" ||
+      !serverIds.includes(header.parts[1])
+    )
+      return false;
+    const table = raw.slice(
+      header.start,
+      headers[index + 1]?.start ?? raw.length,
+    );
+    const url = /^\s*url\s*=\s*(["'])(.*?)\1/m.exec(table)?.[2];
+    return url !== undefined && LEGACY_BROKER_URL.test(url);
+  });
 }
 
 /** Perform the explicit, one-time install after the UI has shown a preview. */

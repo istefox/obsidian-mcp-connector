@@ -15,7 +15,7 @@ const connection: CodexConnection = {
   vaultName: "Neon Hades-2",
   routeId: "123e4567-e89b-42d3-a456-426614174000",
   accessToken: "stable-broker-token",
-  brokerPort: 27206,
+  brokerPort: 27200,
   serverId: "obsidian_neonhades2",
 };
 
@@ -69,10 +69,10 @@ describe("Codex config snippet", () => {
     expect(codexServerId(connection.vaultName)).toBe("obsidian_neonhades2");
     const snippet = codexConfigSnippet(connection);
     expect(snippet).toContain(
-      'url = "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
+      'url = "http://127.0.0.1:27200/v1/123e4567-e89b-42d3-a456-426614174000/mcp"',
     );
     expect(snippet).toContain('Authorization = "Bearer stable-broker-token"');
-    expect(snippet).not.toContain("27200");
+    expect(snippet).not.toContain("27200/mcp");
   });
 
   test("env-var mode writes the variable name, not the token", () => {
@@ -286,7 +286,7 @@ describe("explicit Codex config installer", () => {
       mcp_servers: { obsidian_neonhades2: Record<string, unknown> };
     };
     expect(parsed.mcp_servers.obsidian_neonhades2).toMatchObject({
-      url: "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp",
+      url: "http://127.0.0.1:27200/v1/123e4567-e89b-42d3-a456-426614174000/mcp",
       enabled: true,
       required: false,
       environment_id: "env-1",
@@ -413,7 +413,7 @@ describe("explicit Codex config installer", () => {
     expect(Bun.TOML.parse(written)).toEqual({
       mcp_servers: {
         obsidian_neonhades2: {
-          url: "http://127.0.0.1:27206/v1/123e4567-e89b-42d3-a456-426614174000/mcp",
+          url: "http://127.0.0.1:27200/v1/123e4567-e89b-42d3-a456-426614174000/mcp",
           http_headers: { Authorization: "Bearer stable-broker-token" },
           enabled: true,
           required: false,
@@ -464,7 +464,7 @@ describe("explicit Codex config installer", () => {
     expect(parsed.mcp_servers[oldId]).toBeUndefined();
     expect(Object.keys(parsed.mcp_servers)).toEqual([namedId]);
     expect(parsed.mcp_servers[namedId]).toMatchObject({
-      url: `http://127.0.0.1:27206/v1/${connection.routeId}/mcp`,
+      url: `http://127.0.0.1:27200/v1/${connection.routeId}/mcp`,
       http_headers: { Authorization: `Bearer ${connection.accessToken}` },
       enabled_tools: ["read_only"],
       disabled_tools: ["write_file"],
@@ -903,5 +903,52 @@ describe("Codex install with token and timeout options", () => {
     expect(await fsp.readFile(configPath, "utf8")).toContain(
       "startup_timeout_sec = 5",
     );
+  });
+});
+
+describe("entries on the old broker port", () => {
+  const legacy = { ...connection, brokerPort: 27206 };
+
+  test("flags this vault's entry on 27206 and replaces it only through the installer", async () => {
+    await installCodexConfig(legacy, { configPath });
+    const before = await fsp.readFile(configPath, "utf8");
+    const preview = await inspectCodexInstall(connection, { configPath });
+    expect(preview.legacyBroker).toBe(true);
+    expect(preview.action).toBe("replace");
+    expect(await fsp.readFile(configPath, "utf8")).toBe(before);
+
+    await installCodexConfig(connection, {
+      configPath,
+      expectedRevision: preview.revision,
+    });
+    const after = await inspectCodexInstall(connection, { configPath });
+    expect(after.legacyBroker).toBe(false);
+    expect(after.action).toBe("unchanged");
+    expect(await fsp.readFile(configPath, "utf8")).toContain(
+      "http://127.0.0.1:27200/v1/",
+    );
+  });
+
+  test("flags a UUID-only entry on 27206 and ignores other servers", async () => {
+    const oldId = `obsidian_${connection.routeId.replace(/-/g, "")}`;
+    await fsp.writeFile(
+      configPath,
+      `${codexConfigSnippet({ ...legacy, serverId: oldId })}\n\n[mcp_servers.other]\nurl = "http://127.0.0.1:27206/v1/${connection.routeId}/mcp"\n`,
+    );
+    expect(
+      (
+        await inspectCodexInstall(
+          { ...connection, serverId: undefined },
+          { configPath },
+        )
+      ).legacyBroker,
+    ).toBe(true);
+    await fsp.writeFile(
+      configPath,
+      `[mcp_servers.other]\nurl = "http://127.0.0.1:27206/v1/${connection.routeId}/mcp"\n`,
+    );
+    expect(
+      (await inspectCodexInstall(connection, { configPath })).legacyBroker,
+    ).toBe(false);
   });
 });

@@ -3,7 +3,8 @@
  * for the supported MCP client families: Claude Desktop (`.mcpb`
  * export, legacy `mcp-remote`), Claude Code CLI (`claude mcp add`),
  * Cursor / Continue / Windsurf / VS Code (streamable-http), Cline
- * (`streamableHttp`) and Codex (TOML installer + discovery broker).
+ * (`streamableHttp`) and Codex (TOML installer). Also owns the shared
+ * discovery broker every client config points at (ADR-0027).
  */
 
 export {
@@ -58,19 +59,36 @@ export {
 } from "./services/codexConfig";
 
 export {
-  DISCOVERY_BROKER_PORT,
-  DISCOVERY_PROTOCOL_VERSION,
   acceptDiscoveryMove,
+  createBrokerHost,
+  resetCodexCredential,
   resetDiscoveryIdentity,
   disableCodexDiscovery,
   enableCodexDiscovery,
   getCodexConnection,
+  isLocationUnresolved,
   releaseCodexDiscoveryOwner,
   resolveCodexDiscoveryOwner,
-  startCodexDiscovery,
+  startDiscovery,
+  type BrokerHost,
   type DiscoveryRuntime,
   type DiscoveryStatus,
 } from "./services/discoveryBroker";
+
+export {
+  createRouteQueue,
+  replaceRoute,
+  restartTransport,
+  RouteQueueClosed,
+  type RouteQueue,
+} from "./services/routeLifecycle";
+
+export {
+  brokerRouteUrl,
+  clientEndpointUrl,
+  directVaultUrl,
+  resolveClientEndpoint,
+} from "./services/endpoint";
 
 export {
   clearNodeDetectCache,

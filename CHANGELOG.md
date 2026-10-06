@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: The shared broker moved into Obsidian on port 27200 and now serves every client.** One open vault hosts it in its renderer, every open vault registers a route with it, and another open vault takes over after a short outage when the host closes. The copy buttons on each token row and the Claude Desktop config sync now produce `http://127.0.0.1:27200/v1/<route-id>/mcp`, which survives vault port changes and the port swaps caused by opening vaults in a different order. A vault with a fixed port keeps direct `http://127.0.0.1:<port>/mcp` URLs. The broker forwards each client's own bearer token to the vault, so per-client tokens and tool profiles apply as on a direct port. Codex entries that point at `127.0.0.1:27206` stop working: The Codex row flags them, and **Install Codex config…** replaces them. Plain direct configs on `http://127.0.0.1:27200/mcp` keep working, because the broker routes them to the open vault that holds their token. On macOS and Linux a vault's route works only while its plugin folder and `data.json` belong to the user and are not writable by others or by a group other than the user's own, checked on every read. See [ADR-0027](docs/architecture/ADR-0027-shared-broker-for-all-clients.md)
+- **Vault ports moved to 27201-27212.** A vault tries its last port first, then the rest of the range in order. Direct configs copied earlier that name a port from 27201 to 27205 still address a vault port, so copy them again from the token's row. Port 27200 can no longer be set as a fixed port. An existing fixed 27200 keeps working directly, but no vault can host the broker while it runs, and a Notice asks to change it
+- **Codex no longer needs Node.js.** The Codex checkbox works without a system Node.js installation. Node.js is still needed for the `.mcpb` export and the `mcp-remote` path
+- **Reset Codex connection replaces only the Codex credential.** The route, its address and every other client config stay. Install or copy the Codex entry again afterwards
+- **Make this copy independent always gives the vault a new broker route**, not only when Codex is enabled. Copy fresh configs from the copy's token rows for the clients that should use it
+
+### Removed
+
+- **The detached Node.js broker process and its executable in application data.** The plugin no longer generates `discoveryBroker.js` or starts a process outside Obsidian. An `obsidian-mcp-connector/broker-v2` directory left by an earlier version is no longer used and can be deleted
+
 ## [2.12.1] — 2026-10-04
 
 ### Changed

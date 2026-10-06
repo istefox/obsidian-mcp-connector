@@ -6,7 +6,7 @@ describe("parsePortInput", () => {
     expect(parsePortInput(null)).toEqual({ ok: true, port: undefined });
   });
 
-  test.each([1024, 8080, 27200, 65535])(
+  test.each([1024, 8080, 27201, 65535])(
     "valid port %i → ok with the same value",
     (input) => {
       const r = parsePortInput(input);
@@ -47,8 +47,14 @@ describe("parsePortInput", () => {
     expect(nullResult.ok).toBe(true);
     if (nullResult.ok) expect(nullResult.port).toBeUndefined();
 
-    const numberResult = parsePortInput(27200);
+    const numberResult = parsePortInput(27201);
     expect(numberResult.ok).toBe(true);
-    if (numberResult.ok) expect(numberResult.port).toBe(27200);
+    if (numberResult.ok) expect(numberResult.port).toBe(27201);
   });
+});
+
+test("refuses the shared broker's port", () => {
+  const r = parsePortInput(27200);
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.error).toContain("reserved for the shared MCP broker");
 });

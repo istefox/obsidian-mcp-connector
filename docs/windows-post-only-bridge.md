@@ -7,12 +7,12 @@ On some Windows setups, Claude Desktop fails to connect to the plugin through `m
 ## Requirements
 
 - Python 3.8 or newer on PATH (`python --version`).
-- The plugin running in Obsidian, with its bearer token and port from the plugin settings.
+- The plugin running in Obsidian, with its bearer token and client URL from the plugin settings.
 
 ## Setup
 
 1. Save `obsidian_mcp_bridge.py` somewhere stable, for example `C:\Users\you\obsidian_mcp_bridge.py`.
-2. Open the plugin settings and copy the bearer token and the port (the URL is `http://127.0.0.1:<port>/mcp`).
+2. Open the plugin settings and copy the bearer token and the vault's client URL. **Server port** in Access control shows that URL, and every copy button on the token's row copies a config that contains it. By default it is `http://127.0.0.1:27200/v1/<route-id>/mcp` with the vault's route in place of `<route-id>`. A vault with a fixed port uses `http://127.0.0.1:<port>/mcp`.
 3. Edit `claude_desktop_config.json` to launch the bridge instead of `mcp-remote`:
 
 ```json
@@ -20,7 +20,7 @@ On some Windows setups, Claude Desktop fails to connect to the plugin through `m
   "mcpServers": {
     "obsidian": {
       "command": "python",
-      "args": ["C:\\Users\\you\\obsidian_mcp_bridge.py", "http://127.0.0.1:27200/mcp"],
+      "args": ["C:\\Users\\you\\obsidian_mcp_bridge.py", "http://127.0.0.1:27200/v1/<route-id>/mcp"],
       "env": { "OBSIDIAN_BEARER_TOKEN": "paste-your-token-here" }
     }
   }

@@ -37,7 +37,7 @@ MCP Connector exposes an MCP server that gives an external AI client (Claude Des
 
 The 0.4.x line runs the MCP server **in-process inside the Obsidian plugin**. Implementation lives in `packages/obsidian-plugin/src/features/mcp-transport/`.
 
-- **Loopback bind only.** The HTTP listener binds `127.0.0.1` on a port from a fixed allow-list (`27200`–`27205`); never `0.0.0.0`. The plugin will refuse to start on any other interface. See `port.ts`.
+- **Loopback bind only.** Every HTTP listener binds `127.0.0.1`, never `0.0.0.0`. The shared broker uses the fixed port `27200`, and each vault server uses a port from a fixed allow-list (`27201` through `27212`) or a fixed port the user sets, which cannot be `27200`. The plugin will refuse to start on any other interface. See `constants.ts` and `port.ts`
 - **Bearer token authentication.** A 256-bit token is generated at first plugin load and persisted in the vault's `data.json` at `mcpTransport.bearerToken`. Comparison uses `crypto.timingSafeEqual` over UTF-8 bytes to prevent timing oracles. The token is rotatable from Settings → MCP Connector → Access Control. See `token.ts`.
 - **Origin validation (anti-DNS-rebinding).** Every request is checked against a loopback regex on the `Origin` header **before** authentication. Per MCP spec 2025-06-18 / RFC 6454, this prevents a rogue webpage in the user's browser from issuing forged requests to the local server. See `origin.ts` + `middleware.ts`.
 - **Method + path allow-list.** Only `POST` and `GET` on `/mcp` and `/mcp/*` are routed; everything else returns 404 before reaching the MCP handler. See `middleware.ts`.
@@ -45,19 +45,36 @@ The 0.4.x line runs the MCP server **in-process inside the Obsidian plugin**. Im
 
 **Transport is not encrypted.** This is intentional: the listener is loopback-only, so no on-the-wire attacker can observe the traffic. Adding TLS to a `127.0.0.1` listener would require the plugin to manage a self-signed cert — strictly worse UX for no incremental security against the relevant threat models. If your threat model includes a malicious local process running on the same machine and reading raw kernel sockets, MCP transport security is not the right layer to address that.
 
-### Codex discovery broker
+### Shared broker
 
-The optional Codex integration starts one detached Node.js broker on `127.0.0.1:27206`.
-The broker can remain running for up to ten seconds after the final vault closes.
-[ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md) documents its process lifecycle and Node.js prerequisite.
+Client configs reach a vault through one shared broker on `127.0.0.1:27200`.
+The broker runs inside the Obsidian renderer of one open vault, not as a separate process, and stops with that vault's plugin.
+Another open vault takes over when the hosting vault closes.
+[ADR-0027](docs/architecture/ADR-0027-shared-broker-for-all-clients.md) documents its hosting, routing and failover, and amends [ADR-0021](docs/architecture/ADR-0021-shared-local-discovery-broker.md).
 
-The broker's static health response does not authenticate the process that owns port `27206`.
-A process that binds the port first and returns the expected response can receive the raw broker credential, route ID, and lease ID from a later registration request.
-The broker credential grants access only to its matching route while that vault has an active control connection, but the fixed port makes the listener easier to target than the vault's default port range.
+Each vault registers a route over a loopback control connection, authenticated with that vault's route credential.
+The broker admits the route only when the vault's `data.json` names the same route ID and canonical settings path, and it keeps registrations only in memory while the connection is open.
+The registered path must be the plugin's own data file, `<vault>/<config folder>/plugins/<plugin ID>/data.json`.
+On macOS and Linux that file and its plugin folder must also be a regular file and folder, not links, owned by the user running Obsidian and not writable by others or by any group other than that user's own primary group.
+The broker checks the file on the open file it then reads, so a path swapped after the check, for example through a linked parent folder, cannot change what it reads.
+It applies these checks on every read of the file: At registration, for each forwarded request and for bare `/mcp` routing.
+Windows has no such owner check and relies on the access rules of the user profile that holds the vault.
+A route ID is as sensitive as a token: A same-user process that knows it can register first, which the vault reports as a route conflict.
+
+- **Passthrough on a route.** A request on `/v1/<route-id>/mcp` is forwarded to the port that vault registered on its control connection, with its `Authorization` header unchanged, so the vault authenticates it as on a direct port. Per-client tokens and tool profiles apply, and a revoked token gets the vault's `401`
+- **Codex credential swap.** Only when the bearer is the route credential and the vault's Codex connection is enabled with a selected token that still exists does the broker replace `Authorization` with that vault token
+- **Legacy bare `/mcp`.** A request on `http://127.0.0.1:27200/mcp` is forwarded to the open vault whose token store holds the bearer, compared in constant time. No match returns `401`, and a token present in more than one open vault returns `409`
+- **Unchanged limits.** Host and Origin checks, registration size, timeout and pending caps, and hop-by-hop header stripping apply as before
+
+The broker's static health response does not authenticate the process that owns port `27200`.
+A process that binds the port first receives the bearer tokens clients send there, including vault tokens on passthrough requests and the route credential Codex sends.
+Later registration requests also reveal each vault's route credential, route ID and lease ID.
+This is the same port-owner trust as squatting a direct vault port, but the single fixed port is easier to target than a vault in the port range.
+The plugin reports a foreign listener on the port in a Notice and keeps retrying, while direct vault ports keep working.
 
 This port-owner trust is accepted under the existing local-process threat model.
 A per-launch secret would authenticate only the plugin registration and would remain readable to a process running as the same operating-system user.
-It would not authenticate the broker to Codex, which sends its configured bearer credential to whichever process owns the fixed port.
+It would not authenticate the broker to clients, which send their configured bearer credentials to whichever process owns the fixed port.
 The project therefore does not present a registration-only challenge as complete mitigation.
 
 ### Authorization (`execute_obsidian_command`)
