@@ -4,7 +4,6 @@ import http from "http";
 import path from "path";
 import { FileSystemAdapter, Notice } from "obsidian";
 import { BIND_HOST, BROKER_PORT } from "$/features/mcp-transport/constants";
-import { readTokens } from "$/features/mcp-transport/services/tokenStore";
 import { generateToken } from "$/features/mcp-transport/services/token";
 import { logger } from "$/shared/logger";
 import { SettingsStore } from "$/shared/settingsStore";
@@ -19,28 +18,27 @@ import {
   type BrokerRegistration,
   type BrokerServer,
 } from "./brokerServer";
-import { codexServerId, type CodexConnection } from "./codexConfig";
+import type { CodexConnection } from "./codexConfig";
+import { vaultServerId } from "./generators";
 
 const DISCOVERY_RECONNECT_MS = 1_000;
 const MAX_RECONNECT_MS = 30_000;
 const FAILOVER_JITTER_MIN_MS = 50;
 const FAILOVER_JITTER_MAX_MS = 250;
 // The storage key predates routes for every client. It is kept so existing
-// routes, credentials and Codex entries survive without a data migration.
+// routes and credentials survive without a data migration. Older versions
+// also stored `enabled` and `tokenId` for a Codex credential swap and a
+// `serverId` Codex entry name: they are kept on disk but ignored.
 const DATA_KEY = "mcpClientConfig";
 const SETTINGS_KEY = "codexDiscovery";
 const ROUTE_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type DiscoverySettings = {
-  /** Codex credential swap on; the route exists either way. */
-  enabled: boolean;
   routeId: string;
-  /** The route credential, also the Codex bearer. */
+  /** The route credential. Only registration presents it, never a client. */
   accessToken: string;
-  tokenId: string | null;
   dataPath?: string;
-  serverId?: string;
 };
 
 /** A plugin whose own `data.json` location can be resolved. */
@@ -105,48 +103,20 @@ class RegistrationConflict extends Error {}
 /** The broker port is held by something this plugin cannot reuse. */
 class BrokerUnavailable extends Error {}
 
-/**
- * Add the vault name to old UUID-only keys while preserving other saved keys.
- * Settings without a saved key retain their legacy vault-name form, falling
- * back to the route when the name contains no ASCII alphanumerics.
- */
-function storedCodexServerId(
-  vaultName: string,
-  settings: DiscoverySettings,
-): string {
-  const opaqueId = `obsidian_${settings.routeId.replace(/-/g, "")}`;
-  if (settings.serverId) {
-    return settings.serverId === opaqueId
-      ? codexServerId(vaultName, settings.routeId)
-      : settings.serverId;
-  }
-  try {
-    return codexServerId(vaultName);
-  } catch {
-    return codexServerId(vaultName, settings.routeId);
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseSettings(value: unknown): DiscoverySettings | null {
   if (!isRecord(value)) return null;
-  const enabled = value.enabled === true;
-  const { routeId, accessToken, tokenId } = value;
+  const { routeId, accessToken } = value;
   if (typeof routeId !== "string" || !ROUTE_PATTERN.test(routeId)) return null;
   if (typeof accessToken !== "string" || Buffer.byteLength(accessToken) < 32)
     return null;
-  if (tokenId !== null && (typeof tokenId !== "string" || tokenId.length === 0))
-    return null;
   return {
-    enabled,
     routeId,
     accessToken,
-    tokenId,
     ...(typeof value.dataPath === "string" ? { dataPath: value.dataPath } : {}),
-    ...(typeof value.serverId === "string" ? { serverId: value.serverId } : {}),
   };
 }
 
@@ -164,126 +134,50 @@ async function updateSettings(
   let result!: DiscoverySettings;
   await new SettingsStore(plugin).updateSlice(DATA_KEY, (current) => {
     const slice = isRecord(current) ? current : {};
-    result = recipe(parseSettings(slice[SETTINGS_KEY]));
-    return { ...slice, [SETTINGS_KEY]: result };
+    const stored = slice[SETTINGS_KEY];
+    result = recipe(parseSettings(stored));
+    // Unknown keys stay, so no write migrates the stored settings
+    return {
+      ...slice,
+      [SETTINGS_KEY]: { ...(isRecord(stored) ? stored : {}), ...result },
+    };
   });
   return result;
 }
 
-/** A new route identity with the Codex swap off and its entry name ready. */
-function mintSettings(vaultName: string, dataPath: string): DiscoverySettings {
-  const routeId = randomUUID();
-  return {
-    enabled: false,
-    routeId,
-    accessToken: generateToken(),
-    tokenId: null,
-    serverId: codexServerId(vaultName, routeId),
-    dataPath,
-  };
+/** A new route identity. */
+function mintSettings(dataPath: string): DiscoverySettings {
+  return { routeId: randomUUID(), accessToken: generateToken(), dataPath };
 }
 
-export async function resolveCodexDiscoveryOwner(
-  plugin: PluginDataLike,
-): Promise<string | null> {
-  const settings = await readSettings(plugin);
-  if (!settings?.enabled || settings.tokenId === null) return null;
-  const tokens = await readTokens(plugin);
-  return tokens.some((token) => token.id === settings.tokenId)
-    ? settings.tokenId
-    : null;
-}
-
-export async function getCodexConnection(
+/**
+ * The Codex entry for one token row: that row's vault token, sent to `url`
+ * from resolveClientEndpoint, under the same per-vault key as every other
+ * client config, so a new snippet replaces this vault's existing entry.
+ */
+export function getCodexConnection(
   plugin: DiscoveryPlugin,
-): Promise<CodexConnection | null> {
-  const settings = await readSettings(plugin);
-  if (!settings?.serverId) return null;
+  token: string,
+  url: string,
+): CodexConnection {
   return {
-    vaultName: plugin.app.vault.getName(),
-    routeId: settings.routeId,
-    accessToken: settings.accessToken,
-    brokerPort: BROKER_PORT,
-    serverId: settings.serverId,
+    serverId: vaultServerId(plugin.app.vault.getName()),
+    accessToken: token,
+    url,
   };
 }
 
 /**
- * Let the Codex credential stand in for `tokenId` on this vault's route.
- * The broker reads this per request, so no connection restarts.
- */
-export async function enableCodexDiscovery(
-  plugin: DiscoveryPlugin,
-  tokenId: string,
-): Promise<void> {
-  const tokens = await readTokens(plugin);
-  if (!tokens.some((token) => token.id === tokenId)) {
-    throw new Error(`Token '${tokenId}' is no longer configured.`);
-  }
-  await updateSettings(plugin, (current) => {
-    const routeId = current?.routeId ?? randomUUID();
-    return {
-      ...current,
-      enabled: true,
-      routeId,
-      accessToken: current?.accessToken ?? generateToken(),
-      tokenId,
-      serverId: current
-        ? current.serverId
-        : codexServerId(plugin.app.vault.getName(), routeId),
-    };
-  });
-}
-
-/** Turn off only the Codex credential swap. The route stays for every other client */
-export async function disableCodexDiscovery(
-  plugin: PluginDataLike,
-): Promise<void> {
-  await updateSettings(plugin, (current) => ({
-    ...current,
-    enabled: false,
-    routeId: current?.routeId ?? randomUUID(),
-    accessToken: current?.accessToken ?? generateToken(),
-    tokenId: current?.tokenId ?? null,
-  }));
-}
-
-/**
- * Replace only the Codex credential. The route, its address and every other
- * client config stay, and the installed Codex entry needs the new value
- */
-export async function resetCodexCredential(
-  plugin: PluginDataLike,
-): Promise<void> {
-  await updateSettings(plugin, (current) => {
-    if (!current) {
-      throw new Error(
-        "This vault has no broker route yet. Retry the connection first",
-      );
-    }
-    return { ...current, accessToken: generateToken() };
-  });
-}
-
-/**
- * Rotate this vault's whole broker identity in its saved settings: route,
- * credential and Codex entry name. Every client config that uses the
- * broker must be replaced. Run with the route stopped, see replaceRoute.
+ * Rotate this vault's whole broker identity in its saved settings: route
+ * and route credential. Every client config that uses the broker must be
+ * replaced. Run with the route stopped, see replaceRoute.
  */
 export async function resetDiscoveryIdentity(
   plugin: DiscoveryPlugin,
   opts?: { dataPath?: string },
 ): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
-  const routeId = randomUUID();
-  await updateSettings(plugin, (current) => ({
-    enabled: current?.enabled ?? false,
-    tokenId: current?.tokenId ?? null,
-    routeId,
-    accessToken: generateToken(),
-    serverId: codexServerId(plugin.app.vault.getName(), routeId),
-    dataPath,
-  }));
+  await updateSettings(plugin, () => mintSettings(dataPath));
 }
 
 /**
@@ -297,9 +191,7 @@ export async function acceptDiscoveryMove(
 ): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
   await updateSettings(plugin, (latest) =>
-    latest
-      ? { ...latest, dataPath }
-      : mintSettings(plugin.app.vault.getName(), dataPath),
+    latest ? { ...latest, dataPath } : mintSettings(dataPath),
   );
 }
 
@@ -334,24 +226,9 @@ async function canonicalDataPath(
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-export async function releaseCodexDiscoveryOwner(
-  plugin: PluginDataLike,
-  tokenId: string,
-): Promise<boolean> {
-  const current = await readSettings(plugin);
-  if (!current || current.tokenId !== tokenId) return false;
-  await updateSettings(plugin, () => ({
-    ...current,
-    enabled: false,
-    tokenId: null,
-  }));
-  return true;
-}
-
 /**
  * Register this vault's route with the shared broker and keep it
- * registered. Every vault has a route, minted on first start, whether or
- * not Codex is enabled.
+ * registered. Every vault has a route, minted on first start.
  */
 export async function startDiscovery(
   plugin: DiscoveryPlugin,
@@ -362,8 +239,7 @@ export async function startDiscovery(
     (await readSettings(plugin)) ??
     (await updateSettings(
       plugin,
-      (current) =>
-        current ?? mintSettings(plugin.app.vault.getName(), dataPath),
+      (current) => current ?? mintSettings(dataPath),
     ));
   return startRuntime(plugin, settings, dataPath, opts);
 }
@@ -417,8 +293,8 @@ async function startRuntime(
   const establishControl = async () => {
     await host.ensure();
     if (stopped) return;
-    // Read on every attempt: a Codex credential reset rotates the route
-    // credential without restarting this runtime.
+    // Read on every attempt, so a changed route fails instead of
+    // registering with a stale credential.
     const current = await readSettings(plugin);
     if (current?.routeId !== routeId) {
       throw new Error(
@@ -553,15 +429,10 @@ async function startRuntime(
     );
     return runtime;
   }
-  const serverId = storedCodexServerId(plugin.app.vault.getName(), settings);
-  if (!settings.dataPath || settings.serverId !== serverId) {
+  if (!settings.dataPath) {
     await updateSettings(plugin, (current) => ({
       ...(current ?? settings),
       dataPath,
-      serverId: storedCodexServerId(
-        plugin.app.vault.getName(),
-        current ?? settings,
-      ),
     }));
   }
   try {

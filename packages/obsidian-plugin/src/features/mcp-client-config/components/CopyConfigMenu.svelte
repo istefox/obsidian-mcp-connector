@@ -177,6 +177,8 @@
   >
     Cline
   </button>
+  <!-- Copy buttons whose config needs state the caller owns, such as Codex -->
+  <slot />
   {#if showMcpb && tokenId}
     <button
       type="button"

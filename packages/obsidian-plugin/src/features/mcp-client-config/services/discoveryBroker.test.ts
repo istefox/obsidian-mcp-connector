@@ -15,21 +15,13 @@ import {
 import type { McpTransportState } from "$/features/mcp-transport/services/setup";
 import { SettingsStore } from "$/shared/settingsStore";
 import { BROKER_NAME } from "./brokerServer";
-import {
-  codexConfigSnippet,
-  installCodexConfig,
-  inspectCodexInstall,
-} from "./codexConfig";
+import { codexConfigSnippet } from "./codexConfig";
+import { vaultServerId } from "./generators";
 import {
   acceptDiscoveryMove,
   createBrokerHost,
-  disableCodexDiscovery,
-  enableCodexDiscovery,
   getCodexConnection,
-  releaseCodexDiscoveryOwner,
-  resetCodexCredential,
   resetDiscoveryIdentity,
-  resolveCodexDiscoveryOwner,
   startDiscovery,
   type BrokerHost,
   type DiscoveryRuntime,
@@ -92,6 +84,8 @@ function storedSettings(plugin: ReturnType<typeof fakePlugin>) {
   return (plugin._data?.mcpClientConfig as Record<string, unknown>)
     .codexDiscovery as Record<string, unknown>;
 }
+
+const ROW_URL = "http://127.0.0.1:27200/v1/synthetic-route/mcp";
 
 let tempDir = "";
 let dataPath = "";
@@ -247,20 +241,17 @@ afterEach(async () => {
 });
 
 describe("routes for every vault", () => {
-  test("a vault without Codex gets a route and registers it", async () => {
+  test("every vault gets a route and registers it", async () => {
     const plugin = fakePlugin(withTokens("a"));
     const runtime = await startDiscovery(plugin, fakeOpts());
     runtimes.push(runtime);
 
     expect(runtime.status.state).toBe("connected");
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBeNull();
     const settings = storedSettings(plugin);
-    expect(settings.enabled).toBe(false);
-    expect(settings.tokenId).toBeNull();
+    expect(settings).not.toHaveProperty("enabled");
+    expect(settings).not.toHaveProperty("tokenId");
     expect(settings.routeId).toBe(runtime.routeId);
-    expect(settings.serverId).toBe(
-      `obsidian_neonhades2_${runtime.routeId.replace(/-/g, "")}`,
-    );
+    expect(settings).not.toHaveProperty("serverId");
     const [{ registration, credential }] = registrations;
     expect(credential).toBe(settings.accessToken as string);
     const body = JSON.stringify(registration);
@@ -282,68 +273,41 @@ describe("routes for every vault", () => {
   });
 });
 
-describe("Codex ownership", () => {
-  test("enabling Codex only changes settings and keeps the registered route", async () => {
+describe("Codex entries", () => {
+  test("a row's entry carries that row's token and URL, not the route credential", async () => {
     const plugin = fakePlugin(withTokens("a", "b"));
     const runtime = await startDiscovery(plugin, fakeOpts());
     runtimes.push(runtime);
 
-    await enableCodexDiscovery(plugin, "b");
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBe("b");
-    const connection = await getCodexConnection(plugin);
-    expect(connection?.routeId).toBe(runtime.routeId);
-    expect(connection?.brokerPort).toBe(27200);
-    expect(codexConfigSnippet(connection!).split("\n")[0]).toBe(
-      `[mcp_servers.obsidian_neonhades2_${runtime.routeId.replace(/-/g, "")}]`,
+    const connection = getCodexConnection(plugin, secretFor("b"), ROW_URL);
+    expect(connection.accessToken).toBe(secretFor("b"));
+    expect(connection.accessToken).not.toBe(storedSettings(plugin).accessToken);
+    const snippet = codexConfigSnippet(connection);
+    // The same key as every other client config, with no route ID in it
+    expect(snippet.split("\n")[0]).toBe(
+      `[mcp_servers.${vaultServerId(plugin.app.vault.getName())}]`,
     );
-
-    await enableCodexDiscovery(plugin, "a");
-    expect(await getCodexConnection(plugin)).toEqual(connection);
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBe("a");
-    expect(registrations).toHaveLength(1);
-    expect(runtime.status.state).toBe("connected");
-  });
-
-  test("disabling Codex keeps the route and the saved client entry", async () => {
-    const plugin = fakePlugin(withTokens("a"));
-    const runtime = await startDiscovery(plugin, fakeOpts());
-    runtimes.push(runtime);
-    await enableCodexDiscovery(plugin, "a");
-    const connection = await getCodexConnection(plugin);
-
-    await disableCodexDiscovery(plugin);
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBeNull();
-    expect(await getCodexConnection(plugin)).toEqual(connection);
-    expect(runtime.status.state).toBe("connected");
+    expect(snippet.split("\n")[0]).not.toContain(
+      runtime.routeId.replace(/-/g, ""),
+    );
+    expect(snippet).toContain(`url = "${ROW_URL}"`);
+    expect(snippet).toContain(`Bearer ${secretFor("b")}`);
     expect(registrations).toHaveLength(1);
   });
 
-  test("revoking the owner fails closed without assigning another token", async () => {
-    const plugin = fakePlugin(withTokens("a", "b"));
-    await enableCodexDiscovery(plugin, "a");
-
-    expect(await releaseCodexDiscoveryOwner(plugin, "b")).toBe(false);
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBe("a");
-    expect(await releaseCodexDiscoveryOwner(plugin, "a")).toBe(true);
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBeNull();
-  });
-
-  test("resetting the Codex credential keeps the route and re-registers with the new credential", async () => {
+  test("a vault without route settings, such as a legacy fixed 27200, gets a direct entry", () => {
+    // A fixed BROKER_PORT never starts discovery, so no route settings exist
     const plugin = fakePlugin(withTokens("a"));
-    const runtime = await startDiscovery(plugin, fakeOpts());
-    runtimes.push(runtime);
-    await enableCodexDiscovery(plugin, "a");
-    const before = await getCodexConnection(plugin);
+    const direct = "http://127.0.0.1:27200/mcp";
 
-    await resetCodexCredential(plugin);
-    const after = await getCodexConnection(plugin);
-    expect(after?.routeId).toBe(before?.routeId);
-    expect(after?.serverId).toBe(before?.serverId);
-    expect(after?.accessToken).not.toBe(before?.accessToken);
-
-    controls[0].disconnect();
-    await untilStatus(runtime, () => registrations.length === 2);
-    expect(registrations[1].credential).toBe(after!.accessToken);
+    const snippet = codexConfigSnippet(
+      getCodexConnection(plugin, secretFor("a"), direct),
+    );
+    expect(snippet.split("\n")[0]).toBe(
+      `[mcp_servers.${vaultServerId(plugin.app.vault.getName())}]`,
+    );
+    expect(snippet).toContain(`url = "${direct}"`);
+    expect(registrations).toHaveLength(0);
   });
 });
 
@@ -517,8 +481,8 @@ test("a copied settings identity is blocked until an explicit move or reset", as
   const plugin = fakePlugin(withTokens("a"));
   const opts = fakeOpts();
   const first = await startDiscovery(plugin, opts);
-  await enableCodexDiscovery(plugin, "a");
-  const original = await getCodexConnection(plugin);
+  const originalRoute = first.routeId;
+  const originalCredential = storedSettings(plugin).accessToken;
   await first.stop();
   const movedDir = path.join(tempDir, "copy");
   await fsp.mkdir(movedDir);
@@ -536,7 +500,8 @@ test("a copied settings identity is blocked until an explicit move or reset", as
   );
   expect(blocked.status.state).toBe("stopped");
   expect(moved.status.state).toBe("connected");
-  expect(await getCodexConnection(plugin)).toEqual(original);
+  expect(moved.routeId).toBe(originalRoute);
+  expect(storedSettings(plugin).accessToken).toBe(originalCredential);
   const reset = await replaceWith(
     plugin,
     moved,
@@ -544,18 +509,12 @@ test("a copied settings identity is blocked until an explicit move or reset", as
     movedOpts,
   );
   runtimes.push(reset);
-  const next = await getCodexConnection(plugin);
-  expect(reset.routeId).toBe(next!.routeId);
-  expect(next?.routeId).not.toBe(original?.routeId);
-  expect(next?.accessToken).not.toBe(original?.accessToken);
-  expect(next?.serverId).not.toBe(original?.serverId);
-  expect(codexConfigSnippet(next!).split("\n")[0]).toBe(
-    `[mcp_servers.obsidian_neonhades2_${next!.routeId.replace(/-/g, "")}]`,
-  );
-  expect(await resolveCodexDiscoveryOwner(plugin)).toBe("a");
+  expect(storedSettings(plugin).routeId).toBe(reset.routeId);
+  expect(reset.routeId).not.toBe(originalRoute);
+  expect(storedSettings(plugin).accessToken).not.toBe(originalCredential);
 });
 
-test("legacy settings retain route, credential and client entry when first bound to a location", async () => {
+test("legacy settings retain route and credential when first bound to a location", async () => {
   const plugin = fakePlugin({
     ...withTokens("a"),
     mcpClientConfig: {
@@ -564,164 +523,92 @@ test("legacy settings retain route, credential and client entry when first bound
         routeId: "123e4567-e89b-42d3-a456-426614174000",
         accessToken: secretFor("broker"),
         tokenId: "a",
+        serverId: "obsidian_123e4567e89b42d3a456426614174000",
       },
     },
   });
-  expect(await getCodexConnection(plugin)).toBeNull();
   const runtime = await startDiscovery(plugin, fakeOpts());
   runtimes.push(runtime);
-  const after = await getCodexConnection(plugin);
-  expect(after?.routeId).toBe("123e4567-e89b-42d3-a456-426614174000");
-  expect(after?.accessToken).toBe(secretFor("broker"));
-  expect(after?.serverId).toBe("obsidian_neonhades2");
+  expect(runtime.routeId).toBe("123e4567-e89b-42d3-a456-426614174000");
+  // The route credential stays, and the old Codex keys are kept but ignored
+  expect(storedSettings(plugin)).toMatchObject({
+    accessToken: secretFor("broker"),
+    enabled: true,
+    tokenId: "a",
+    serverId: "obsidian_123e4567e89b42d3a456426614174000",
+  });
+  expect(storedSettings(plugin).dataPath).toBeString();
+  expect(
+    codexConfigSnippet(
+      getCodexConnection(plugin, secretFor("a"), ROW_URL),
+    ).split("\n")[0],
+  ).toBe(`[mcp_servers.${vaultServerId(plugin.app.vault.getName())}]`);
 });
 
-test.each(["enable", "start"])(
-  "%s upgrades a UUID-only entry through an aliased path and keeps its name after a rename",
-  async (action) => {
-    const routeId = "123e4567-e89b-42d3-a456-426614174000";
-    const opaqueId = "obsidian_123e4567e89b42d3a456426614174000";
-    const namedId = "obsidian_neonhades2_123e4567e89b42d3a456426614174000";
-    const vaultDir = path.join(tempDir, "vault");
-    const aliasDir = path.join(tempDir, "vault-alias");
-    await fsp.mkdir(vaultDir);
-    await fsp.symlink(
-      vaultDir,
-      aliasDir,
-      process.platform === "win32" ? "junction" : "dir",
-    );
-    const resolvedPath = path.join(await fsp.realpath(vaultDir), "data.json");
-    const plugin = fakePlugin({
-      ...withTokens("a"),
-      mcpClientConfig: {
-        codexDiscovery: {
-          enabled: action === "start",
-          routeId,
-          accessToken: secretFor("broker"),
-          tokenId: action === "start" ? "a" : null,
-          dataPath:
-            process.platform === "win32"
-              ? resolvedPath.toLowerCase()
-              : resolvedPath,
-          serverId: opaqueId,
-        },
+test("start through an aliased path keeps the saved location, route and credential", async () => {
+  const routeId = "123e4567-e89b-42d3-a456-426614174000";
+  const vaultDir = path.join(tempDir, "vault");
+  const aliasDir = path.join(tempDir, "vault-alias");
+  await fsp.mkdir(vaultDir);
+  await fsp.symlink(
+    vaultDir,
+    aliasDir,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const resolvedPath = path.join(await fsp.realpath(vaultDir), "data.json");
+  const plugin = fakePlugin({
+    ...withTokens("a"),
+    mcpClientConfig: {
+      codexDiscovery: {
+        routeId,
+        accessToken: secretFor("broker"),
+        dataPath:
+          process.platform === "win32"
+            ? resolvedPath.toLowerCase()
+            : resolvedPath,
       },
-    });
-    const before = await getCodexConnection(plugin);
-    expect(codexConfigSnippet(before!).split("\n")[0]).toBe(
-      `[mcp_servers.${opaqueId}]`,
-    );
-    const opts = fakeOpts(fakeHost(), path.join(aliasDir, "data.json"));
-    if (action === "enable") await enableCodexDiscovery(plugin, "a");
-    const runtime = await startDiscovery(plugin, opts);
-    expect(runtime.status.locationChanged).not.toBe(true);
-    expect(storedSettings(plugin).serverId).toBe(namedId);
-    const after = await getCodexConnection(plugin);
-    expect(after?.routeId).toBe(routeId);
-    expect(after?.accessToken).toBe(before?.accessToken);
-    expect(await resolveCodexDiscoveryOwner(plugin)).toBe("a");
-    await runtime.stop();
+    },
+  });
+  const opts = fakeOpts(fakeHost(), path.join(aliasDir, "data.json"));
+  const runtime = await startDiscovery(plugin, opts);
+  runtimes.push(runtime);
+  expect(runtime.status.locationChanged).not.toBe(true);
+  expect(runtime.routeId).toBe(routeId);
+  expect(storedSettings(plugin).accessToken).toBe(secretFor("broker"));
+});
 
-    plugin.app.vault.getName = () => "Renamed";
-    const restarted = await startDiscovery(plugin, opts);
-    runtimes.push(restarted);
-    const renamed = await getCodexConnection(plugin);
-    expect(renamed?.serverId).toBe(namedId);
-    expect(codexConfigSnippet(renamed!).split("\n")[0]).toBe(
-      `[mcp_servers.${namedId}]`,
-    );
-  },
-);
-
-test.each(["start/move", "start/reset", "enable/move", "enable/reset"])(
-  "%s preserves a copied vault's saved name until its location is resolved",
+test.each(["move", "reset"])(
+  "%s resolves a copied vault that registers nothing until then",
   async (scenario) => {
     const routeId = "123e4567-e89b-42d3-a456-426614174000";
-    const opaqueId = "obsidian_123e4567e89b42d3a456426614174000";
     const plugin = fakePlugin({
       ...withTokens("a"),
       mcpClientConfig: {
         codexDiscovery: {
-          enabled: true,
           routeId,
           accessToken: secretFor("broker"),
-          tokenId: "a",
-          serverId: opaqueId,
           dataPath: "synthetic-original-location/data.json",
         },
       },
     });
-    plugin.app.vault.getName = () => "Copy of Notes";
     const opts = fakeOpts();
-    const configPath = path.join(tempDir, "synthetic-config.toml");
-    const original = await getCodexConnection(plugin);
-    await installCodexConfig(original!, { configPath });
-    const previous = await fsp.readFile(configPath, "utf8");
-    if (scenario.startsWith("enable")) await enableCodexDiscovery(plugin, "a");
     const blocked = await startDiscovery(plugin, opts);
     expect(blocked.status.locationChanged).toBe(true);
     expect(registrations).toHaveLength(0);
-    const unresolved = await getCodexConnection(plugin);
-    expect(unresolved?.serverId).toBe(opaqueId);
-    expect(unresolved?.routeId).toBe(routeId);
-    expect(
-      (await inspectCodexInstall(unresolved!, { configPath })).action,
-    ).toBe("unchanged");
-    expect((await installCodexConfig(unresolved!, { configPath })).action).toBe(
-      "unchanged",
-    );
-    expect(await fsp.readFile(configPath, "utf8")).toBe(previous);
-    plugin.app.vault.getName = () => "Renamed Copy";
-    expect((await getCodexConnection(plugin))?.serverId).toBe(opaqueId);
     const resolved = await replaceWith(
       plugin,
       blocked,
-      scenario.endsWith("move")
+      scenario === "move"
         ? () => acceptDiscoveryMove(plugin, opts)
         : () => resetDiscoveryIdentity(plugin, opts),
       opts,
     );
     runtimes.push(resolved);
-    const ready = await getCodexConnection(plugin);
-    expect(ready?.serverId).toBe(
-      `obsidian_renamed_copy_${ready!.routeId.replace(/-/g, "")}`,
-    );
-    if (scenario.endsWith("move")) {
-      expect(ready?.routeId).toBe(routeId);
-      expect((await installCodexConfig(ready!, { configPath })).action).toBe(
-        "migrate",
-      );
-    } else {
-      expect(ready?.routeId).not.toBe(routeId);
-      expect((await installCodexConfig(ready!, { configPath })).action).toBe(
-        "add",
-      );
-      expect(
-        (await fsp.readFile(configPath, "utf8")).startsWith(previous),
-      ).toBe(true);
-    }
+    expect(resolved.status.state).toBe("connected");
+    if (scenario === "move") expect(resolved.routeId).toBe(routeId);
+    else expect(resolved.routeId).not.toBe(routeId);
   },
 );
-
-test("a new fallback entry keeps its saved name after an ASCII vault rename", async () => {
-  const plugin = fakePlugin(withTokens("a"));
-  plugin.app.vault.getName = () => "日記";
-  const first = await startDiscovery(plugin, fakeOpts());
-  const before = await getCodexConnection(plugin);
-  const expectedId = `obsidian_vault_${before!.routeId.replace(/-/g, "")}`;
-  expect(before?.serverId).toBe(expectedId);
-  await first.stop();
-  plugin.app.vault.getName = () => "Journal";
-  const second = await startDiscovery(plugin, fakeOpts());
-  runtimes.push(second);
-  const after = await getCodexConnection(plugin);
-  expect(after?.serverId).toBe(expectedId);
-  expect(after?.routeId).toBe(before?.routeId);
-  expect(after?.accessToken).toBe(before?.accessToken);
-  expect(codexConfigSnippet(after!).split("\n")[0]).toBe(
-    `[mcp_servers.${expectedId}]`,
-  );
-});
 
 // ---------------------------------------------------------------------------
 // Real broker, real vault transports
@@ -1022,8 +909,7 @@ describe("requests through the broker", () => {
   }
 
   test("a client token reaches the vault as itself, so its tool profile applies", async () => {
-    const { port, vault, runtime } = await connected();
-    await enableCodexDiscovery(vault.plugin, "t1");
+    const { port, runtime } = await connected();
     expect(
       JSON.parse((await call(port, routeOf(runtime), secretFor("t2"))).body),
     ).toEqual({
@@ -1049,28 +935,32 @@ describe("requests through the broker", () => {
     expect((await call(port, "/mcp", undefined, "GET")).status).toBe(405);
   });
 
-  test("the Codex credential is swapped for the selected token, and disabling Codex keeps the route", async () => {
+  test("a route forwards client bearers unchanged, even with stored Codex keys", async () => {
     const { port, vault, runtime } = await connected();
-    await enableCodexDiscovery(vault.plugin, "t1");
-    const codex = (await getCodexConnection(vault.plugin))!;
-    expect(
-      JSON.parse((await call(port, routeOf(runtime), codex.accessToken)).body),
-    ).toEqual({
-      vault: "a",
-      tokenId: "t1",
-    });
-
-    await disableCodexDiscovery(vault.plugin);
-    expect((await call(port, routeOf(runtime), codex.accessToken)).status).toBe(
-      401,
+    await new SettingsStore(vault.plugin).updateSlice(
+      "mcpClientConfig",
+      (current) => {
+        const slice = current as Record<string, Record<string, unknown>>;
+        return {
+          ...slice,
+          codexDiscovery: {
+            ...slice.codexDiscovery,
+            enabled: true,
+            tokenId: "t1",
+          },
+        };
+      },
     );
-    expect(runtime.status.state).toBe("connected");
+    // The route credential is a registration secret, never a client's
+    const credential = storedSettings(vault.plugin).accessToken as string;
+    expect((await call(port, routeOf(runtime), credential)).status).toBe(401);
     expect(
       JSON.parse((await call(port, routeOf(runtime), secretFor("t2"))).body),
     ).toEqual({
       vault: "a",
       tokenId: "t2",
     });
+    expect(runtime.status.state).toBe("connected");
   });
 
   test("bare /mcp routes by token: one match, no match and a copied vault", async () => {

@@ -22,10 +22,10 @@ import { PortNumber } from "$/features/mcp-transport/types";
  * connection. A request on `/v1/<route>/mcp` is forwarded to the transport
  * port the vault registered on that connection, never to the `livePort` in
  * its `data.json`: a stale plugin instance can still overwrite that file
- * after a reload. Tokens and Codex settings are read from `data.json` per
- * request. The Codex broker credential is swapped for the selected vault
- * token; any other Authorization header is forwarded unchanged so the vault
- * authenticates it. Bare `/mcp` serves configs that pointed at BROKER_PORT
+ * after a reload. The vault's `data.json` is checked on every request, and
+ * the Authorization header is forwarded unchanged so the vault
+ * authenticates it. The route credential only proves route ownership at
+ * registration. Bare `/mcp` serves configs that pointed at BROKER_PORT
  * before it was the broker's: the bearer token picks the vault.
  */
 
@@ -100,12 +100,6 @@ type Control = {
 
 type VaultFile = {
   tokens: { id: string; token: string }[];
-  codex: {
-    enabled: boolean;
-    routeId: unknown;
-    tokenId: unknown;
-    accessToken: unknown;
-  } | null;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -248,28 +242,15 @@ async function readVaultFile(
           entry.token.length > 0,
       )
     : [];
-  const clientConfig = isRecord(data.mcpClientConfig)
-    ? data.mcpClientConfig
-    : {};
-  const codex = isRecord(clientConfig.codexDiscovery)
-    ? clientConfig.codexDiscovery
-    : null;
-  return {
-    tokens,
-    codex: codex && {
-      enabled: codex.enabled === true,
-      routeId: codex.routeId,
-      tokenId: codex.tokenId,
-      accessToken: codex.accessToken,
-    },
-  };
+  return { tokens };
 }
 
 /**
  * The route belongs to the vault whose saved settings name both the route
  * and this canonical `data.json` path, and whose route credential the
- * registrant presented. Codex settings play no part: a vault without Codex
- * keeps its route.
+ * registrant presented. That credential is only a registration secret: no
+ * client sends it, and the stored `enabled` and `tokenId` keys of older
+ * versions play no part.
  */
 async function ownsRegistration(
   registration: BrokerRegistration,
@@ -377,15 +358,13 @@ function respond(
 }
 
 /**
- * Pipe one request to the MCP endpoint on the port the vault registered.
- * `authorization` replaces the incoming header, or is left out when
- * undefined.
+ * Pipe one request to the MCP endpoint on the port the vault registered,
+ * with its Authorization header unchanged so the vault authenticates it.
  */
 function forward(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   control: Control,
-  authorization: string | undefined,
   query: string,
 ): void {
   if (control.closed || req.aborted || res.destroyed) {
@@ -394,6 +373,7 @@ function forward(
   }
   const { port } = control.registration;
   const headers = copyHeaders(req.headers);
+  const { authorization } = req.headers;
   if (authorization !== undefined) headers.authorization = authorization;
   headers.host = `${BIND_HOST}:${port}`;
   // A pooled socket would outlive the broker that opened it
@@ -592,34 +572,12 @@ export function startBrokerServer(opts: {
       respond(res, 404, "route not found");
       return;
     }
-    const vault = await readVaultFile(
-      control.registration.dataPath,
-      opts.pluginId,
-    );
-    if (!vault) {
+    // The data file must still pass its checks, but the vault authenticates
+    if (!(await readVaultFile(control.registration.dataPath, opts.pluginId))) {
       respond(res, 503, "vault data is unavailable");
       return;
     }
-    let authorization = req.headers.authorization;
-    const presented = bearerToken(authorization);
-    const codex = vault.codex;
-    if (
-      presented !== null &&
-      codex !== null &&
-      typeof codex.routeId === "string" &&
-      codex.routeId.toLowerCase() === routeId &&
-      typeof codex.accessToken === "string" &&
-      credentialMatches(presented, codex.accessToken)
-    ) {
-      // The Codex credential stands in for the selected vault token. A
-      // disabled connection or a revoked selection forwards it unchanged,
-      // and the vault answers 401 like for any unknown bearer.
-      const selected = codex.enabled
-        ? vault.tokens.find((entry) => entry.id === codex.tokenId)
-        : undefined;
-      if (selected) authorization = `Bearer ${selected.token}`;
-    }
-    forward(req, res, control, authorization, query);
+    forward(req, res, control, query);
   }
 
   /**
@@ -672,7 +630,7 @@ export function startBrokerServer(opts: {
       return;
     }
     const [control] = matches.values();
-    forward(req, res, control, req.headers.authorization, query);
+    forward(req, res, control, query);
   }
 
   const closed = new Promise<void>((resolve) =>

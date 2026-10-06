@@ -313,7 +313,7 @@ export function vaultNameDisambiguator(vaultName: string): string | null {
  * non-ASCII characters gets a short hash appended (`obsidian_societ_1a2b3c`,
  * `obsidian_1a2b3c` for "日記"), so two such vaults never share a key.
  *
- * Codex adds its route UUID and retains saved names (see codexServerId).
+ * Codex uses the same key.
  */
 export function vaultServerId(vaultName: string): string {
   const parts = [...vaultNameWords(vaultName)];

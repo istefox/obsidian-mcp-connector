@@ -12,7 +12,6 @@ import {
   vaultServerId,
   wrapInMcpServers,
 } from "./generators";
-import { codexServerId } from "./codexConfig";
 import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 /**
@@ -185,12 +184,6 @@ describe("vaultServerId", () => {
     expect(vaultServerId("Neon Hades-2")).toBe("obsidian_neon_hades_2");
     expect(vaultServerId("  My   Vault! ")).toBe("obsidian_my_vault");
     expect(vaultServerId("Work")).not.toBe(vaultServerId("Personal"));
-  });
-
-  test("leaves the Codex id in its merged form", () => {
-    // Codex's vault-named entries predate the route id and already sit in
-    // users' config.toml under this name.
-    expect(codexServerId("My Vault")).toBe("obsidian_myvault");
   });
 
   test("a name with no ASCII alphanumerics still gets a key of its own", () => {

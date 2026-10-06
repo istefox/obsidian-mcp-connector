@@ -254,7 +254,7 @@ afterEach(async () => {
   await fsp.rm(tempDir, { recursive: true, force: true });
 });
 
-test("one stable route forwards to the registered port and reads tokens on every request", async () => {
+test("one stable route forwards the client bearer unchanged to the registered port", async () => {
   const seen: Array<{
     authorization: string | undefined;
     protocolVersion: string | undefined;
@@ -288,7 +288,7 @@ test("one stable route forwards to the registered port and reads tokens on every
   const firstPort = await listen(firstTarget);
   const secondPort = await listen(secondTarget);
   const dataPath = vaultFile();
-  // The Codex connection is on and selects one vault token
+  // Stored Codex keys from older versions are ignored
   const codex = routeSettings(dataPath, { enabled: true, tokenId: "selected" });
   await writeVault(dataPath, {
     livePort: firstPort,
@@ -324,12 +324,12 @@ test("one stable route forwards to the registered port and reads tokens on every
   );
   const first = await request(brokerPort, {
     path: route,
-    token: routeCredential,
+    token: "client-token",
     body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
   });
 
   // A stale plugin instance finishing its save after a reload names
-  // another port. Tokens still come from the file on every request.
+  // another port. The route keeps the port it registered.
   await writeVault(dataPath, {
     livePort: secondPort,
     tokens: [{ id: "selected", token: "second-vault-token" }],
@@ -337,7 +337,7 @@ test("one stable route forwards to the registered port and reads tokens on every
   });
   const second = await request(brokerPort, {
     path: route,
-    token: routeCredential,
+    token: "client-token",
     body: '{"jsonrpc":"2.0","id":2,"method":"tools/list"}',
   });
 
@@ -354,7 +354,7 @@ test("one stable route forwards to the registered port and reads tokens on every
   );
   const third = await request(brokerPort, {
     path: route,
-    token: routeCredential,
+    token: "client-token",
     body: '{"jsonrpc":"2.0","id":3,"method":"tools/list"}',
   });
 
@@ -366,9 +366,9 @@ test("one stable route forwards to the registered port and reads tokens on every
   expect(third.status).toBe(200);
   expect(third.body).toContain("second");
   expect(seen.map((entry) => entry.authorization)).toEqual([
-    "Bearer first-vault-token",
-    "Bearer second-vault-token",
-    "Bearer second-vault-token",
+    "Bearer client-token",
+    "Bearer client-token",
+    "Bearer client-token",
   ]);
   expect(seen.map((entry) => entry.protocolVersion)).toEqual([
     "2026-07-28",
@@ -459,26 +459,19 @@ describe("route authorization", () => {
     );
   });
 
-  test("swaps the Codex credential only while the Codex connection is on", async () => {
+  test("ignores stored Codex keys and forwards a client bearer unchanged", async () => {
     const port = await registered({ enabled: true, tokenId: "selected" });
-    expect((await call(port, routeCredential)).body).toBe(
+    expect((await call(port, "selected-token")).body).toBe(
       "vault|Bearer selected-token",
     );
   });
 
-  test.each([
-    ["disabled", { enabled: false, tokenId: "selected" }],
-    ["without a selected token", { enabled: true, tokenId: null }],
-    ["with a revoked selection", { enabled: true, tokenId: "revoked" }],
-  ])(
-    "forwards the Codex credential unchanged when the connection is %s",
-    async (_label, settings) => {
-      const port = await registered(settings);
-      expect((await call(port, routeCredential)).body).toBe(
-        `vault|Bearer ${routeCredential}`,
-      );
-    },
-  );
+  test("forwards the route credential unchanged so the vault rejects it", async () => {
+    const port = await registered({ enabled: true, tokenId: "selected" });
+    expect((await call(port, routeCredential)).body).toBe(
+      `vault|Bearer ${routeCredential}`,
+    );
+  });
 
   test("forwards a request without Authorization so the vault answers it", async () => {
     const port = await registered({});
@@ -1012,15 +1005,9 @@ describe.skipIf(process.platform === "win32")(
 
 test("reads the data file it checked, not one swapped in after the open", async () => {
   const file = await vaultTarget("vault", "vault");
-  // The substitute claims this vault's route and differs only in the token
-  // the Codex credential stands in for, so the file actually read decides
-  // which token the vault receives
+  // The substitute differs only in its token, so the file actually read
+  // decides whether bare /mcp routes the bearer to this vault
   const original = JSON.parse(await fsp.readFile(file, "utf8"));
-  original.mcpClientConfig.codexDiscovery = routeSettings(file, {
-    enabled: true,
-    tokenId: "selected",
-  });
-  await fsp.writeFile(file, JSON.stringify(original));
   const substitute = structuredClone(original);
   substitute.mcpTransport.tokens = [
     { id: "selected", token: "substitute-token" },
@@ -1029,12 +1016,8 @@ test("reads the data file it checked, not one swapped in after the open", async 
   await fsp.writeFile(staged, JSON.stringify(substitute), { mode: 0o600 });
   const port = await startBroker();
   await registerRoute(port, routeCredential, "lease", routeId, file);
-  const call = () =>
-    request(port, {
-      path: `/v1/${routeId}/mcp`,
-      token: routeCredential,
-      body: "{}",
-    });
+  const call = (token = "vault-token") =>
+    request(port, { path: "/mcp", token, body: "{}" });
 
   const open = fsp.open;
   const swap = spyOn(fsp, "open").mockImplementation(
@@ -1053,7 +1036,10 @@ test("reads the data file it checked, not one swapped in after the open", async 
     swap.mockRestore();
   }
   // The swap held: the next read opens the substitute
-  expect((await call()).body).toBe("vault|Bearer substitute-token");
+  expect((await call()).status).toBe(401);
+  expect((await call("substitute-token")).body).toBe(
+    "vault|Bearer substitute-token",
+  );
 });
 
 describe.skipIf(process.platform === "win32")(

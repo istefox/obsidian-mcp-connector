@@ -62,12 +62,12 @@ Windows has no such owner check and relies on the access rules of the user profi
 A route ID is as sensitive as a token: A same-user process that knows it can register first, which the vault reports as a route conflict.
 
 - **Passthrough on a route.** A request on `/v1/<route-id>/mcp` is forwarded to the port that vault registered on its control connection, with its `Authorization` header unchanged, so the vault authenticates it as on a direct port. Per-client tokens and tool profiles apply, and a revoked token gets the vault's `401`
-- **Codex credential swap.** Only when the bearer is the route credential and the vault's Codex connection is enabled with a selected token that still exists does the broker replace `Authorization` with that vault token
+- **No credential swap.** The route credential only proves route ownership at registration. No client sends it, and the broker forwards it unchanged like any other bearer, so the vault rejects it
 - **Legacy bare `/mcp`.** A request on `http://127.0.0.1:27200/mcp` is forwarded to the open vault whose token store holds the bearer, compared in constant time. No match returns `401`, and a token present in more than one open vault returns `409`
 - **Unchanged limits.** Host and Origin checks, registration size, timeout and pending caps, and hop-by-hop header stripping apply as before
 
 The broker's static health response does not authenticate the process that owns port `27200`.
-A process that binds the port first receives the bearer tokens clients send there, including vault tokens on passthrough requests and the route credential Codex sends.
+A process that binds the port first receives the bearer tokens clients send there, including vault tokens on passthrough requests.
 Later registration requests also reveal each vault's route credential, route ID and lease ID.
 This is the same port-owner trust as squatting a direct vault port, but the single fixed port is easier to target than a vault in the port range.
 The plugin reports a foreign listener on the port in a Notice and keeps retrying, while direct vault ports keep working.
