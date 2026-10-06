@@ -395,7 +395,13 @@ claude mcp add --transport http --scope user obsidian-mcp-connector http://127.0
 
 The copied command already carries the vault's route and the token
 
-`--scope user` makes the vault available in every project; drop it for the default local scope (this project only). Both are stored in `~/.claude.json`, which the CLI owns, so do not hand-edit it. To share the server with a team without sharing the secret, commit a project-scoped `.mcp.json` at the repository root and let each person export the token. **Claude Code (.mcp.json, no token)** on the token's row copies this entry with the token as a `${OBSIDIAN_MCP_TOKEN}` reference; Claude Code asks you to approve a project `.mcp.json` the first time it loads it:
+`--scope user` makes the vault available in every project; drop it for the default local scope (this project only). To register it for one project only, set **Claude Code project path** in Access Control to that project's absolute path. The button then copies a command that enters the directory first and uses local scope:
+
+```bash
+cd '/home/me/project' && claude mcp add --transport http --scope local obsidian_my_vault http://127.0.0.1:27200/v1/<route-id>/mcp --header "Authorization: Bearer YOUR_TOKEN"
+```
+
+The path is single-quoted, so it cannot contain a single quote or a line break, and it cannot contain `[`, `]`, `*` or `?`, which PowerShell's `cd` treats as wildcards. `&&` skips the registration when the `cd` fails, and needs a POSIX shell or PowerShell 7+ (Windows PowerShell 5.1 does not support it). User and local scope are both stored in `~/.claude.json`, which the CLI owns, so do not hand-edit it. To share the server with a team without sharing the secret, commit a project-scoped `.mcp.json` at the repository root and let each person export the token. **Claude Code (.mcp.json, no token)** on the token's row copies this entry with the token as a `${OBSIDIAN_MCP_TOKEN}` reference; Claude Code asks you to approve a project `.mcp.json` the first time it loads it:
 
 ```json
 {

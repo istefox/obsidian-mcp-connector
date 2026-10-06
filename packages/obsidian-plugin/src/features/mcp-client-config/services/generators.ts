@@ -151,6 +151,83 @@ export function claudeCodeAddCommand(
   ].join(" ");
 }
 
+/**
+ * The command the Claude Code button copies. With no project path it is
+ * the user-scope one-liner. With one, it enters that directory first and
+ * registers at `local` scope, Claude Code's private per-project entry
+ * keyed by the working directory.
+ *
+ * `&&` rather than `;`, so a failed `cd` registers nothing in whatever
+ * directory the terminal happened to be in. That needs a POSIX shell or
+ * PowerShell 7+; Windows PowerShell 5.1 has no `&&`.
+ *
+ * Throws on a path `parseClaudeCodeProjectPath` rejects: the settings
+ * store never holds one, and quoting a bad path anyway could run part of
+ * it as a command.
+ */
+export function claudeCodeProjectAddCommand(
+  input: ClientConfigInput,
+  projectPath: string,
+): string {
+  const parsed = parseClaudeCodeProjectPath(projectPath);
+  if (!parsed.ok) throw new Error(parsed.error);
+  if (parsed.path === "") return claudeCodeAddCommand(input);
+  return `cd '${parsed.path}' && ${claudeCodeAddCommand(input, "local")}`;
+}
+
+/**
+ * Characters that end a single-quoted string: `'` in POSIX shells, and
+ * also the typographic single quotes PowerShell treats as the same
+ * delimiter. A line break would split the pasted command in two.
+ */
+const UNQUOTABLE_PATH_CHARS = /['\u2018\u2019\u201a\u201b\r\n]/;
+
+/**
+ * PowerShell's `cd` (`Set-Location -Path`) expands these as wildcards even
+ * inside single quotes, so `C:\app[1]` could enter `C:\app1` and register
+ * the vault for the wrong project.
+ */
+const WILDCARD_PATH_CHARS = /[[\]*?]/;
+
+/** POSIX `/…`, a Windows drive `C:\…` or `C:/…`, or a UNC `\\server\share`. */
+const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/;
+
+/**
+ * Validate the "Claude Code project path" setting. Trims, and accepts an
+ * empty value as "no project" (user scope). Anything else must be an
+ * absolute path that a single-quoted shell string carries literally, which
+ * holds for both POSIX shells and PowerShell once the quote characters are
+ * excluded.
+ */
+export function parseClaudeCodeProjectPath(
+  input: string,
+):
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: string } {
+  const path = input.trim();
+  if (path === "") return { ok: true, path };
+  if (UNQUOTABLE_PATH_CHARS.test(path)) {
+    return {
+      ok: false,
+      error: "The project path cannot contain a single quote or a line break.",
+    };
+  }
+  if (WILDCARD_PATH_CHARS.test(path)) {
+    return {
+      ok: false,
+      error: "The project path cannot contain [, ], * or ?.",
+    };
+  }
+  if (!ABSOLUTE_PATH.test(path)) {
+    return {
+      ok: false,
+      error:
+        "The project path must be absolute, such as /home/me/project or C:\\Projects\\app.",
+    };
+  }
+  return { ok: true, path };
+}
+
 function shellDoubleQuote(value: string): string {
   return `"${value.replace(/[\\"$`]/g, (c) => `\\${c}`)}"`;
 }

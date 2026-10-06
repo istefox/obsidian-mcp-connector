@@ -21,10 +21,12 @@ export {
   claudeCodeAddCommand,
   claudeCodeConfig,
   claudeCodeEnvConfig,
+  claudeCodeProjectAddCommand,
   CLAUDE_CODE_TOKEN_ENV_VAR,
   claudeDesktopConfig,
   clientConfigInputSchema,
   clineConfig,
+  parseClaudeCodeProjectPath,
   streamableHttpConfig,
   vaultNameWords,
   vaultServerId,
@@ -45,6 +47,11 @@ export {
   setAutoWriteOwner,
   type ApplyAutoWriteResult,
 } from "./services/autoWrite";
+
+export {
+  getClaudeCodeProjectPath,
+  setClaudeCodeProjectPath,
+} from "./services/claudeCodeProject";
 
 export {
   codexConfigSnippet,

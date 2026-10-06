@@ -3,8 +3,8 @@
   import { Notice } from "obsidian";
   import {
     CLAUDE_CODE_TOKEN_ENV_VAR,
-    claudeCodeAddCommand,
     claudeCodeEnvConfig,
+    claudeCodeProjectAddCommand,
     claudeDesktopConfig,
     clineConfig,
     streamableHttpConfig,
@@ -37,6 +37,11 @@
   /** Off where the surrounding section already carries its own .mcpb row. */
   export let showMcpb = true;
   export let mcpbDisabled = false;
+  /**
+   * The saved "Claude Code project path", or "" for user scope. Read and
+   * validated by the section that mounts this menu.
+   */
+  export let claudeCodeProjectPath = "";
 
   let mcpbBusy = false;
 
@@ -66,12 +71,24 @@
 
   // Claude Code owns `~/.claude.json`; its docs register servers through
   // the CLI, so the button copies the command rather than a JSON block
-  // for a file the user is told not to hand-edit.
+  // for a file the user is told not to hand-edit. With a project path it
+  // registers at local scope for that project instead of user scope.
   function copyClaudeCode(): Promise<void> {
-    return copyText(
-      claudeCodeAddCommand({ url, token, pluginId: serverId }),
-      "Claude Code `claude mcp add` command",
-    );
+    let command: string;
+    try {
+      command = claudeCodeProjectAddCommand(
+        { url, token, pluginId: serverId },
+        claudeCodeProjectPath,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Copy failed: ${msg}`);
+      return Promise.resolve();
+    }
+    const scope = claudeCodeProjectPath
+      ? `local scope for ${claudeCodeProjectPath}`
+      : "user scope";
+    return copyText(command, `Claude Code \`claude mcp add\` command (${scope})`);
   }
 
   // A project `.mcp.json` is committed, so the token is a ${VAR} reference

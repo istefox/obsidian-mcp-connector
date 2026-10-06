@@ -42,6 +42,7 @@
     detectNode,
     disableCodexDiscovery,
     enableCodexDiscovery,
+    getClaudeCodeProjectPath,
     getCodexConnection,
     inspectCodexInstall,
     installCodexConfig,
@@ -50,6 +51,7 @@
     resolveAutoWriteOwner,
     resolveCodexDiscoveryOwner,
     setAutoWriteOwner,
+    setClaudeCodeProjectPath,
     type NodeDetectResult,
   } from "$/features/mcp-client-config";
   import {
@@ -153,6 +155,14 @@
   let serverNameInput = "";
   let serverNameBusy = false;
 
+  // The saved project path every row's Claude Code button uses, and the
+  // field's draft. Blank means user scope. A rejected draft keeps the
+  // saved value and shows its error under the field.
+  let claudeCodeProjectPath = "";
+  let claudeCodeProjectInput = "";
+  let claudeCodeProjectError = "";
+  let claudeCodeProjectBusy = false;
+
   // How many requests each protocol era has served, as persisted at the
   // moment this pane opened. Diagnostic and read-only: the value exists so
   // the `legacy: 'reject'` trigger (ADR-0016 §8) can be observed rather
@@ -193,6 +203,8 @@
       | undefined;
     portInput = raw?.port ?? null;
     serverNameInput = raw?.serverName ?? "";
+    claudeCodeProjectPath = await getClaudeCodeProjectPath(plugin);
+    claudeCodeProjectInput = claudeCodeProjectPath;
     eraCounters = readEraCounters(raw?.eraCounters);
     eraByToken = readEraCountersByToken(raw?.eraCountersByToken);
     const registry = plugin.mcpTransportState?.mcp.registry;
@@ -528,6 +540,36 @@
       new Notice(`MCP Connector: failed to save server name — ${message}`);
     } finally {
       serverNameBusy = false;
+    }
+  }
+
+  /**
+   * Persist the Claude Code project path. No restart: only the copied
+   * command changes. An invalid path is shown inline and not saved.
+   */
+  async function handleSaveClaudeCodeProject(): Promise<void> {
+    claudeCodeProjectBusy = true;
+    try {
+      const result = await setClaudeCodeProjectPath(
+        plugin,
+        claudeCodeProjectInput,
+      );
+      if (!result.ok) {
+        claudeCodeProjectError = result.error;
+        return;
+      }
+      claudeCodeProjectError = "";
+      claudeCodeProjectPath = result.path;
+      claudeCodeProjectInput = result.path;
+      new Notice(
+        result.path
+          ? "Claude Code project path saved."
+          : "Claude Code project path cleared.",
+      );
+    } catch (err) {
+      noticeFailure("saving the Claude Code project path", err);
+    } finally {
+      claudeCodeProjectBusy = false;
     }
   }
 
@@ -951,6 +993,7 @@
               token={token.token}
               tokenId={token.id}
               {mcpbDisabled}
+              {claudeCodeProjectPath}
             />
             <button
               type="button"
@@ -1069,6 +1112,40 @@
       token. This checkbox does not edit <code>config.toml</code>. Use one of
       the configuration actions after enabling it.
     </p>
+    <div class="setting-item">
+      <div class="setting-item-info">
+        <div class="setting-item-name">Claude Code project path</div>
+        <div class="setting-item-description">
+          Absolute path of a project directory. When set, <strong>Claude Code</strong>
+          copies a command that enters this directory and registers the vault
+          at local scope, private to that project. Leave blank for user scope,
+          available in every project. The command needs a POSIX shell or
+          PowerShell 7+, because Windows PowerShell 5.1 has no <code>&amp;&amp;</code>
+          {#if claudeCodeProjectError}
+            <div class="token-error" role="alert">{claudeCodeProjectError}</div>
+          {/if}
+        </div>
+      </div>
+      <div class="setting-item-control token-control">
+        <input
+          type="text"
+          bind:value={claudeCodeProjectInput}
+          on:input={() => (claudeCodeProjectError = "")}
+          placeholder="User scope"
+          aria-label="Claude Code project path"
+          aria-invalid={claudeCodeProjectError !== ""}
+          disabled={claudeCodeProjectBusy}
+          class="server-name-input"
+        />
+        <button
+          type="button"
+          on:click={handleSaveClaudeCodeProject}
+          disabled={claudeCodeProjectBusy}
+        >
+          {claudeCodeProjectBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
     <div class="setting-item">
       <div class="setting-item-info">
         <div class="setting-item-name">Set up a copied vault</div>
@@ -1364,6 +1441,11 @@
     color: var(--text-muted);
     font-size: 0.85em;
     margin: 0 0 1em;
+  }
+
+  .token-error {
+    color: var(--text-error);
+    margin-top: 0.4em;
   }
 
   .token-unavailable {

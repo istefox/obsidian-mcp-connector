@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Code can register the vault for one project.** Set **Claude Code project path** in Access Control to a project's absolute path, and **Claude Code** on each token row copies `cd '<path>' && claude mcp add --scope local …`, which keeps the entry private to that project. With the field blank the command is unchanged and uses user scope. The path cannot contain a single quote, a line break or the PowerShell wildcards `[`, `]`, `*` and `?`, and the command needs a POSIX shell or PowerShell 7+ for `&&`
+
 ### Changed
 
 - **Breaking: The shared broker moved into Obsidian on port 27200 and now serves every client.** One open vault hosts it in its renderer, every open vault registers a route with it, and another open vault takes over after a short outage when the host closes. The copy buttons on each token row and the Claude Desktop config sync now produce `http://127.0.0.1:27200/v1/<route-id>/mcp`, which survives vault port changes and the port swaps caused by opening vaults in a different order. A vault with a fixed port keeps direct `http://127.0.0.1:<port>/mcp` URLs. The broker forwards each client's own bearer token to the vault, so per-client tokens and tool profiles apply as on a direct port. Codex entries that point at `127.0.0.1:27206` stop working: The Codex row flags them, and **Install Codex config…** replaces them. Plain direct configs on `http://127.0.0.1:27200/mcp` keep working, because the broker routes them to the open vault that holds their token. On macOS and Linux a vault's route works only while its plugin folder and `data.json` belong to the user and are not writable by others or by a group other than the user's own, checked on every read. See [ADR-0027](docs/architecture/ADR-0027-shared-broker-for-all-clients.md)

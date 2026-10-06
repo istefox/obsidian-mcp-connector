@@ -4,8 +4,10 @@ import {
   CLAUDE_CODE_TOKEN_ENV_VAR,
   claudeCodeConfig,
   claudeCodeEnvConfig,
+  claudeCodeProjectAddCommand,
   claudeDesktopConfig,
   clineConfig,
+  parseClaudeCodeProjectPath,
   streamableHttpConfig,
   vaultServerId,
   wrapInMcpServers,
@@ -76,6 +78,85 @@ describe("claudeCodeAddCommand", () => {
       out.endsWith('--header "Authorization: Bearer a\\"b\\$c\\`d\\\\e"'),
     ).toBe(true);
   });
+});
+
+describe("claudeCodeProjectAddCommand", () => {
+  const input = { url: URL, token: TOKEN, pluginId: "vault-a" };
+  const tail = `--transport http --scope local vault-a ${URL} --header "Authorization: Bearer ${TOKEN}"`;
+
+  test("with no project path, copies the user-scope command unchanged", () => {
+    expect(claudeCodeProjectAddCommand(input, "")).toBe(
+      claudeCodeAddCommand(input),
+    );
+    expect(claudeCodeProjectAddCommand(input, "   ")).toBe(
+      claudeCodeAddCommand(input),
+    );
+  });
+
+  test("enters a Windows path with spaces and registers at local scope", () => {
+    expect(
+      claudeCodeProjectAddCommand(input, "  C:\\Users\\Me\\My Projects\\app "),
+    ).toBe(`cd 'C:\\Users\\Me\\My Projects\\app' && claude mcp add ${tail}`);
+  });
+
+  test("enters a POSIX path, keeping shell metacharacters literal", () => {
+    expect(claudeCodeProjectAddCommand(input, "/home/me/$work & play")).toBe(
+      `cd '/home/me/$work & play' && claude mcp add ${tail}`,
+    );
+  });
+
+  test("rejects a path it cannot quote or that is not absolute", () => {
+    expect(() => claudeCodeProjectAddCommand(input, "projects/app")).toThrow(
+      "absolute",
+    );
+    expect(() => claudeCodeProjectAddCommand(input, "/tmp/it's")).toThrow(
+      "single quote",
+    );
+  });
+});
+
+describe("parseClaudeCodeProjectPath", () => {
+  test.each([
+    "/",
+    "/home/me/app",
+    "C:\\Projects\\app",
+    "c:/Projects/app",
+    "\\\\server\\share\\app",
+  ])("accepts the absolute path %p", (path) => {
+    expect(parseClaudeCodeProjectPath(path)).toEqual({ ok: true, path });
+  });
+
+  test.each([
+    "app",
+    "./app",
+    "~/app",
+    "C:app",
+    "\\Projects\\app",
+    "\\\\server",
+  ])("rejects the non-absolute path %p", (path) => {
+    expect(parseClaudeCodeProjectPath(path).ok).toBe(false);
+  });
+
+  test.each(["/tmp/it's", "C:\\it\u2019s", "/tmp/a\nb", "/tmp/a\rb"])(
+    "rejects %p, which a single-quoted string cannot carry",
+    (path) => {
+      expect(parseClaudeCodeProjectPath(path)).toEqual({
+        ok: false,
+        error:
+          "The project path cannot contain a single quote or a line break.",
+      });
+    },
+  );
+
+  test.each(["C:\\app[1]", "/srv/app]", "/srv/*", "C:\\app?"])(
+    "rejects %p, which PowerShell's cd expands as a wildcard",
+    (path) => {
+      expect(parseClaudeCodeProjectPath(path)).toEqual({
+        ok: false,
+        error: "The project path cannot contain [, ], * or ?.",
+      });
+    },
+  );
 });
 
 describe("clineConfig", () => {
