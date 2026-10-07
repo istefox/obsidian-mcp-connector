@@ -28,12 +28,13 @@ import { FORK_PLUGIN_ID } from "./claudeDesktop";
 
 export const clientConfigInputSchema = type({
   /**
-   * Full MCP endpoint URL, including scheme and `/mcp` path. Always
-   * `http://127.0.0.1:<port>/mcp` in 0.4.0 — the plugin binds
-   * loopback only.
+   * Full MCP endpoint URL, including scheme and `/mcp` path, from
+   * resolveClientEndpoint: the broker route
+   * `http://127.0.0.1:27200/v1/<route-id>/mcp`, or
+   * `http://127.0.0.1:<port>/mcp` for a fixed or fallback vault port.
    */
   url: type(/^https?:\/\//).describe(
-    "MCP endpoint URL, e.g. http://127.0.0.1:27200/mcp",
+    "MCP endpoint URL, e.g. http://127.0.0.1:27200/v1/<route-id>/mcp",
   ),
   /** Bearer token. Written verbatim into the Authorization header. */
   token: "string > 0",

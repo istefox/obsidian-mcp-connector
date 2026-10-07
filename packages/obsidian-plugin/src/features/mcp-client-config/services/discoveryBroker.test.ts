@@ -549,13 +549,17 @@ test("start through an aliased path keeps the saved location, route and credenti
   const routeId = "123e4567-e89b-42d3-a456-426614174000";
   const vaultDir = path.join(tempDir, "vault");
   const aliasDir = path.join(tempDir, "vault-alias");
-  await fsp.mkdir(vaultDir);
+  const pluginDir = path.join(".obsidian", "plugins", PLUGIN_ID);
+  await fsp.mkdir(path.join(vaultDir, pluginDir), { recursive: true });
   await fsp.symlink(
     vaultDir,
     aliasDir,
     process.platform === "win32" ? "junction" : "dir",
   );
-  const resolvedPath = path.join(await fsp.realpath(vaultDir), "data.json");
+  const resolvedPath = path.join(
+    await fsp.realpath(path.join(vaultDir, pluginDir)),
+    "data.json",
+  );
   const plugin = fakePlugin({
     ...withTokens("a"),
     mcpClientConfig: {
@@ -569,7 +573,10 @@ test("start through an aliased path keeps the saved location, route and credenti
       },
     },
   });
-  const opts = fakeOpts(fakeHost(), path.join(aliasDir, "data.json"));
+  const opts = fakeOpts(
+    fakeHost(),
+    path.join(aliasDir, pluginDir, "data.json"),
+  );
   const runtime = await startDiscovery(plugin, opts);
   runtimes.push(runtime);
   expect(runtime.status.locationChanged).not.toBe(true);
@@ -892,7 +899,7 @@ describe("broker hosting", () => {
         runtime,
         (status) => status.message !== undefined && ++failures === 2,
       );
-      expect(runtime.status.state).toBe("retrying");
+      expect(runtime.status.state).toBe("unavailable");
       expect(notices).toHaveLength(1);
       expect(notices[0]).toContain(expected);
       expect(notices[0]).toContain("Direct vault ports keep working");
@@ -985,6 +992,236 @@ describe("requests through the broker", () => {
     const duplicate = await call(port, "/mcp", secretFor("a1"));
     expect(duplicate.status).toBe(409);
     expect(duplicate.body).toContain("Make this copy independent");
+  });
+});
+
+describe("registration with a real broker", () => {
+  /**
+   * A real broker host whose retries each wait for one `allowRetry()`, so
+   * a test changes the vault's data file between attempts without racing
+   * the backoff. The first election runs at once, and `open()` lets every
+   * later one through. `failNextRetry()` makes the next allowed retry
+   * fail like a dropped connection, and `retryWaits()` resolves once a
+   * later retry waits at the gate, so the failure before it was recorded.
+   */
+  function gatedHost(port: number) {
+    const inner = hostOn(port);
+    let elections = 0;
+    let allowed = 0;
+    let failNext = false;
+    let wake: (() => void) | undefined;
+    let waiting: (() => void) | undefined;
+    const host: BrokerHost = {
+      get port() {
+        return inner.port;
+      },
+      get hosting() {
+        return inner.hosting;
+      },
+      async ensure() {
+        if (elections++ > 0) {
+          while (allowed === 0)
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+              waiting?.();
+              waiting = undefined;
+            });
+          allowed -= 1;
+          if (failNext) {
+            failNext = false;
+            throw new Error("socket hang up");
+          }
+        }
+        return inner.ensure();
+      },
+      close: () => inner.close(),
+    };
+    const allow = (count: number) => {
+      allowed += count;
+      wake?.();
+    };
+    return {
+      host,
+      allowRetry: () => allow(1),
+      open: () => allow(Number.POSITIVE_INFINITY),
+      failNextRetry: () => {
+        failNext = true;
+      },
+      retryWaits: () => new Promise<void>((resolve) => (waiting = resolve)),
+    };
+  }
+
+  /** Resolves on the first status published after this call. */
+  function nextStatus(runtime: DiscoveryRuntime): Promise<DiscoveryStatus> {
+    let published = false;
+    const next = untilStatus(runtime, () => published);
+    published = true;
+    return next;
+  }
+
+  /** The data file path the vault registered, saved with its route. */
+  const registeredPath = (vault: Vault) =>
+    storedSettings(vault.plugin).dataPath as string;
+
+  test("a linked plugin folder registers under its own name, not its target's", async () => {
+    const port = await freePort();
+    const vault = await openVault("a", "a1");
+    // What bun run link leaves: The plugin folder links to a checkout
+    const checkout = path.join(tempDir, "checkout");
+    await fsp.rename(path.dirname(vault.file), checkout);
+    await fsp.symlink(
+      checkout,
+      path.dirname(vault.file),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const runtime = await start(vault, hostOn(port));
+
+    expect(runtime.status.state).toBe("connected");
+    const expected = path.join(
+      await fsp.realpath(path.dirname(path.dirname(vault.file))),
+      PLUGIN_ID,
+      "data.json",
+    );
+    expect(registeredPath(vault)).toBe(
+      process.platform === "win32" ? expected.toLowerCase() : expected,
+    );
+    expect(
+      JSON.parse((await call(port, routeOf(runtime), secretFor("a1"))).body),
+    ).toEqual({ vault: "a", tokenId: "a1" });
+    expect(notices).toEqual([]);
+  });
+
+  /**
+   * Break the vault's data file, start its route, then fix the file: The
+   * refusal names its cause once and the route recovers on a later retry.
+   */
+  async function refusedUntilFixed(
+    breakFile: (vault: Vault) => Promise<void>,
+    fixFile: (vault: Vault) => Promise<void>,
+    reason: (file: string) => string,
+  ) {
+    const port = await freePort();
+    const vault = await openVault("a", "a1");
+    await breakFile(vault);
+    const { host, allowRetry, open } = gatedHost(port);
+    try {
+      const runtime = await start(vault, host);
+      expect(runtime.status.state).toBe("rejected");
+      const message = runtime.status.message ?? "";
+      expect(message).toContain(reason(registeredPath(vault)));
+      expect(message).toContain(
+        "the copy buttons in Access Control give its direct address",
+      );
+      expect(notices).toEqual([message]);
+      // The direct address the copy buttons fall back to
+      expect(runtime.transportPort).toBe(vault.port);
+
+      // Still broken: the status keeps the reason, no second Notice
+      const refusedAgain = nextStatus(runtime);
+      allowRetry();
+      expect(await refusedAgain).toEqual({ state: "rejected", message });
+      expect(notices).toHaveLength(1);
+
+      await fixFile(vault);
+      const recovered = untilStatus(
+        runtime,
+        (status) => status.state === "connected",
+      );
+      allowRetry();
+      await recovered;
+      expect(
+        JSON.parse((await call(port, routeOf(runtime), secretFor("a1"))).body),
+      ).toEqual({ vault: "a", tokenId: "a1" });
+      expect(notices).toHaveLength(1);
+    } finally {
+      open();
+    }
+  }
+
+  // Through the plugin's own settings store, like any setting
+  const padding = (value: string | undefined) => (vault: Vault) =>
+    new SettingsStore(vault.plugin)
+      .updateSlice("padding", () => value)
+      .then(() => undefined);
+
+  test("a data file over 1 MB is named, shown once and recovers once it shrinks", async () => {
+    await refusedUntilFixed(
+      padding("x".repeat(1024 * 1024)),
+      padding(undefined),
+      (file) =>
+        `The shared broker refused this vault's route: The data file ${file} is larger than 1 MB, the most the shared broker reads`,
+    );
+  });
+
+  test("a transient failure while refused keeps the refusal until a registration succeeds", async () => {
+    const port = await freePort();
+    const vault = await openVault("a", "a1");
+    await padding("x".repeat(1024 * 1024))(vault);
+    const { host, allowRetry, open, failNextRetry, retryWaits } =
+      gatedHost(port);
+    try {
+      const runtime = await start(vault, host);
+      expect(runtime.status.state).toBe("rejected");
+      const message = runtime.status.message ?? "";
+      const states: string[] = [];
+      const unsubscribe = runtime.subscribe((status) =>
+        states.push(status.state),
+      );
+
+      // A retry dropped mid-election, while the file is still too large
+      const waited = retryWaits();
+      failNextRetry();
+      allowRetry();
+      await waited;
+      unsubscribe();
+      expect(states).toEqual(["rejected"]);
+      expect(runtime.status).toEqual({ state: "rejected", message });
+      expect(notices).toEqual([message]);
+
+      await padding(undefined)(vault);
+      const recovered = untilStatus(
+        runtime,
+        (status) => status.state === "connected",
+      );
+      allowRetry();
+      await recovered;
+      expect(
+        JSON.parse((await call(port, routeOf(runtime), secretFor("a1"))).body),
+      ).toEqual({ vault: "a", tokenId: "a1" });
+      expect(notices).toHaveLength(1);
+    } finally {
+      open();
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a data file every user can write is named, shown once and recovers once fixed",
+    async () => {
+      await refusedUntilFixed(
+        async (vault) => {
+          // Written once so the mode sticks, the vault keeps it on save
+          await vault.plugin.saveData(vault.plugin._data);
+          await fsp.chmod(vault.file, 0o666);
+        },
+        (vault) => fsp.chmod(vault.file, 0o600),
+        (file) =>
+          `Every user on this computer can write to the data file ${file}. Remove that write access, for example with chmod o-w`,
+      );
+    },
+  );
+
+  test("a refusal the vault cannot explain still says so once", async () => {
+    const port = await freePort();
+    const vault = await openVault("a", "a1");
+    // A host whose plugin ID differs refuses a file this vault finds valid
+    const host = createBrokerHost({ port, pluginId: "another-plugin" });
+    hosts.push(host);
+    const runtime = await start(vault, host);
+    expect(runtime.status.state).toBe("rejected");
+    expect(runtime.status.message).toContain(
+      "The shared broker refused this vault's route with HTTP 401, for a reason this vault cannot check",
+    );
+    expect(notices).toEqual([runtime.status.message!]);
   });
 });
 

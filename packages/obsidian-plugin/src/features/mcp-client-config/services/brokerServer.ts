@@ -139,7 +139,9 @@ function parseRegistration(value: unknown): BrokerRegistration | null {
  * A registration names the file the broker then trusts for a route's
  * tokens, so it must be this plugin's own data file in canonical form:
  * `<vault>/<configDir>/plugins/<pluginId>/data.json`. Any config directory
- * name is accepted, because each vault can override it.
+ * name is accepted, because each vault can override it. canonicalDataPath
+ * resolves links only up to the `plugins` folder, so a linked plugin
+ * folder still names the plugin ID here.
  */
 function isPluginDataPath(dataPath: string, pluginId: string): boolean {
   // canonicalDataPath lowercases the whole path on Windows
@@ -160,50 +162,101 @@ function isPluginDataPath(dataPath: string, pluginId: string): boolean {
   );
 }
 
-/**
- * Owned by this user and writable by no one else. Group write is allowed
- * only for the user's own primary group, the per-user group a `002` umask
- * relies on (Ubuntu and similar).
- */
-function ownedByUser(entry: Stats): boolean {
-  return (
-    entry.uid === process.getuid?.() &&
-    (entry.mode & 0o002) === 0 &&
-    ((entry.mode & 0o020) === 0 || entry.gid === process.getgid?.())
-  );
-}
+/** Why an entry fails the owner check, see ownershipFault. */
+type OwnershipFault = "owner" | "others" | "group";
 
 /**
- * Read a registered vault's `data.json`, or null when it fails a check.
- * Admission, every forwarded request and bare `/mcp` routing all read
- * through here. On POSIX the plugin directory must be a real directory
- * owned by this user, and the file is checked on the descriptor it is then
- * read from: a regular file, not a link, owned by this user and writable
- * by no one else. A path swapped after the open, for example through a
- * linked ancestor directory, therefore cannot change what is read. Windows
- * has no cheap owner check and relies on the ACLs of the user profile that
- * holds the vault.
+ * Null when the entry is owned by this user and writable by no one else.
+ * Group write is allowed only for the user's own primary group, the
+ * per-user group a `002` umask relies on (Ubuntu and similar).
  */
-async function readPluginDataFile(
+function ownershipFault(entry: Stats): OwnershipFault | null {
+  if (entry.uid !== process.getuid?.()) return "owner";
+  if ((entry.mode & 0o002) !== 0) return "others";
+  if ((entry.mode & 0o020) !== 0 && entry.gid !== process.getgid?.())
+    return "group";
+  return null;
+}
+
+type EntryLabel = "plugins folder" | "plugin folder" | "data file";
+type EntryFault = OwnershipFault | "link" | "not-folder" | "not-file" | "size";
+
+/** The check a registered `data.json` failed, see checkPluginDataFile. */
+type DataFileProblem =
+  | { kind: "path" }
+  | { kind: "entry"; label: EntryLabel; entryPath: string; fault: EntryFault }
+  | { kind: "unreadable"; code?: string }
+  | { kind: "json" };
+
+type DataFileCheck = { value: unknown } | { problem: DataFileProblem };
+
+/**
+ * Read a registered vault's `data.json` with the broker's checks, or name
+ * the check it failed. On POSIX the `plugins` folder must be a real
+ * folder, not a link, owned by this user and writable by no one else, so
+ * only this user can create or replace the plugin folder inside it. The
+ * plugin folder may be a link, as `bun run link` creates, and is checked
+ * where it leads with the same owner rule. Following that one link adds no
+ * file another user controls: only this user can place it, and the file
+ * itself is checked on the descriptor it is then read from, a regular
+ * file, not a link, owned by this user and writable by no one else. A path
+ * swapped after the open, for example through a linked ancestor directory,
+ * therefore cannot change what is read, and a registration still needs the
+ * route credential stored in that file. Windows has no cheap owner check
+ * and relies on the ACLs of the user profile that holds the vault.
+ *
+ * With `read` false every check above still runs, the open and the checks
+ * on the open file included, and the file is neither read nor parsed. The
+ * value is then undefined.
+ */
+async function checkPluginDataFile(
   dataPath: string,
   pluginId: string,
-): Promise<unknown> {
-  if (!isPluginDataPath(dataPath, pluginId)) return null;
+  read = true,
+): Promise<DataFileCheck> {
+  if (!isPluginDataPath(dataPath, pluginId))
+    return { problem: { kind: "path" } };
   const posix = process.platform !== "win32";
+  const pluginDir = path.dirname(dataPath);
+  const pluginsDir = path.dirname(pluginDir);
+  const entry = (
+    label: EntryLabel,
+    entryPath: string,
+    fault: EntryFault,
+  ): DataFileCheck => ({ problem: { kind: "entry", label, entryPath, fault } });
   let handle: FileHandle | undefined;
   try {
     if (posix) {
-      const dir = await fsp.lstat(path.dirname(dataPath));
-      if (!dir.isDirectory() || !ownedByUser(dir)) return null;
+      // Not followed, so only this user can place the plugin folder, which
+      // is followed and checked where it leads
+      const plugins = await fsp.lstat(pluginsDir);
+      if (!plugins.isDirectory())
+        return entry("plugins folder", pluginsDir, "link");
+      const pluginsFault = ownershipFault(plugins);
+      if (pluginsFault)
+        return entry("plugins folder", pluginsDir, pluginsFault);
+      const plugin = await fsp.stat(pluginDir);
+      if (!plugin.isDirectory())
+        return entry("plugin folder", pluginDir, "not-folder");
+      const pluginFault = ownershipFault(plugin);
+      if (pluginFault) return entry("plugin folder", pluginDir, pluginFault);
     }
-    handle = await fsp.open(dataPath, DATA_FILE_OPEN_FLAGS);
+    try {
+      handle = await fsp.open(dataPath, DATA_FILE_OPEN_FLAGS);
+    } catch (error) {
+      // What O_NOFOLLOW reports for a link: ELOOP, or EMLINK on FreeBSD
+      const code = (error as NodeJS.ErrnoException).code;
+      if (posix && (code === "ELOOP" || code === "EMLINK"))
+        return entry("data file", dataPath, "not-file");
+      throw error;
+    }
     const stat = await handle.stat();
-    if (
-      !stat.isFile() ||
-      stat.size > MAX_DATA_JSON_BYTES ||
-      (posix && !ownedByUser(stat))
-    )
-      return null;
+    if (!stat.isFile()) return entry("data file", dataPath, "not-file");
+    const fileFault = posix ? ownershipFault(stat) : null;
+    if (fileFault) return entry("data file", dataPath, fileFault);
+    if (stat.size > MAX_DATA_JSON_BYTES)
+      return entry("data file", dataPath, "size");
+    if (!read) return { value: undefined };
     const buffer = Buffer.alloc(stat.size);
     let length = 0;
     while (length < buffer.length) {
@@ -216,13 +269,97 @@ async function readPluginDataFile(
       if (bytesRead === 0) break;
       length += bytesRead;
     }
-    const value: unknown = JSON.parse(buffer.toString("utf8", 0, length));
-    return value;
-  } catch {
-    return null;
+    try {
+      return { value: JSON.parse(buffer.toString("utf8", 0, length)) };
+    } catch {
+      return { problem: { kind: "json" } };
+    }
+  } catch (error) {
+    return {
+      problem: {
+        kind: "unreadable",
+        code: (error as NodeJS.ErrnoException).code,
+      },
+    };
   } finally {
     await handle?.close().catch(() => undefined);
   }
+}
+
+/**
+ * Read a registered vault's `data.json`, or null when it fails a check.
+ * Admission and bare `/mcp` routing read through here, see
+ * checkPluginDataFile.
+ */
+async function readPluginDataFile(
+  dataPath: string,
+  pluginId: string,
+): Promise<unknown> {
+  const check = await checkPluginDataFile(dataPath, pluginId);
+  return "value" in check ? check.value : null;
+}
+
+/**
+ * Whether a route's `data.json` still passes every check, without reading
+ * it. A forwarded request needs nothing from its contents, because the
+ * vault authenticates the bearer itself.
+ */
+async function passesDataFileChecks(
+  dataPath: string,
+  pluginId: string,
+): Promise<boolean> {
+  const check = await checkPluginDataFile(dataPath, pluginId, false);
+  return !("problem" in check);
+}
+
+function describeProblem(
+  problem: DataFileProblem,
+  dataPath: string,
+  pluginId: string,
+): string {
+  switch (problem.kind) {
+    case "path":
+      return `The path ${dataPath} is not this plugin's data file, <vault>/<config folder>/plugins/${pluginId}/data.json`;
+    case "unreadable":
+      return `The data file ${dataPath} cannot be read${problem.code ? ` (${problem.code})` : ""}`;
+    case "json":
+      return `The data file ${dataPath} is not valid JSON`;
+  }
+  const { label, entryPath } = problem;
+  switch (problem.fault) {
+    case "owner":
+      return `The ${label} ${entryPath} is not owned by your user account. Make your account its owner, for example with chown`;
+    case "others":
+      return `Every user on this computer can write to the ${label} ${entryPath}. Remove that write access, for example with chmod o-w`;
+    case "group":
+      return `A group other than your own can write to the ${label} ${entryPath}. Remove the group's write access, for example with chmod g-w`;
+    case "link":
+      return `The ${label} ${entryPath} is a link or not a folder. Replace it with a real folder`;
+    case "not-folder":
+      return `The ${label} ${entryPath} is not a folder`;
+    case "not-file":
+      return `The ${label} ${entryPath} is a link or not a regular file. Replace it with the file itself`;
+    case "size":
+      return `The ${label} ${entryPath} is larger than 1 MB, the most the shared broker reads`;
+  }
+}
+
+/**
+ * Why the broker would refuse to read `dataPath`, as a sentence that names
+ * the path and what to change, or null when every check passes. The
+ * broker answers a refused registration with a bare `401`, so no other
+ * local process learns why: the registering vault runs the same checks
+ * itself. Null leaves a cause these checks cannot see, such as a route
+ * credential that changed meanwhile.
+ */
+export async function diagnosePluginDataFile(
+  dataPath: string,
+  pluginId: string,
+): Promise<string | null> {
+  const check = await checkPluginDataFile(dataPath, pluginId);
+  return "problem" in check
+    ? describeProblem(check.problem, dataPath, pluginId)
+    : null;
 }
 
 /** Read the parts of a vault's `data.json` the broker acts on, or null. */
@@ -573,7 +710,12 @@ export function startBrokerServer(opts: {
       return;
     }
     // The data file must still pass its checks, but the vault authenticates
-    if (!(await readVaultFile(control.registration.dataPath, opts.pluginId))) {
+    if (
+      !(await passesDataFileChecks(
+        control.registration.dataPath,
+        opts.pluginId,
+      ))
+    ) {
       respond(res, 503, "vault data is unavailable");
       return;
     }

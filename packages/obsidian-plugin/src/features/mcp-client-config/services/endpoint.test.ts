@@ -3,25 +3,33 @@ import fsp from "fs/promises";
 import { FileSystemAdapter } from "obsidian";
 import os from "os";
 import path from "path";
+import type { DiscoveryStatus } from "./discoveryBroker";
 import {
   brokerRouteUrl,
   clientEndpointUrl,
   directVaultUrl,
   resolveClientEndpoint,
+  resolveClientEndpointDetails,
   type EndpointPlugin,
 } from "./endpoint";
 
 const routeId = "123e4567-e89b-42d3-a456-426614174000";
 const routeUrl = `http://127.0.0.1:27200/v1/${routeId}/mcp`;
 const pluginId = "mcp-tools-istefox";
+/** The port the running route registered, its direct fallback. */
+const transportPort = 27204;
 
-function plugin(data: Record<string, unknown>, routed = true): EndpointPlugin {
+function plugin(
+  data: Record<string, unknown>,
+  routed = true,
+  status: DiscoveryStatus = { state: "connected" },
+): EndpointPlugin {
   return {
     loadData: async () => data,
     saveData: async () => {},
     app: { vault: { adapter: {}, configDir: ".obsidian" } },
     manifest: { id: pluginId },
-    discoveryState: routed ? { routeId } : undefined,
+    discoveryState: routed ? { routeId, status, transportPort } : undefined,
   };
 }
 
@@ -67,6 +75,38 @@ describe("resolveClientEndpoint", () => {
   });
 });
 
+describe("resolveClientEndpoint by route status", () => {
+  const direct = `http://127.0.0.1:${transportPort}/mcp`;
+
+  test.each<[DiscoveryStatus["state"], string, string]>([
+    ["connecting", routeUrl, "broker"],
+    ["connected", routeUrl, "broker"],
+    // A dropped control, such as a failover between hosting vaults
+    ["retrying", routeUrl, "broker"],
+    ["rejected", direct, "direct"],
+    ["unavailable", direct, "direct"],
+    // The broker routes this route ID to another vault
+    ["conflict", direct, "direct"],
+  ])("a %s route resolves to %s", async (state, url, kind) => {
+    const p = plugin({ mcpTransport: { livePort: 27203 } }, true, { state });
+    expect(await resolveClientEndpoint(p)).toBe(url);
+    expect(await resolveClientEndpointDetails(p)).toEqual({
+      url,
+      kind: kind as "broker" | "direct",
+    });
+  });
+
+  test("a fixed port stays direct whatever the route status", async () => {
+    for (const state of ["connected", "rejected"] as const) {
+      expect(
+        await resolveClientEndpointDetails(
+          plugin({ mcpTransport: { port: 27210 } }, true, { state }),
+        ),
+      ).toEqual({ url: "http://127.0.0.1:27210/mcp", kind: "fixed" });
+    }
+  });
+});
+
 describe("resolveClientEndpoint while the vault location is unresolved", () => {
   let tempDir = "";
 
@@ -86,6 +126,7 @@ describe("resolveClientEndpoint while the vault location is unresolved", () => {
     port: number | undefined,
     routed: boolean,
     savedPath?: string,
+    status?: DiscoveryStatus,
   ): Promise<EndpointPlugin> {
     const vault = path.join(tempDir, "vault");
     const pluginDir = path.join(vault, ".obsidian", "plugins", pluginId);
@@ -107,6 +148,7 @@ describe("resolveClientEndpoint while the vault location is unresolved", () => {
         },
       },
       routed,
+      status,
     );
     p.app.vault.adapter = Object.assign(new FileSystemAdapter(), {
       getBasePath: () => vault,
@@ -137,6 +179,17 @@ describe("resolveClientEndpoint while the vault location is unresolved", () => {
       ).toBeNull();
     },
   );
+
+  test("hands out no direct fallback either while the location is unresolved", async () => {
+    expect(
+      await resolveClientEndpoint(
+        await located(undefined, true, elsewhere(), {
+          state: "rejected",
+          message: "refused",
+        }),
+      ),
+    ).toBeNull();
+  });
 
   test("hands out the endpoint again once the location is resolved", async () => {
     expect(await resolveClientEndpoint(await located(undefined, true))).toBe(

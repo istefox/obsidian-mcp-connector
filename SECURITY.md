@@ -55,10 +55,14 @@ Another open vault takes over when the hosting vault closes.
 Each vault registers a route over a loopback control connection, authenticated with that vault's route credential.
 The broker admits the route only when the vault's `data.json` names the same route ID and canonical settings path, and it keeps registrations only in memory while the connection is open.
 The registered path must be the plugin's own data file, `<vault>/<config folder>/plugins/<plugin ID>/data.json`.
-On macOS and Linux that file and its plugin folder must also be a regular file and folder, not links, owned by the user running Obsidian and not writable by others or by any group other than that user's own primary group.
+On macOS and Linux that file, its plugin folder and the `plugins` folder above it must also be owned by the user running Obsidian and not writable by others or by any group other than that user's own primary group.
+The file must be a regular file and the `plugins` folder a real folder, not links, so only the user can place or replace the plugin folder.
+The plugin folder may be a link, as `bun run link` creates, and is checked where it leads.
 The broker checks the file on the open file it then reads, so a path swapped after the check, for example through a linked parent folder, cannot change what it reads.
-It applies these checks on every read of the file: At registration, for each forwarded request and for bare `/mcp` routing.
+It applies these checks on every use of the file: At registration, for each forwarded request and for bare `/mcp` routing.
 Windows has no such owner check and relies on the access rules of the user profile that holds the vault.
+There, another local account that knows a route ID can register it first, for example while the vault is closed, with a `data.json` it controls, and then receive the bearer tokens clients send on that route.
+Route IDs appear in client configs, so keep those configs private on shared Windows machines.
 A route ID is as sensitive as a token: A same-user process that knows it can register first, which the vault reports as a route conflict.
 
 - **Passthrough on a route.** A request on `/v1/<route-id>/mcp` is forwarded to the port that vault registered on its control connection, with its `Authorization` header unchanged, so the vault authenticates it as on a direct port. Per-client tokens and tool profiles apply, and a revoked token gets the vault's `401`

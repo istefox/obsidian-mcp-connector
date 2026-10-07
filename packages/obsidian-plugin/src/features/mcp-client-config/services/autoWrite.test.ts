@@ -22,6 +22,7 @@ import {
   defaultClaudeDesktopConfigPath,
   FORK_PLUGIN_ID,
 } from "./claudeDesktop";
+import type { EndpointPlugin } from "./endpoint";
 
 /**
  * Tests for the auto-write toggle persistence + sync action.
@@ -60,7 +61,11 @@ function fakePlugin(initial: StoredData = {}) {
     mcpTransportState: undefined as
       | { bearerToken: string; server: { port: number } }
       | undefined,
-    discoveryState: { routeId: ROUTE_ID } as { routeId: string } | undefined,
+    discoveryState: {
+      routeId: ROUTE_ID,
+      status: { state: "connected" },
+      transportPort: 27203,
+    } as EndpointPlugin["discoveryState"],
   };
 }
 
@@ -437,6 +442,17 @@ describe("applyAutoWrite endpoint (every platform)", () => {
   test("writes the broker route, not the vault's current port", async () => {
     expect(await applyAutoWrite(owned(), "a")).toEqual({ applied: true });
     expect(await writtenUrl()).toBe(ROUTE_URL);
+  });
+
+  test("writes the vault's direct URL while the broker cannot reach it", async () => {
+    const p = owned();
+    p.discoveryState = {
+      routeId: ROUTE_ID,
+      status: { state: "rejected", message: "refused" },
+      transportPort: 27204,
+    };
+    expect(await applyAutoWrite(p, "a")).toEqual({ applied: true });
+    expect(await writtenUrl()).toBe("http://127.0.0.1:27204/mcp");
   });
 
   test("writes the fixed port directly when the vault has one", async () => {

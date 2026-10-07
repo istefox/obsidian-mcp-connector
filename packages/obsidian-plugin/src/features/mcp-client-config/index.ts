@@ -83,6 +83,8 @@ export {
   clientEndpointUrl,
   directVaultUrl,
   resolveClientEndpoint,
+  resolveClientEndpointDetails,
+  type ClientEndpoint,
 } from "./services/endpoint";
 
 export {

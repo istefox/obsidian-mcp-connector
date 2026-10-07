@@ -11,6 +11,7 @@ import type { PluginDataLike } from "$/shared/types";
 import {
   BROKER_NAME,
   BROKER_PROTOCOL_VERSION,
+  diagnosePluginDataFile,
   HEALTH_PATH,
   LEASE_HEADER,
   REGISTRATION_PATH,
@@ -58,13 +59,33 @@ type DiscoveryPlugin = LocatedPlugin & {
 
 export type DiscoveryRuntime = {
   routeId: string;
+  /**
+   * The vault transport port this route registers, which is also the
+   * vault's direct address while the broker cannot reach it.
+   */
+  readonly transportPort: number;
   readonly status: DiscoveryStatus;
   subscribe(listener: (status: DiscoveryStatus) => void): () => void;
   stop(): Promise<void>;
 };
 
 export type DiscoveryStatus = {
-  state: "connecting" | "connected" | "retrying" | "conflict" | "stopped";
+  /**
+   * `retrying` follows a transient failure or a dropped control
+   * connection, such as a failover between hosting vaults, so the broker
+   * is expected to reach this vault again on its own. `rejected` (the
+   * broker refused the registration) and `unavailable` (no compatible
+   * broker can run on its port) keep retrying with backoff, but need the
+   * user to act, like `conflict`, which stops retrying.
+   */
+  state:
+    | "connecting"
+    | "connected"
+    | "retrying"
+    | "rejected"
+    | "unavailable"
+    | "conflict"
+    | "stopped";
   message?: string;
   locationChanged?: boolean;
 };
@@ -102,6 +123,33 @@ class RegistrationConflict extends Error {}
 
 /** The broker port is held by something this plugin cannot reuse. */
 class BrokerUnavailable extends Error {}
+
+/** The broker refused the registration with `401` or `403`. */
+class RegistrationRejected extends Error {
+  constructor(
+    readonly status: number,
+    message = `The shared broker rejected registration with HTTP ${status}`,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * What the route status and its Notice say about a refused registration.
+ * The broker answers every refusal with a bare `401`, so the vault runs
+ * the broker's own checks on its data file to name the cause.
+ */
+async function rejectionMessage(
+  status: number,
+  dataPath: string,
+  pluginId: string,
+): Promise<string> {
+  const reason = await diagnosePluginDataFile(dataPath, pluginId);
+  const cause = reason
+    ? `The shared broker refused this vault's route: ${reason}`
+    : `The shared broker refused this vault's route with HTTP ${status}, for a reason this vault cannot check, such as a route credential that changed meanwhile or another open vault running a different MCP Connector build`;
+  return `${cause}. Until that is fixed, client configs that use the broker cannot reach this vault, and the copy buttons in Access Control give its direct address instead`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -214,13 +262,24 @@ export async function isLocationUnresolved(
   }
 }
 
+/**
+ * The `data.json` path this vault registers and saves with its route.
+ * Links are resolved up to the `plugins` folder, so a vault opened through
+ * an alias keeps its saved location. The plugin folder and file names are
+ * appended unresolved: A plugin folder linked elsewhere, as `bun run link`
+ * creates, would otherwise lose the plugin ID the broker requires in the
+ * path. For a plugin folder that is no link the result is the same as
+ * resolving the whole folder.
+ */
 async function canonicalDataPath(
   plugin: LocatedPlugin,
   opts?: { dataPath?: string },
 ): Promise<string> {
   const file = opts?.dataPath ?? resolveDataPath(plugin);
+  const pluginDir = path.dirname(file);
   const resolved = path.join(
-    await fsp.realpath(path.dirname(file)),
+    await fsp.realpath(path.dirname(pluginDir)),
+    path.basename(pluginDir),
     path.basename(file),
   );
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -275,7 +334,7 @@ async function startRuntime(
   let status: DiscoveryStatus = { state: "connecting" };
   let backoff = reconnectMs;
   let lastLoggedMessage: string | null = null;
-  let notified = false;
+  const notified = new Set<DiscoveryStatus["state"]>();
   const listeners = new Set<(status: DiscoveryStatus) => void>();
   const setStatus = (next: DiscoveryStatus) => {
     status = next;
@@ -307,7 +366,13 @@ async function startRuntime(
       current.accessToken,
       leaseId,
       registration,
-    );
+    ).catch(async (error: unknown) => {
+      if (!(error instanceof RegistrationRejected)) throw error;
+      throw new RegistrationRejected(
+        error.status,
+        await rejectionMessage(error.status, dataPath, plugin.manifest.id),
+      );
+    });
     if (stopped) {
       next.close();
       await next.closed;
@@ -339,9 +404,23 @@ async function startRuntime(
       setStatus({ state: "conflict", message });
       return;
     }
-    setStatus({ state: "retrying", message });
-    if (error instanceof BrokerUnavailable && !notified) {
-      notified = true;
+    // Both leave the broker unable to reach this vault until the user acts,
+    // so each raises one Notice per runtime. Retries go on, so fixing the
+    // cause recovers without a reload.
+    const state =
+      error instanceof RegistrationRejected
+        ? "rejected"
+        : error instanceof BrokerUnavailable
+          ? "unavailable"
+          : "retrying";
+    // A transient failure says nothing about a cause the user must fix, so
+    // the refusal and its message hold until a registration succeeds.
+    // Showing `retrying` would hand out the dead route URL meanwhile.
+    const holdsForUser =
+      status.state === "rejected" || status.state === "unavailable";
+    if (state !== "retrying" || !holdsForUser) setStatus({ state, message });
+    if (state !== "retrying" && !notified.has(state)) {
+      notified.add(state);
       notify(message);
     }
     // Log on every distinct failure reason, not just the first, so a
@@ -384,7 +463,9 @@ async function startRuntime(
 
   function scheduleRecovery(firstDelay: number): void {
     if (stopped || recovery !== null) return;
-    setStatus({ state: "retrying" });
+    // A dropped control. After a failed first attempt the status already
+    // names the failure, which the user needs while the retry waits.
+    if (status.state === "connected") setStatus({ state: "retrying" });
     recovery = recover(firstDelay).finally(() => {
       recovery = null;
       // Only a control that dropped before this recovery settled gets
@@ -396,6 +477,7 @@ async function startRuntime(
 
   const runtime: DiscoveryRuntime = {
     routeId,
+    transportPort: opts.transportPort,
     get status() {
       return status;
     },
@@ -472,16 +554,19 @@ async function connectRegistration(
       },
       (response) => {
         window.clearTimeout(deadline);
-        if (response.statusCode !== 200) {
+        const status = response.statusCode ?? 0;
+        if (status !== 200) {
           response.destroy();
           reject(
-            response.statusCode === 409
+            status === 409
               ? new RegistrationConflict(
                   "This vault's broker route is already in use by another open vault. In the copied vault, use Make this copy independent",
                 )
-              : new Error(
-                  `The shared broker rejected registration with HTTP ${response.statusCode ?? 0}`,
-                ),
+              : status === 401 || status === 403
+                ? new RegistrationRejected(status)
+                : new Error(
+                    `The shared broker rejected registration with HTTP ${status}`,
+                  ),
           );
           return;
         }

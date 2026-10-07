@@ -8,6 +8,7 @@ import { isOriginAllowed } from "$/features/mcp-transport/services/origin";
 import {
   BROKER_NAME,
   BROKER_PROTOCOL_VERSION,
+  diagnosePluginDataFile,
   HEALTH_PATH,
   LEASE_HEADER,
   MAX_PENDING_REGISTRATIONS,
@@ -852,19 +853,34 @@ describe("registration ownership", () => {
     );
   });
 
-  test("rejects a missing, corrupt or oversized data file", async () => {
+  test("rejects a missing, corrupt or oversized data file, which the vault's diagnosis names", async () => {
     const port = await startBroker();
-    const missing = vaultFile("missing");
-    await expect(
-      registerRoute(port, routeCredential, "lease", routeId, missing),
-    ).rejects.toThrow("HTTP 401");
+    /** Refused with a bare 401, while the vault's own check names why. */
+    const refused = async (file: string, reason: string) => {
+      const result = await request(port, {
+        path: `${REGISTRATION_PATH}/${routeId}`,
+        token: routeCredential,
+        body: JSON.stringify({
+          version: BROKER_PROTOCOL_VERSION,
+          routeId,
+          dataPath: file,
+          leaseId: "lease",
+          port: UNUSED_PORT,
+        }),
+        headers: { [LEASE_HEADER]: "lease" },
+      });
+      expect(result.status).toBe(401);
+      expect(JSON.parse(result.body)).toEqual({ error: "unauthorized" });
+      const diagnosis = await diagnosePluginDataFile(file, pluginId);
+      expect(diagnosis).toContain(file);
+      expect(diagnosis).toContain(reason);
+    };
+    await refused(vaultFile("missing"), "cannot be read (ENOENT)");
 
     const corrupt = vaultFile("corrupt");
     await fsp.mkdir(path.dirname(corrupt), { recursive: true, mode: 0o700 });
     await fsp.writeFile(corrupt, "not json", { mode: 0o600 });
-    await expect(
-      registerRoute(port, routeCredential, "lease", routeId, corrupt),
-    ).rejects.toThrow("HTTP 401");
+    await refused(corrupt, "is not valid JSON");
 
     const oversized = vaultFile("oversized");
     await fsp.mkdir(path.dirname(oversized), { recursive: true, mode: 0o700 });
@@ -876,9 +892,7 @@ describe("registration ownership", () => {
       }),
       { mode: 0o600 },
     );
-    await expect(
-      registerRoute(port, routeCredential, "lease", routeId, oversized),
-    ).rejects.toThrow("HTTP 401");
+    await refused(oversized, "is larger than 1 MB");
   });
 
   test("admits only the plugin's own data.json path", async () => {
@@ -916,22 +930,72 @@ describe("registration ownership", () => {
       await expect(
         registerRoute(port, routeCredential, "lease", routeId, file),
       ).rejects.toThrow("HTTP 401");
+      expect(await diagnosePluginDataFile(file, pluginId)).toContain(
+        `is not this plugin's data file, <vault>/<config folder>/plugins/${pluginId}/data.json`,
+      );
     }
 
     const valid = vaultFile("valid");
     await writeVault(valid, {});
+    expect(await diagnosePluginDataFile(valid, pluginId)).toBeNull();
     await registerRoute(port, routeCredential, "lease", routeId, valid);
+  });
+
+  test("admits a linked plugin folder, as bun run link creates", async () => {
+    const file = await vaultTarget("linked", "vault");
+    // The plugin's checkout lives outside the vault, linked in by its ID
+    const checkout = path.join(tempDir, "checkout");
+    await fsp.rename(path.dirname(file), checkout);
+    await fsp.symlink(
+      checkout,
+      path.dirname(file),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const port = await startBroker();
+    await registerRoute(port, routeCredential, "lease", routeId, file);
+    expect(await diagnosePluginDataFile(file, pluginId)).toBeNull();
+    expect(
+      (
+        await request(port, {
+          path: `/v1/${routeId}/mcp`,
+          token: "vault-token",
+          body: "{}",
+        })
+      ).body,
+    ).toBe("linked|Bearer vault-token");
   });
 });
 
 describe.skipIf(process.platform === "win32")(
   "registration file ownership on POSIX",
   () => {
+    const pluginsDir = (file: string) => path.dirname(path.dirname(file));
+    /** Move the plugin folder out of the vault and link it back by its ID. */
+    const linkPluginFolder = async (file: string) => {
+      const checkout = path.join(tempDir, "checkout");
+      await fsp.rename(path.dirname(file), checkout);
+      await fsp.symlink(checkout, path.dirname(file));
+      return checkout;
+    };
+
     test.each([
-      ["a world-writable data file", (file: string) => fsp.chmod(file, 0o602)],
       [
-        "a world-writable plugin directory",
+        "a world-writable data file",
+        (file: string) => fsp.chmod(file, 0o602),
+        (file: string) =>
+          `Every user on this computer can write to the data file ${file}. Remove that write access, for example with chmod o-w`,
+      ],
+      [
+        "a world-writable plugin folder",
         (file: string) => fsp.chmod(path.dirname(file), 0o707),
+        (file: string) =>
+          `Every user on this computer can write to the plugin folder ${path.dirname(file)}`,
+      ],
+      [
+        "a world-writable plugins folder",
+        (file: string) => fsp.chmod(pluginsDir(file), 0o707),
+        (file: string) =>
+          `Every user on this computer can write to the plugins folder ${pluginsDir(file)}`,
       ],
       [
         "a symlinked data file",
@@ -940,44 +1004,64 @@ describe.skipIf(process.platform === "win32")(
           await fsp.rename(file, elsewhere);
           await fsp.symlink(elsewhere, file);
         },
+        (file: string) =>
+          `The data file ${file} is a link or not a regular file`,
       ],
       [
-        "a symlinked plugin directory",
+        // Whoever can replace it could point the plugin folder anywhere
+        "a symlinked plugins folder",
         async (file: string) => {
           const elsewhere = path.join(tempDir, "elsewhere");
-          await fsp.rename(path.dirname(file), elsewhere);
-          await fsp.symlink(elsewhere, path.dirname(file));
+          await fsp.rename(pluginsDir(file), elsewhere);
+          await fsp.symlink(elsewhere, pluginsDir(file));
         },
+        (file: string) =>
+          `The plugins folder ${pluginsDir(file)} is a link or not a folder`,
       ],
-    ])("rejects %s", async (_label, change) => {
-      const file = vaultFile();
-      await writeVault(file, {});
-      const port = await startBroker();
-      await change(file);
-      await expect(
-        registerRoute(port, routeCredential, "lease"),
-      ).rejects.toThrow("HTTP 401");
-    });
-
-    test.each([
-      ["data file", (file: string) => fsp.chmod(file, 0o620)],
       [
-        "plugin directory",
-        (file: string) => fsp.chmod(path.dirname(file), 0o770),
+        "a linked plugin folder that every user can write",
+        async (file: string) => {
+          await fsp.chmod(await linkPluginFolder(file), 0o707);
+        },
+        (file: string) =>
+          `Every user on this computer can write to the plugin folder ${path.dirname(file)}`,
       ],
     ])(
-      "admits a %s writable by the user's own primary group (umask 002), but not by another group",
-      async (_label, change) => {
+      "rejects %s, and the vault's diagnosis names it",
+      async (_label, change, reason) => {
         const file = vaultFile();
         await writeVault(file, {});
         const port = await startBroker();
         await change(file);
+        await expect(
+          registerRoute(port, routeCredential, "lease"),
+        ).rejects.toThrow("HTTP 401");
+        expect(await diagnosePluginDataFile(file, pluginId)).toContain(
+          reason(file),
+        );
+      },
+    );
+
+    test.each([
+      ["data file", (file: string) => file],
+      ["plugin folder", (file: string) => path.dirname(file)],
+      ["plugins folder", pluginsDir],
+    ])(
+      "admits a %s writable by the user's own primary group (umask 002), but not by another group",
+      async (label, entry) => {
+        const file = vaultFile();
+        await writeVault(file, {});
+        const port = await startBroker();
+        await fsp.chmod(entry(file), label === "data file" ? 0o620 : 0o770);
         const gid = process.getgid!();
         const getgid = spyOn(process, "getgid").mockReturnValue(gid + 1);
         try {
           await expect(
             registerRoute(port, routeCredential, "lease"),
           ).rejects.toThrow("HTTP 401");
+          expect(await diagnosePluginDataFile(file, pluginId)).toContain(
+            `A group other than your own can write to the ${label} ${entry(file)}. Remove the group's write access, for example with chmod g-w`,
+          );
         } finally {
           getgid.mockRestore();
         }
@@ -995,6 +1079,10 @@ describe.skipIf(process.platform === "win32")(
         await expect(
           registerRoute(port, routeCredential, "lease"),
         ).rejects.toThrow("HTTP 401");
+        // The first entry checked is the plugins folder
+        expect(await diagnosePluginDataFile(file, pluginId)).toContain(
+          `The plugins folder ${pluginsDir(file)} is not owned by your user account`,
+        );
       } finally {
         getuid.mockRestore();
       }
@@ -1103,6 +1191,12 @@ describe.skipIf(process.platform === "win32")(
         },
       ],
       [
+        "in a plugins folder made world-writable",
+        async (file: string) => {
+          await fsp.chmod(path.dirname(path.dirname(file)), 0o707);
+        },
+      ],
+      [
         "owned by another user",
         async () => {
           const uid = process.getuid!();
@@ -1156,6 +1250,63 @@ describe.skipIf(process.platform === "win32")(
     });
   },
 );
+
+describe("route requests check the data file without reading it", () => {
+  const route = `/v1/${routeId}/mcp`;
+  const call = (port: number, path: string) =>
+    request(port, { path, token: "vault-token", body: "{}" });
+
+  async function registered() {
+    const file = await vaultTarget("vault", "vault");
+    const port = await startBroker();
+    await registerRoute(port, routeCredential, "lease", routeId, file);
+    expect((await call(port, route)).body).toBe("vault|Bearer vault-token");
+    return { file, port };
+  }
+
+  test("a route request opens and checks the file but never reads it, while bare /mcp reads it", async () => {
+    const { file, port } = await registered();
+    // The broker's handles on the data file, each with its reads
+    const handles: Array<{ mock: { calls: unknown[] } }> = [];
+    const open = fsp.open;
+    const spy = spyOn(fsp, "open").mockImplementation(
+      async (...args: Parameters<typeof fsp.open>) => {
+        const handle = await open(...args);
+        if (args[0] === file) handles.push(spyOn(handle, "read"));
+        return handle;
+      },
+    );
+    const readFrom = () =>
+      handles.filter((handle) => handle.mock.calls.length > 0).length;
+    try {
+      expect((await call(port, route)).body).toBe("vault|Bearer vault-token");
+      expect(handles.length).toBe(1);
+      expect(readFrom()).toBe(0);
+      expect((await call(port, "/mcp")).body).toBe("vault|Bearer vault-token");
+      expect(handles.length).toBe(2);
+      expect(readFrom()).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a file grown over 1 MB after admission stops forwarding", async () => {
+    const { file, port } = await registered();
+    const stored = JSON.parse(await fsp.readFile(file, "utf8"));
+    stored.padding = "x".repeat(1024 * 1024);
+    await fsp.writeFile(file, JSON.stringify(stored));
+    expect((await call(port, route)).status).toBe(503);
+    expect((await call(port, "/mcp")).status).toBe(401);
+  });
+
+  test("a file that turns into invalid JSON after admission still forwards the bearer unchanged", async () => {
+    const { file, port } = await registered();
+    await fsp.writeFile(file, "not json");
+    expect((await call(port, route)).body).toBe("vault|Bearer vault-token");
+    // Bare /mcp needs the token store, so it finds no vault
+    expect((await call(port, "/mcp")).status).toBe(401);
+  });
+});
 
 test("concurrent clients share one broker and closing another vault preserves its sibling", async () => {
   const first = await vaultTarget("first", "first");

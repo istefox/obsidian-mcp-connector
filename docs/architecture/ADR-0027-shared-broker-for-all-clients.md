@@ -49,7 +49,7 @@ On plugin load, after the vault's MCP transport has started, each vault probes `
 - **A healthy broker** answers with the name `obsidian-mcp-discovery-broker` and protocol version `3`. The vault registers with it
 - **A free port** makes the vault start the broker in-process
 - **`EADDRINUSE`** means another vault won the race between probe and bind. The vault probes again and registers
-- **Any other listener**, such as a foreign process, a vault on an older plugin version whose vault server holds `27200`, or a vault with fixed port `27200`, leaves the vault without a broker. Direct vault ports keep working, one Notice per start names those causes and the route status keeps retrying with backoff
+- **Any other listener**, such as a foreign process, a vault on an older plugin version whose vault server holds `27200`, or a vault with fixed port `27200`, leaves the vault without a broker. Direct vault ports keep working, one Notice per start names those causes and the route status shows **Unavailable** and keeps retrying with backoff
 - **A broker with another protocol version** produces a Notice asking the user to update the plugin in every open vault
 
 Every vault, including the host, registers its route over a loopback control connection.
@@ -96,19 +96,33 @@ The `enabled` and `tokenId` keys that earlier versions stored under the same key
 
 The broker admits a registration when the vault's `data.json` names the same route ID and the same canonical `data.json` path, and the bearer matches the stored route credential.
 The registered path must have the shape of this plugin's own data file, `<vault>/<config folder>/plugins/<plugin ID>/data.json`, with the plugin ID of the hosting plugin and in canonical form.
+The vault resolves links in that path up to the `plugins` folder and keeps the plugin folder's own name, so a plugin folder linked elsewhere, as `bun run link` creates, still names the plugin ID.
 The config folder name is not checked, because each vault can override it.
-On macOS and Linux the broker also checks the file and its `plugins/<plugin ID>` folder without following links: Both must be a regular file and a folder, owned by the user running Obsidian and not writable by others or by any group other than that user's own primary group.
-The broker opens `data.json` without following a final link, checks the open file and reads from it, so a path swapped after the check, for example through a linked parent folder, cannot change what it reads.
+On macOS and Linux the broker also checks the `plugins` folder, the plugin folder and the file.
+All three must be owned by the user running Obsidian and not writable by others or by any group other than that user's own primary group.
+The `plugins` folder must be a real folder, not a link, so only its owner can create or replace the plugin folder in it.
+The plugin folder may be a link and is checked where it leads.
+The broker opens `data.json` without following a final link, checks that it is a regular file on the open file and reads from it, so a path swapped after the check, for example through a linked parent folder, cannot change what it reads.
 A FIFO is opened without waiting for a writer and then fails the regular-file check.
-Every read of a registered `data.json` goes through these checks: Admission, each forwarded request and bare `/mcp` routing.
+Every use of a registered `data.json` goes through these checks: Admission, each forwarded request and bare `/mcp` routing.
 Windows has no comparably cheap owner check, so there the broker relies on the access rules of the user profile that holds the vault.
 Copied-vault handling from ADR-0021 stays.
 A different data path claiming a registered route gets `409`.
 A moved vault must confirm **This vault was moved**, and a copy uses **Make this copy independent**
 
+### Refused registrations
+
+The broker answers every refused registration with `401` and no reason, so another local process learns nothing about a vault's files.
+The registering vault runs the broker's own checks on its `data.json`, through the same code, and names the one that failed: The path shape, a `plugins` folder, plugin folder or `data.json` that is not the user's or that others or a foreign group can write, a `plugins` folder or `data.json` that is a link, a file over 1 MB, an unreadable file or invalid JSON.
+The message names the path and what to change, for example removing write access for others with `chmod o-w`.
+When every check passes, the cause is one the vault cannot see, such as a route credential that changed meanwhile or a host running a different plugin build, and the message says so.
+The broker connection in Access Control shows **Refused** with that message, and one Notice per route start repeats it.
+The route keeps retrying with backoff, so fixing the file reconnects it without a reload
+
 ### Request authentication on a route
 
-For each request on `/v1/<route-id>/mcp`, the broker reads that vault's `data.json` again with the admission checks, bounded to regular files of at most 1 MB.
+For each request on `/v1/<route-id>/mcp`, the broker runs the admission checks on that vault's `data.json` again, on the open file and bounded to regular files of at most 1 MB.
+It does not read or parse the file, because the vault authenticates the bearer itself, so a file that is no longer valid JSON still forwards.
 A file that fails a check gets `503`.
 Otherwise the broker forwards the request with its `Authorization` header unchanged, or absent, to `127.0.0.1:<registered port>/mcp`.
 The vault authenticates it as on a direct port, so per-client tokens and tool profiles apply, a revoked token gets the vault's `401` and `GET` gets the vault's `405`.
@@ -128,6 +142,14 @@ Host and Origin checks, registration size, timeout and pending caps, hop-by-hop 
 `services/endpoint.ts` is the single place that chooses the URL a client config uses.
 By default it returns `http://127.0.0.1:27200/v1/<route-id>/mcp`.
 A vault with a fixed port gets `http://127.0.0.1:<fixedPort>/mcp`, because the user pinned that port to address the vault directly.
+
+While the broker cannot reach the vault, the resolver returns the vault's direct URL on the transport port its route registered, `http://127.0.0.1:<port>/mcp`.
+That holds after a refused registration (**Refused**), while no compatible broker can run on `27200` (**Unavailable**) and while another vault holds the route (**Needs attention**), because the route URL then fails or reaches another vault until the user acts.
+A route that is connecting, connected or retrying after a dropped control connection keeps the broker URL, because a failover between hosting vaults ends on its own.
+Access Control resolves the URL again whenever the route status changes and explains that its copy buttons give a direct URL meanwhile, which breaks when the vault's port changes.
+The Claude Desktop config sync writes that direct URL too when it runs meanwhile.
+It runs only on an explicit action that expects a working entry, such as turning it on or replacing its token's secret, and skipping would keep a replaced secret.
+It does not rewrite the entry when the route connects again.
 
 Every copy button on a token row uses the resolver: Claude Desktop with `mcp-remote`, the Claude Code `claude mcp add` command, the Claude Code `.mcp.json` entry, the Cursor, Continue and VS Code streamable HTTP entry and Cline.
 The Claude Desktop config sync also uses it, writes a URL and is applied again when the fixed-port setting is saved.
@@ -183,9 +205,13 @@ That conflict surfaces like a copied vault's: The registration gets `409` and th
 On macOS and Linux the path and ownership checks keep another user's process from claiming a route with a file it controls.
 They do not stop a process of the same user, which can already read the vault's `data.json` and its tokens.
 Group write access is accepted only when the group is the user's own primary group, the per-user group a `002` umask relies on, so Obsidian's default file modes on Ubuntu and similar systems still register.
-A vault whose `data.json` or plugin folder is writable by any other group, or by others, cannot register a route and gets the broker's `401` until that write access is removed.
+A vault whose `data.json`, plugin folder or `plugins` folder is writable by any other group, or by others, cannot register a route and gets the broker's `401` until that write access is removed.
+Access Control names the cause, and its copy buttons give the vault's direct URL meanwhile.
 Such access added after registration makes its route answer `503`.
 Its direct port keeps working
+
+A vault whose plugin folder is a link saved its route with a path through the link's target before linked plugin folders were supported.
+That route never registered, and the vault now reports a changed location once, which **This vault was moved** resolves
 
 ## Accepted risks
 
@@ -196,9 +222,12 @@ Its direct port keeps working
 - **Route registration by a same-user process:** A process running as the same user that knows a route ID can register first with a `data.json` it controls and then receive the bearer tokens clients send on that route. Such a process can already read every vault's `data.json`, tokens included, so registration adds no access it lacks. The vault's own registration then fails with `409` and shows **Needs attention** instead of silently losing its route. A full registry of trusted vault paths was not adopted
 - **Equally named vaults in Codex:** Two vaults with the same name produce the same `obsidian_<vault>` key. Pasting both gives `config.toml` a duplicate table, and Codex rejects the whole file. ADR-0021's installer refused such conflicts, but the plugin no longer writes `config.toml`. Renaming one entry's key fixes it, because Codex connects by URL and the key is only a label. Keeping the route UUID in the key was rejected so that Codex is named like every other client
 - **Windows ownership:** The broker checks only the path shape on Windows and relies on the user profile's access rules to keep other users from writing a vault's `data.json`
+- **Linked plugin folder:** On macOS and Linux the broker follows a link at the plugin folder, as `bun run link` creates, and checks its target with the same owner rule. Only the owner of the `plugins` folder can place that link, `data.json` is still opened without following a link and checked on the open file, and a registration still needs the route credential stored in that file, so the link gives no other user a file the broker trusts
+- **Direct URL while the broker cannot reach a vault:** A config copied or synced after a refused registration, while the broker is unavailable or during a route conflict names the vault's current port and breaks when that port changes. The plugin does not rewrite it when the route connects again. Access Control asks to copy such configs again once the broker connection shows **Connected**
 
 ## Alternatives considered
 
 - **Keep the detached Node.js process and extend it to every client.** It keeps the system Node.js requirement, the generated executable in application data and a process outside Obsidian's lifecycle for every user instead of only Codex users
 - **Reserve a port per vault.** A persisted per-vault port still collides when vaults are copied or opened on another machine, needs an allocation scheme across vaults that cannot see each other and still breaks direct configs when the reservation fails. Preferring `livePort` keeps the benefit without the contract
 - **Keep the broker Codex-only.** It leaves every other HTTP client exposed to open-order port swaps, which was the defect that prompted this change
+- **Cache the parsed `data.json` by file metadata.** On Windows, back-to-back rewrites of the same size often keep the exact same timestamps, so a changed file could look unchanged unless a time window and a clock check guard the cache. That bought about 0.2 ms per request. A route request needs nothing from the file's contents, so the broker checks the open file without reading it, which saves the read and the parse with no cached state to go stale

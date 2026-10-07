@@ -18,7 +18,7 @@ import { vaultServerId } from "./generators";
  * The Settings UI exposes an opt-in toggle (default OFF)
  * that, when ON, automatically rewrites `claude_desktop_config.json`
  * whenever the bearer token rotates or the vault's client endpoint
- * changes (a saved fixed port, see endpoint.ts).
+ * changes through a saved fixed port (see endpoint.ts).
  * This module owns the read/write of that flag and the one-shot sync
  * action invoked by callers.
  *
@@ -277,7 +277,15 @@ export async function applyAutoWrite(
   if (!record) return { applied: false, reason: "not-owner" };
 
   // The same resolver as the copy buttons, so the synced entry and a
-  // copied one never point at different endpoints.
+  // copied one never point at different endpoints. While the broker cannot
+  // reach this vault that is the vault's direct URL, and the sync writes
+  // it rather than skipping or waiting: It runs only on an explicit action
+  // (turning it on, replacing the owner's secret, saving a fixed port) that
+  // expects a working entry now, skipping would keep a replaced secret, and
+  // a broker URL would leave Claude Desktop without this vault until the
+  // user fixes the cause. The entry is not rewritten when the route
+  // connects again: Access Control says to sync again then, because the
+  // direct URL breaks when the vault's port changes.
   const url = await resolveClientEndpoint(plugin);
   if (url === null) return { applied: false, reason: "endpoint-unavailable" };
 

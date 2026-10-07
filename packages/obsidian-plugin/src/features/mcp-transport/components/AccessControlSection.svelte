@@ -33,6 +33,7 @@
     isLocationUnresolved,
     resetDiscoveryIdentity,
     resolveClientEndpoint,
+    resolveClientEndpointDetails,
     type DiscoveryStatus,
     codexConfigSnippet,
     CLAUDE_CODE_TOKEN_ENV_VAR,
@@ -89,11 +90,27 @@
   let destroyed = false;
   onDestroy(() => { destroyed = true; unsubscribeDiscovery?.(); });
 
+  const STATUS_LABELS: Record<DiscoveryStatus["state"], string> = {
+    connecting: "Connecting",
+    connected: "Connected",
+    retrying: "Retrying",
+    rejected: "Refused",
+    unavailable: "Unavailable",
+    conflict: "Needs attention",
+    stopped: "Stopped",
+  };
+
   function watchDiscoveryStatus(): void {
     unsubscribeDiscovery?.();
     if (destroyed) return;
     discoveryStatus = plugin.discoveryState?.status ?? { state: "stopped" };
-    unsubscribeDiscovery = plugin.discoveryState?.subscribe((status) => { discoveryStatus = status; });
+    unsubscribeDiscovery = plugin.discoveryState?.subscribe((status) => {
+      const changed = status.state !== discoveryStatus.state;
+      discoveryStatus = status;
+      // The copy buttons follow the route: the direct URL while the
+      // broker cannot reach this vault, the broker route once it can.
+      if (changed) void refreshEndpoint().catch(() => undefined);
+    });
   }
 
   /**
@@ -108,21 +125,31 @@
   let port: number = plugin.mcpTransportState?.server.port ?? 0;
 
   /**
-   * What every copy button on every row points at: the broker route, or
-   * the fixed port (see resolveClientEndpoint). Empty while there is none
-   * to hand out, which disables the buttons.
+   * What every copy button on every row points at: the broker route, the
+   * fixed port, or the vault's direct URL while the broker cannot reach it
+   * (see resolveClientEndpoint). Empty while there is none to hand out,
+   * which disables the buttons.
    */
   let url = "";
+  /** `url` is the direct fallback, which breaks when the vault's port changes. */
+  let directFallback = false;
   /**
    * The saved route belongs to another vault location. Read from the saved
    * settings rather than the route status, so it also shows while no route
    * runs, for example with a fixed port 27200 or a stopped transport.
    */
   let locationUnresolved = false;
+  let endpointReads = 0;
 
   async function refreshEndpoint(): Promise<void> {
-    locationUnresolved = await isLocationUnresolved(plugin);
-    url = (await resolveClientEndpoint(plugin)) ?? "";
+    const read = ++endpointReads;
+    const unresolved = await isLocationUnresolved(plugin);
+    const endpoint = await resolveClientEndpointDetails(plugin);
+    // A status change can start a newer read while this one awaits
+    if (read !== endpointReads) return;
+    locationUnresolved = unresolved;
+    url = endpoint?.url ?? "";
+    directFallback = endpoint?.kind === "direct";
   }
 
   // The configured (possibly blank) fixed-port override, read from
@@ -906,7 +933,7 @@
     </ul>
 
     <p role="status" aria-live="polite">
-      Broker connection: <strong>{discoveryStatus.state === "connected" ? "Connected" : discoveryStatus.state === "connecting" ? "Connecting" : discoveryStatus.state === "retrying" ? "Retrying" : discoveryStatus.state === "conflict" ? "Needs attention" : "Stopped"}</strong>
+      Broker connection: <strong>{STATUS_LABELS[discoveryStatus.state]}</strong>
       {#if discoveryStatus.message} {discoveryStatus.message}{/if}
     </p>
     <div class="token-actions connection-actions">
@@ -915,6 +942,18 @@
         <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("move")}>This vault was moved</button>
       {/if}
     </div>
+
+    {#if directFallback}
+      <p class="token-hint">
+        The shared broker cannot reach this vault, for the reason shown under
+        Broker connection, so the copy buttons and the Claude Desktop sync use
+        this vault's direct address <code>{url}</code> meanwhile. That address
+        breaks when this vault's port changes, for example when vaults open in
+        another order. Once the broker connection shows Connected, copy those
+        configs again, and turn the Claude Desktop sync off and on if it wrote
+        meanwhile
+      </p>
+    {/if}
 
     {#if locationUnresolved}
       <p class="token-hint">

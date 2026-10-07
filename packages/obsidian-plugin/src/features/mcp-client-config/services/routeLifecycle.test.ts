@@ -34,6 +34,7 @@ function runtime(name: string, log: Log): DiscoveryRuntime {
   let stopped = false;
   return {
     routeId: name,
+    transportPort: 27201,
     get status() {
       return { state: stopped ? ("stopped" as const) : ("connected" as const) };
     },
