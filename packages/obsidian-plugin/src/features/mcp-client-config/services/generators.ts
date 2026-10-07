@@ -194,8 +194,9 @@ const WILDCARD_PATH_CHARS = /[[\]*?]/;
 const ABSOLUTE_PATH = /^(\/|[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/;
 
 /**
- * Validate the "Claude Code project path" setting. Trims, and accepts an
- * empty value as "no project" (user scope). Anything else must be an
+ * Validate the "Project path" setting, shared by Claude Code and the Codex
+ * project install (ADR-0028 D6). Trims, and accepts an empty value as "no
+ * project" (user scope). Anything else must be an
  * absolute path that a single-quoted shell string carries literally, which
  * holds for both POSIX shells and PowerShell once the quote characters are
  * excluded.

@@ -63,6 +63,7 @@ It applies these checks on every use of the file: At registration, for each forw
 Windows has no such owner check and relies on the access rules of the user profile that holds the vault.
 There, another local account that knows a route ID can register it first, for example while the vault is closed, with a `data.json` it controls, and then receive the bearer tokens clients send on that route.
 Route IDs appear in client configs, so keep those configs private on shared Windows machines.
+That includes a project's `.codex/config.toml` written by the Codex project install: It holds no token, but its URL names the vault's route, so on a shared Windows machine committing it hands the route ID to everyone who can read the repository. This is an accepted risk ([ADR-0028](docs/architecture/ADR-0028-codex-installer-and-project-scope.md)).
 A route ID is as sensitive as a token: A same-user process that knows it can register first, which the vault reports as a route conflict.
 
 - **Passthrough on a route.** A request on `/v1/<route-id>/mcp` is forwarded to the port that vault registered on its control connection, with its `Authorization` header unchanged, so the vault authenticates it as on a direct port. Per-client tokens and tool profiles apply, and a revoked token gets the vault's `401`
@@ -80,6 +81,23 @@ This port-owner trust is accepted under the existing local-process threat model.
 A per-launch secret would authenticate only the plugin registration and would remain readable to a process running as the same operating-system user.
 It would not authenticate the broker to clients, which send their configured bearer credentials to whichever process owns the fixed port.
 The project therefore does not present a registration-only challenge as complete mitigation.
+
+### Files written outside the vault
+
+The plugin writes these files, and no others, outside the vault:
+
+- **`claude_desktop_config.json`**, only while the opt-in Claude Desktop config sync is on, and **`claude_desktop_config.json.backup`** next to it, written before a sync write replaces the file. The backup holds the previous file, including any token it carried
+- **A `.mcpb` bundle**, only on a `.mcpb` export the user starts, at the path the user picks in a save dialog. The bundle names the vault's path and the token's ID, not its secret, which it reads from the vault's `data.json` at run time
+- **The user's Codex `config.toml`** and **a project's `.codex/config.toml`**, only on a Codex install that the user previewed and confirmed in a dialog. Nothing installs at startup, on reconnect or on a token, port or route change. The install refuses a write when the file changed after its preview
+- **Backups** of an existing Codex config, `config.toml.backup-<time>-<id>`, written with mode `0600` next to the config before each changing install and never cleaned up. A backup holds the previous file, including any token it carried. In a project they are untracked files that `git add -A` would commit
+- **A lock file**, `config.toml.obsidian-mcp.lock`, mode `0600`, held during the install and removed afterwards
+
+A missing Codex home is created with mode `0700`, a new `config.toml` with mode `0600`, and an existing file keeps its mode.
+The installer refuses a `config.toml` that is a link or not a regular file.
+In a project it also refuses a `.codex` that is a link, before it creates a lock file or a backup, because a cloned repository could otherwise point the write at a file outside the project.
+A project entry always reads the token from the `OBSIDIAN_MCP_TOKEN` environment variable. The installer enforces this itself, and replacing a project entry that held a literal token removes the token.
+The installer never receives the route credential: Its entries carry the row's vault token or the environment variable.
+External editors and Codex itself do not take the lock, and a process running as the same user can swap `.codex` or `config.toml` between the checks and the write. Such a process can already edit those files directly
 
 ### Authorization (`execute_obsidian_command`)
 

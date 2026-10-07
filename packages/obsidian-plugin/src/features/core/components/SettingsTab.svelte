@@ -34,16 +34,25 @@
   // Bumped whenever the policy panel writes, so the token rows re-read
   // the profile and active tool count they display.
   let policyRevision = 0;
+  // Bumped when Access Control writes a policy (a Codex install that
+  // switched a profile), so the policy panel re-reads the selected token.
+  let accessPolicyRevision = 0;
 </script>
 
 <div class="settings-container">
-  <AccessControlSection {plugin} bind:selectedTokenId {policyRevision} />
+  <AccessControlSection
+    {plugin}
+    bind:selectedTokenId
+    {policyRevision}
+    on:policychange={() => (accessPolicyRevision += 1)}
+  />
   <ClaudeDesktopIntegrationSection {plugin} />
   <CommandPermissionsSettings {plugin} />
   <SemanticSearchSettings {plugin} />
   <AdaptiveToolLoadingSettings
     {plugin}
     tokenId={selectedTokenId}
+    externalRevision={accessPolicyRevision}
     on:policychange={() => (policyRevision += 1)}
   />
   <McpToolsSettings {plugin} />

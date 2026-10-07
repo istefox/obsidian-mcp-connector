@@ -38,8 +38,8 @@
   export let showMcpb = true;
   export let mcpbDisabled = false;
   /**
-   * The saved "Claude Code project path", or "" for user scope. Read and
-   * validated by the section that mounts this menu.
+   * The saved "Project path", shared with Codex, or "" for user scope. Read
+   * and validated by the section that mounts this menu.
    */
   export let claudeCodeProjectPath = "";
 
@@ -177,7 +177,7 @@
   >
     Cline
   </button>
-  <!-- Copy buttons whose config needs state the caller owns, such as Codex -->
+  <!-- Client actions that need state the caller owns, such as the Codex menu -->
   <slot />
   {#if showMcpb && tokenId}
     <button

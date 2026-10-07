@@ -2,7 +2,7 @@
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
   import { logger } from "$/shared/logger";
-  import { onMount, onDestroy } from "svelte";
+  import { createEventDispatcher, onMount, onDestroy } from "svelte";
   import type { SetupResult } from "$/features/mcp-transport/services/setup";
   import {
     addToken,
@@ -32,16 +32,13 @@
     acceptDiscoveryMove,
     isLocationUnresolved,
     resetDiscoveryIdentity,
-    resolveClientEndpoint,
     resolveClientEndpointDetails,
     type DiscoveryStatus,
-    codexConfigSnippet,
     CLAUDE_CODE_TOKEN_ENV_VAR,
-    type CodexConnection,
+    CodexMenu,
     CopyConfigMenu,
     detectNode,
     getClaudeCodeProjectPath,
-    getCodexConnection,
     releaseAutoWriteOwner,
     resolveAutoWriteOwner,
     setAutoWriteOwner,
@@ -60,6 +57,10 @@
   export let selectedTokenId = "";
   /** Bumped by that panel after every write, so these rows re-read. */
   export let policyRevision = 0;
+
+  // A Codex install that switched a token's profile, so the Tool Loading
+  // panel re-reads the policy it shows
+  const dispatch = createEventDispatcher<{ policychange: void }>();
 
   let tokens: TokenRecord[] = [];
   let policies: Record<string, TokenPolicy> = {};
@@ -80,9 +81,10 @@
   let autoWriteOwner: string | null = null;
   /**
    * Codex reads the token from $OBSIDIAN_MCP_TOKEN instead of having it
-   * written into config.toml. Off by default: a Codex started from a GUI may
-   * not inherit the variable, and the connection would then fail to
-   * authenticate. A per-session choice for every row, not persisted.
+   * written into a user config.toml. Off by default: a Codex started from a
+   * GUI may not inherit the variable, and the connection would then fail to
+   * authenticate. A per-session choice for every row, not persisted. A
+   * project install always uses the variable.
    */
   let codexTokenFromEnv = false;
   let discoveryStatus: DiscoveryStatus = { state: "stopped" };
@@ -172,9 +174,10 @@
   let serverNameInput = "";
   let serverNameBusy = false;
 
-  // The saved project path every row's Claude Code button uses, and the
-  // field's draft. Blank means user scope. A rejected draft keeps the
-  // saved value and shows its error under the field.
+  // The saved project path every row's Claude Code button and Codex
+  // project install use, and the field's draft. Blank means user scope. A
+  // rejected draft keeps the saved value and shows its error under the
+  // field.
   let claudeCodeProjectPath = "";
   let claudeCodeProjectInput = "";
   let claudeCodeProjectError = "";
@@ -522,8 +525,9 @@
   }
 
   /**
-   * Persist the Claude Code project path. No restart: only the copied
-   * command changes. An invalid path is shown inline and not saved.
+   * Persist the project path, shared by Claude Code and Codex. No restart:
+   * only the copied command and the Codex project install change. An
+   * invalid path is shown inline and not saved.
    */
   async function handleSaveClaudeCodeProject(): Promise<void> {
     claudeCodeProjectBusy = true;
@@ -540,12 +544,10 @@
       claudeCodeProjectPath = result.path;
       claudeCodeProjectInput = result.path;
       new Notice(
-        result.path
-          ? "Claude Code project path saved."
-          : "Claude Code project path cleared.",
+        result.path ? "Project path saved." : "Project path cleared.",
       );
     } catch (err) {
-      noticeFailure("saving the Claude Code project path", err);
+      noticeFailure("saving the project path", err);
     } finally {
       claudeCodeProjectBusy = false;
     }
@@ -704,36 +706,10 @@
     }
   }
 
-  /** The Codex entry for one row: its own token, sent to the client endpoint. */
-  async function configurationConnection(token: TokenRecord) {
-    if (await isLocationUnresolved(plugin))
-      throw new Error("Resolve the vault location change before copying Codex config. Confirm a move or make this copy independent first.");
-    const endpoint = await resolveClientEndpoint(plugin);
-    if (!endpoint)
-      throw new Error("This vault has no client address yet. Retry the broker connection, or wait for the MCP server to start.");
-    return getCodexConnection(plugin, token.token, endpoint);
-  }
-
-  function withCodexOptions(connection: CodexConnection): CodexConnection {
-    return {
-      ...connection,
-      // A broker failover between vaults can outlast Codex's 10 s default.
-      startupTimeoutSec: 30,
-      ...(codexTokenFromEnv ? { bearerTokenEnvVar: CLAUDE_CODE_TOKEN_ENV_VAR } : {}),
-    };
-  }
-
-  async function handleCopyCodexConfig(token: TokenRecord): Promise<void> {
-    if (busy) return;
-    try {
-      const connection = await configurationConnection(token);
-      await copyToClipboard(
-        codexConfigSnippet(withCodexOptions(connection)),
-        "Copied Codex config. When replacing this vault's entry, transfer its tool restrictions and approvals and remove its superseded entry. For a copy, keep the original vault's entry.",
-      );
-    } catch (err) {
-      noticeFailure("copying the Codex config", err);
-    }
+  /** A Codex install switched a row's profile: re-read the rows, tell the panel. */
+  async function handleCodexPolicyChange(): Promise<void> {
+    await refreshPolicies();
+    dispatch("policychange");
   }
 
   /**
@@ -884,14 +860,17 @@
               {mcpbDisabled}
               {claudeCodeProjectPath}
             >
-              <button
-                type="button"
-                on:click={() => void handleCopyCodexConfig(token)}
-                disabled={busy || !url}
-                aria-label="Copy Codex config for {token.label}"
-              >
-                Codex
-              </button>
+              <CodexMenu
+                {plugin}
+                {url}
+                token={token.token}
+                tokenId={token.id}
+                tokenLabel={token.label}
+                projectPath={claudeCodeProjectPath}
+                tokenFromEnv={codexTokenFromEnv}
+                disabled={busy}
+                on:policychange={() => void handleCodexPolicyChange()}
+              />
             </CopyConfigMenu>
           </div>
 
@@ -971,9 +950,12 @@
     {/if}
     <p class="token-hint">
       Every client connects through the shared broker that runs in Obsidian
-      and sends its own token. Codex entries carry the token of the row they
-      were copied from. The plugin never writes Codex's
-      <code>config.toml</code>: paste the entry there yourself.
+      and sends its own token. A row's <strong>Codex</strong> menu copies a
+      <code>config.toml</code> entry or a <code>codex mcp add</code> command,
+      or installs the entry into your Codex config or into the project path
+      below. An install shows what it will change and writes only after you
+      confirm, with a backup of the previous file. A project entry always
+      reads the token from <code>{CLAUDE_CODE_TOKEN_ENV_VAR}</code>.
     </p>
     <label class="token-hint">
       <input type="checkbox" bind:checked={codexTokenFromEnv} />
@@ -988,13 +970,16 @@
     {/if}
     <div class="setting-item">
       <div class="setting-item-info">
-        <div class="setting-item-name">Claude Code project path</div>
+        <div class="setting-item-name">Project path</div>
         <div class="setting-item-description">
-          Absolute path of a project directory. When set, <strong>Claude Code</strong>
-          copies a command that enters this directory and registers the vault
-          at local scope, private to that project. Leave blank for user scope,
-          available in every project. The command needs a POSIX shell or
-          PowerShell 7+, because Windows PowerShell 5.1 has no <code>&amp;&amp;</code>
+          Absolute path of a project directory, shared by Claude Code and
+          Codex. When set, <strong>Claude Code</strong> copies a command that
+          enters this directory and registers the vault at local scope, private
+          to that project, and the <strong>Codex</strong> menu can install into
+          the project's <code>.codex/config.toml</code>, which Codex loads only
+          for a trusted project. Leave blank for user scope, available in every
+          project. The Claude Code command needs a POSIX shell or PowerShell 7+,
+          because Windows PowerShell 5.1 has no <code>&amp;&amp;</code>
           {#if claudeCodeProjectError}
             <div class="token-error" role="alert">{claudeCodeProjectError}</div>
           {/if}
@@ -1006,7 +991,7 @@
           bind:value={claudeCodeProjectInput}
           on:input={() => (claudeCodeProjectError = "")}
           placeholder="User scope"
-          aria-label="Claude Code project path"
+          aria-label="Project path"
           aria-invalid={claudeCodeProjectError !== ""}
           disabled={claudeCodeProjectBusy}
           class="server-name-input"

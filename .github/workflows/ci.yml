@@ -173,4 +173,4 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Tests — discovery broker
-        run: bun test packages/obsidian-plugin/src/features/mcp-client-config/services/brokerServer.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexConfig.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/endpoint.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/routeLifecycle.test.ts
+        run: bun test packages/obsidian-plugin/src/features/mcp-client-config/services/brokerServer.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexConfig.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/codexInstallFlow.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/discoveryBroker.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/endpoint.test.ts packages/obsidian-plugin/src/features/mcp-client-config/services/routeLifecycle.test.ts
