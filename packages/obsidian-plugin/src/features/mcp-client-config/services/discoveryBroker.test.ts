@@ -15,13 +15,23 @@ import {
 import type { McpTransportState } from "$/features/mcp-transport/services/setup";
 import { SettingsStore } from "$/shared/settingsStore";
 import { BROKER_NAME } from "./brokerServer";
-import { codexConfigSnippet } from "./codexConfig";
+import {
+  codexConfigSnippet,
+  codexEntryFor,
+  inspectCodexInstall,
+  installCodexConfig,
+  type CodexInstallInput,
+  type CodexInstallPreview,
+  type CodexTokenForm,
+} from "./codexConfig";
+import { brokerRouteUrl } from "./endpoint";
 import { vaultServerId } from "./generators";
 import {
   acceptDiscoveryMove,
   createBrokerHost,
   getCodexConnection,
   resetDiscoveryIdentity,
+  savedRouteId,
   startDiscovery,
   type BrokerHost,
   type DiscoveryRuntime,
@@ -308,6 +318,38 @@ describe("Codex entries", () => {
     );
     expect(snippet).toContain(`url = "${direct}"`);
     expect(registrations).toHaveLength(0);
+  });
+});
+
+describe("savedRouteId", () => {
+  test("returns the stored route ID, never the credential (ADR-0028 D2)", async () => {
+    const plugin = fakePlugin(withTokens("a"));
+    const runtime = await startDiscovery(plugin, fakeOpts());
+    runtimes.push(runtime);
+
+    const routeId = await savedRouteId(plugin);
+    expect(routeId).toBe(runtime.routeId);
+    expect(routeId).not.toBe(storedSettings(plugin).accessToken);
+  });
+
+  test("returns a route ID that was seeded in the stored settings", async () => {
+    const plugin = fakePlugin({
+      ...withTokens("a"),
+      mcpClientConfig: {
+        codexDiscovery: {
+          routeId: "123e4567-e89b-42d3-a456-426614174000",
+          accessToken: secretFor("broker"),
+        },
+      },
+    });
+    expect(await savedRouteId(plugin)).toBe(
+      "123e4567-e89b-42d3-a456-426614174000",
+    );
+  });
+
+  test("returns null when no route was minted", async () => {
+    expect(await savedRouteId(fakePlugin(withTokens("a")))).toBeNull();
+    expect(await savedRouteId(fakePlugin(null))).toBeNull();
   });
 });
 
@@ -992,6 +1034,206 @@ describe("requests through the broker", () => {
     const duplicate = await call(port, "/mcp", secretFor("a1"));
     expect(duplicate.status).toBe(409);
     expect(duplicate.body).toContain("Make this copy independent");
+  });
+});
+
+describe("Codex entries installed by the plugin", () => {
+  type Parsed = { mcp_servers: Record<string, Record<string, unknown>> };
+
+  async function connected() {
+    const port = await freePort();
+    const vault = await openVault("a", "t1", "t2");
+    const runtime = await start(vault, hostOn(port));
+    const configPath = path.join(tempDir, "codex-home", "config.toml");
+    return { port, vault, runtime, configPath };
+  }
+
+  function inputFor(
+    vault: Vault,
+    runtime: DiscoveryRuntime,
+    port: number,
+    tokenForm: CodexTokenForm = "literal",
+  ): CodexInstallInput {
+    return {
+      ...codexEntryFor({
+        serverId: vaultServerId(vault.plugin.app.vault.getName()),
+        url: brokerRouteUrl(runtime.routeId, port),
+        token: secretFor("t2"),
+        tokenForm,
+      }),
+      routeId: runtime.routeId,
+    };
+  }
+
+  async function installInto(
+    input: CodexInstallInput,
+    configPath: string,
+  ): Promise<CodexInstallPreview> {
+    const target = { scope: "user" as const, configPath };
+    const planned = await inspectCodexInstall(input, target);
+    await installCodexConfig(input, target, {
+      expectedRevision: planned.revision,
+    });
+    return planned;
+  }
+
+  /** The request a Codex client makes from one parsed entry. */
+  function requestFrom(
+    entry: Record<string, unknown>,
+    env: Record<string, string> = {},
+  ) {
+    const url = new URL(entry.url as string);
+    const headers = entry.http_headers as
+      | { Authorization?: string }
+      | undefined;
+    const envName = entry.bearer_token_env_var as string | undefined;
+    const bearer = headers?.Authorization
+      ? headers.Authorization.replace(/^Bearer /, "")
+      : envName
+        ? env[envName]
+        : undefined;
+    return call(Number(url.port), url.pathname, bearer);
+  }
+
+  test("an installed entry reaches the vault as its own token, and gets the vault's 401 once revoked", async () => {
+    const { port, vault, runtime, configPath } = await connected();
+    await installInto(inputFor(vault, runtime, port), configPath);
+
+    const text = await fsp.readFile(configPath, "utf8");
+    const key = vaultServerId(vault.plugin.app.vault.getName());
+    const entry = (Bun.TOML.parse(text) as Parsed).mcp_servers[key];
+    expect(entry.url).toBe(brokerRouteUrl(runtime.routeId, port));
+    expect(text).not.toContain(
+      storedSettings(vault.plugin).accessToken as string,
+    );
+
+    const served = await requestFrom(entry);
+    expect(JSON.parse(served.body)).toEqual({ vault: "a", tokenId: "t2" });
+
+    await revokeToken(vault.plugin, "t2");
+    const revoked = await requestFrom(entry);
+    expect(revoked.status).toBe(401);
+    // The vault answers with no body; a broker refusal would carry JSON
+    expect(revoked.body).toBe("");
+  });
+
+  test("the environment variable form reaches the vault as its own token and holds no secret", async () => {
+    const { port, vault, runtime, configPath } = await connected();
+    await installInto(inputFor(vault, runtime, port, "env"), configPath);
+
+    const text = await fsp.readFile(configPath, "utf8");
+    const key = vaultServerId(vault.plugin.app.vault.getName());
+    const entry = (Bun.TOML.parse(text) as Parsed).mcp_servers[key];
+    expect(entry.bearer_token_env_var).toBe("OBSIDIAN_MCP_TOKEN");
+    expect(entry).not.toHaveProperty("http_headers");
+    expect(text).not.toContain(secretFor("t2"));
+    expect(text).not.toContain(
+      storedSettings(vault.plugin).accessToken as string,
+    );
+
+    const env = { OBSIDIAN_MCP_TOKEN: secretFor("t2") };
+    expect(JSON.parse((await requestFrom(entry, env)).body)).toEqual({
+      vault: "a",
+      tokenId: "t2",
+    });
+    await revokeToken(vault.plugin, "t2");
+    expect((await requestFrom(entry, env)).status).toBe(401);
+  });
+
+  test.each([
+    ["a UUID-only key", (hex: string) => `obsidian_${hex}`],
+    [
+      "a name plus the route hex",
+      (hex: string) => `obsidian_neon_hades_2_${hex}`,
+    ],
+  ])(
+    "an entry from an earlier version (%s) is migrated and no longer carries the route credential",
+    async (_label, legacyKey) => {
+      const { port, vault, runtime, configPath } = await connected();
+      const credential = storedSettings(vault.plugin).accessToken as string;
+      const hex = runtime.routeId.replace(/-/g, "");
+      const old = legacyKey(hex);
+      const legacyUrl = `http://127.0.0.1:27206/v1/${runtime.routeId}/mcp`;
+      await fsp.mkdir(path.dirname(configPath), { recursive: true });
+      await fsp.writeFile(
+        configPath,
+        [
+          `[mcp_servers.${old}]`,
+          `url = "${legacyUrl}"`,
+          `http_headers = { Authorization = "Bearer ${credential}" }`,
+          "enabled = true",
+          'default_tools_approval_mode = "approve"',
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      // The route credential in the legacy entry is no client bearer: the
+      // route answers it with the vault's 401
+      expect(
+        (await call(port, `/v1/${runtime.routeId}/mcp`, credential)).status,
+      ).toBe(401);
+
+      const planned = await installInto(
+        inputFor(vault, runtime, port),
+        configPath,
+      );
+      expect(planned.action).toBe("migrate");
+      expect(planned.previousServerId).toBe(old);
+
+      const text = await fsp.readFile(configPath, "utf8");
+      expect(text).not.toContain(credential);
+      const servers = (Bun.TOML.parse(text) as Parsed).mcp_servers;
+      const key = vaultServerId(vault.plugin.app.vault.getName());
+      expect(Object.keys(servers)).toEqual([key]);
+      expect(servers[key].default_tools_approval_mode).toBe("approve");
+      expect(JSON.parse((await requestFrom(servers[key])).body)).toEqual({
+        vault: "a",
+        tokenId: "t2",
+      });
+    },
+  );
+
+  test("legacy Codex keys stay in the stored settings, the install uses the plain key and the route stays connected", async () => {
+    const { port, vault, runtime, configPath } = await connected();
+    await new SettingsStore(vault.plugin).updateSlice(
+      "mcpClientConfig",
+      (current) => {
+        const slice = current as Record<string, Record<string, unknown>>;
+        return {
+          ...slice,
+          codexDiscovery: {
+            ...slice.codexDiscovery,
+            enabled: true,
+            tokenId: "t1",
+            serverId: "obsidian_saved_legacy_name",
+          },
+        };
+      },
+    );
+    const before = structuredClone(storedSettings(vault.plugin));
+
+    await installInto(inputFor(vault, runtime, port), configPath);
+
+    expect(storedSettings(vault.plugin)).toEqual(before);
+    expect(before).toMatchObject({
+      enabled: true,
+      tokenId: "t1",
+      serverId: "obsidian_saved_legacy_name",
+    });
+    const servers = (
+      Bun.TOML.parse(await fsp.readFile(configPath, "utf8")) as Parsed
+    ).mcp_servers;
+    expect(Object.keys(servers)).toEqual([
+      vaultServerId(vault.plugin.app.vault.getName()),
+    ]);
+    expect(runtime.status.state).toBe("connected");
+    // The route still serves the row token it was installed with
+    const entry = Object.values(servers)[0];
+    expect(JSON.parse((await requestFrom(entry)).body)).toEqual({
+      vault: "a",
+      tokenId: "t2",
+    });
   });
 });
 

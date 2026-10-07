@@ -3,8 +3,10 @@
  * for the supported MCP client families: Claude Desktop (`.mcpb`
  * export, legacy `mcp-remote`), Claude Code CLI (`claude mcp add`),
  * Cursor / Continue / Windsurf / VS Code (streamable-http), Cline
- * (`streamableHttp`) and Codex (copied TOML). Also owns the shared
- * discovery broker every client config points at (ADR-0027).
+ * (`streamableHttp`) and Codex (copied TOML, `codex mcp add`, and a
+ * previewed, confirmed installer for the user and project `config.toml`,
+ * ADR-0028). Also owns the shared discovery broker every client config
+ * points at (ADR-0027).
  */
 
 export {
@@ -54,9 +56,47 @@ export {
 } from "./services/claudeCodeProject";
 
 export {
+  CODEX_STARTUP_TIMEOUT_SEC,
+  CODEX_TOKEN_ENV_VAR,
+  CodexInstallError,
   codexConfigSnippet,
+  codexEntryFor,
+  codexMcpAddCommand,
+  inspectCodexInstall,
+  installCodexConfig,
+  locateCodexHome,
+  locateCodexProject,
   type CodexConnection,
+  type CodexHomeLocation,
+  type CodexInstallAction,
+  type CodexInstallInput,
+  type CodexInstallPreview,
+  type CodexInstallResult,
+  type CodexInstallScope,
+  type CodexInstallTarget,
+  type CodexProjectLocation,
+  type CodexTokenForm,
 } from "./services/codexConfig";
+
+export {
+  CODEX_OFFERED_PROFILE,
+  codexInstallNotice,
+  codexProfileOffer,
+  commitCodexInstall,
+  prepareCodexInstall,
+  type CodexInstallDecision,
+  type CodexInstallOutcome,
+  type CodexProfileOffer,
+  type PreparedCodexInstall,
+} from "./services/codexInstallFlow";
+
+export { CodexInstallModal } from "./services/codexInstallModal";
+
+export {
+  codexMenuItems,
+  type CodexMenuAction,
+  type CodexMenuItem,
+} from "./services/codexMenu";
 
 export {
   acceptDiscoveryMove,
@@ -64,6 +104,7 @@ export {
   resetDiscoveryIdentity,
   getCodexConnection,
   isLocationUnresolved,
+  savedRouteId,
   startDiscovery,
   type BrokerHost,
   type DiscoveryRuntime,
@@ -118,3 +159,4 @@ export { downloadMcpb } from "./services/mcpbDownload";
 
 export { default as ClaudeDesktopIntegrationSection } from "./components/ClaudeDesktopIntegrationSection.svelte";
 export { default as CopyConfigMenu } from "./components/CopyConfigMenu.svelte";
+export { default as CodexMenu } from "./components/CodexMenu.svelte";

@@ -19,7 +19,7 @@ import {
   type BrokerRegistration,
   type BrokerServer,
 } from "./brokerServer";
-import type { CodexConnection } from "./codexConfig";
+import { codexEntryFor, type CodexConnection } from "./codexConfig";
 import { vaultServerId } from "./generators";
 
 const DISCOVERY_RECONNECT_MS = 1_000;
@@ -193,6 +193,13 @@ async function updateSettings(
   return result;
 }
 
+/** The saved route ID, or null when no route was minted. Never the credential. */
+export async function savedRouteId(
+  plugin: PluginDataLike,
+): Promise<string | null> {
+  return (await readSettings(plugin))?.routeId ?? null;
+}
+
 /** A new route identity. */
 function mintSettings(dataPath: string): DiscoverySettings {
   return { routeId: randomUUID(), accessToken: generateToken(), dataPath };
@@ -202,17 +209,19 @@ function mintSettings(dataPath: string): DiscoverySettings {
  * The Codex entry for one token row: that row's vault token, sent to `url`
  * from resolveClientEndpoint, under the same per-vault key as every other
  * client config, so a new snippet replaces this vault's existing entry.
+ * The literal-token form of codexEntryFor, which the Codex menu uses.
  */
 export function getCodexConnection(
   plugin: DiscoveryPlugin,
   token: string,
   url: string,
 ): CodexConnection {
-  return {
+  return codexEntryFor({
     serverId: vaultServerId(plugin.app.vault.getName()),
-    accessToken: token,
     url,
-  };
+    token,
+    tokenForm: "literal",
+  });
 }
 
 /**

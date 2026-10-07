@@ -3,9 +3,12 @@ import { SettingsStore } from "$/shared/settingsStore";
 import { parseClaudeCodeProjectPath } from "./generators";
 
 /**
- * The optional "Claude Code project path" setting. Set, the Claude Code
- * copy button registers the vault at `local` scope for that project
- * instead of at `user` scope (see `claudeCodeProjectAddCommand`).
+ * The optional "Project path" setting, shared by Claude Code and Codex.
+ * Set, the Claude Code copy button registers the vault at `local` scope
+ * for that project instead of at `user` scope (see
+ * `claudeCodeProjectAddCommand`), and the Codex menu can install into the
+ * project's `.codex/config.toml` (see `locateCodexProject`, ADR-0028 D6).
+ * The key and function names keep "claudeCode" for stored data.
  *
  * Persistence: `data.json` slice
  * `mcpClientConfig.claudeCodeProjectPath`, a trimmed absolute path or

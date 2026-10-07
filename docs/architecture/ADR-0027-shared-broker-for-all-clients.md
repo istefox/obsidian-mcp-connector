@@ -1,9 +1,15 @@
 # ADR-0027: Shared broker for all clients
 
-- **Status:** Accepted and implemented
+- **Status:** Accepted and implemented, amended by ADR-0028 (Codex installer, project install, entry ownership)
 - **Date:** 2026-10-06
 - **Scope:** One stable loopback endpoint per vault for every HTTP client, hosted inside Obsidian
 - **Amends:** [ADR-0021](/docs/architecture/ADR-0021-shared-local-discovery-broker.md) (broker hosting, broker port, Node.js requirement, idle exit, Codex-only registration, the Codex credential swap, Codex entry names and the Codex config installer)
+
+> **Amended by [ADR-0028](/docs/architecture/ADR-0028-codex-installer-and-project-scope.md).**
+> Codex is no longer copy-only.
+> Each token row has a **Codex** menu that copies a `config.toml` entry or a `codex mcp add` command, or installs the entry into the user's Codex config or into a project's `.codex/config.toml` after a preview and a confirmation.
+> The installer keeps the plain `obsidian_<vault>` key, refuses another vault's entry by the route in its URL and migrates this vault's earlier entries, including those on `27206` and those that send the route credential.
+> The passages below marked "Amended by ADR-0028" record this decision's original text
 
 ## Context
 
@@ -153,6 +159,7 @@ It runs only on an explicit action that expects a working entry, such as turning
 It does not rewrite the entry when the route connects again.
 
 Every copy button on a token row uses the resolver: Claude Desktop with `mcp-remote`, the Claude Code `claude mcp add` command, the Claude Code `.mcp.json` entry, the Cursor, Continue and VS Code streamable HTTP entry and Cline.
+*Amended by ADR-0028:* The Codex menu on each row uses it too, for its copy actions and its installs.
 The Claude Desktop config sync also uses it, writes a URL and is applied again when the fixed-port setting is saved.
 While a vault location change is unresolved, the resolver returns no URL, for a fixed port too, because the saved route may still belong to the original vault.
 It compares the location saved with the route against the vault's own canonical `data.json` path, so the check holds while no route runs, for a legacy fixed `27200` and after a failed start.
@@ -167,6 +174,7 @@ Its shim still reads `livePort` and connects to the vault directly
 
 Codex is a client like any other.
 Each token row has **Codex**, which copies a `config.toml` entry with the client endpoint URL, normally `http://127.0.0.1:27200/v1/<route-id>/mcp`, and that row's vault token.
+*Amended by ADR-0028:* **Codex** is a menu with four actions: Copy the snippet, copy the `codex mcp add` command, install into the user's Codex config and install into the project.
 The entry is named with the same per-vault key as every other client config, such as `obsidian_my_vault`, with no route ID in it. A snippet copied from another row therefore names this vault's one entry.
 The route ID only appears in the URL.
 ADR-0021's `obsidian_<vault>_<route-uuid>` names and the saved entry name are dropped.
@@ -176,9 +184,11 @@ Equally named vaults share a key, as they already do for every other client, see
 Codex config is copy-only: The plugin never reads, locates or writes the Codex config.
 The opt-in Claude Desktop config sync stays the only client config the plugin writes.
 The earlier one-time installer and its backup, atomic write and `27206` detection are removed, so replacing an old entry is a manual paste.
+*Amended by ADR-0028:* The installer is restored for the user and the project config, and runs only after a preview and a confirmation. The opt-in Claude Desktop sync stays the only client config the plugin writes without a confirmation per write.
 
 The Codex checkbox, its token selector and **Reset Codex connection** are removed.
 Entries installed through the old checkbox carry the route credential and get `401` until they are copied again from a token row.
+*Amended by ADR-0028:* An install from the Codex menu also repairs them, replacing the credential with the row token.
 **Make this copy independent** always gives the vault a new route, so clients that should use the copy need fresh configs from its token rows.
 Codex configuration no longer requires Node.js
 
@@ -187,6 +197,7 @@ Codex configuration no longer requires Node.js
 Every HTTP client config survives vault port changes, open-order swaps and restarts, because its URL names a route instead of a port.
 Per-client tokens and tool profiles apply through the broker exactly as on a direct port, so the broker adds no authority of its own.
 Codex keeps its stable entry without a second process, a system Node.js installation or files outside the vault.
+*Amended by ADR-0028:* A confirmed Codex install writes `config.toml`, its backup and a short-lived lock file outside the vault.
 Replacing a token's secret breaks a Codex entry for that token, as for any client with a pasted token.
 
 The broker lives and dies with Obsidian.
@@ -196,6 +207,7 @@ A vault that hosts the broker carries the routes of every open vault, and closin
 Port `27200` changes meaning.
 Configs from before this change that pointed at a vault on `27200` keep working only through bare `/mcp` token routing.
 Codex entries on `27206` stop working until they are replaced by hand.
+*Amended by ADR-0028:* An install from the Codex menu replaces or migrates them.
 A dynamic vault port can still change when its last port is taken.
 Resolver URLs do not depend on it, and the `.mcpb` shim reads it at connect time.
 Direct configs copied earlier that name `27201` through `27205` still address a vault port and break when it changes, until they are copied again.
@@ -218,10 +230,10 @@ That route never registered, and the vault now reports a changed location once, 
 
 - **Failover outage:** After the hosting vault closes, broker requests fail until another vault binds the port and the open vaults register again
 - **Port-owner trust on `27200`:** A process that binds `127.0.0.1:27200` first receives the bearer tokens clients send, including vault tokens on routes, and registrations reveal route credentials. This is the same trust model as squatting a direct vault port today. The single fixed port is easier to target than a vault in a port range. The plugin reports the foreign listener in a Notice but cannot stop clients from sending credentials to it. ADR-0021's reasoning against a registration-only challenge still applies
-- **Breaking move for Codex:** Entries on `127.0.0.1:27206`, and entries that send the route credential, fail until a snippet from **Codex** on a token row replaces them. The plugin does not detect or rewrite such entries, because it never touches `config.toml`
+- **Breaking move for Codex:** Entries on `127.0.0.1:27206`, and entries that send the route credential, fail until a snippet from **Codex** on a token row replaces them. The plugin does not detect or rewrite such entries, because it never touches `config.toml`. *Amended by ADR-0028:* A confirmed install from the Codex menu migrates them; until then they fail as described
 - **Legacy direct configs on `27200`:** They keep working only through bare `/mcp` token routing, and fail while a foreign process or an older plugin version holds `27200`
 - **Route registration by a same-user process:** A process running as the same user that knows a route ID can register first with a `data.json` it controls and then receive the bearer tokens clients send on that route. Such a process can already read every vault's `data.json`, tokens included, so registration adds no access it lacks. The vault's own registration then fails with `409` and shows **Needs attention** instead of silently losing its route. A full registry of trusted vault paths was not adopted
-- **Equally named vaults in Codex:** Two vaults with the same name produce the same `obsidian_<vault>` key. Pasting both gives `config.toml` a duplicate table, and Codex rejects the whole file. ADR-0021's installer refused such conflicts, but the plugin no longer writes `config.toml`. Renaming one entry's key fixes it, because Codex connects by URL and the key is only a label. Keeping the route UUID in the key was rejected so that Codex is named like every other client
+- **Equally named vaults in Codex:** Two vaults with the same name produce the same `obsidian_<vault>` key. Pasting both gives `config.toml` a duplicate table, and Codex rejects the whole file. ADR-0021's installer refused such conflicts, but the plugin no longer writes `config.toml`. Renaming one entry's key fixes it, because Codex connects by URL and the key is only a label. Keeping the route UUID in the key was rejected so that Codex is named like every other client. *Amended by ADR-0028:* The installer refuses another vault's entry under the same key again. A pasted snippet or a `codex mcp add` entry stays unprotected
 - **Windows ownership:** The broker checks only the path shape on Windows and relies on the user profile's access rules to keep other users from writing a vault's `data.json`
 - **Linked plugin folder:** On macOS and Linux the broker follows a link at the plugin folder, as `bun run link` creates, and checks its target with the same owner rule. Only the owner of the `plugins` folder can place that link, `data.json` is still opened without following a link and checked on the open file, and a registration still needs the route credential stored in that file, so the link gives no other user a file the broker trusts
 - **Direct URL while the broker cannot reach a vault:** A config copied or synced after a refused registration, while the broker is unavailable or during a route conflict names the vault's current port and breaks when that port changes. The plugin does not rewrite it when the route connects again. Access Control asks to copy such configs again once the broker connection shows **Connected**

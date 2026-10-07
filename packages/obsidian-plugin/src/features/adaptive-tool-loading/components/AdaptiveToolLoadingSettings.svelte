@@ -36,6 +36,12 @@
    * the checklist below has a single implementation.
    */
   export let tokenId: string;
+  /**
+   * Bumped when another surface wrote a policy (a Codex install switching
+   * a profile), so this panel re-reads the selected token's policy.
+   */
+  export let externalRevision = 0;
+  let seenExternalRevision = 0;
 
   // Access Control renders each token's profile and active tool count,
   // so it has to re-read them after every write here.
@@ -97,6 +103,10 @@
   // Follow the selection. `loadedTokenId` is set before the await so a
   // re-run triggered by the assignments below cannot loop.
   $: if (tokenId && tokenId !== loadedTokenId) void loadPolicy(tokenId);
+  $: if (externalRevision !== seenExternalRevision) {
+    seenExternalRevision = externalRevision;
+    if (tokenId) void loadPolicy(tokenId);
+  }
 
   async function loadPolicy(id: string): Promise<void> {
     loadedTokenId = id;
