@@ -1,5 +1,4 @@
 import { logger } from "$/shared/logger";
-import type { PluginDataLike } from "$/shared/types";
 import { SettingsStore } from "$/shared/settingsStore";
 // Direct path, not the `mcp-transport` barrel: that barrel re-exports
 // `AccessControlSection`, which imports `$/features/mcp-client-config`,
@@ -10,6 +9,7 @@ import {
   removeFromClaudeDesktopConfig,
   updateClaudeDesktopConfig,
 } from "./claudeDesktop";
+import { resolveClientEndpoint, type EndpointPlugin } from "./endpoint";
 import { vaultServerId } from "./generators";
 
 /**
@@ -17,7 +17,8 @@ import { vaultServerId } from "./generators";
  *
  * The Settings UI exposes an opt-in toggle (default OFF)
  * that, when ON, automatically rewrites `claude_desktop_config.json`
- * whenever the bearer token rotates or the HTTP server's port changes.
+ * whenever the bearer token rotates or the vault's client endpoint
+ * changes through a saved fixed port (see endpoint.ts).
  * This module owns the read/write of that flag and the one-shot sync
  * action invoked by callers.
  *
@@ -47,7 +48,7 @@ const DATA_KEY = "mcpClientConfig";
 const FLAG_KEY = "autoWriteClaudeDesktopConfig";
 const OWNER_KEY = "autoWriteTokenId";
 
-type PluginLike = PluginDataLike & {
+type PluginLike = EndpointPlugin & {
   /** The entry key in the user's config comes from the vault name. */
   app: { vault: { getName(): string } };
   mcpTransportState?:
@@ -205,13 +206,21 @@ export async function releaseAutoWriteOwner(
 
 export type ApplyAutoWriteResult =
   | { applied: true }
-  | { applied: false; reason: "disabled" | "transport-offline" | "not-owner" }
+  | {
+      applied: false;
+      reason:
+        | "disabled"
+        | "transport-offline"
+        | "not-owner"
+        | "endpoint-unavailable";
+    }
   | { applied: false; reason: "error"; error: string };
 
 /**
  * Rewrite the Claude Desktop config for `actedTokenId`, if and only if
- * that token owns it and the HTTP transport is up. No-op (with a
- * structured reason) otherwise.
+ * that token owns it, the HTTP transport is up and the vault has a client
+ * endpoint (`endpoint-unavailable` while a vault location change is
+ * unresolved). No-op (with a structured reason) otherwise.
  *
  * `actedTokenId` is required, and the secret written is that token's
  * own, read from the live list. Reading `mcpTransportState.bearerToken`
@@ -237,11 +246,13 @@ export async function applyAutoWrite(
   const enabled = await getAutoWriteEnabled(plugin);
   if (!enabled) return { applied: false, reason: "disabled" };
 
-  // Checked before ownership: with no transport there is no port to
-  // write, so "the server is down" is the more useful of the two
-  // answers and the one the UI already knows how to phrase.
-  const state = plugin.mcpTransportState;
-  if (!state) return { applied: false, reason: "transport-offline" };
+  // Checked before ownership: with no transport the vault registers no
+  // broker route and serves no direct port, so "the server is down" is
+  // the more useful of the two answers and the one the UI already knows
+  // how to phrase.
+  if (!plugin.mcpTransportState) {
+    return { applied: false, reason: "transport-offline" };
+  }
 
   const owner = await resolveAutoWriteOwner(plugin);
   if (owner === null || owner !== actedTokenId) {
@@ -265,10 +276,23 @@ export async function applyAutoWrite(
   // substituted for.
   if (!record) return { applied: false, reason: "not-owner" };
 
+  // The same resolver as the copy buttons, so the synced entry and a
+  // copied one never point at different endpoints. While the broker cannot
+  // reach this vault that is the vault's direct URL, and the sync writes
+  // it rather than skipping or waiting: It runs only on an explicit action
+  // (turning it on, replacing the owner's secret, saving a fixed port) that
+  // expects a working entry now, skipping would keep a replaced secret, and
+  // a broker URL would leave Claude Desktop without this vault until the
+  // user fixes the cause. The entry is not rewritten when the route
+  // connects again: Access Control says to sync again then, because the
+  // direct URL breaks when the vault's port changes.
+  const url = await resolveClientEndpoint(plugin);
+  if (url === null) return { applied: false, reason: "endpoint-unavailable" };
+
   try {
     await updateClaudeDesktopConfig({
       pluginId: vaultServerId(plugin.app.vault.getName()),
-      port: state.server.port,
+      url,
       token: record.token,
     });
     return { applied: true };

@@ -8,6 +8,7 @@ import {
   type Mock,
 } from "bun:test";
 import fsp from "fs/promises";
+import { FileSystemAdapter } from "obsidian";
 import os from "os";
 import path from "path";
 import {
@@ -17,7 +18,11 @@ import {
   resolveAutoWriteOwner,
   setAutoWriteOwner,
 } from "./autoWrite";
-import { FORK_PLUGIN_ID } from "./claudeDesktop";
+import {
+  defaultClaudeDesktopConfigPath,
+  FORK_PLUGIN_ID,
+} from "./claudeDesktop";
+import type { EndpointPlugin } from "./endpoint";
 
 /**
  * Tests for the auto-write toggle persistence + sync action.
@@ -45,12 +50,29 @@ function fakePlugin(initial: StoredData = {}) {
     set _data(v: StoredData) {
       data = v;
     },
-    app: { vault: { getName: () => "Test Vault" } },
+    app: {
+      vault: {
+        getName: () => "Test Vault",
+        adapter: {} as unknown,
+        configDir: ".obsidian",
+      },
+    },
+    manifest: { id: PLUGIN_ID },
     mcpTransportState: undefined as
       | { bearerToken: string; server: { port: number } }
       | undefined,
+    discoveryState: {
+      routeId: ROUTE_ID,
+      status: { state: "connected" },
+      transportPort: 27203,
+    } as EndpointPlugin["discoveryState"],
   };
 }
+
+const PLUGIN_ID = "mcp-tools-istefox";
+
+const ROUTE_ID = "123e4567-e89b-42d3-a456-426614174000";
+const ROUTE_URL = `http://127.0.0.1:27200/v1/${ROUTE_ID}/mcp`;
 
 const VAULT_KEY = "obsidian_test_vault";
 
@@ -349,7 +371,7 @@ describe("applyAutoWrite", () => {
       args: [
         "-y",
         "mcp-remote",
-        "http://127.0.0.1:27200/mcp",
+        ROUTE_URL,
         "--header",
         `Authorization: Bearer ${secretFor("b")}`,
       ],
@@ -374,6 +396,139 @@ describe("applyAutoWrite", () => {
     expect(written.mcpServers[VAULT_KEY].args).toContain(
       `Authorization: Bearer ${secretFor("a")}`,
     );
+  });
+});
+
+describe("applyAutoWrite endpoint (every platform)", () => {
+  let tmpRoot: string;
+  let homedirSpy: Mock<typeof os.homedir>;
+  const savedAppData = process.env.APPDATA;
+
+  beforeEach(async () => {
+    tmpRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-tools-endpoint-"));
+    homedirSpy = spyOn(os, "homedir").mockReturnValue(tmpRoot);
+    process.env.APPDATA = tmpRoot;
+  });
+
+  afterEach(async () => {
+    homedirSpy.mockRestore();
+    if (savedAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = savedAppData;
+    await fsp.rm(tmpRoot, { recursive: true, force: true });
+  });
+
+  function owned(clientConfig: Record<string, unknown> = {}) {
+    const p = fakePlugin(
+      withTokens(["a"], {
+        autoWriteClaudeDesktopConfig: true,
+        autoWriteTokenId: "a",
+        ...clientConfig,
+      }),
+    );
+    p.mcpTransportState = {
+      bearerToken: secretFor("a"),
+      server: { port: 27203 },
+    };
+    return p;
+  }
+
+  async function writtenUrl(): Promise<string> {
+    const written = JSON.parse(
+      await fsp.readFile(defaultClaudeDesktopConfigPath()!, "utf8"),
+    ) as { mcpServers: Record<string, { args: string[] }> };
+    return written.mcpServers[VAULT_KEY].args[2];
+  }
+
+  test("writes the broker route, not the vault's current port", async () => {
+    expect(await applyAutoWrite(owned(), "a")).toEqual({ applied: true });
+    expect(await writtenUrl()).toBe(ROUTE_URL);
+  });
+
+  test("writes the vault's direct URL while the broker cannot reach it", async () => {
+    const p = owned();
+    p.discoveryState = {
+      routeId: ROUTE_ID,
+      status: { state: "rejected", message: "refused" },
+      transportPort: 27204,
+    };
+    expect(await applyAutoWrite(p, "a")).toEqual({ applied: true });
+    expect(await writtenUrl()).toBe("http://127.0.0.1:27204/mcp");
+  });
+
+  test("writes the fixed port directly when the vault has one", async () => {
+    const p = owned();
+    p._data = {
+      ...(p._data as Record<string, unknown>),
+      mcpTransport: {
+        ...((p._data as Record<string, unknown>).mcpTransport as object),
+        port: 27210,
+      },
+    };
+    expect(await applyAutoWrite(p, "a")).toEqual({ applied: true });
+    expect(await writtenUrl()).toBe("http://127.0.0.1:27210/mcp");
+  });
+
+  /**
+   * Anchor the vault at a real directory, give it a fixed port when set,
+   * and save a route bound to `savedPath`, or to the vault's own data file.
+   */
+  async function located(port: number | undefined, savedPath?: string) {
+    const p = owned();
+    const vault = path.join(tmpRoot, "vault");
+    const pluginDir = path.join(vault, ".obsidian", "plugins", PLUGIN_ID);
+    await fsp.mkdir(pluginDir, { recursive: true });
+    p.app.vault.adapter = Object.assign(new FileSystemAdapter(), {
+      getBasePath: () => vault,
+    });
+    const own = path.join(await fsp.realpath(pluginDir), "data.json");
+    const data = p._data as Record<string, Record<string, unknown>>;
+    p._data = {
+      ...data,
+      mcpTransport: { ...data.mcpTransport, port },
+      mcpClientConfig: {
+        ...data.mcpClientConfig,
+        codexDiscovery: {
+          enabled: false,
+          routeId: ROUTE_ID,
+          accessToken: secretFor("route"),
+          tokenId: null,
+          dataPath:
+            savedPath ??
+            (process.platform === "win32" ? own.toLowerCase() : own),
+        },
+      },
+    };
+    return p;
+  }
+
+  test.each([
+    ["the broker route", undefined, true],
+    ["a fixed port", 27210, true],
+    ["a fixed port after a failed route start", 27210, false],
+    ["a legacy fixed 27200, which registers no route", 27200, false],
+  ])(
+    "writes nothing for %s while the vault location change is unresolved",
+    async (_label, port, routed) => {
+      const p = await located(
+        port,
+        path.join(tmpRoot, "original", ".obsidian", "data.json"),
+      );
+      if (!routed) p.discoveryState = undefined;
+      expect(await applyAutoWrite(p, "a")).toEqual({
+        applied: false,
+        reason: "endpoint-unavailable",
+      });
+      expect(
+        await fsp.stat(defaultClaudeDesktopConfigPath()!).catch(() => null),
+      ).toBeNull();
+    },
+  );
+
+  test("writes a legacy fixed 27200 directly once the location is resolved", async () => {
+    const p = await located(27200);
+    p.discoveryState = undefined;
+    expect(await applyAutoWrite(p, "a")).toEqual({ applied: true });
+    expect(await writtenUrl()).toBe("http://127.0.0.1:27200/mcp");
   });
 });
 

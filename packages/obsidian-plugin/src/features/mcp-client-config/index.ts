@@ -3,7 +3,8 @@
  * for the supported MCP client families: Claude Desktop (`.mcpb`
  * export, legacy `mcp-remote`), Claude Code CLI (`claude mcp add`),
  * Cursor / Continue / Windsurf / VS Code (streamable-http), Cline
- * (`streamableHttp`) and Codex (TOML installer + discovery broker).
+ * (`streamableHttp`) and Codex (copied TOML). Also owns the shared
+ * discovery broker every client config points at (ADR-0027).
  */
 
 export {
@@ -20,10 +21,12 @@ export {
   claudeCodeAddCommand,
   claudeCodeConfig,
   claudeCodeEnvConfig,
+  claudeCodeProjectAddCommand,
   CLAUDE_CODE_TOKEN_ENV_VAR,
   claudeDesktopConfig,
   clientConfigInputSchema,
   clineConfig,
+  parseClaudeCodeProjectPath,
   streamableHttpConfig,
   vaultNameWords,
   vaultServerId,
@@ -46,31 +49,43 @@ export {
 } from "./services/autoWrite";
 
 export {
+  getClaudeCodeProjectPath,
+  setClaudeCodeProjectPath,
+} from "./services/claudeCodeProject";
+
+export {
   codexConfigSnippet,
-  codexServerId,
-  inspectCodexInstall,
-  installCodexConfig,
-  locateCodexConfig,
-  type CodexConfigLocation,
   type CodexConnection,
-  type CodexInstallPreview,
-  type CodexInstallResult,
 } from "./services/codexConfig";
 
 export {
-  DISCOVERY_BROKER_PORT,
-  DISCOVERY_PROTOCOL_VERSION,
   acceptDiscoveryMove,
+  createBrokerHost,
   resetDiscoveryIdentity,
-  disableCodexDiscovery,
-  enableCodexDiscovery,
   getCodexConnection,
-  releaseCodexDiscoveryOwner,
-  resolveCodexDiscoveryOwner,
-  startCodexDiscovery,
+  isLocationUnresolved,
+  startDiscovery,
+  type BrokerHost,
   type DiscoveryRuntime,
   type DiscoveryStatus,
 } from "./services/discoveryBroker";
+
+export {
+  createRouteQueue,
+  replaceRoute,
+  restartTransport,
+  RouteQueueClosed,
+  type RouteQueue,
+} from "./services/routeLifecycle";
+
+export {
+  brokerRouteUrl,
+  clientEndpointUrl,
+  directVaultUrl,
+  resolveClientEndpoint,
+  resolveClientEndpointDetails,
+  type ClientEndpoint,
+} from "./services/endpoint";
 
 export {
   clearNodeDetectCache,

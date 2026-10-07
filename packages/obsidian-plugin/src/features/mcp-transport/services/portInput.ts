@@ -1,4 +1,5 @@
 import { type } from "arktype";
+import { BROKER_PORT } from "../constants";
 import { PortNumber } from "../types";
 
 /**
@@ -11,6 +12,11 @@ import { PortNumber } from "../types";
  * "use the automatic range" (returned as `port: undefined` on success)
  * and validates any numeric value against `PortNumber` (integer in
  * 1024–65535).
+ *
+ * BROKER_PORT is refused: a vault holding it keeps the shared broker from
+ * starting for every open vault (ADR-0027). A fixed port saved before that
+ * rule still loads, because resolvePorts does not apply it; only setting
+ * it here is refused.
  *
  * The function is intentionally pure and synchronous so the save
  * handler can call it inside its try/catch without adding a failure
@@ -30,6 +36,12 @@ export function parsePortInput(
     return {
       ok: false,
       error: "Port must be a whole number between 1024 and 65535.",
+    };
+  }
+  if (validated === BROKER_PORT) {
+    return {
+      ok: false,
+      error: `Port ${BROKER_PORT} is reserved for the shared MCP broker. Choose another port or leave the field blank.`,
     };
   }
   return { ok: true, port: validated };

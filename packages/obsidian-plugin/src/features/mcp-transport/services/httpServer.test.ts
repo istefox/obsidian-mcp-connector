@@ -6,7 +6,7 @@ import {
   type RunningServer,
 } from "./httpServer";
 import { staticTokenProvider } from "./tokenStore";
-import { MAX_REQUEST_BODY_BYTES } from "../constants";
+import { MAX_REQUEST_BODY_BYTES, PORT_RANGE } from "../constants";
 
 const running: RunningServer[] = [];
 afterEach(async () => {
@@ -35,8 +35,7 @@ describe("startHttpServer", () => {
       },
     });
     running.push(server);
-    expect(server.port).toBeGreaterThanOrEqual(27200);
-    expect(server.port).toBeLessThanOrEqual(27205);
+    expect(PORT_RANGE as readonly number[]).toContain(server.port);
   });
 
   test("honors a custom ports override instead of PORT_RANGE (#337)", async () => {

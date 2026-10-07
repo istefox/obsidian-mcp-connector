@@ -50,8 +50,13 @@ const CLAUDE_CONFIG_PATH_TEMPLATES = {
 export const updateClaudeDesktopConfigInputSchema = type({
   /** Bearer token written into the Authorization header literal. */
   token: "string > 0",
-  /** Local port of the in-process MCP HTTP server (e.g. 27200). */
-  port: "number.integer > 0",
+  /**
+   * MCP endpoint URL from resolveClientEndpoint (endpoint.ts), the same
+   * one the copy buttons use: the broker route, or the vault's fixed port.
+   */
+  url: type(/^https?:\/\//).describe(
+    "MCP endpoint URL, e.g. http://127.0.0.1:27200/v1/<route-id>/mcp",
+  ),
   /** Entry key. The sync passes `vaultServerId`. Defaults to FORK_PLUGIN_ID. */
   "pluginId?": "string",
   /** Override config path. Defaults to platform default. */
@@ -161,7 +166,7 @@ export async function updateClaudeDesktopConfig(
   for (const key of removedKeys) delete config.mcpServers[key];
 
   // Write the new entry.
-  config.mcpServers[pluginId] = buildHttpEntry(input.port, input.token);
+  config.mcpServers[pluginId] = mcpRemoteInvocation(input.url, input.token);
 
   await fsp.writeFile(configPath, JSON.stringify(config, null, 2), "utf8");
   logger.info("Claude Desktop config updated", {
@@ -231,16 +236,6 @@ export function defaultClaudeDesktopConfigPath(): string | undefined {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
-
-function buildHttpEntry(
-  port: number,
-  token: string,
-): {
-  command: string;
-  args: string[];
-} {
-  return mcpRemoteInvocation(`http://127.0.0.1:${port}/mcp`, token);
-}
 
 type Platform = "macos" | "windows" | "linux";
 

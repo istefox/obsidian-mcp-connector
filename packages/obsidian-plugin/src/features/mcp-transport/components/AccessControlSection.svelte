@@ -3,10 +3,7 @@
   import { Notice } from "obsidian";
   import { logger } from "$/shared/logger";
   import { onMount, onDestroy } from "svelte";
-  import {
-    setup as mcpTransportSetup,
-    teardown as mcpTransportTeardown,
-  } from "$/features/mcp-transport/services/setup";
+  import type { SetupResult } from "$/features/mcp-transport/services/setup";
   import {
     addToken,
     readTokens,
@@ -25,30 +22,30 @@
   } from "$/features/mcp-transport/services/eraCounters";
   import {
     BIND_HOST,
+    BROKER_PORT,
     MAX_TOKENS,
     MCP_PATH_PREFIX,
+    PORT_RANGE,
   } from "$/features/mcp-transport/constants";
   import {
     applyAutoWrite,
     acceptDiscoveryMove,
+    isLocationUnresolved,
     resetDiscoveryIdentity,
-    startCodexDiscovery,
+    resolveClientEndpoint,
+    resolveClientEndpointDetails,
     type DiscoveryStatus,
     codexConfigSnippet,
     CLAUDE_CODE_TOKEN_ENV_VAR,
     type CodexConnection,
     CopyConfigMenu,
     detectNode,
-    disableCodexDiscovery,
-    enableCodexDiscovery,
+    getClaudeCodeProjectPath,
     getCodexConnection,
-    inspectCodexInstall,
-    installCodexConfig,
     releaseAutoWriteOwner,
-    releaseCodexDiscoveryOwner,
     resolveAutoWriteOwner,
-    resolveCodexDiscoveryOwner,
     setAutoWriteOwner,
+    setClaudeCodeProjectPath,
     type NodeDetectResult,
   } from "$/features/mcp-client-config";
   import {
@@ -81,12 +78,11 @@
    * could only mean one of them silently losing.
    */
   let autoWriteOwner: string | null = null;
-  let codexDiscoveryOwner: string | null = null;
   /**
    * Codex reads the token from $OBSIDIAN_MCP_TOKEN instead of having it
    * written into config.toml. Off by default: a Codex started from a GUI may
    * not inherit the variable, and the connection would then fail to
-   * authenticate. A per-session choice, not persisted.
+   * authenticate. A per-session choice for every row, not persisted.
    */
   let codexTokenFromEnv = false;
   let discoveryStatus: DiscoveryStatus = { state: "stopped" };
@@ -94,11 +90,27 @@
   let destroyed = false;
   onDestroy(() => { destroyed = true; unsubscribeDiscovery?.(); });
 
+  const STATUS_LABELS: Record<DiscoveryStatus["state"], string> = {
+    connecting: "Connecting",
+    connected: "Connected",
+    retrying: "Retrying",
+    rejected: "Refused",
+    unavailable: "Unavailable",
+    conflict: "Needs attention",
+    stopped: "Stopped",
+  };
+
   function watchDiscoveryStatus(): void {
     unsubscribeDiscovery?.();
     if (destroyed) return;
-    discoveryStatus = plugin.codexDiscoveryState?.status ?? { state: "stopped" };
-    unsubscribeDiscovery = plugin.codexDiscoveryState?.subscribe((status) => { discoveryStatus = status; });
+    discoveryStatus = plugin.discoveryState?.status ?? { state: "stopped" };
+    unsubscribeDiscovery = plugin.discoveryState?.subscribe((status) => {
+      const changed = status.state !== discoveryStatus.state;
+      discoveryStatus = status;
+      // The copy buttons follow the route: the direct URL while the
+      // broker cannot reach this vault, the broker route once it can.
+      if (changed) void refreshEndpoint().catch(() => undefined);
+    });
   }
 
   /**
@@ -110,9 +122,35 @@
   let nodeStatus: NodeDetectResult | null = null;
   $: mcpbDisabled = nodeStatus !== null && !nodeStatus.found;
 
-  let port: number = plugin.mcpTransportState?.server.port ?? 27200;
+  let port: number = plugin.mcpTransportState?.server.port ?? 0;
 
-  $: url = port ? `http://${BIND_HOST}:${port}${MCP_PATH_PREFIX}` : "";
+  /**
+   * What every copy button on every row points at: the broker route, the
+   * fixed port, or the vault's direct URL while the broker cannot reach it
+   * (see resolveClientEndpoint). Empty while there is none to hand out,
+   * which disables the buttons.
+   */
+  let url = "";
+  /** `url` is the direct fallback, which breaks when the vault's port changes. */
+  let directFallback = false;
+  /**
+   * The saved route belongs to another vault location. Read from the saved
+   * settings rather than the route status, so it also shows while no route
+   * runs, for example with a fixed port 27200 or a stopped transport.
+   */
+  let locationUnresolved = false;
+  let endpointReads = 0;
+
+  async function refreshEndpoint(): Promise<void> {
+    const read = ++endpointReads;
+    const unresolved = await isLocationUnresolved(plugin);
+    const endpoint = await resolveClientEndpointDetails(plugin);
+    // A status change can start a newer read while this one awaits
+    if (read !== endpointReads) return;
+    locationUnresolved = unresolved;
+    url = endpoint?.url ?? "";
+    directFallback = endpoint?.kind === "direct";
+  }
 
   // The configured (possibly blank) fixed-port override, read from
   // data.json on mount. Typed as `number | null` because the field is
@@ -133,6 +171,14 @@
   // resolveServerName in services/setup.ts.
   let serverNameInput = "";
   let serverNameBusy = false;
+
+  // The saved project path every row's Claude Code button uses, and the
+  // field's draft. Blank means user scope. A rejected draft keeps the
+  // saved value and shows its error under the field.
+  let claudeCodeProjectPath = "";
+  let claudeCodeProjectInput = "";
+  let claudeCodeProjectError = "";
+  let claudeCodeProjectBusy = false;
 
   // How many requests each protocol era has served, as persisted at the
   // moment this pane opened. Diagnostic and read-only: the value exists so
@@ -174,6 +220,8 @@
       | undefined;
     portInput = raw?.port ?? null;
     serverNameInput = raw?.serverName ?? "";
+    claudeCodeProjectPath = await getClaudeCodeProjectPath(plugin);
+    claudeCodeProjectInput = claudeCodeProjectPath;
     eraCounters = readEraCounters(raw?.eraCounters);
     eraByToken = readEraCountersByToken(raw?.eraCountersByToken);
     const registry = plugin.mcpTransportState?.mcp.registry;
@@ -199,9 +247,23 @@
     // Read after the token list, never before: resolving the owner
     // validates it against that list and can rewrite it.
     autoWriteOwner = await resolveAutoWriteOwner(plugin);
-    codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
     watchDiscoveryStatus();
     syncMirror();
+    await refreshEndpoint();
+  }
+
+  /**
+   * Restart the transport with this vault's route down meanwhile, see
+   * restartTransport. A failed restart leaves the route down too. Queued
+   * behind any other restart or route change of this plugin.
+   */
+  async function restart(): Promise<SetupResult> {
+    try {
+      return await plugin.restartTransport();
+    } finally {
+      watchDiscoveryStatus();
+      await refreshEndpoint();
+    }
   }
 
   async function refreshPolicies(): Promise<void> {
@@ -307,17 +369,16 @@
    *
    * The confirm names what breaks and what follows on its own, because
    * that depends on the row: `.mcpb` bundles resolve the secret by id,
-   * the Codex broker reads it per request, and the Claude Desktop sync
-   * rewrites its entry only for the token that owns it.
+   * and the Claude Desktop sync rewrites its entry only for the token that
+   * owns it.
    */
   async function handleRegenerate(token: TokenRecord): Promise<void> {
     const automatic = [".mcpb bundles made for this token"];
-    if (codexDiscoveryOwner === token.id) automatic.push("the Codex connection");
     if (autoWriteOwner === token.id) automatic.push("the Claude Desktop config sync");
     const confirmed = confirm(
       [
         `Replace the secret for "${token.label}"?`,
-        "Stops working: Any config where you pasted this token's current secret by hand, such as Claude Code or Cursor",
+        "Stops working: Any config that holds this token's current secret, such as Claude Code, Cursor or a Codex entry",
         `Updates on its own: ${joinList(automatic)}`,
         "The token keeps its name and tool profile",
       ].join("\n\n"),
@@ -336,9 +397,7 @@
       new Notice(
         autoWriteResult.applied
           ? "Secret replaced and Claude Desktop config updated"
-          : codexDiscoveryOwner === token.id
-            ? "Secret replaced. The Codex connection uses it on its next request"
-            : "Secret replaced. Paste it into the clients you set up by hand with this token",
+          : "Secret replaced. Paste it into the clients you set up by hand with this token",
       );
     } catch (err) {
       noticeFailure("regenerating the token", err);
@@ -360,31 +419,15 @@
       // Before refreshTokens: that call re-resolves the owner, and the
       // release has to be the thing that clears it rather than a
       // validation failure that leaves the config entry behind.
-      const [released, codexRelease] = await Promise.all([
-        releaseAutoWriteOwner(plugin, token.id),
-        releaseCodexDiscoveryOwner(
-          plugin,
-          token.id,
-          plugin.codexDiscoveryState,
-        )
-          .then((released) => ({ released }))
-          .catch((error) => ({
-            released: false,
-            error: error instanceof Error ? error.message : String(error),
-          })),
-      ]);
-      if (codexRelease.released) plugin.codexDiscoveryState = undefined;
+      const released = await releaseAutoWriteOwner(plugin, token.id);
       await refreshTokens();
-      const cleanupError =
-        released.error ??
-        ("error" in codexRelease ? codexRelease.error : undefined);
-      if (cleanupError) {
+      if (released.error) {
         new Notice(
-          `Token "${token.label}" revoked, but a managed client entry could not be removed: ${cleanupError}`,
+          `Token "${token.label}" revoked, but a managed client entry could not be removed: ${released.error}`,
         );
       } else {
         new Notice(
-          released.released || codexRelease.released
+          released.released
             ? `Token "${token.label}" revoked and removed from managed client access.`
             : `Token "${token.label}" revoked.`,
         );
@@ -403,7 +446,11 @@
    * changes nothing.
    *
    * On a busy configured port, setup() fails and the transport is left
-   * down — no silent fallback to the range.
+   * down — no silent fallback to the range. This vault's broker route
+   * stays down with it.
+   *
+   * The client endpoint switches between the broker route and the fixed
+   * port with this setting, so the Claude Desktop sync is rewritten too.
    */
   async function handleSavePort(): Promise<void> {
     portBusy = true;
@@ -420,21 +467,22 @@
         port: portValue,
       }));
 
-      if (plugin.mcpTransportState) {
-        await mcpTransportTeardown(plugin.mcpTransportState);
-        plugin.mcpTransportState = undefined;
-      }
-
-      const result = await mcpTransportSetup(plugin);
+      const result = await restart();
       if (!result.success) {
         new Notice(`MCP Connector: failed to restart — ${result.error}`);
         return;
       }
 
-      plugin.mcpTransportState = result.state;
       port = result.state.server.port;
       portInput = portValue ?? null;
-      new Notice("Fixed port saved.");
+      const synced =
+        autoWriteOwner !== null &&
+        (await applyAutoWrite(plugin, autoWriteOwner)).applied;
+      new Notice(
+        synced
+          ? "Fixed port saved and Claude Desktop config updated."
+          : "Fixed port saved.",
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(`MCP Connector: failed to save port — ${message}`);
@@ -456,18 +504,12 @@
         serverName: trimmed,
       }));
 
-      if (plugin.mcpTransportState) {
-        await mcpTransportTeardown(plugin.mcpTransportState);
-        plugin.mcpTransportState = undefined;
-      }
-
-      const result = await mcpTransportSetup(plugin);
+      const result = await restart();
       if (!result.success) {
         new Notice(`MCP Connector: failed to restart — ${result.error}`);
         return;
       }
 
-      plugin.mcpTransportState = result.state;
       port = result.state.server.port;
       serverNameInput = trimmed;
       new Notice("Server name saved.");
@@ -476,6 +518,36 @@
       new Notice(`MCP Connector: failed to save server name — ${message}`);
     } finally {
       serverNameBusy = false;
+    }
+  }
+
+  /**
+   * Persist the Claude Code project path. No restart: only the copied
+   * command changes. An invalid path is shown inline and not saved.
+   */
+  async function handleSaveClaudeCodeProject(): Promise<void> {
+    claudeCodeProjectBusy = true;
+    try {
+      const result = await setClaudeCodeProjectPath(
+        plugin,
+        claudeCodeProjectInput,
+      );
+      if (!result.ok) {
+        claudeCodeProjectError = result.error;
+        return;
+      }
+      claudeCodeProjectError = "";
+      claudeCodeProjectPath = result.path;
+      claudeCodeProjectInput = result.path;
+      new Notice(
+        result.path
+          ? "Claude Code project path saved."
+          : "Claude Code project path cleared.",
+      );
+    } catch (err) {
+      noticeFailure("saving the Claude Code project path", err);
+    } finally {
+      claudeCodeProjectBusy = false;
     }
   }
 
@@ -508,6 +580,8 @@
         new Notice(`claude_desktop_config.json now uses "${token.label}".`);
       } else if (result.reason === "transport-offline") {
         new Notice("Sync enabled, but the MCP transport is not running yet.");
+      } else if (result.reason === "endpoint-unavailable") {
+        new Notice("Sync enabled, but this vault's location change has to be resolved first.");
       } else if (result.reason === "error") {
         new Notice(`Sync enabled, but the write failed: ${result.error}`);
       } else {
@@ -522,67 +596,24 @@
     }
   }
 
-  async function handleToggleCodexDiscovery(
-    token: TokenRecord,
-    checked: boolean,
-  ): Promise<void> {
+  async function handleConnectionRecovery(action: "retry" | "move"): Promise<void> {
     if (busy) return;
+    if (action === "move" && !confirm("Keep this vault's broker route at the new vault location? Choose this only for a moved vault, not a copy")) return;
     busy = true;
     try {
-      if (!checked) {
-        await disableCodexDiscovery(plugin, plugin.codexDiscoveryState);
-        plugin.codexDiscoveryState = undefined;
-        codexDiscoveryOwner = null;
-        new Notice("Codex connection disabled. The installed config entry was left unchanged.");
-        return;
-      }
-
-      await plugin.codexDiscoveryState?.stop();
-      plugin.codexDiscoveryState = await enableCodexDiscovery(plugin, token.id);
-      codexDiscoveryOwner = token.id;
-      new Notice(`Connection configured for "${token.label}". Check its status below before connecting a client`);
-    } catch (err) {
-      noticeFailure("changing the Codex connection", err);
-      // Both branches above stop the previous runtime before the step that
-      // can throw, so on failure plugin.codexDiscoveryState (if still set)
-      // points at a dead handle: clear it rather than leave it for
-      // onunload to call stop() on again.
-      plugin.codexDiscoveryState = undefined;
-      logger.warn("Codex discovery connection toggle failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      codexDiscoveryOwner = await resolveCodexDiscoveryOwner(plugin);
-    } finally {
-      watchDiscoveryStatus();
-      busy = false;
-    }
-  }
-
-  async function handleConnectionRecovery(action: "retry" | "move" | "reset"): Promise<void> {
-    if (busy) return;
-    if (action === "move" && !confirm("Keep this Codex route at the new vault location? Choose this only for a moved vault, not a copy")) return;
-    if (action === "reset" && !confirm("Reset only this vault's Codex connection?\n\nIts connection address and credential change. Install or copy the new Codex entry and remove the old one for this vault\n\nOther client token secrets and Claude Desktop sync do not change. For a copied vault, use Make this copy independent instead")) return;
-    busy = true;
-    try {
-      const runtime = plugin.codexDiscoveryState;
-      if (action === "reset") plugin.codexDiscoveryState = await resetDiscoveryIdentity(plugin, runtime) ?? undefined;
-      else if (action === "move") plugin.codexDiscoveryState = await acceptDiscoveryMove(plugin, runtime) ?? undefined;
-      else {
-        await runtime?.stop();
-        plugin.codexDiscoveryState = await startCodexDiscovery(plugin) ?? undefined;
-      }
+      // A failure leaves the route stopped, never a dead handle
+      const started = await plugin.replaceRoute(
+        action === "move" ? () => acceptDiscoveryMove(plugin) : undefined,
+      );
+      if (!started)
+        new Notice(`MCP Connector: The broker route starts once the MCP transport runs on a port other than ${BROKER_PORT}`);
       await refreshTokens();
-      if (action === "reset") new Notice("Codex connection reset. Install or copy the new Codex entry and remove the old one for this vault");
     } catch (err) {
       noticeFailure("recovering the connection", err);
-      // All three branches above stop the previous runtime before the step
-      // that can throw, so on failure plugin.codexDiscoveryState still
-      // points at a dead handle unless the throwing step also reassigned
-      // it: clear it rather than leave it for onunload to call stop() again.
-      plugin.codexDiscoveryState = undefined;
-      logger.warn("Codex discovery connection recovery failed", {
+      logger.warn("Broker connection recovery failed", {
         error: err instanceof Error ? err.message : String(err),
       });
+      await refreshEndpoint().catch(() => undefined);
     } finally {
       watchDiscoveryStatus();
       busy = false;
@@ -604,7 +635,7 @@
     const message = [
       "Replace the secret of every token in this vault?",
       "Stops working: Every config where you pasted a secret by hand",
-      "Updates on its own: .mcpb bundles and the Codex connection",
+      "Updates on its own: .mcpb bundles",
       ...(syncLabel
         ? [`The synced claude_desktop_config.json keeps the old secret. Replace the secret of "${syncLabel}" afterwards to update it`]
         : []),
@@ -627,22 +658,19 @@
 
   /**
    * The one action for a copied `.obsidian` folder, which carries the
-   * original vault's token secrets, Codex route and Claude Desktop sync
-   * setting. Replaces every secret, gives Codex a new route and turns the
-   * sync off here. The sync goes off because the copy would otherwise
+   * original vault's token secrets, broker route and Claude Desktop sync
+   * setting. Replaces every secret, gives this vault a new route and turns
+   * the sync off here. The sync goes off because the copy would otherwise
    * write into the same `claude_desktop_config.json` as the original, and
    * under the same key when the vault names match. Only this vault's
    * settings change: no client config file is edited (ADR-0021).
    */
   async function handleMakeIndependent(): Promise<void> {
     if (busy) return;
-    const codexOn = codexDiscoveryOwner !== null;
     const syncOn = autoWriteOwner !== null;
-    const changes = ["replaces the secret of every token"];
-    if (codexOn) changes.push("gives the Codex connection a new route");
+    const changes = ["replaces the secret of every token", "gives this vault a new broker route"];
     if (syncOn) changes.push("turns off the Claude Desktop config sync in this vault");
-    const redo = ["Paste the new secrets into clients you set up by hand for this vault"];
-    if (codexOn) redo.push("Install or copy a new Codex entry for this copy. Keep the original vault's entry");
+    const redo = ["Copy fresh client configs from this vault's token rows for the clients that should use this copy. Keep the original vault's Codex entry"];
     if (syncOn) redo.push("Turn the Claude Desktop sync back on if you want it for this vault");
     const message = [
       "Make this vault independent of the vault it was copied from? Run this in the copy, not the original",
@@ -661,19 +689,14 @@
         step = "turning off the Claude Desktop sync";
         await setAutoWriteOwner(plugin, null);
       }
-      if (codexOn) {
-        step = "creating a new Codex route";
-        plugin.codexDiscoveryState =
-          (await resetDiscoveryIdentity(plugin, plugin.codexDiscoveryState)) ??
-          undefined;
-      }
+      // Always: every client config reaches the vault through this
+      // route, and the original vault still holds it.
+      step = "creating a new broker route";
+      await plugin.replaceRoute(() => resetDiscoveryIdentity(plugin));
       await refreshTokens();
       new Notice(`This vault is now independent. ${redo.join(". ")}`);
     } catch (err) {
       noticeFailure(step, err);
-      // A failed route reset has already stopped the previous runtime, so
-      // the handle is dead. Same reasoning as handleConnectionRecovery.
-      if (step === "creating a new Codex route") plugin.codexDiscoveryState = undefined;
       await refreshTokens().catch(() => undefined);
     } finally {
       watchDiscoveryStatus();
@@ -681,78 +704,35 @@
     }
   }
 
-  async function configurationConnection() {
-    if (discoveryStatus.locationChanged)
-      throw new Error("Resolve the vault location change before copying or installing Codex config. Confirm a move or make this copy independent first.");
-    const connection = await getCodexConnection(plugin);
-    if (!connection)
-      throw new Error("The Codex entry is not initialized. Enable or retry the connection after resolving any vault location change.");
-    return connection;
+  /** The Codex entry for one row: its own token, sent to the client endpoint. */
+  async function configurationConnection(token: TokenRecord) {
+    if (await isLocationUnresolved(plugin))
+      throw new Error("Resolve the vault location change before copying Codex config. Confirm a move or make this copy independent first.");
+    const endpoint = await resolveClientEndpoint(plugin);
+    if (!endpoint)
+      throw new Error("This vault has no client address yet. Retry the broker connection, or wait for the MCP server to start.");
+    return getCodexConnection(plugin, token.token, endpoint);
   }
 
-  function withCodexOptions(
-    connection: CodexConnection,
-    startupTimeout = true,
-  ): CodexConnection {
+  function withCodexOptions(connection: CodexConnection): CodexConnection {
     return {
       ...connection,
-      // A cold start of the broker can take longer than Codex's 10 s default.
-      ...(startupTimeout ? { startupTimeoutSec: 30 } : {}),
+      // A broker failover between vaults can outlast Codex's 10 s default.
+      startupTimeoutSec: 30,
       ...(codexTokenFromEnv ? { bearerTokenEnvVar: CLAUDE_CODE_TOKEN_ENV_VAR } : {}),
     };
   }
 
-  async function handleCopyCodexConfig(): Promise<void> {
+  async function handleCopyCodexConfig(token: TokenRecord): Promise<void> {
     if (busy) return;
     try {
-      const connection = await configurationConnection();
+      const connection = await configurationConnection(token);
       await copyToClipboard(
         codexConfigSnippet(withCodexOptions(connection)),
         "Copied Codex config. When replacing this vault's entry, transfer its tool restrictions and approvals and remove its superseded entry. For a copy, keep the original vault's entry.",
       );
     } catch (err) {
       noticeFailure("copying the Codex config", err);
-    }
-  }
-
-  async function handleInstallCodexConfig(): Promise<void> {
-    if (busy) return;
-    busy = true;
-    try {
-      const connection = await configurationConnection();
-      // An existing entry keeps whatever startup timeout its owner set; only a
-      // fresh entry gets the longer default.
-      let options = withCodexOptions(connection, false);
-      let preview = await inspectCodexInstall(options);
-      if (preview.action === "add") {
-        options = withCodexOptions(connection);
-        preview = await inspectCodexInstall(options);
-      }
-      if (preview.action === "unchanged") {
-        new Notice(`Codex config is already installed at ${preview.configPath}.`);
-        return;
-      }
-      const action = preview.action === "migrate"
-        ? `Rename [mcp_servers.${preview.previousServerId}] to [mcp_servers.${preview.serverId}] (settings in this entry and its nested tables are kept. Server-name references elsewhere are not changed)`
-        : `${preview.action === "add" ? "Add" : "Replace"} [mcp_servers.${preview.serverId}]${preview.action === "replace" ? " (existing policy settings are kept, transport settings are replaced)" : ""}`;
-      const confirmed = confirm(
-        `Install Codex MCP entry?\n\nTarget: ${preview.configPath}\nAction: ${action}\n\nA timestamped backup will be created before an existing file is changed.`,
-      );
-      if (!confirmed) return;
-      const result = await installCodexConfig(options, {
-        expectedRevision: preview.revision,
-      });
-      new Notice(
-        `${
-          result.action === "migrate"
-            ? "Renamed the Codex MCP entry and kept settings in this entry. Update any server-name references elsewhere."
-            : `${result.action === "add" ? "Added" : "Replaced"} the Codex MCP entry.`
-        } ${codexTokenFromEnv ? `Export ${CLAUDE_CODE_TOKEN_ENV_VAR} before starting Codex. ` : ""}Restart Codex once.`,
-      );
-    } catch (err) {
-      noticeFailure("installing the Codex config", err);
-    } finally {
-      busy = false;
     }
   }
 
@@ -854,11 +834,6 @@
                 Claude Desktop sync
               </span>
             {/if}
-            {#if codexDiscoveryOwner === token.id}
-              <span class="token-role" title="Codex connects through this token">
-                Codex
-              </span>
-            {/if}
             {#if allToolNames.length > 0}
               <span class="token-count">{toolCounts[token.id] ?? 0} tools</span>
             {/if}
@@ -907,7 +882,20 @@
               token={token.token}
               tokenId={token.id}
               {mcpbDisabled}
-            />
+              {claudeCodeProjectPath}
+            >
+              <button
+                type="button"
+                on:click={() => void handleCopyCodexConfig(token)}
+                disabled={busy || !url}
+                aria-label="Copy Codex config for {token.label}"
+              >
+                Codex
+              </button>
+            </CopyConfigMenu>
+          </div>
+
+          <div class="token-actions">
             <button
               type="button"
               on:click={() => void handleRegenerate(token)}
@@ -940,87 +928,106 @@
             Keep <code>claude_desktop_config.json</code> in sync with this
             token
           </label>
-          <label class="token-autowrite">
-            <input
-              type="checkbox"
-              checked={codexDiscoveryOwner === token.id}
-              disabled={busy || mcpbDisabled}
-              on:change={(event) =>
-                void handleToggleCodexDiscovery(
-                  token,
-                  event.currentTarget.checked,
-                )}
-            />
-            Enable Codex connection for this vault
-          </label>
-          {#if codexDiscoveryOwner === token.id}
-            <label class="token-hint">
-              <input type="checkbox" bind:checked={codexTokenFromEnv} />
-              Keep the token out of <code>config.toml</code> (Codex reads
-              <code>${CLAUDE_CODE_TOKEN_ENV_VAR}</code>)
-            </label>
-            {#if codexTokenFromEnv}
-              <p class="token-hint">
-                Export <code>{CLAUDE_CODE_TOKEN_ENV_VAR}</code> with the token
-                before starting Codex. A Codex launched from a GUI may not
-                inherit it.
-              </p>
-            {/if}
-            <div class="token-actions">
-              <button
-                type="button"
-                on:click={() => void handleCopyCodexConfig()}
-                disabled={busy || discoveryStatus.locationChanged}
-              >
-                Copy Codex config
-              </button>
-              <button
-                type="button"
-                on:click={() => void handleInstallCodexConfig()}
-                disabled={busy || discoveryStatus.locationChanged}
-              >
-                Install Codex config…
-              </button>
-            </div>
-          {/if}
         </li>
       {/each}
     </ul>
 
-    {#if codexDiscoveryOwner !== null}
-      <p role="status" aria-live="polite">
-        Connection: <strong>{discoveryStatus.state === "connected" ? "Connected" : discoveryStatus.state === "connecting" ? "Connecting" : discoveryStatus.state === "retrying" ? "Retrying" : discoveryStatus.state === "conflict" ? "Needs attention" : "Stopped"}</strong>
-        {#if discoveryStatus.message} {discoveryStatus.message}{/if}
+    <p role="status" aria-live="polite">
+      Broker connection: <strong>{STATUS_LABELS[discoveryStatus.state]}</strong>
+      {#if discoveryStatus.message} {discoveryStatus.message}{/if}
+    </p>
+    <div class="token-actions connection-actions">
+      <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("retry")}>Retry connection</button>
+      {#if locationUnresolved}
+        <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("move")}>This vault was moved</button>
+      {/if}
+    </div>
+
+    {#if directFallback}
+      <p class="token-hint">
+        The shared broker cannot reach this vault, for the reason shown under
+        Broker connection, so the copy buttons and the Claude Desktop sync use
+        this vault's direct address <code>{url}</code> meanwhile. That address
+        breaks when this vault's port changes, for example when vaults open in
+        another order. Once the broker connection shows Connected, copy those
+        configs again, and turn the Claude Desktop sync off and on if it wrote
+        meanwhile
       </p>
-      <div class="token-actions connection-actions">
-        <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("retry")}>Retry connection</button>
-        {#if discoveryStatus.locationChanged}
-          <button type="button" disabled={busy} on:click={() => void handleConnectionRecovery("move")}>This vault was moved</button>
-        {/if}
-      </div>
     {/if}
 
+    {#if locationUnresolved}
+      <p class="token-hint">
+        Client config buttons stay disabled until the vault location change is
+        resolved, because the saved broker route may still belong to the
+        original vault.
+      </p>
+    {/if}
     {#if mcpbDisabled}
       <p class="token-hint">
-        Node.js was not found on PATH, so <strong>.mcpb</strong> export and
-        the Codex connection is disabled — both run under <code>node</code>. See
+        Node.js was not found on PATH, so <strong>.mcpb</strong> export is
+        disabled — it runs under <code>node</code>. See
         <em>Claude Desktop integration</em> below to install it.
       </p>
     {/if}
     <p class="token-hint">
-      Codex connects through the shared local broker using the selected token
-      and this vault's current port. This checkbox does not edit
-      <code>config.toml</code>. Use one of the configuration actions after
-      enabling it.
+      Every client connects through the shared broker that runs in Obsidian
+      and sends its own token. Codex entries carry the token of the row they
+      were copied from. The plugin never writes Codex's
+      <code>config.toml</code>: paste the entry there yourself.
     </p>
+    <label class="token-hint">
+      <input type="checkbox" bind:checked={codexTokenFromEnv} />
+      Keep the token out of Codex's <code>config.toml</code> (Codex reads
+      <code>${CLAUDE_CODE_TOKEN_ENV_VAR}</code>)
+    </label>
+    {#if codexTokenFromEnv}
+      <p class="token-hint">
+        Export <code>{CLAUDE_CODE_TOKEN_ENV_VAR}</code> with the row's token
+        before starting Codex. A Codex launched from a GUI may not inherit it.
+      </p>
+    {/if}
+    <div class="setting-item">
+      <div class="setting-item-info">
+        <div class="setting-item-name">Claude Code project path</div>
+        <div class="setting-item-description">
+          Absolute path of a project directory. When set, <strong>Claude Code</strong>
+          copies a command that enters this directory and registers the vault
+          at local scope, private to that project. Leave blank for user scope,
+          available in every project. The command needs a POSIX shell or
+          PowerShell 7+, because Windows PowerShell 5.1 has no <code>&amp;&amp;</code>
+          {#if claudeCodeProjectError}
+            <div class="token-error" role="alert">{claudeCodeProjectError}</div>
+          {/if}
+        </div>
+      </div>
+      <div class="setting-item-control token-control">
+        <input
+          type="text"
+          bind:value={claudeCodeProjectInput}
+          on:input={() => (claudeCodeProjectError = "")}
+          placeholder="User scope"
+          aria-label="Claude Code project path"
+          aria-invalid={claudeCodeProjectError !== ""}
+          disabled={claudeCodeProjectBusy}
+          class="server-name-input"
+        />
+        <button
+          type="button"
+          on:click={handleSaveClaudeCodeProject}
+          disabled={claudeCodeProjectBusy}
+        >
+          {claudeCodeProjectBusy ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
     <div class="setting-item">
       <div class="setting-item-info">
         <div class="setting-item-name">Set up a copied vault</div>
         <div class="setting-item-description">
           Use after duplicating a vault with its <code>.obsidian</code> folder.
-          Run this in the copy to replace all token secrets, reset Codex if
-          enabled, and turn off Claude Desktop sync
-          {#if codexDiscoveryOwner !== null && discoveryStatus.locationChanged}
+          Run this in the copy to replace all token secrets, give it a new
+          broker route, and turn off Claude Desktop sync
+          {#if locationUnresolved}
             <p>
               If you moved the vault instead, use <strong>This vault was moved</strong>
               to keep its existing connection
@@ -1039,51 +1046,27 @@
       </div>
     </div>
 
-    <details class="token-advanced">
-      <summary>Advanced resets</summary>
-      <div class="setting-item">
-        <div class="setting-item-info">
-          <div class="setting-item-name">Replace client token secrets</div>
-          <div class="setting-item-description">
-            Use to replace this vault's token secrets without resetting its
-            Codex connection. Token labels and tool permissions stay the same.
-            Update clients where you pasted a secret by hand. If Claude Desktop
-            sync is on, replace its token's secret afterwards to update its config
-          </div>
-        </div>
-        <div class="setting-item-control">
-          <button
-            type="button"
-            disabled={busy}
-            on:click={() => void handleResetVaultCredentials()}
-          >
-            Replace all token secrets
-          </button>
+    <div class="setting-item">
+      <div class="setting-item-info">
+        <div class="setting-item-name">Replace client token secrets</div>
+        <div class="setting-item-description">
+          Use to replace this vault's token secrets without changing its
+          broker route. Token labels and tool permissions stay the same.
+          Update clients where you pasted a secret, including Codex. If Claude
+          Desktop sync is on, replace its token's secret afterwards to update
+          its config
         </div>
       </div>
-      {#if codexDiscoveryOwner !== null}
-        <div class="setting-item">
-          <div class="setting-item-info">
-            <div class="setting-item-name">Reset only Codex</div>
-            <div class="setting-item-description">
-              Use to replace only this vault's Codex connection address and
-              credential. Other client token secrets and Claude Desktop sync
-              stay the same. Install or copy the new Codex entry afterwards and
-              remove the superseded entry for this vault
-            </div>
-          </div>
-          <div class="setting-item-control">
-            <button
-              type="button"
-              disabled={busy}
-              on:click={() => void handleConnectionRecovery("reset")}
-            >
-              Reset Codex connection
-            </button>
-          </div>
-        </div>
-      {/if}
-    </details>
+      <div class="setting-item-control">
+        <button
+          type="button"
+          disabled={busy}
+          on:click={() => void handleResetVaultCredentials()}
+        >
+          Replace all token secrets
+        </button>
+      </div>
+    </div>
   {/if}
 
   <div class="setting-item">
@@ -1091,8 +1074,11 @@
       <div class="setting-item-name">Server port</div>
       <div class="setting-item-description">
         {#if port}
-          HTTP MCP endpoint at
-          <code>http://{BIND_HOST}:{port}{MCP_PATH_PREFIX}</code>
+          This vault listens at
+          <code>http://{BIND_HOST}:{port}{MCP_PATH_PREFIX}</code>.
+          {#if url}
+            Client configs use <code>{url}</code>
+          {/if}
         {:else}
           HTTP transport not running — port unavailable.
         {/if}
@@ -1121,11 +1107,14 @@
     <div class="setting-item-info">
       <div class="setting-item-name">Fixed port</div>
       <div class="setting-item-description">
-        Pin this vault to one port so its MCP client config never drifts
-        across sessions. Leave blank for the automatic 27200-27205 range.
-        If the port is already in use, the server will not start. Saving
-        restarts the server, which clears every client's non-persisted
-        tool promotions.
+        Pin this vault to one port and point client configs at it directly
+        instead of the shared broker. Leave blank for the automatic
+        {PORT_RANGE[0]}-{PORT_RANGE[PORT_RANGE.length - 1]} range, where
+        configs go through the broker on port {BROKER_PORT} and keep working
+        when the vault's port changes. Port {BROKER_PORT} is reserved for the
+        broker. If the port is already in use, the server will not start.
+        Saving restarts the server, which clears every client's
+        non-persisted tool promotions.
       </div>
     </div>
     <div class="setting-item-control token-control">
@@ -1210,7 +1199,7 @@
     flex-wrap: wrap;
   }
 
-  /* The Codex hint follows directly, so keep the buttons off its text. */
+  /* A hint follows directly, so keep the buttons off its text. */
   .connection-actions {
     margin-bottom: 0.75em;
   }
@@ -1287,21 +1276,15 @@
     border-radius: var(--radius-s);
   }
 
-  .token-advanced {
-    margin-top: 0.5em;
-  }
-
-  .token-advanced summary {
-    color: var(--text-muted);
-    font-size: 0.85em;
-    cursor: pointer;
-    margin-bottom: 0.5em;
-  }
-
   .token-hint {
     color: var(--text-muted);
     font-size: 0.85em;
     margin: 0 0 1em;
+  }
+
+  .token-error {
+    color: var(--text-error);
+    margin-top: 0.4em;
   }
 
   .token-unavailable {

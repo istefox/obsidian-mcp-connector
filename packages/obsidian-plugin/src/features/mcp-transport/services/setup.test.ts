@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { mockPlugin } from "$/test-setup";
 import { setup, teardown, type McpTransportState } from "./setup";
 import type McpToolsPlugin from "$/main";
+import { PORT_RANGE } from "../constants";
 
 /**
  * `mcpTransport.livePort` is the actually-bound port, written back after
@@ -72,7 +73,7 @@ describe("setup — livePort persistence", () => {
   });
 
   test("livePort reflects a fallback port, not the first PORT_RANGE entry", async () => {
-    // Occupy 27200 ourselves so the test is deterministic in CI. If it is
+    // Occupy PORT_RANGE[0] ourselves so the test is deterministic in CI. If it is
     // already taken (e.g. a real Obsidian instance running on the dev
     // machine), that already satisfies the precondition — skip creating
     // our own blocker rather than fail on the double-bind.
@@ -80,7 +81,7 @@ describe("setup — livePort persistence", () => {
     try {
       await new Promise<void>((resolve, reject) => {
         blocker!.once("error", reject);
-        blocker!.listen(27200, "127.0.0.1", () => resolve());
+        blocker!.listen(PORT_RANGE[0], "127.0.0.1", () => resolve());
       });
     } catch {
       blocker = null;
@@ -92,13 +93,67 @@ describe("setup — livePort persistence", () => {
       if (!result.success) return;
       active.push(result.state);
 
-      expect(result.state.server.port).not.toBe(27200);
+      expect(result.state.server.port).not.toBe(PORT_RANGE[0]);
       const slice = getData()?.mcpTransport as Record<string, unknown>;
       expect(slice.livePort).toBe(result.state.server.port);
     } finally {
       if (blocker) {
         await new Promise<void>((resolve) => blocker!.close(() => resolve()));
       }
+    }
+  });
+});
+
+describe("setup — sticky livePort", () => {
+  /** The last range port nothing listens on now (small TOCTOU window). */
+  async function lastFreeRangePort(): Promise<number | null> {
+    for (const port of [...PORT_RANGE].reverse()) {
+      const probe = createServer();
+      const free = await new Promise<boolean>((resolve) => {
+        probe.once("error", () => resolve(false));
+        probe.listen(port, "127.0.0.1", () => resolve(true));
+      });
+      if (free) {
+        await new Promise<void>((resolve) => probe.close(() => resolve()));
+        return port;
+      }
+    }
+    return null;
+  }
+
+  test("binds the vault's last live port before the rest of the range", async () => {
+    const port = await lastFreeRangePort();
+    expect(port).not.toBeNull();
+    const { plugin } = makePlugin({ mcpTransport: { livePort: port } });
+    const result = await setup(plugin);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    active.push(result.state);
+    expect(result.state.server.port).toBe(port!);
+  });
+
+  test("an unloaded instance does not overwrite the livePort of its replacement", async () => {
+    const port = await lastFreeRangePort();
+    expect(port).not.toBeNull();
+    // The reloaded instance listens on its port and published it, so the
+    // stale instance binds another one
+    const replacement = createServer();
+    await new Promise<void>((resolve) =>
+      replacement.listen(port!, "127.0.0.1", () => resolve()),
+    );
+    try {
+      const { plugin, getData } = makePlugin({
+        mcpTransport: { livePort: port },
+      });
+      const stale = await setup(plugin, () => true);
+      expect(stale).toEqual({
+        success: false,
+        error: "The plugin was unloaded",
+      });
+      const slice = getData()?.mcpTransport as Record<string, unknown>;
+      expect(slice.livePort).toBe(port!);
+    } finally {
+      await new Promise<void>((resolve) => replacement.close(() => resolve()));
     }
   });
 });

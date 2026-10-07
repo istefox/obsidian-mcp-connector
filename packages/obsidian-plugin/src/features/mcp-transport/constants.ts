@@ -1,4 +1,12 @@
-export const PORT_RANGE = [27200, 27201, 27202, 27203, 27204, 27205] as const;
+// The shared discovery broker's fixed loopback port, used by every vault and
+// every client config (ADR-0027). Never part of PORT_RANGE, so a vault's
+// dynamic port can never take it; only a legacy fixed port can.
+export const BROKER_PORT = 27200 as const;
+// The dynamic vault range: 12 slots, one per open vault, after BROKER_PORT.
+export const PORT_RANGE = [
+  27201, 27202, 27203, 27204, 27205, 27206, 27207, 27208, 27209, 27210, 27211,
+  27212,
+] as const;
 export const BIND_HOST = "127.0.0.1" as const;
 export const MCP_PATH_PREFIX = "/mcp" as const;
 export const TOKEN_BYTE_LENGTH = 32 as const;

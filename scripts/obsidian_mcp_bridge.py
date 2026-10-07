@@ -21,11 +21,15 @@ Usage (claude_desktop_config.json):
       "mcpServers": {
         "obsidian": {
           "command": "python",
-          "args": ["C:\\\\path\\\\to\\\\obsidian_mcp_bridge.py", "http://127.0.0.1:27200/mcp"],
+          "args": ["C:\\\\path\\\\to\\\\obsidian_mcp_bridge.py", "http://127.0.0.1:27200/v1/<route-id>/mcp"],
           "env": { "OBSIDIAN_BEARER_TOKEN": "your-token-here" }
         }
       }
     }
+
+Copy the URL from a token row in the plugin's Access Control settings: the
+vault's route on the shared broker, or `http://127.0.0.1:<port>/mcp` for a
+vault with a fixed port.
 
 The token can also be passed as a second argument instead of the env var, but
 the env var keeps it out of the process list.

@@ -54,11 +54,19 @@ export function resolveServerName(
  *
  * Args:
  *   plugin: The Obsidian Plugin instance (provides loadData/saveData/manifest).
+ *   stale: True once this plugin instance was unloaded (ADR-0027). A stale
+ *     setup never publishes its port as `livePort`: a reloaded instance may
+ *     already have published its own port, which the `.mcpb` shim and the
+ *     next port preference read. The broker forwards to the port a vault
+ *     registers, not to `livePort`.
  *
  * Returns:
  *   SetupResult — success with the running state, or failure with an error message.
  */
-export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
+export async function setup(
+  plugin: McpToolsPlugin,
+  stale: () => boolean = () => false,
+): Promise<SetupResult> {
   try {
     // First statement of setup, and before the listener binds: mints
     // the first-run token, migrates a 0.28.2 vault to the multi-token
@@ -78,8 +86,13 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
 
     const mcpTransportSlice = (await new SettingsStore(plugin).readSlice(
       "mcpTransport",
-    )) as { port?: unknown; serverName?: string } | undefined;
-    const ports = resolvePorts(mcpTransportSlice?.port);
+    )) as
+      | { port?: unknown; livePort?: unknown; serverName?: string }
+      | undefined;
+    const ports = resolvePorts(
+      mcpTransportSlice?.port,
+      mcpTransportSlice?.livePort,
+    );
     const serverName = resolveServerName(
       plugin.app,
       mcpTransportSlice?.serverName,
@@ -123,12 +136,23 @@ export async function setup(plugin: McpToolsPlugin): Promise<SetupResult> {
     // user's optional Fixed Port setting (`mcpTransport.port`). The
     // generated .mcpb reads this at spawn time (mcpbGenerator.ts) so an
     // already-installed Claude Desktop extension keeps working across a
-    // port that drifted, without a manual re-export.
+    // port that drifted, without a manual re-export, and the next start
+    // tries it first (resolvePorts). The broker does not use it: it
+    // forwards to the port a vault registers (ADR-0027). Checked inside
+    // the write as well, so
+    // an unload during the read cannot slip a stale port through.
+    let published = false;
     await new SettingsStore(plugin).updateSlice("mcpTransport", (current) => {
+      if (stale()) return current; // NO_CHANGE
+      published = true;
       const slice = (current as Record<string, unknown> | undefined) ?? {};
       if (slice.livePort === server.port) return current; // NO_CHANGE
       return { ...slice, livePort: server.port };
     });
+    if (!published) {
+      await teardown({ server, mcp, bearerToken });
+      return { success: false, error: "The plugin was unloaded" };
+    }
 
     logger.info("MCP Connector HTTP server listening", {
       port: server.port,

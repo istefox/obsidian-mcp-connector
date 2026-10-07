@@ -2,9 +2,19 @@ import { Notice, Plugin } from "obsidian";
 import { type SmartConnections } from "shared";
 import { checkCommandPermission as runCommandPermissionCheck } from "./features/command-permissions/services/checkCommandPermission";
 import {
-  startCodexDiscovery,
+  createBrokerHost,
+  startDiscovery,
+  type BrokerHost,
   type DiscoveryRuntime,
 } from "./features/mcp-client-config/services/discoveryBroker";
+import {
+  createRouteQueue,
+  replaceRoute,
+  restartTransport,
+  RouteQueueClosed,
+} from "./features/mcp-client-config/services/routeLifecycle";
+import { BROKER_PORT } from "./features/mcp-transport/constants";
+import type { SetupResult } from "./features/mcp-transport/services/setup";
 import { SettingsStore } from "./shared/settingsStore";
 import {
   disableSettingsReadCache,
@@ -35,7 +45,22 @@ import { logger } from "./shared/logger";
 export default class McpToolsPlugin extends Plugin {
   mcpTransportState?: McpTransportState;
 
-  codexDiscoveryState?: DiscoveryRuntime;
+  /**
+   * Hosts the shared broker when this vault wins the port, for as long as
+   * the plugin is loaded (ADR-0027). Outlives route restarts, so a retry
+   * or move in this vault never takes the broker from the others.
+   */
+  brokerHost?: BrokerHost;
+
+  /** This vault's broker route, registered for every client. */
+  discoveryState?: DiscoveryRuntime;
+
+  /**
+   * Runs transport starts and restarts and route changes one at a time.
+   * Obsidian awaits neither onload nor onunload, so onunload closes it and
+   * an operation that settles afterwards tears down what it created.
+   */
+  readonly routeQueue = createRouteQueue();
 
   promptsState?: PromptsFeatureState;
 
@@ -75,26 +100,62 @@ export default class McpToolsPlugin extends Plugin {
     );
   }
 
+  /**
+   * Start or restart the MCP transport and this vault's broker route, see
+   * restartTransport. Rejects with RouteQueueClosed after unload.
+   */
+  restartTransport(): Promise<SetupResult> {
+    return restartTransport(this, {
+      setup: (stale) => mcpTransportSetup(this, stale),
+      teardown: mcpTransportTeardown,
+      startRoute: (port) => this.startRoute(port),
+    });
+  }
+
+  /**
+   * Restart this vault's broker route around `update`, a change to its
+   * saved identity, see replaceRoute. Resolves whether a route started.
+   */
+  replaceRoute(update?: () => Promise<void>): Promise<boolean> {
+    return replaceRoute(this, {
+      update,
+      startRoute: (port) => this.startRoute(port),
+    });
+  }
+
+  private startRoute(transportPort: number): Promise<DiscoveryRuntime> {
+    const host = this.brokerHost;
+    if (!host) return Promise.reject(new RouteQueueClosed());
+    return startDiscovery(this, { host, transportPort });
+  }
+
   async onload() {
     // Every MCP request reads data.json three to four times (auth, tool
     // policy, folder-exclusion policy). Coalesce them before anything
     // else starts reading; writes still go to disk (settingsReadCache.ts).
     enableSettingsReadCache(this);
+    // Before the first await, so onunload always has it to close
+    this.brokerHost = createBrokerHost({ pluginId: this.manifest.id });
 
     // Initialize features in order
     await setupCore(this);
 
-    // 0.4.0 HTTP transport — in-process MCP server.
-    const mcpResult = await mcpTransportSetup(this);
+    // 0.4.0 HTTP transport — in-process MCP server, and its broker route.
+    let mcpResult: SetupResult;
+    try {
+      mcpResult = await this.restartTransport();
+    } catch (error) {
+      // onunload ran first, and the queue tore down whatever had started
+      if (error instanceof RouteQueueClosed) return;
+      throw error;
+    }
     if (mcpResult.success) {
-      this.mcpTransportState = mcpResult.state;
-      try {
-        this.codexDiscoveryState =
-          (await startCodexDiscovery(this)) ?? undefined;
-      } catch (error) {
-        logger.warn("Codex discovery failed during startup", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+      if (mcpResult.state.server.port === BROKER_PORT) {
+        // A fixed port saved before the broker took this port. It keeps
+        // working directly, but no vault can host the broker meanwhile.
+        new Notice(
+          `MCP Connector: This vault's fixed port ${BROKER_PORT} is reserved for the shared broker, so client configs that use the broker cannot connect to any open vault. Change the fixed port in Access Control`,
+        );
       }
       // ADR-0020 D1: prompts are a separate registry that never reaches
       // toolRegistry.dispatch, so this is the second and last place the
@@ -194,6 +255,9 @@ export default class McpToolsPlugin extends Plugin {
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Obsidian calls onunload synchronously; the returned Promise is not awaited by the plugin lifecycle
   async onunload() {
+    // First and synchronous: no queued transport or route operation runs
+    // after this, and one still running tears down what it creates
+    this.routeQueue.close();
     disableSettingsReadCache(this);
     this.cancelSmartSearchPoll?.();
     this.cancelSmartSearchPoll = undefined;
@@ -201,10 +265,20 @@ export default class McpToolsPlugin extends Plugin {
       promptsTeardown(this.promptsState);
       this.promptsState = undefined;
     }
-    if (this.codexDiscoveryState) {
-      await this.codexDiscoveryState.stop();
-      this.codexDiscoveryState = undefined;
-    }
+    // Both calls close their sockets and listener before their first
+    // await, so the broker port is released even though Obsidian never
+    // awaits this method. Every other vault then re-elects a host.
+    const discoveryStopped = this.discoveryState?.stop();
+    const brokerClosed = this.brokerHost?.close();
+    this.discoveryState = undefined;
+    this.brokerHost = undefined;
+    await discoveryStopped;
+    await brokerClosed;
+    // A route still registering is not in discoveryState yet. Its
+    // operation stops it on seeing the closed queue; release the
+    // transport only after that, or the broker could briefly forward
+    // this vault's clients to a port it no longer holds.
+    await this.routeQueue.idle();
     if (this.mcpTransportState) {
       await mcpTransportTeardown(this.mcpTransportState);
       this.mcpTransportState = undefined;
