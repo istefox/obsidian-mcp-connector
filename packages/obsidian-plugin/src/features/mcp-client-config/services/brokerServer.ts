@@ -41,6 +41,8 @@ export const LEASE_HEADER = "x-obsidian-mcp-lease-id";
 export const MAX_PENDING_REGISTRATIONS = 32;
 
 const MAX_REGISTRATION_BYTES = 16 * 1024;
+const EVICTION_WINDOW_MS = 10_000;
+const MAX_EVICTIONS_PER_WINDOW = 3;
 const REGISTRATION_TIMEOUT_MS = 2_000;
 // Every path below comes from a registration body: require a regular file
 // under a small cap before reading it.
@@ -566,6 +568,25 @@ export function startBrokerServer(opts: {
   const routes = new Map<string, Control>();
   let pendingRegistrations = 0;
   let closing = false;
+  // When a route's control was last evicted by another lease, per route
+  const evictions = new Map<string, number[]>();
+
+  /**
+   * Records an eviction of `key`'s control by a different lease and says
+   * whether it exceeds the allowance: a restarting vault evicts its own
+   * stale control once, a second vault on the same data file does so on
+   * every reconnect.
+   */
+  function evictionRefused(key: string): boolean {
+    const now = Date.now();
+    const recent = (evictions.get(key) ?? []).filter(
+      (at) => now - at < EVICTION_WINDOW_MS,
+    );
+    const refused = recent.length >= MAX_EVICTIONS_PER_WINDOW;
+    if (!refused) recent.push(now);
+    evictions.set(key, recent);
+    return refused;
+  }
 
   const server = http.createServer((req, res) => {
     void handle(req, res).catch(() => {
@@ -664,6 +685,16 @@ export function startBrokerServer(opts: {
       // instead of reporting a false identity conflict. A different
       // dataPath is a genuine copied-vault conflict.
       if (existing.registration.dataPath === registration.dataPath) {
+        // Two open vaults that share one data file would otherwise evict
+        // each other's control forever. A different lease is another
+        // plugin instance, so repeated evictions of it are refused.
+        if (
+          existing.registration.leaseId !== registration.leaseId &&
+          evictionRefused(key)
+        ) {
+          respond(res, 409, "route already registered");
+          return;
+        }
         existing.response.destroy();
       } else {
         respond(res, 409, "route already registered");

@@ -153,12 +153,14 @@ async function registerRoute(
   vaultPath = vaultFile(),
   registeredPath = vaultPath,
   transportPort: unknown = transportPorts.get(vaultPath) ?? UNUSED_PORT,
+  /** The lease named in the body. The header carries `leaseId`. */
+  bodyLeaseId = "lease",
 ): Promise<{ close(): Promise<void> }> {
   const body = JSON.stringify({
     version: BROKER_PROTOCOL_VERSION,
     routeId: id,
     dataPath: registeredPath,
-    leaseId: "lease",
+    leaseId: bodyLeaseId,
     port: transportPort,
   });
   return new Promise((resolve, reject) => {
@@ -823,6 +825,49 @@ test("a same-vault reconnect evicts its own stale control instead of a 409", asy
   // The evicted first control is already closed broker-side; close() must be safe to call anyway.
   await first.close();
   await second.close();
+});
+
+/** One plugin instance registering with its own lease, header and body alike. */
+function registerInstance(port: number, lease: string, file: string) {
+  return registerRoute(
+    port,
+    routeCredential,
+    lease,
+    routeId,
+    file,
+    file,
+    transportPorts.get(file),
+    lease,
+  );
+}
+
+test("two plugin instances on one data file stop evicting each other", async () => {
+  const file = await vaultTarget("shared", "vault");
+  const port = await startBroker();
+  // A restart evicts the stale control once. Another instance on the same
+  // data file does it on every reconnect, so the allowance runs out.
+  for (const lease of ["a", "b", "a", "b"]) {
+    await registerInstance(port, lease, file);
+  }
+  await expect(registerInstance(port, "a", file)).rejects.toThrow("HTTP 409");
+  // The holder keeps its route
+  expect(
+    (
+      await request(port, {
+        path: `/v1/${routeId}/mcp`,
+        token: "vault-token",
+        body: "{}",
+      })
+    ).body,
+  ).toBe("shared|Bearer vault-token");
+});
+
+test("reconnects on one lease never count as evictions", async () => {
+  const file = await vaultTarget("vault", "vault");
+  const port = await startBroker();
+  for (let i = 0; i < 6; i += 1) {
+    await registerRoute(port, routeCredential, "lease", routeId, file);
+  }
 });
 
 describe("registration ownership", () => {

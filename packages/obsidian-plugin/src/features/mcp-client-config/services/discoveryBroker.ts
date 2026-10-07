@@ -560,7 +560,7 @@ async function connectRegistration(
           reject(
             status === 409
               ? new RegistrationConflict(
-                  "This vault's broker route is already in use by another open vault. In the copied vault, use Make this copy independent",
+                  "This vault's broker route is already in use by another open vault. In the copied vault, use Make this copy independent. Vaults that share one plugin folder cannot both use its route",
                 )
               : status === 401 || status === 403
                 ? new RegistrationRejected(status)

@@ -108,6 +108,7 @@ Every use of a registered `data.json` goes through these checks: Admission, each
 Windows has no comparably cheap owner check, so there the broker relies on the access rules of the user profile that holds the vault.
 Copied-vault handling from ADR-0021 stays.
 A different data path claiming a registered route gets `409`.
+The same data path under another lease replaces the held control, which is how a restarting vault takes its route back. Because two open vaults can share one data file, a route's control may be replaced at most three times in ten seconds, and the next replacement gets `409` like a copied vault's
 A moved vault must confirm **This vault was moved**, and a copy uses **Make this copy independent**
 
 ### Refused registrations
