@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-10-08
+
 ### Fixed
 
 - **A vault with a linked plugin folder no longer stays on "Vault location changed" after updating from 2.11 or 2.12.** 3.0.0 saves the plugin folder under its own name, where 2.x saved the link's target, so a saved route looked like a moved vault and the broker never registered it. The old form is now recognized as the same file and replaced by the current one on the next start. A copied vault still has to be confirmed as moved or made independent
