@@ -9,7 +9,7 @@
 
 Your Obsidian vault, exposed to AI clients over the [Model Context Protocol](https://modelcontextprotocol.io). The MCP server runs **inside Obsidian**, on loopback, with no binary to download and no cloud round-trip. Claude Desktop, Claude Code, Cursor, Cline, Continue, Windsurf and VS Code all connect to the same endpoint.
 
-[What's new](#whats-new-in-28-to-212) · [Quick start](#quick-start) · [Tools](#what-it-can-do) · [Rendered search results](#rendered-search-results-mcp-apps) · [Adaptive tool loading](#adaptive-tool-loading) · [Per-client tokens](#per-client-tokens) · [Prompts](#prompts) · [Protocol](#protocol-status) · [Clients](#connecting-a-client) · [Troubleshooting](#troubleshooting) · [Security](#security) · [For developers](#for-developers)
+[What's new in 3.0.0](#whats-new-in-300) · [Quick start](#quick-start) · [Tools](#what-it-can-do) · [Rendered search results](#rendered-search-results-mcp-apps) · [Adaptive tool loading](#adaptive-tool-loading) · [Per-client tokens](#per-client-tokens) · [Prompts](#prompts) · [Protocol](#protocol-status) · [Clients](#connecting-a-client) · [Troubleshooting](#troubleshooting) · [Security](#security) · [For developers](#for-developers)
 
 ---
 
@@ -41,11 +41,38 @@ Four things follow from that shape:
 - **Semantic search is on-device.** Transformers.js runs the embedding model locally. No API key, no Smart Connections requirement.
 - **Every request carries its own credentials.** The transport keeps no session state, which is what makes per-client tool surfaces possible.
 
+## What's new in 3.0.0
+
+> [!IMPORTANT]
+> **3.0.0 is a major release, and it changes how every client connects.** The shared broker now runs inside Obsidian on port **27200** and serves Claude Code, Claude Desktop, Codex, Cursor and the rest from one stable address. **Existing Codex entries return `401` until you reinstall them from the new Codex menu.** Read [Upgrading from 2.x](#upgrading-from-2x) before you update.
+
+Every release is announced on the [Obsidian forum thread](https://forum.obsidian.md/t/mcp-connector-an-mcp-server-that-runs-inside-obsidian/117465), where questions and ideas are welcome too.
+
+| Change | Why it matters |
+|---|---|
+| **One broker for every client** | Copy buttons and the Claude Desktop sync now give `http://127.0.0.1:27200/v1/<route-id>/mcp`. The address survives vault port changes and the port swaps caused by opening vaults in a different order. If the hosting vault closes, another open vault takes over after a short outage. Each client's own bearer token reaches the vault, so per-client tokens and tool profiles apply as on a direct port. |
+| **No separate process** | The detached Node.js broker and its executable in application data are gone. The broker is plugin code in Obsidian's renderer, so there is nothing outside Obsidian to start, update or kill. |
+| **A Codex menu on every token row** | Copy the `config.toml` snippet, copy a `codex mcp add` command, install into your Codex config, or install into a project. An install shows a preview first, then writes with a backup, a lock, an atomic write and a read-back. |
+| **Safe Codex installs** | The installer refuses an entry that belongs to another vault, so two equally named vaults cannot overwrite each other. It migrates entries written by 2.11 and 2.12, and keeps your tool approvals and policy keys. |
+| **Register one project** | Set **Project path** in Access Control. Claude Code copies a local-scope `claude mcp add` command for that project, and Codex installs into the project's `.codex/config.toml`. A project install never writes your token: it reads `OBSIDIAN_MCP_TOKEN`. |
+| **All tools offer for Codex** | Codex does not refetch the tool list during a session, so an install on an **Adaptive** token offers to switch it to **All tools**. It is unticked by default and applied only after a successful install. |
+| **Clear errors from the broker** | When the broker cannot reach a vault, **Broker connection** shows **Refused** with the cause and what to change, and the copy buttons hand out the vault's direct URL meanwhile. |
+| **Codex needs no Node.js** | Node.js is still needed for the `.mcpb` export and the `mcp-remote` path. |
+
+### Upgrading from 2.x
+
+1. **Update the plugin in every open vault.** If another open vault runs a different plugin version, a Notice asks you to update it.
+2. **Codex: reinstall once.** Open **Codex** on the token row and choose **Install into user Codex config…**. The installer finds your old entry, shows the migration in a preview and rewrites it with the new address and your row token. A pasted snippet replaces it just as well.
+3. **Other clients: copy the config again** if it names a vault port from 27201 to 27205, because that port now addresses a vault, not the broker. Vault ports now run from **27201 to 27212**, and 27200 can no longer be set as a fixed port. A plain direct config on `http://127.0.0.1:27200/mcp` keeps working.
+4. **Replacing a token secret now also breaks a Codex entry** for that token, as for any client that holds a pasted token. Reinstall after you replace one.
+5. **macOS and Linux:** a vault registers its route only while its `plugins` folder, plugin folder and `data.json` belong to you and are not writable by others. If they are not, **Broker connection** shows **Refused** and says what to change.
+6. **Optional:** delete the `obsidian-mcp-connector/broker-v2` folder in application data. Nothing uses it any more.
+
+The full list is in the [3.0.0 changelog](CHANGELOG.md#300--2026-10-08). The design is recorded in [ADR-0027](docs/architecture/ADR-0027-shared-broker-for-all-clients.md) and [ADR-0028](docs/architecture/ADR-0028-codex-installer-and-project-scope.md).
+
 ## What's new in 2.8 to 2.12
 
 Five releases followed a code and protocol audit ([`docs/audit-2026-10-02.md`](docs/audit-2026-10-02.md)). The tool count went from 52 to 64, writes got safer, and search got shorter and more precise.
-
-Every release is announced on the [Obsidian forum thread](https://forum.obsidian.md/t/mcp-connector-an-mcp-server-that-runs-inside-obsidian/117465), where questions and ideas are welcome too.
 
 | Change | Why it matters |
 |---|---|
@@ -178,7 +205,7 @@ while a web client does without it.
 
 ## Adaptive tool loading
 
-Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 52 active is roughly 10K tokens per session. Adaptive loading cuts that without putting any tool out of reach.
+Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 64 active is roughly 10K tokens or more per session. Adaptive loading cuts that without putting any tool out of reach.
 
 ### Profiles
 
@@ -216,6 +243,26 @@ A tool can be dark for two unrelated reasons, and the difference is deliberate:
 ### Does this violate the `tools/list` stability rule?
 
 MCP revision `2026-07-28` says the advertised set must not vary per-connection or as a side effect of other requests on the connection, while it may vary by the authorization presented. Adaptive loading satisfies it, and the reasoning is written down in [ADR-0015](docs/architecture/ADR-0015-tools-list-invariant-and-adaptive-loading.md): registry state is process-global and token-scoped, never connection-scoped, so two clients presenting the same token get the same list, and a promotion is a vault state change (like a settings edit), not a property of one connection. `notifications/tools/list_changed` is what the clause points at for exactly this case.
+
+### Does a mid-session change cost prompt cache?
+
+It can, depending on the client. Anthropic's prompt cache covers the tool definitions first, then the system prompt, then the messages. If a client keeps MCP tool schemas in that prefix and re-sends a changed list, everything after the change is written to the cache again instead of read from it.
+
+Measured on 2026-10-08 with headless Claude Code 2.1.294 against a mock server that answers `activate_tool` and sends `list_changed` the way this plugin does:
+
+| Client setup | Turn after the refresh |
+|---|---|
+| Tool search on (the Claude Code default) | The client re-listed and the cache stayed intact, with 100 to 300 tokens created per turn |
+| Tool search off, schemas in the prefix | 42,779 tokens written and none read. The unchanged control wrote about 71 and read about 42K |
+
+This is one run per setup, on Haiku, against a mock and not the plugin itself. Other clients are not measured.
+
+What follows for you:
+
+- Profile **All** never changes the list, so it never triggers this.
+- Automatic promotion at 3 calls sends no notification on the 2025 protocol wire, so a running session keeps its list until the client re-lists. A client with a `subscriptions/listen` stream on the 2026 revision is told.
+- `activate_tool` and `activate_tools` notify, and only when the model calls them. Prefer `activate_tools` when several tools are needed, because it refreshes once.
+- For a long session on a client that keeps tool schemas in the prefix, use **All**, or promote with `persist: true` and start a new conversation.
 
 ## Per-client tokens
 
