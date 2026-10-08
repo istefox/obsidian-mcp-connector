@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **A vault with a linked plugin folder no longer stays on "Vault location changed" after updating from 2.11 or 2.12.** 3.0.0 saves the plugin folder under its own name, where 2.x saved the link's target, so a saved route looked like a moved vault and the broker never registered it. The old form is now recognized as the same file and replaced by the current one on the next start. A copied vault still has to be confirmed as moved or made independent
+
 ## [3.0.0] — 2026-10-08
 
 > **3.0.0 is a major release: every client now connects through one shared broker inside Obsidian.** Two changes are breaking. Existing Codex entries return `401` until you reinstall them from the new **Codex** menu on a token row, and vault ports moved to 27201-27212. The steps are in [Upgrading from 2.x](README.md#upgrading-from-2x).

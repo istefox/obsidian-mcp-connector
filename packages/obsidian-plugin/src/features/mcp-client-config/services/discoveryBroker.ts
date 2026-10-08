@@ -265,10 +265,11 @@ export async function isLocationUnresolved(
   const saved = (await readSettings(plugin))?.dataPath;
   if (saved === undefined) return false;
   try {
-    return saved !== (await canonicalDataPath(plugin, opts));
+    if (saved === (await canonicalDataPath(plugin, opts))) return false;
   } catch {
     return true;
   }
+  return !(await isLegacyLocation(plugin, saved, opts));
 }
 
 /**
@@ -292,6 +293,42 @@ async function canonicalDataPath(
     path.basename(file),
   );
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * The form 2.11 and 2.12 saved: the whole plugin folder resolved. For a
+ * plugin folder linked elsewhere it names the link's target, where
+ * canonicalDataPath keeps the folder's own name.
+ */
+async function legacyDataPath(
+  plugin: LocatedPlugin,
+  opts?: { dataPath?: string },
+): Promise<string> {
+  const file = opts?.dataPath ?? resolveDataPath(plugin);
+  const resolved = path.join(
+    await fsp.realpath(path.dirname(file)),
+    path.basename(file),
+  );
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * True when `saved` is this vault's own data file in the form older
+ * versions saved. It names the same file, so it is no move: A copy resolves
+ * to a different file and stays blocked. A plugin folder shared by two
+ * vaults is the exception, and the second vault to open then sees the
+ * current form of the first and is blocked as a copy.
+ */
+async function isLegacyLocation(
+  plugin: LocatedPlugin,
+  saved: string,
+  opts?: { dataPath?: string },
+): Promise<boolean> {
+  try {
+    return saved === (await legacyDataPath(plugin, opts));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -511,7 +548,12 @@ async function startRuntime(
       listeners.clear();
     },
   };
-  if (settings.dataPath && settings.dataPath !== dataPath) {
+  const savedPath = settings.dataPath;
+  if (
+    savedPath &&
+    savedPath !== dataPath &&
+    !(await isLegacyLocation(plugin, savedPath, opts))
+  ) {
     const message =
       "Vault location changed. Confirm a move or make this copy independent";
     setStatus({ state: "conflict", locationChanged: true, message });
@@ -520,7 +562,8 @@ async function startRuntime(
     );
     return runtime;
   }
-  if (!settings.dataPath) {
+  // First bind, or a location saved in an older form: save the current one
+  if (savedPath !== dataPath) {
     await updateSettings(plugin, (current) => ({
       ...(current ?? settings),
       dataPath,
