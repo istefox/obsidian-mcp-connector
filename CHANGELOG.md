@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-10-08
+
 ### Added
 
 - **Claude Code and Codex can register the vault for one project.** Set **Project path** in Access Control to a project's absolute path. **Claude Code** on each token row then copies `cd '<path>' && claude mcp add --scope local …`, which keeps the entry private to that project, and the **Codex** menu can install into the project's `.codex/config.toml`. With the field blank the Claude Code command is unchanged and uses user scope. The path cannot contain a single quote, a line break or the PowerShell wildcards `[`, `]`, `*` and `?`, must name an existing folder for the Codex install, and the Claude Code command needs a POSIX shell or PowerShell 7+ for `&&`
