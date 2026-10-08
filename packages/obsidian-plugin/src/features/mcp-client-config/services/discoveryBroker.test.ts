@@ -30,6 +30,7 @@ import {
   acceptDiscoveryMove,
   createBrokerHost,
   getCodexConnection,
+  isLocationUnresolved,
   resetDiscoveryIdentity,
   savedRouteId,
   startDiscovery,
@@ -624,6 +625,79 @@ test("start through an aliased path keeps the saved location, route and credenti
   expect(runtime.status.locationChanged).not.toBe(true);
   expect(runtime.routeId).toBe(routeId);
   expect(storedSettings(plugin).accessToken).toBe(secretFor("broker"));
+});
+
+/** A vault whose plugin folder links to a checkout, as bun run link leaves it. */
+async function linkedPluginFolder(name: string) {
+  const checkout = path.join(tempDir, `${name}-checkout`);
+  const vaultPlugins = path.join(tempDir, name, ".obsidian", "plugins");
+  await fsp.mkdir(checkout, { recursive: true });
+  await fsp.mkdir(vaultPlugins, { recursive: true });
+  await fsp.symlink(
+    checkout,
+    path.join(vaultPlugins, PLUGIN_ID),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const lower = (file: string) =>
+    process.platform === "win32" ? file.toLowerCase() : file;
+  return {
+    file: path.join(vaultPlugins, PLUGIN_ID, "data.json"),
+    // What 2.11 and 2.12 saved: the whole plugin folder resolved to its target
+    legacyPath: lower(path.join(await fsp.realpath(checkout), "data.json")),
+    // What this version saves: the plugin folder keeps its own name
+    currentPath: lower(
+      path.join(await fsp.realpath(vaultPlugins), PLUGIN_ID, "data.json"),
+    ),
+  };
+}
+
+function savedRoute(dataPath: string) {
+  return fakePlugin({
+    ...withTokens("a"),
+    mcpClientConfig: {
+      codexDiscovery: {
+        routeId: "123e4567-e89b-42d3-a456-426614174000",
+        accessToken: secretFor("broker"),
+        dataPath,
+      },
+    },
+  });
+}
+
+test("a location saved by 2.12 for a linked plugin folder is kept and moved to the current form", async () => {
+  const linked = await linkedPluginFolder("vault");
+  expect(linked.legacyPath).not.toBe(linked.currentPath);
+  const plugin = savedRoute(linked.legacyPath);
+  const opts = fakeOpts(fakeHost(), linked.file);
+
+  expect(await isLocationUnresolved(plugin, opts)).toBe(false);
+  const runtime = await startDiscovery(plugin, opts);
+  runtimes.push(runtime);
+
+  expect(runtime.status.locationChanged).not.toBe(true);
+  expect(runtime.status.state).toBe("connected");
+  expect(runtime.routeId).toBe("123e4567-e89b-42d3-a456-426614174000");
+  expect(storedSettings(plugin).accessToken).toBe(secretFor("broker"));
+  expect(storedSettings(plugin).dataPath).toBe(linked.currentPath);
+  expect(registrations).toHaveLength(1);
+  expect(registrations[0]?.registration).toMatchObject({
+    dataPath: linked.currentPath,
+  });
+});
+
+test("a vault whose plugin folder links elsewhere than the saved location is still a copy", async () => {
+  const original = await linkedPluginFolder("original");
+  const copy = await linkedPluginFolder("copy");
+  const plugin = savedRoute(original.legacyPath);
+  const opts = fakeOpts(fakeHost(), copy.file);
+
+  expect(await isLocationUnresolved(plugin, opts)).toBe(true);
+  const blocked = await startDiscovery(plugin, opts);
+  runtimes.push(blocked);
+
+  expect(blocked.status.locationChanged).toBe(true);
+  expect(registrations).toHaveLength(0);
+  expect(storedSettings(plugin).dataPath).toBe(original.legacyPath);
 });
 
 test.each(["move", "reset"])(
