@@ -144,3 +144,38 @@ feature to satisfy a requirement that does not exist.
 **Leave it as a comment on #407.** Rejected because that is what it already was. A reading
 of a normative clause that licenses a whole feature is a decision, and decisions in this
 repo live in `docs/architecture/`.
+
+## Addendum 2026-10-08: what a mid-session list change costs a client's prompt cache
+
+A forum user pointed out that Anthropic's prompt cache orders its prefix as tools, system
+prompt, messages, so a client that re-sends a changed tool list rewrites the whole cached
+prefix. That is a cost of the notification obligation in section 3, not a change to the
+invariant, so it is recorded here.
+
+**Measurement.** Headless Claude Code 2.1.294 on Haiku, against a mock server that answers
+`activate_tool` with an SSE response carrying `notifications/tools/list_changed` and then
+serves one more tool. Per-turn usage came from `--output-format stream-json`.
+
+- Tool search on, the Claude Code default: the client re-listed (the mock saw a second
+  `tools/list`) and the cache stayed intact, 100 to 300 tokens created per turn.
+- Tool search off, so MCP schemas sit in the prefix: the turn after the refresh created
+  42,779 tokens and read none. The unchanged control created about 71 and read about 42K.
+  Adding the tool at the end of the list did not help, since the system prompt and the
+  messages follow the tools block.
+
+**Limits.** One run per variant, headless rather than interactive, a mock rather than the
+plugin, and no other client measured. A whole-run cost ratio is not valid, because the
+no-search run also paid one cold first turn.
+
+**Decision.** No code change. Profile All never changes the list. Automatic promotion
+sends no notification on the 2025 wire, and the 2026 fan-out in section 4 reaches only
+clients that opted into `subscriptions/listen`. Only `activate_tool` and `activate_tools`
+notify, and only when the model calls them. Dropping that notification would leave a
+client that re-lists with no way to see the tool it just activated, which defeats
+`activate_tool`. `activate_tools` already batches several tools into one refresh.
+
+**Documented instead.** The README's Adaptive tool loading section carries the numbers and
+the advice for long sessions on a client that keeps schemas in the prefix: use All, or
+promote with `persist: true` and start a new conversation. If a client with schemas in the
+prefix turns out to be common, revisit with a per-token option to skip the notification
+rather than removing it.

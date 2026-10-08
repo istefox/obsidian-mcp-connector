@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [3.0.0] — 2026-10-08
 
+> **3.0.0 is a major release: every client now connects through one shared broker inside Obsidian.** Two changes are breaking. Existing Codex entries return `401` until you reinstall them from the new **Codex** menu on a token row, and vault ports moved to 27201-27212. The steps are in [Upgrading from 2.x](README.md#upgrading-from-2x).
+
+### Highlights
+
+- **One broker for every client.** Claude Code, Claude Desktop, Codex, Cursor and the rest use `http://127.0.0.1:27200/v1/<route-id>/mcp`, which survives vault port changes. It runs in Obsidian, so no Node.js process is started outside it. Another open vault takes over if the host closes.
+- **Codex is back as a full installer.** A **Codex** menu on each token row copies a snippet or a `codex mcp add` command, or installs into the user config or a project, with a preview, a backup, a lock and a read-back. It refuses another vault's entry and migrates entries from 2.11 and 2.12.
+- **Register the vault for one project.** **Project path** in Access Control makes Claude Code copy a local-scope command and lets Codex install into the project's `.codex/config.toml`, never writing a literal token there.
+- **Clearer failures.** **Broker connection** names the cause when the broker refuses a vault, and the copy buttons hand out the direct URL until it reconnects.
+
 ### Added
 
 - **Claude Code and Codex can register the vault for one project.** Set **Project path** in Access Control to a project's absolute path. **Claude Code** on each token row then copies `cd '<path>' && claude mcp add --scope local …`, which keeps the entry private to that project, and the **Codex** menu can install into the project's `.codex/config.toml`. With the field blank the Claude Code command is unchanged and uses user scope. The path cannot contain a single quote, a line break or the PowerShell wildcards `[`, `]`, `*` and `?`, must name an existing folder for the Codex install, and the Claude Code command needs a POSIX shell or PowerShell 7+ for `&&`
