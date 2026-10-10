@@ -69,8 +69,15 @@ export type ProgressCallback = (info: ProgressEvent) => void;
 export type PipelineFactoryWithProgress = (
   model: string,
   onProgress?: ProgressCallback,
-  opts?: { dtype?: string },
+  opts?: { dtype?: DtypeSpec },
 ) => Promise<PipelineFn>;
+
+/**
+ * Model weight precision. A plain string applies to every backend; a
+ * record picks one per backend, because a precision that is right for
+ * WASM can be the wrong download on WebGPU (see `buildPipelineOptions`).
+ */
+export type DtypeSpec = string | Partial<Record<BackendKind, string>>;
 
 export interface Embedder {
   embed(text: string): Promise<Float32Array>;
@@ -381,28 +388,44 @@ export function __resetBackendForTesting(): void {
   _backendConfig = null;
 }
 
+/**
+ * Options for `pipeline("feature-extraction", …)` on the resolved backend.
+ *
+ * The dtype must reach the library on both backends: transformers.js falls
+ * back to fp32 for every device except WASM, so a dropped dtype on WebGPU
+ * downloads the full-precision weights (1.23 GB for EmbeddingGemma against
+ * the ~200 MB the settings promise). When no dtype is given, or the record
+ * has no entry for this backend, the key is left out and the library
+ * default applies.
+ */
+export function buildPipelineOptions(
+  backend: BackendKind,
+  dtype: DtypeSpec | undefined,
+  onProgress?: ProgressCallback,
+): { device: string; progress_callback?: ProgressCallback; dtype?: string } {
+  const resolved = typeof dtype === "string" ? dtype : dtype?.[backend];
+  return {
+    device: backend === "webgpu" ? "webgpu" : "cpu",
+    progress_callback: onProgress,
+    ...(resolved !== undefined ? { dtype: resolved } : {}),
+  };
+}
+
 export async function realPipelineFactory(
   model: string,
   onProgress?: ProgressCallback,
-  opts?: { dtype?: string },
+  opts?: { dtype?: DtypeSpec },
 ): Promise<PipelineFn> {
   const backend = await resolveBackend();
+  const options = buildPipelineOptions(
+    backend,
+    opts?.dtype,
+    onProgress,
+  ) as Parameters<typeof _hfPipeline>[2];
 
-  if (backend === "webgpu") {
-    // No CPU fallback: a failed WebGPU attempt corrupts onnxruntime-web's
-    // internal session state — subsequent cpu calls also get "webgpu backend
-    // not found". Let the error propagate so the caller can surface it cleanly.
-    const pipe = await _hfPipeline("feature-extraction", model, {
-      device: "webgpu",
-      progress_callback: onProgress,
-    } as Parameters<typeof _hfPipeline>[2]);
-    return pipe;
-  }
-
-  const pipe = await _hfPipeline("feature-extraction", model, {
-    device: "cpu",
-    progress_callback: onProgress,
-    ...(opts?.dtype !== undefined ? { dtype: opts.dtype } : {}),
-  } as Parameters<typeof _hfPipeline>[2]);
-  return pipe;
+  // On WebGPU there is no CPU fallback: a failed WebGPU attempt corrupts
+  // onnxruntime-web's internal session state — subsequent cpu calls also get
+  // "webgpu backend not found". Let the error propagate so the caller can
+  // surface it cleanly.
+  return _hfPipeline("feature-extraction", model, options);
 }

@@ -46,8 +46,8 @@ export interface EmbeddingProvider {
  *   - "native"              → always Transformers.js MiniLM (NativeProvider)
  *   - "smart-connections"   → always Smart Connections; errors if not installed
  *   - "auto"                → Smart Connections if loaded and ready, else native
- *   - "embedding-gemma"     → EmbeddingGemma 300M (~190 MB, multilingual, 768d)
- *   - "multilingual-e5-base"→ Multilingual E5 base (~100 MB, multilingual, 768d)
+ *   - "embedding-gemma"     → EmbeddingGemma 300M (~200 MB on WebGPU, ~310 MB on WASM, multilingual, 768d)
+ *   - "multilingual-e5-base"→ Multilingual E5 base (~280 MB, multilingual, 768d)
  *
  * `indexingMode`: live re-embedding on file change vs.
  * 5-minute batched scan. Only meaningful when the active provider

@@ -25,12 +25,12 @@
   > = {
     "embedding-gemma-300m": {
       label: "EmbeddingGemma 300M",
-      size: "~190 MB",
+      size: "~200 to 310 MB",
       seconds: "5–10 min",
     },
     "multilingual-e5-base": {
       label: "Multilingual E5 base",
-      size: "~100 MB",
+      size: "~280 MB",
       seconds: "3–5 min",
     },
   };
@@ -250,7 +250,7 @@
         on:change={() => onProviderChange("embedding-gemma")}
       />
       EmbeddingGemma 300M
-      <span class="hint">multilingual, 768d, 2K context (~190 MB download)</span
+      <span class="hint">multilingual, 768d, 2K context (~200 to 310 MB download)</span
       >
     </label>
     <label>
@@ -263,7 +263,7 @@
       />
       Multilingual E5 base
       <span class="hint"
-        >multilingual, 768d, 512 context (~100 MB download)</span
+        >multilingual, 768d, 512 context (~280 MB download)</span
       >
     </label>
   </fieldset>

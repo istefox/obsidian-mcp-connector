@@ -186,14 +186,18 @@ export async function wireSemanticSearch(
   registry.markReady("native-minilm-l6-v2");
 
   // DLC providers — pipeline loads lazily on first embed call.
+  // The dtype is per backend because transformers.js defaults to fp32
+  // everywhere but WASM: 1.23 GB for Gemma and 1.11 GB for E5 on WebGPU
+  // (#597). Gemma has a 4-bit build (~197 MB) that WebGPU supports; fp16
+  // and q4f16 do not work for it. E5's q4 is 823 MB, so it keeps q8.
   const gemmaDownloader = createModelDownloader({
     innerFactory: realPipelineFactory,
-    dtype: "q8",
+    dtype: { wasm: "q8", webgpu: "q4" },
   });
   const gemmaProvider = createEmbeddingGemmaProvider(gemmaDownloader.factory);
   const e5Downloader = createModelDownloader({
     innerFactory: realPipelineFactory,
-    dtype: "q8",
+    dtype: { wasm: "q8", webgpu: "q8" },
   });
   const e5Provider = createMultilingualE5Provider(e5Downloader.factory);
 

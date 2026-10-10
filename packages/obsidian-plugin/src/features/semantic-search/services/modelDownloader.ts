@@ -20,6 +20,7 @@
  */
 
 import type {
+  DtypeSpec,
   PipelineFactory,
   PipelineFactoryWithProgress,
   PipelineFn,
@@ -47,8 +48,8 @@ export interface ModelDownloader {
 
 export type ModelDownloaderOpts = {
   innerFactory: PipelineFactoryWithProgress;
-  /** Passed to the WASM fallback path. Unused when WebGPU succeeds. */
-  dtype?: string;
+  /** Weight precision, forwarded to the inner factory on every backend. */
+  dtype?: DtypeSpec;
 };
 
 const IDLE: ModelState = { kind: "idle" };

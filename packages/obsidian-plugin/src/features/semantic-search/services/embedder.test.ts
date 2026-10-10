@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   __resetBackendForTesting,
+  buildPipelineOptions,
   createEmbedder,
   resolveBackend,
   type PipelineFactory,
@@ -394,5 +395,46 @@ describe("embedder — embedBatch batching", () => {
     expect(embedder.isLoaded()).toBe(true);
     await new Promise((r) => setTimeout(r, 60));
     expect(embedder.isLoaded()).toBe(false);
+  });
+});
+
+describe("buildPipelineOptions", () => {
+  const perBackend = { wasm: "q8", webgpu: "q4" } as const;
+
+  test("passes the WebGPU entry of a per-backend dtype on the WebGPU backend", () => {
+    expect(buildPipelineOptions("webgpu", perBackend)).toMatchObject({
+      device: "webgpu",
+      dtype: "q4",
+    });
+  });
+
+  test("passes the WASM entry of a per-backend dtype on the WASM backend", () => {
+    expect(buildPipelineOptions("wasm", perBackend)).toMatchObject({
+      device: "cpu",
+      dtype: "q8",
+    });
+  });
+
+  test("a plain string dtype applies to both backends", () => {
+    expect(buildPipelineOptions("webgpu", "q8").dtype).toBe("q8");
+    expect(buildPipelineOptions("wasm", "q8").dtype).toBe("q8");
+  });
+
+  test("leaves dtype out when none is given, so the library default applies", () => {
+    expect("dtype" in buildPipelineOptions("webgpu", undefined)).toBe(false);
+    expect("dtype" in buildPipelineOptions("wasm", undefined)).toBe(false);
+  });
+
+  test("leaves dtype out when the record has no entry for the active backend", () => {
+    expect("dtype" in buildPipelineOptions("webgpu", { wasm: "q8" })).toBe(
+      false,
+    );
+  });
+
+  test("forwards the progress callback", () => {
+    const onProgress = () => {};
+    expect(
+      buildPipelineOptions("wasm", "q8", onProgress).progress_callback,
+    ).toBe(onProgress);
   });
 });
