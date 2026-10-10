@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **EmbeddingGemma and Multilingual E5 no longer download the full-precision model on a Mac with WebGPU.** The precision the plugin sets for both was dropped on the WebGPU path, so transformers.js fell back to fp32: 1.23 GB for Gemma and 1.11 GB for E5, against the ~190 MB and ~100 MB the settings promised. Gemma now loads its 4-bit build (about 197 MB) on WebGPU and keeps the 8-bit build (about 309 MB) otherwise, E5 loads its 8-bit build (about 279 MB) on both, and the size labels in the settings match. An index you already built with Gemma or E5 on WebGPU holds slightly different vectors, so click **Rebuild** after updating. This may be the cause of the blank window reported in #597 on a ~3,800-note vault, but that is not confirmed until the reporter tests a build
+
 ## [3.0.1] — 2026-10-08
 
 ### Fixed
