@@ -12,6 +12,11 @@ import moment from "moment";
 
 export { moment };
 export { resolveSubpath } from "./linkResolution";
+export {
+  parseFrontMatterAliases,
+  prepareFuzzySearch,
+  sortSearchResults,
+} from "./fuzzySearch";
 
 export class TAbstractFile {
   parent: TFolder | null = null;
@@ -22,6 +27,11 @@ export class TAbstractFile {
     public path: string,
   ) {
     this.name = path.slice(path.lastIndexOf("/") + 1);
+  }
+
+  /** Re-derive the name after the path changed. */
+  syncName(): void {
+    this.name = this.path.slice(this.path.lastIndexOf("/") + 1);
   }
 }
 
@@ -42,9 +52,8 @@ export class TFile extends TAbstractFile {
     this.extension = dot > 0 ? this.name.slice(dot + 1) : "";
   }
 
-  /** Re-derive the name parts after the path changed. */
-  syncName(): void {
-    this.name = this.path.slice(this.path.lastIndexOf("/") + 1);
+  override syncName(): void {
+    super.syncName();
     const dot = this.name.lastIndexOf(".");
     this.basename = dot > 0 ? this.name.slice(0, dot) : this.name;
     this.extension = dot > 0 ? this.name.slice(dot + 1) : "";

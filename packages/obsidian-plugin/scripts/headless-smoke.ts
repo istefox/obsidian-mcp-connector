@@ -12,6 +12,8 @@
  *   - a created note is immediately visible to properties, tags and backlinks;
  *   - an edit made outside the server becomes visible, polled against a
  *     bounded deadline derived from the watcher debounce;
+ *   - file-name search finds a note, and renaming a note rewrites the links
+ *     to it in another note;
  *   - closing stdin exits 0.
  * Then the install the README gives: the file copied under an extensionless
  * name into a folder with no package.json and run through its shebang,
@@ -174,6 +176,11 @@ async function stdioChecks(vault: string): Promise<void> {
     );
     const leaked = DESKTOP_ONLY_TOOLS.filter((n) => names.includes(n));
     check("stdio: desktop-only tools are absent", leaked.length === 0, leaked);
+    check(
+      "stdio: file-name search and rename are served",
+      names.includes("search_files_by_name") &&
+        names.includes("rename_vault_file"),
+    );
 
     const read = await client.tool("get_vault_file", { path: "Note.md" });
     check(
@@ -205,6 +212,65 @@ async function stdioChecks(vault: string): Promise<void> {
       "stdio: new note's backlink visible at once",
       back.includes("Fresh.md"),
       back,
+    );
+
+    const named = await client.tool("search_files_by_name", { query: "frsh" });
+    check(
+      "stdio: search_files_by_name finds a note fuzzily",
+      named.includes("Fresh.md") && !named.includes("isError"),
+      named,
+    );
+    const renamed = await client.tool("rename_vault_file", {
+      from: "Note.md",
+      to: "Renamed.md",
+    });
+    check(
+      "stdio: rename_vault_file moves a note",
+      renamed.includes('"ok":true'),
+      renamed,
+    );
+    const linker = await client.tool("get_vault_file", { path: "Fresh.md" });
+    check(
+      "stdio: rename_vault_file rewrote the link in another note",
+      linker.includes("[[Renamed]]") && !linker.includes("[[Note]]"),
+      linker,
+    );
+
+    await client.tool("create_vault_file", {
+      path: "Board.canvas",
+      content: JSON.stringify({
+        nodes: [
+          {
+            id: "a",
+            type: "file",
+            file: "Renamed.md",
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+          },
+        ],
+        edges: [],
+      }),
+    });
+    await client.tool("create_vault_file", {
+      path: "Tasks.base",
+      content: 'filters:\n  and:\n    - file.path == "Renamed.md"\n',
+    });
+    const moved = await client.tool("rename_vault_file", {
+      from: "Renamed.md",
+      to: "Final.md",
+    });
+    const board = await client.tool("get_vault_file", { path: "Board.canvas" });
+    check(
+      "stdio: rename_vault_file updates a canvas file node",
+      board.includes("Final.md") && !board.includes("Renamed.md"),
+      board,
+    );
+    check(
+      "stdio: rename_vault_file warns about a base filter it left",
+      moved.includes('"warnings"') && moved.includes("Tasks.base"),
+      moved,
     );
 
     writeFileSync(join(vault, "External.md"), "Edited outside #ext-tag\n");

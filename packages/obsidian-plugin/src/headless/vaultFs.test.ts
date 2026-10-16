@@ -16,7 +16,7 @@ let vault: string;
 let outside: string;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "vaultfs-"));
+  dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "vaultfs-")));
   vault = path.join(dir, "vault");
   outside = path.join(dir, "outside");
   fs.mkdirSync(path.join(vault, "notes"), { recursive: true });
@@ -37,6 +37,9 @@ describe("normalizeVaultPath", () => {
     ["/etc/passwd"],
     ["C:/x.md"],
     ["a\0b.md"],
+    ["a\nb.md"],
+    ["dir/a\tb.md"],
+    ["a\x7fb.md"],
     [".obsidian/app.json"],
     ["notes/.git/config"],
   ])("rejects %p", (input) => {

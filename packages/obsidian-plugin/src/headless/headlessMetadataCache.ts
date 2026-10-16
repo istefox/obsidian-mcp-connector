@@ -11,6 +11,7 @@
  * so one bad file never stops a scan or the server.
  */
 
+import { createHash } from "node:crypto";
 import type { CachedMetadata } from "obsidian";
 import { HeadlessEvents } from "./events";
 import { logger } from "$/shared/logger";
@@ -37,8 +38,14 @@ export type MetadataCacheOptions = {
   createResolver?: (paths: Iterable<string>) => LinkResolver;
 };
 
+function fingerprint(content: string): string {
+  return createHash("sha1").update(content).digest("base64");
+}
+
 export class HeadlessMetadataCache extends HeadlessEvents {
   private readonly caches = new Map<string, CachedMetadata>();
+  /** What each cache was parsed from, to tell a stale cache from a current one. */
+  private readonly fingerprints = new Map<string, string>();
   private resolver: LinkResolver | null = null;
   private batchDepth = 0;
   private dirty = false;
@@ -65,6 +72,20 @@ export class HeadlessMetadataCache extends HeadlessEvents {
 
   getCache(path: string): CachedMetadata | null {
     return this.caches.get(path) ?? null;
+  }
+
+  /**
+   * The cache of `file` when it was parsed from exactly `content`, else
+   * null. A disk edit the watcher has not yet reconciled leaves a cache
+   * whose positions no longer fit the text.
+   */
+  getFileCacheIfCurrent(
+    file: { path: string },
+    content: string,
+  ): CachedMetadata | null {
+    return this.fingerprints.get(file.path) === fingerprint(content)
+      ? (this.caches.get(file.path) ?? null)
+      : null;
   }
 
   /** The Files & Links "Excluded files" setting has no headless equivalent. */
@@ -113,6 +134,7 @@ export class HeadlessMetadataCache extends HeadlessEvents {
       cache = {};
     }
     this.caches.set(file.path, cache);
+    this.fingerprints.set(file.path, fingerprint(content));
     if (recompute && !this.dirty) this.recomputeFile(file.path);
     this.trigger("changed", file, content, cache);
   }
@@ -120,9 +142,25 @@ export class HeadlessMetadataCache extends HeadlessEvents {
   removeFile(file: TFile): void {
     const previous = this.caches.get(file.path);
     this.caches.delete(file.path);
+    this.fingerprints.delete(file.path);
     delete this.resolvedLinks[file.path];
     delete this.unresolvedLinks[file.path];
     this.trigger("deleted", file, previous);
+  }
+
+  /**
+   * `file` moved from `oldPath` to the path it now has: its cache goes with
+   * it. Call `fileSetChanged` once the whole move is applied.
+   */
+  moveFile(file: { path: string }, oldPath: string): void {
+    const cache = this.caches.get(oldPath);
+    const print = this.fingerprints.get(oldPath);
+    this.caches.delete(oldPath);
+    this.fingerprints.delete(oldPath);
+    delete this.resolvedLinks[oldPath];
+    delete this.unresolvedLinks[oldPath];
+    if (cache) this.caches.set(file.path, cache);
+    if (print !== undefined) this.fingerprints.set(file.path, print);
   }
 
   /** The file set changed: every resolution may have changed with it. */

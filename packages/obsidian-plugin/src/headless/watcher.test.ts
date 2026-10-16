@@ -17,7 +17,9 @@ let handle: HeadlessAppHandle;
 let watcher: VaultWatcher | undefined;
 
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "headless-watch-"));
+  dir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "headless-watch-")),
+  );
   root = path.join(dir, "vault");
   fs.mkdirSync(root);
 });
@@ -266,5 +268,31 @@ describe("one watch per visible folder", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("flush", () => {
+  test("runs the full rescan an event without a path asked for", async () => {
+    fs.writeFileSync(path.join(root, "a.md"), "a");
+    const vault = await HeadlessVault.open(root);
+    const listeners = new Map<
+      string,
+      (type: string, name: string | null) => void
+    >();
+    // A debounce that never ends: only the flush can run the rescan.
+    watcher = new VaultWatcher(vault, 3_600_000, (abs, listener) => {
+      listeners.set(abs, listener);
+      return { close() {}, on() {} };
+    });
+    watcher.start();
+    await vault.rescan();
+
+    fs.writeFileSync(path.join(root, "b.md"), "b");
+    listeners.get(vault.root)!("rename", null);
+    expect(vault.getFileByPath("b.md")).toBeNull();
+
+    await watcher.flush();
+
+    expect(vault.getFileByPath("b.md")).not.toBeNull();
   });
 });

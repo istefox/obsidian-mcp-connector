@@ -48,7 +48,10 @@ export class VaultWatcher {
   /** One watch per visible folder, by vault path; the root is "". */
   private readonly watches = new Map<string, FolderWatch>();
   private limitWarned = false;
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly timers = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; eventType: string }
+  >();
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   /** Events seen while held, by path; null when not held. */
@@ -83,7 +86,7 @@ export class VaultWatcher {
   stop(): void {
     this.stopped = true;
     this.held = null;
-    for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const { timer } of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     if (this.resyncTimer !== null) clearTimeout(this.resyncTimer);
     this.resyncTimer = null;
@@ -157,14 +160,34 @@ export class VaultWatcher {
       return;
     }
     const pending = this.timers.get(rel);
-    if (pending) clearTimeout(pending);
-    this.timers.set(
-      rel,
-      setTimeout(() => {
+    if (pending) clearTimeout(pending.timer);
+    this.timers.set(rel, {
+      timer: setTimeout(() => {
         this.timers.delete(rel);
         void this.settle(rel, eventType);
       }, this.debounceMs),
+      eventType,
+    });
+  }
+
+  /**
+   * Apply now the events that are waiting out their debounce, and the full
+   * rescan they or an event without a path asked for, and return when they
+   * are applied. An event the operating system has not delivered yet is not
+   * known.
+   */
+  async flush(): Promise<void> {
+    const due = [...this.timers];
+    this.timers.clear();
+    for (const [, { timer }] of due) clearTimeout(timer);
+    await Promise.all(
+      due.map(([rel, { eventType }]) => this.settle(rel, eventType)),
     );
+    if (this.resyncTimer !== null) {
+      clearTimeout(this.resyncTimer);
+      this.resyncTimer = null;
+      await this.resync();
+    }
   }
 
   private async settle(rel: string, eventType: string): Promise<void> {

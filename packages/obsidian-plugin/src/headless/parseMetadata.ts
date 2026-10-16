@@ -461,9 +461,44 @@ export function parseMetadata(content: string): CachedMetadata {
     const orig = lines[i].text.slice(pre);
     const found: Array<{ col: number; embed: boolean; ref: LinkCache }> = [];
 
-    WIKILINK.lastIndex = 0;
+    // Link syntax inside a markdown link (its title or destination) is part
+    // of that link, not another one.
+    const mdSpans: Array<[number, number]> = [];
+    MD_LINK.lastIndex = 0;
     let m: RegExpExecArray | null;
+    while ((m = MD_LINK.exec(masked)) !== null) {
+      mdSpans.push([m.index, m.index + m[0].length]);
+      let dest = m[3];
+      if (dest.startsWith("<") && dest.endsWith(">")) dest = dest.slice(1, -1);
+      dest = dest.trim();
+      if (dest === "" || URL_SCHEME.test(dest) || dest.startsWith("//")) {
+        continue;
+      }
+      const col = pre + m.index;
+      found.push({
+        col,
+        embed: m[1] === "!",
+        ref: {
+          link: markdownLinkTarget(dest),
+          original: orig.slice(m.index, m.index + m[0].length),
+          displayText: orig.slice(
+            m.index + m[1].length + 1,
+            m.index + m[1].length + 1 + m[2].length,
+          ),
+          position: posOf({
+            sl: i,
+            sc: col,
+            el: i,
+            ec: col + m[0].length,
+          }),
+        },
+      });
+    }
+
+    WIKILINK.lastIndex = 0;
     while ((m = WIKILINK.exec(masked)) !== null) {
+      const at = m.index;
+      if (mdSpans.some(([from, to]) => at >= from && at < to)) continue;
       const inner = orig.slice(
         m.index + 2 + m[1].length,
         m.index + m[0].length - 2,
@@ -486,35 +521,6 @@ export function parseMetadata(content: string): CachedMetadata {
           link: target,
           original: orig.slice(m.index, m.index + m[0].length),
           displayText: alias || target,
-          position: posOf({
-            sl: i,
-            sc: col,
-            el: i,
-            ec: col + m[0].length,
-          }),
-        },
-      });
-    }
-
-    MD_LINK.lastIndex = 0;
-    while ((m = MD_LINK.exec(masked)) !== null) {
-      let dest = m[3];
-      if (dest.startsWith("<") && dest.endsWith(">")) dest = dest.slice(1, -1);
-      dest = dest.trim();
-      if (dest === "" || URL_SCHEME.test(dest) || dest.startsWith("//")) {
-        continue;
-      }
-      const col = pre + m.index;
-      found.push({
-        col,
-        embed: m[1] === "!",
-        ref: {
-          link: markdownLinkTarget(dest),
-          original: orig.slice(m.index, m.index + m[0].length),
-          displayText: orig.slice(
-            m.index + m[1].length + 1,
-            m.index + m[1].length + 1 + m[2].length,
-          ),
           position: posOf({
             sl: i,
             sc: col,

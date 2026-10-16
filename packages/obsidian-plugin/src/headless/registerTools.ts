@@ -48,6 +48,10 @@ import {
   getFileInfoSchema,
 } from "$/features/mcp-tools/tools/getFileInfo";
 import {
+  searchFilesByNameHandler,
+  searchFilesByNameSchema,
+} from "$/features/mcp-tools/tools/searchFilesByName";
+import {
   ensureBlockIdHandler,
   ensureBlockIdSchema,
 } from "$/features/mcp-tools/tools/ensureBlockId";
@@ -99,6 +103,10 @@ import {
   deleteVaultFileHandler,
   deleteVaultFileSchema,
 } from "$/features/mcp-tools/tools/deleteVaultFile";
+import {
+  renameVaultFileHandler,
+  renameVaultFileSchema,
+} from "$/features/mcp-tools/tools/renameVaultFile";
 import {
   renameHeadingHandler,
   renameHeadingSchema,
@@ -191,6 +199,7 @@ import {
   connectCanvasNodesHandler,
   connectCanvasNodesSchema,
 } from "$/features/mcp-tools/tools/connectCanvasNodes";
+import { collectRenameWarnings, withRenameWarnings } from "./renameWarnings";
 
 export type RegisterToolsContext = {
   app: App;
@@ -252,6 +261,9 @@ export async function registerTools(
   registry.register(ensureBlockIdSchema, async ({ arguments: args }) =>
     ensureBlockIdHandler({ arguments: args, app: ctx.app }),
   );
+  registry.register(searchFilesByNameSchema, async ({ arguments: args }) =>
+    searchFilesByNameHandler({ arguments: args, app: ctx.app }),
+  );
 
   // Vault file ops
   registry.register(listVaultFilesSchema, async ({ arguments: args }) =>
@@ -294,6 +306,13 @@ export async function registerTools(
       plugin: ctx.plugin,
     }),
   );
+  // Reports what the rename could not settle (see renameWarnings.ts).
+  registry.register(renameVaultFileSchema, async ({ arguments: args }) => {
+    const { result, warnings } = await collectRenameWarnings(() =>
+      renameVaultFileHandler({ arguments: args, app: ctx.app }),
+    );
+    return withRenameWarnings(result, warnings);
+  });
   registry.register(renameHeadingSchema, async ({ arguments: args }) =>
     renameHeadingHandler({ arguments: args, app: ctx.app }),
   );

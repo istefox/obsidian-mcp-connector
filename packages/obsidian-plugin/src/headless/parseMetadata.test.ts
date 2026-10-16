@@ -321,6 +321,21 @@ describe("links and embeds", () => {
     expect(parseMetadata(md).links!.map((l) => l.link)).toEqual(["real"]);
   });
 
+  test("link syntax inside a markdown link's title or destination is not a link", () => {
+    const md = '[t](old.md "[[old]]") [u](a[[b]]c.md) [[real]]\n';
+    const links = parseMetadata(md).links!;
+    expect(links.map((l) => l.original)).toEqual([
+      '[t](old.md "[[old]]")',
+      "[u](a[[b]]c.md)",
+      "[[real]]",
+    ]);
+  });
+
+  test("a wikilink in the title of a skipped URL link is not a link either", () => {
+    const md = '[t](https://x.y "[[old]]") [[real]]\n';
+    expect(parseMetadata(md).links!.map((l) => l.link)).toEqual(["real"]);
+  });
+
   test("links in frontmatter bodies are not body links", () => {
     expect(parseMetadata('---\na: "[[X]]"\n---\n').links).toBeUndefined();
   });

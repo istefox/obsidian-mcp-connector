@@ -12,8 +12,6 @@ import { DESKTOP_ONLY_TOOLS as DESKTOP_ONLY } from "./toolSets";
  * complete.
  */
 const NOT_YET_SERVED = [
-  "search_files_by_name",
-  "rename_vault_file",
   "search_vault_smart",
   "fetch",
   "get_or_create_daily_note",

@@ -22,6 +22,7 @@ import path from "node:path";
 import * as mocked from "obsidian";
 import * as shim from "./obsidianShim";
 import type { HeadlessAppHandle } from "./headlessApp";
+import { nodeMoveOps } from "./moveEntry";
 
 const original = { ...mocked };
 
@@ -77,7 +78,7 @@ async function call(
   const registry = new ToolRegistryClass();
   await registerTools(registry, {
     app: handle!.app,
-    plugin: {} as never,
+    plugin: { loadData: async () => ({}) } as never,
     pluginVersion: "0.0.0-test",
   });
   const result = (await registry.dispatch(
@@ -137,5 +138,77 @@ describe("a path the vault refuses", () => {
       recursive: true,
     });
     expect(body.errorCode).toBe("permission_denied");
+  });
+});
+
+describe("a rename the vault refuses", () => {
+  beforeEach(async () => {
+    write("Notes/old.md", "# Old\n");
+    handle = await createHeadlessApp(root);
+  });
+
+  test("a name that would break links says so", async () => {
+    const body = await call("rename_vault_file", {
+      from: "Notes/old.md",
+      to: "Notes/new|name.md",
+    });
+    expect(body.errorCode).toBe("rename_failed");
+    expect(body.error).toContain("would break links");
+    expect(body.error).not.toContain("file system error");
+  });
+
+  test("a folder moved into itself says so", async () => {
+    const body = await call("rename_vault_file", {
+      from: "Notes",
+      to: "Notes/inner",
+    });
+    expect(body.errorCode).toBe("rename_failed");
+    expect(body.error).toContain("cannot move into itself");
+    expect(body.error).not.toContain("file system error");
+  });
+});
+
+describe("a trash that leaves a file behind", () => {
+  const hostPaths = (text: string) => text.includes(dir);
+
+  test("names the temporary name that could not be removed, without the vault path", async () => {
+    write("a.md", "original");
+    handle = await createHeadlessApp(root, {
+      moveOps: {
+        ...nodeMoveOps,
+        unlink: async (p) => {
+          if (p.endsWith(".tmp")) {
+            throw Object.assign(new Error(`EACCES: denied, unlink '${p}'`), {
+              code: "EACCES",
+            });
+          }
+          await fs.promises.unlink(p);
+        },
+      },
+    });
+    const body = await call("delete_vault_file", { path: "a.md" });
+    expect(body.error).toContain("moved to the trash");
+    expect(body.error).toContain("could not be removed");
+    expect(hostPaths(body.error)).toBe(false);
+  });
+
+  test("names where a file that could not be put back is kept, without the vault path", async () => {
+    write("a.md", "original");
+    write(".trash/a.md", "older");
+    handle = await createHeadlessApp(root, {
+      moveOps: {
+        ...nodeMoveOps,
+        rename: async (src, dst) => {
+          await fs.promises.rename(src, dst);
+          // An external save recreates the name right after it is captured.
+          if (path.basename(dst).endsWith(".tmp")) {
+            fs.writeFileSync(path.join(root, "a.md"), "external");
+          }
+        },
+      },
+    });
+    const body = await call("delete_vault_file", { path: "a.md" });
+    expect(body.error).toContain("the file is kept at");
+    expect(hostPaths(body.error)).toBe(false);
   });
 });

@@ -2,10 +2,10 @@
  * Path confinement for the headless vault.
  *
  * Every vault path that reaches the disk goes through `VaultFs`. The
- * lexical rules (no `..`, no absolute paths, no NUL, no hidden segments)
- * reject a hostile path before any fs call. Symlinks below the root are
- * not part of the vault: a path through one, in any segment, is refused,
- * so every path served is the lexical path joined on the root. The root
+ * lexical rules (no `..`, no absolute paths, no control characters, no hidden
+ * segments) reject a hostile path before any fs call. Symlinks below the
+ * root are not part of the vault: a path through one, in any segment, is
+ * refused, so every path served is the lexical path joined on the root. The root
  * itself may be a symlink; it is resolved once when the vault opens, and
  * only segments below it count, so a vault in `~/.vaults/x` is served.
  *
@@ -73,7 +73,7 @@ export function isSkippedPath(
 
 /**
  * Normalise a vault-relative path: `/` separators, no leading or trailing
- * slash, no empty or `.` segments. Throws VaultPathError for NUL bytes,
+ * slash, no empty or `.` segments. Throws VaultPathError for control characters,
  * absolute paths, `..` segments and hidden segments. The empty string is
  * the vault root and is allowed.
  *
@@ -86,8 +86,10 @@ export function normalizeVaultPath(
   input: string,
   separator: string = path.sep,
 ): string {
-  if (input.includes("\0")) {
-    throw new VaultPathError("Path contains a NUL byte", "EINVAL");
+  // A control character (a newline above all) can inject structure into the
+  // YAML or markdown that a rename writes the path into.
+  if (/[\u0000-\u001f\u007f]/.test(input)) {
+    throw new VaultPathError("Path contains a control character", "EINVAL");
   }
   if (hasBackslashName(input, separator)) {
     throw new VaultPathError(
