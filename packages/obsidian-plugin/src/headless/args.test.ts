@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { MIN_NODE_VERSION, parseArgs, unsupportedNodeReason } from "./args";
+import {
+  MIN_NODE_VERSION,
+  parseArgs,
+  unsupportedNodeReason,
+  USAGE,
+} from "./args";
 
 describe("unsupportedNodeReason", () => {
   test("accepts the first Node 24 LTS and anything newer", () => {
@@ -28,7 +33,24 @@ describe("parseArgs", () => {
       port: undefined,
       data: undefined,
       printToken: false,
+      semantic: true,
     });
+  });
+
+  test("--no-semantic turns semantic search off, in either transport", () => {
+    expect(parseArgs(["/v", "--no-semantic"], {})).toMatchObject({
+      kind: "run",
+      semantic: false,
+    });
+    expect(parseArgs(["--http", "--no-semantic", "/v"], {})).toMatchObject({
+      kind: "run",
+      http: true,
+      semantic: false,
+    });
+  });
+
+  test("--help lists --no-semantic", () => {
+    expect(USAGE).toContain("--no-semantic");
   });
 
   test("falls back to OBSIDIAN_VAULT", () => {

@@ -29,11 +29,12 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    - *Tool set.* `src/headless/registerTools.ts` exports the same `registerTools` as the desktop `features/mcp-tools/index.ts`, with the same context, and registers the shared schema and handler of every tool that needs only a vault-shaped `App`.
      The shared composition root imports the desktop one, so `bun.headless.config.ts` points that single import at the headless file when it bundles.
      The build fails if the redirect is not used.
-     Headless serves 44 tools plus the three adaptive-loading meta-tools.
+     Headless serves 45 tools plus the three adaptive-loading meta-tools.
      `registerTools.test.ts` builds both registries and requires the headless set to equal the desktop set minus an explicit list of desktop-only tools (`toolSets.ts`: the open file and workspace, commands, Dataview, Templater, bookmarks), with identical schemas, descriptions, annotations and titles.
      A tool added on the desktop therefore fails that test until it is either served or listed as desktop-only.
      `rename_vault_file` and `search_files_by_name` are desktop tools already.
      Headless serves them with the same schema and handler (see decision 8), and the one headless addition is a `warnings` list on a `rename_vault_file` result.
+     `search_vault_smart` is registered only when semantic search is on (decision 9).
    - *Host.* The shared transport and tool code is typed with the plugin class and reads only `app`, `manifest`, `loadData` and `saveData`, plus `mcpTransportState` and `semanticSearchState` that the entry assigns.
      Headless passes an object with those members, cast once in `hostData.ts`.
    - *Timers.* Shared code calls `window.setTimeout` and its three siblings, which do not exist in Node.
@@ -44,6 +45,7 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
      The check is by property name, so a new use of a name already on the list is not caught.
    - *Barrels.* The semantic search feature takes its mutex from the `command-permissions` barrel, which pulls in a modal and the Svelte runtime.
      The bundle points that import at `shared/settingsLock`, where the mutex lives, and replaces any other `.svelte` file with a stub that throws when called.
+   - *Libraries.* Three more imports are pointed at headless files (decision 9): `onnxruntime-node` and `onnxruntime-web` at a shim over the CPU build, `sharp` at an empty stub, and `@huggingface/transformers` at a wrapper.
    - *Instructions.* The `initialize` text is the desktop one, which also names Dataview and Templater.
      `tools/list` is exact and is what clients use.
      Making the text a parameter would be a shared change, so it is left for later.
@@ -64,7 +66,9 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    Symlinks inside the vault are ignored: they are not indexed, and a path through one is refused.
    Dot-folders are not indexed, read or written.
    On POSIX a backslash is a file name character, so a name that holds one is left out of the index and a path that holds one is refused with an explanation, rather than read as a `/` and mapped to a different file.
-   Host paths are stripped from error messages.
+   Host paths are kept out of error messages by source.
+   An error from the vault names the vault root as `<vault>` (decision 3).
+   A failure outside the vault gives the client fixed text and the error's code, and the whole error goes to stderr: the semantic-search cache, lock and runtime files (decision 9) and the HTTP state file (decision 6).
 5. **Own metadata parser.**
    A line-oriented parser produces the `CachedMetadata` fields the tools read, and a link resolver reproduces `getFirstLinkpathDest` and `resolveSubpath`.
    Any change to the file set recomputes every file's link entries, so a created target resolves an unchanged source.
@@ -73,6 +77,7 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    Stdio is the default: `obsidian-mcp-headless /path/to/vault` (or `OBSIDIAN_VAULT`), spoken by the client that spawned it.
    There is no token, so the session is served under a stored policy with the full tool profile.
    `--http` is the service mode: loopback only, bearer token from the existing token store, state file outside the vault with mode `0600`, `--print-token` to read the token.
+   A save of the state file that fails while a tool runs (`activate_tool` or `activate_tools` with `persist`) ends the call as an error that reads, for example, `The server settings could not be saved (EACCES). Details are in the server log.`, with the error's code only if it has a plain one and the whole error on stderr.
    The `yaml` package, used to parse and write frontmatter, is the only new dependency.
 7. **Distribution is one file.**
    `bun run build:headless` bundles everything into `packages/obsidian-plugin/dist/headless/obsidian-mcp-headless.js` as CommonJS with a `node` shebang and the executable bit, so it runs as `node obsidian-mcp-headless.js` and as an extensionless copy on `PATH` on Node 24.11 or newer, the first Node 24 LTS release, and the release workflow attaches it to each release.
@@ -130,13 +135,78 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    The link style comes from each link and not from `.obsidian/app.json` (dot-folders are never read), a link that did not resolve before the move is left as written, and on a filesystem without hard links a save landing at the destination in the instant before the move can be replaced.
    There is no transaction across the move and the rewrites, and a change the operating system has not yet reported to the watcher when the rename starts is not seen.
 
+9. **Semantic search runs on the desktop feature code, wired from the headless side.**
+   The tool, the chunker, the store and the indexer are the desktop ones, and `wireSemanticSearch(plugin)` is called as it is.
+   Everything it reaches through the plugin is supplied by headless:
+   - *Host.* A host object with its own in-memory settings, so the HTTP state file still holds only the token.
+     The one slice it reads from the transport's host is `mcpTools`, so the folder exclusions that hide notes from the tools also keep them out of the index.
+     The defaults apply: provider `auto`, which resolves to the native one, and live indexing.
+   - *App.* The headless app, with `vault.adapter` swapped for an adapter over a cache folder outside the vault and the plugin folder set to the empty string, so the store lives at `<cache>/<vault name>-<hash>/embeddings/`.
+     The adapter writes through a temporary file and a rename, creates folders `0700` and files `0600` (the store keeps note paths and headings in clear text), and refuses a path that leaves its folder.
+     The layout is always ready, and `Notice` is a log line on stderr.
+   - *Lazy, on by default.* Nothing is wired or fetched at startup.
+     The tool registration lists `search_vault_smart` when the host has a `semanticGate`, which is what `--no-semantic` leaves out, and runs the gate before every call.
+     The first call takes the lock below and then wires the feature, which may rewrite an index in an old format, so nothing in the index folder is written or wiped without the lock.
+     The call then starts the indexer, which loads the model, which first fetches the ONNX runtime files and then the model weights, and returns the existing `index_building` error until the index is ready.
+     A setup that fails is reported as `semantic_search_unavailable` and the next call tries again.
+     The client is never given the text of an error from outside the vault (the cache folder, the lock, the setup, the ONNX runtime files, the model files).
+     Such a message names paths and URLs of the host, and a scrub of free text misses some: a path with a space, a Windows path, a `file:` URL.
+     The client gets what failed and the error's code, if it has a plain one such as `EACCES`, then "Details are in the server log": `Semantic search is unavailable: setup failed (EACCES). Details are in the server log.`
+     The code is read from the error's `code` (or its `cause`'s), and only if it is upper-case letters, digits and underscores.
+     The lock reports its own `code` for this.
+     The whole error goes to stderr.
+     A search that fails inside the shared handler, such as a model file that cannot be read, is reported as `semantic_search_failed`.
+     The handler flattens the error to its message, so the registration reads the errno the message starts with, if any, and answers `Semantic search failed (EACCES). Details are in the server log.`, or `Semantic search failed. Details are in the server log.` with no errno, and logs the whole message.
+     `errorCode` and the other fields stay as they were, and the answers that name no host path (`index_building` and the fixed `semantic_search_unavailable` texts) are not changed.
+     One message is kept as it is: a failure to download or store the ONNX runtime files reads `Semantic search failed: the ONNX runtime files could not be downloaded or stored (code). Details are in the server log.`, so a client can tell a network or cache problem from a model problem.
+     The model files themselves are not told apart: whatever fails in a search, other than the runtime files, reads as above.
+   - *Cache layout.* `$XDG_CACHE_HOME` or `~/.cache`, then `obsidian-mcp-connector/`: `models/` and `ort-<version>/` shared across vaults, and one folder per vault named like the HTTP state file.
+   - *ONNX runtime files are pinned.* Node's `import()` accepts only `file:` and `data:` URLs, so onnxruntime-web cannot load its glue script from the CDN address the desktop uses.
+     Headless fetches `ort-wasm-simd-threaded.mjs` and `.wasm` of the pinned onnxruntime-web version from the same jsDelivr URL, once, verifies a SHA-256 for each before anything is written, writes atomically, and sets ORT's `wasmPaths` to the folder.
+     A cached file is re-verified on use, and a test compares the pins with the installed package.
+     The download is started by a hook on `InferenceSession.create`, so it happens when the model first loads.
+     The model is not pinned to a revision, as on the desktop.
+   - *Library settings.* The shared `configureEnv` runs first, so that it is spent, and headless then sets what it leaves to its environment.
+     The browser cache is off, because Node 24 defines `navigator`, which the shared configuration takes for a browser, but has no Cache API.
+     The transformers.js cache folder is set, because its default is `/.cache`.
+     Model requests that get no response headers within 30 seconds are abandoned (a header deadline only, never a total-download limit).
+   - *Bundle.* `onnxruntime-node` cannot live in one file, so every ONNX import in the headless bundle resolves to a small shim over the CPU build of onnxruntime-web (`ort.wasm.min.js`).
+     The shim reads a model path into bytes first, because ORT-web would fetch a string as a URL.
+     `sharp` is stubbed.
+     `node:sqlite`, which the index lock uses, is a Node built-in and stays a plain `require` in the bundle.
+     The two `import.meta` tests in transformers.js's Node build are rewritten at build time, and the build still fails if any `import.meta` remains.
+   - *Same model, 8-bit weights, one text at a time.* The desktop passes no precision for its native model and embeds batches of 8.
+     Measured on a 50-note vault, running the desktop's way in Node took 42 s to index against 23 s with the wrapper described next, left a trivial tool call waiting 0.8 s against 0.4 s, and downloaded 103 MB against 36 MB.
+     The import of `@huggingface/transformers` therefore points at a wrapper whose `pipeline` loads at `q8` when the caller names no precision and runs a batch as one call per text.
+     A text's vector does not depend on how it was batched, because pooling is masked, and the weights differ from the desktop's, so scores differ slightly.
+     The ORT shim also makes the runs of a session one at a time with a turn for the event loop after each, since the embedder starts its batches together.
+   - *One writer per index.* The first search takes an exclusive SQLite lock on `lock-<16 hex>.sqlite` in the cache root, through Node's built-in `node:sqlite` (unflagged since Node 22.13, so available on the 24.11 floor).
+     The connection runs `PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE;` with no wait and stays open for as long as the lock is held.
+     SQLite takes the lock from the operating system (`fcntl` on POSIX, `LockFileEx` on Windows), so the kernel holds it for the open file and releases it with the process, however the process dies.
+     A second connection, in this process or another, is refused at once with "database is locked", which is the only error read as "held".
+     Any other error is reported as `semantic_search_unavailable`, as "the index lock for this vault could not be taken" with the error's code if it has one, and not with its message.
+     There is one mechanism on every system, and no stale lock to detect or reclaim.
+     The lock file is created `0600` inside the `0700` cache root, which is made before the lock is taken, and is never deleted.
+     It is created exclusively and an existing one is never opened outside SQLite, because closing any descriptor of a file drops the process's own POSIX locks on it.
+     A search that was waiting for the cache root when the server shut down takes no lock and wires nothing.
+     Locks that live in a name (a socket, a named pipe, a lock file that is removed and recreated) cannot be reclaimed after a crash without a race, which is why none is used.
+     Nothing is written to the lock file, and any rollback journal SQLite leaves beside it is empty and takes its mode.
+     The lock is released on teardown, after the indexer has stopped.
+     While another process holds it, `search_vault_smart` stays registered and returns `semantic_search_unavailable`, which tells the client more than a missing tool would, and the next call tries again.
+   - *Bounded shutdown.* Cleanup waits on the indexer, which can be stuck in a stalled download, so SIGINT, SIGTERM and the end of stdin give it 5 seconds and then exit, with a line on stderr when the bound fired.
+   - *Limits.* CPU only.
+     The desktop's other providers and its settings screen do not exist here.
+     An index is not shared with the plugin.
+     Peak memory is about 0.55 GB with the model loaded, indexing uses one core for as long as it runs, and a call to another tool can wait for the text being embedded, up to about 0.4 s in the measurement above.
+     Retrying a failed first start and dropping files that are gone from the index are the shared feature's own behavior.
+
 ## Consequences
 
 - Tool names and response shapes stay identical, so client integrations carry over.
 - The parser and the link resolver are approximations of Obsidian's.
   Differences show up in edge cases such as setext headings, footnotes and unusual tag forms, and the tests pin the behaviour the tools rely on.
 - The "Excluded files" setting has no equivalent (so `search_files_by_name` omits nothing), and `get_server_info` reports a loopback endpoint, which is correct because headless binds `127.0.0.1` only.
-- Semantic search, `fetch` and the daily and periodic note tools are not in this step.
+- `fetch` and the daily and periodic note tools are not in this step.
   They arrive in the next changes of the series, which also leave the desktop bundle unchanged.
 - The desktop plugin gains nothing from this change and loses nothing: its code, its tool order and its bundle are the same.
 - Because the redirects live in the headless build, the bundle's composition differs from what a unit test of the shared code sees.

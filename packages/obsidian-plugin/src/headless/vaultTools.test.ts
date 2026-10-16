@@ -101,6 +101,87 @@ describe("registration", () => {
   });
 });
 
+describe("search_vault_smart", () => {
+  const registered = async (host: Record<string, unknown>) => {
+    const registry = new ToolRegistryClass();
+    await registerTools(registry, {
+      app: {
+        vault: { getName: () => "v" },
+        metadataCache: {},
+      } as unknown as App,
+      plugin: host as never,
+      pluginVersion: "0.0.0-test",
+    });
+    return registry;
+  };
+  const call = (registry: Awaited<ReturnType<typeof registered>>) =>
+    registry.dispatch(
+      { name: "search_vault_smart", arguments: { query: "dough" } },
+      {} as never,
+    ) as Promise<Result>;
+
+  test("is registered only when the host has a semantic gate", async () => {
+    const without = await registered({});
+    expect(without.list().tools.map((t) => t.name)).not.toContain(
+      "search_vault_smart",
+    );
+    const withGate = await registered({ semanticGate: async () => undefined });
+    expect(withGate.list().tools.map((t) => t.name)).toContain(
+      "search_vault_smart",
+    );
+  });
+
+  test("a gate that refuses is the answer, and the search does not run", async () => {
+    let ran = false;
+    const host = {
+      semanticGate: async () => "Semantic search is unavailable: busy.",
+      get semanticSearchState() {
+        ran = true;
+        return undefined;
+      },
+    };
+    const result = await call(await registered(host));
+    expect(result.isError).toBe(true);
+    expect(json(result).errorCode).toBe("semantic_search_unavailable");
+    expect(json(result).error).toContain("busy");
+    expect(ran).toBe(false);
+  });
+
+  test("an open gate lets the shared handler read the host's state, set meanwhile", async () => {
+    const host: Record<string, unknown> = {};
+    host.semanticGate = async () => {
+      // What wiring does: the state exists only after the first gate.
+      host.semanticSearchState = {
+        settings: { provider: "native" },
+        store: null,
+        startIndexerIfNeeded: () => {},
+        provider: {
+          isReady: () => true,
+          search: async () => [],
+        },
+      };
+      return undefined;
+    };
+    const result = await call(await registered(host));
+    expect(result.isError).toBeUndefined();
+    expect(json(result)).toEqual({ results: [] });
+  });
+
+  test("the gate runs before every call", async () => {
+    let calls = 0;
+    const host = {
+      semanticGate: async () => {
+        calls += 1;
+        return "no";
+      },
+    };
+    const registry = await registered(host);
+    await call(registry);
+    await call(registry);
+    expect(calls).toBe(2);
+  });
+});
+
 describe("search_files_by_name", () => {
   beforeEach(async () => {
     write(

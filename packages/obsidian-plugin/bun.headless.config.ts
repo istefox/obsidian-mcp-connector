@@ -31,15 +31,33 @@
  *   rewritten to `globalThis`. (Defining a `window` at run time is not an
  *   option: libraries take it as a sign of a browser.)
  *
+ * Semantic search needs an ONNX runtime. The native onnxruntime-node is
+ * an addon and cannot live in one file, so every ONNX import resolves to
+ * `ortNodeShim.cjs`, which wraps the CPU build of onnxruntime-web
+ * (`ort.wasm.min.js`). Its runtime files are not in the bundle: they are
+ * downloaded and pinned on first use (see `ortAssets.ts`). `sharp`, an
+ * image library the text pipeline never touches, is stubbed. The
+ * transformers.js import is pointed at a wrapper that loads the model at 8
+ * bits and embeds a batch one text at a time (see `pipelineDefaults.ts`).
+ *
  * No `browser` condition here: the desktop config selects browser builds
  * for a few packages, and this one runs in Node.
  */
 import { chmod, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const outdir = join(import.meta.dir, "dist/headless");
 const outfile = join(outdir, "obsidian-mcp-headless.js");
 const shim = join(import.meta.dir, "src/headless/obsidianShim.ts");
+const ortShim = join(import.meta.dir, "src/headless/ortNodeShim.cjs");
+const transformersShim = join(
+  import.meta.dir,
+  "src/headless/transformersShim.ts",
+);
+const ortCpu = join(
+  dirname(Bun.resolveSync("onnxruntime-web/package.json", import.meta.dir)),
+  "dist/ort.wasm.min.js",
+);
 
 /** Imports of shared modules that the bundle must not reach, and where they go. */
 const REDIRECTS: ReadonlyArray<{ from: RegExp; to: string }> = [
@@ -47,11 +65,21 @@ const REDIRECTS: ReadonlyArray<{ from: RegExp; to: string }> = [
     from: /^\$\/features\/mcp-tools$/,
     to: join(import.meta.dir, "src/headless/registerTools.ts"),
   },
+  {
+    from: /^\$\/features\/command-permissions$/,
+    to: join(import.meta.dir, "src/shared/settingsLock.ts"),
+  },
 ];
 const redirected = new Set<RegExp>();
+let transformersShimUsed = false;
 
 /** The timer calls the define below rewrites, each of which the graph uses. */
-const REWRITTEN_TIMERS = ["setTimeout", "clearTimeout"];
+const REWRITTEN_TIMERS = [
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "clearInterval",
+];
 
 /** `window.<name>` reads in bundled libraries, on paths Node never takes. */
 const KNOWN_WINDOW_PROPERTIES = [
@@ -108,6 +136,44 @@ const result = await Bun.build({
         build.onResolve({ filter: /^obsidian$/ }, () => ({ path: shim }));
       },
     },
+    {
+      name: "semantic-search-runtime",
+      setup(build) {
+        build.onResolve(
+          { filter: /^onnxruntime-(node|web(\/webgpu)?)$/ },
+          () => ({
+            path: ortShim,
+          }),
+        );
+        // The headless defaults on the pipeline (see pipelineDefaults.ts).
+        // The shim's own import of the package goes to the real one.
+        build.onResolve({ filter: /^@huggingface\/transformers$/ }, (args) => {
+          if (args.importer === transformersShim) return undefined;
+          transformersShimUsed = true;
+          return { path: transformersShim };
+        });
+        build.onResolve({ filter: /^ort-wasm-cpu$/ }, () => ({ path: ortCpu }));
+        build.onResolve({ filter: /^sharp$/ }, (args) => ({
+          path: args.path,
+          namespace: "stub",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "stub" }, () => ({
+          contents: "module.exports = {};",
+          loader: "js",
+        }));
+        // transformers.js's Node build tests `import.meta` in two places,
+        // for code paths this bundle never takes. Name the result they
+        // would have given without a module URL.
+        build.onLoad({ filter: /transformers\.node\.mjs$/ }, async (args) => ({
+          contents: (await Bun.file(args.path).text())
+            .split("Object(import.meta).url")
+            .join("undefined")
+            .split("typeof import.meta")
+            .join('"undefined"'),
+          loader: "js",
+        }));
+      },
+    },
   ],
 });
 
@@ -124,6 +190,13 @@ for (const redirect of REDIRECTS) {
     );
     process.exit(1);
   }
+}
+
+if (!transformersShimUsed) {
+  console.error(
+    "Headless build failed: nothing imported transformers.js, so the 8-bit and one-at-a-time defaults are not in the bundle",
+  );
+  process.exit(1);
 }
 
 if ((await readFile(outfile, "utf8")).includes("import.meta")) {

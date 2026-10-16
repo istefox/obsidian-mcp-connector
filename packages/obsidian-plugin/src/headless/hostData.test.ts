@@ -1,12 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { App } from "obsidian";
+import { activateToolHandler } from "$/features/mcp-tools/tools/activateTool";
+import { activateToolsHandler } from "$/features/mcp-tools/tools/activateTools";
+import { logger } from "$/shared/logger";
 import {
   checkDataOutsideVault,
   createFileHost,
+  createExclusionsHost,
   createMemoryHost,
+  defaultCachePath,
+  defaultCacheRoot,
   defaultDataPath,
   withFixedPort,
 } from "./hostData";
@@ -32,6 +39,23 @@ describe("defaultDataPath", () => {
   });
 });
 
+describe("defaultCachePath", () => {
+  test("lives under XDG_CACHE_HOME, one folder per vault path", () => {
+    const env = { XDG_CACHE_HOME: "/cache" };
+    expect(defaultCacheRoot(env)).toBe("/cache/obsidian-mcp-connector");
+    const a = defaultCachePath("/one/notes", env);
+    expect(a).toMatch(/^\/cache\/obsidian-mcp-connector\/notes-[0-9a-f]{8}$/);
+    expect(defaultCachePath("/two/notes", env)).not.toBe(a);
+    expect(defaultCachePath("/one/notes", env)).toBe(a);
+  });
+
+  test("shares its vault key with the state file name", () => {
+    const env = { XDG_CACHE_HOME: "/c", XDG_CONFIG_HOME: "/f" };
+    const key = path.basename(defaultCachePath("/v/notes", env));
+    expect(path.basename(defaultDataPath("/v/notes", env))).toBe(`${key}.json`);
+  });
+});
+
 describe("createFileHost", () => {
   test("persists privately and reloads", async () => {
     const file = path.join(dir, "state", "vault.json");
@@ -54,11 +78,156 @@ describe("createFileHost", () => {
   });
 });
 
+// A directory the process can no longer write to is how a full or read-only
+// state folder looks after startup. Root ignores the mode bits.
+const asRoot = process.getuid?.() === 0;
+
+/**
+ * A file host whose state folder (a name with a space, so any leak of it is
+ * easy to spot) stops being writable once the host is up.
+ */
+async function hostWithLockedState() {
+  const stateDir = path.join(dir, "Private Config");
+  const host = await createFileHost(parts, path.join(stateDir, ".state.json"));
+  await host.saveData({ before: true });
+  fs.chmodSync(stateDir, 0o500);
+  return { host, stateDir };
+}
+
+describe.skipIf(asRoot)(
+  "createFileHost when the state folder is locked",
+  () => {
+    afterEach(() => {
+      for (const entry of fs.readdirSync(dir)) {
+        fs.chmodSync(path.join(dir, entry), 0o700);
+      }
+    });
+
+    test("fails with fixed text and the code, and logs the detail", async () => {
+      const { host, stateDir } = await hostWithLockedState();
+      const logged = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        const failure = await host.saveData({ after: true }).then(
+          () => undefined,
+          (err: unknown) => err as Error,
+        );
+        expect(failure).toBeInstanceOf(Error);
+        expect(failure!.message).toBe(
+          "The server settings could not be saved (EACCES). Details are in the server log.",
+        );
+        expect(failure!.message).not.toContain("Private Config");
+        expect(failure!.message).not.toContain(dir);
+        expect(JSON.stringify(logged.mock.calls)).toContain(stateDir);
+      } finally {
+        logged.mockRestore();
+      }
+    });
+
+    test("leaves the client no path when a persisted activation fails", async () => {
+      const { host } = await hostWithLockedState();
+      const logged = spyOn(logger, "error").mockImplementation(() => {});
+      const registry = {
+        listAll: () => [
+          {
+            name: "rename_vault_file",
+            description: "d",
+            enabled: false,
+            userDisabled: false,
+          },
+          {
+            name: "find_broken_links",
+            description: "d",
+            enabled: false,
+            userDisabled: false,
+          },
+        ],
+      };
+      const server = {
+        server: { notification: async () => {} },
+      } as unknown as McpServer;
+      const scope = { id: "tok", active: new Set<string>(), allowed: null };
+      try {
+        const messages: string[] = [];
+        for (const run of [
+          () =>
+            activateToolHandler({
+              arguments: { name: "rename_vault_file", persist: true },
+              registry,
+              plugin: host,
+              server,
+              scope,
+            }),
+          () =>
+            activateToolsHandler({
+              arguments: { names: ["find_broken_links"], persist: true },
+              registry,
+              plugin: host,
+              server,
+              scope,
+            }),
+        ]) {
+          const error = await run().then(
+            () => undefined,
+            (err: unknown) => err as Error,
+          );
+          expect(error).toBeInstanceOf(Error);
+          messages.push(error!.message);
+        }
+        for (const message of messages) {
+          expect(message).toContain("(EACCES)");
+          expect(message).not.toContain("Private Config");
+          expect(message).not.toContain(dir);
+        }
+      } finally {
+        logged.mockRestore();
+      }
+    });
+  },
+);
+
 describe("createMemoryHost", () => {
   test("keeps data in memory", async () => {
     const host = createMemoryHost(parts);
     await host.saveData({ a: 1 });
     expect(await host.loadData()).toEqual({ a: 1 });
+  });
+});
+
+describe("createExclusionsHost", () => {
+  test("reads mcpTools from the source and keeps every other write in memory", async () => {
+    const file = path.join(dir, "state.json");
+    const source = await createFileHost(parts, file);
+    await source.saveData({ mcpTools: { excludedFolders: ["Hidden"] } });
+    const host = createExclusionsHost(parts, source);
+
+    expect(await host.loadData()).toEqual({
+      mcpTools: { excludedFolders: ["Hidden"] },
+    });
+
+    await host.saveData({
+      mcpTools: { excludedFolders: ["Stale"] },
+      semanticSearch: { provider: "native" },
+    });
+    // The source's slice wins on read, and the state file is untouched.
+    expect(await host.loadData()).toEqual({
+      mcpTools: { excludedFolders: ["Hidden"] },
+      semanticSearch: { provider: "native" },
+    });
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+      mcpTools: { excludedFolders: ["Hidden"] },
+    });
+
+    // A later change to the source shows through.
+    await source.saveData({ mcpTools: { excludedFolders: ["Other"] } });
+    expect(await host.loadData()).toEqual({
+      mcpTools: { excludedFolders: ["Other"] },
+      semanticSearch: { provider: "native" },
+    });
+  });
+
+  test("a source without mcpTools yields none", async () => {
+    const host = createExclusionsHost(parts, createMemoryHost(parts));
+    expect(await host.loadData()).toEqual({});
   });
 });
 

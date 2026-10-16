@@ -7,8 +7,8 @@
  *
  * The shared transport and tool code is typed with the Obsidian plugin
  * class. Headless leaves that code as it is and hands it a host with the
- * members the code really reads (see `HeadlessHost`), cast once by
- * `asPlugin`.
+ * members the code really reads (see `HeadlessHost`), cast in `asPlugin`
+ * and, for code that is handed the class, back in `hostOf`.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -17,7 +17,10 @@ import os from "node:os";
 import path from "node:path";
 import type { App } from "obsidian";
 import type McpToolsPlugin from "$/main";
+import type { SemanticSearchState } from "$/features/semantic-search";
+import { logger } from "$/shared/logger";
 import type { PluginDataLike } from "$/shared/types";
+import { codeOf, fixedMessage } from "./clientMessage";
 
 export type HostParts = {
   app: App;
@@ -30,11 +33,17 @@ export type HostParts = {
  * manifest. The entry also assigns `mcpTransportState` once the HTTP
  * listener is bound, which `get_server_info` reads, and
  * `semanticSearchState`, which `search_vault_smart` reads.
+ *
+ * `semanticGate` is headless's own. It is set when semantic search is on:
+ * the tool registration lists `search_vault_smart` only then, and runs the
+ * gate before each call (see semanticSearch.ts), which also sets
+ * `semanticSearchState` once the feature is wired.
  */
 export type HeadlessHost = PluginDataLike &
   HostParts & {
     mcpTransportState?: { server: { port: number } };
-    semanticSearchState?: unknown;
+    semanticSearchState?: SemanticSearchState;
+    semanticGate?: () => Promise<string | undefined>;
   };
 
 /**
@@ -44,6 +53,11 @@ export type HeadlessHost = PluginDataLike &
  */
 export function asPlugin(host: HeadlessHost): McpToolsPlugin {
   return host as unknown as McpToolsPlugin;
+}
+
+/** The inverse of `asPlugin`, for headless code that is handed the plugin type. */
+export function hostOf(plugin: McpToolsPlugin): HeadlessHost {
+  return plugin as unknown as HeadlessHost;
 }
 
 /** Settings kept in memory only; nothing outlives the process. */
@@ -92,6 +106,47 @@ export function withFixedPort(host: HeadlessHost, port: number): HeadlessHost {
 }
 
 /**
+ * Settings kept in memory, except the `mcpTools` slice (the folder
+ * exclusions), which is always read from `source`. Semantic search uses
+ * it so its own settings never reach the HTTP state file while the index
+ * still honors the exclusions the tools enforce. Writes to `mcpTools` are
+ * dropped: this host never owns that slice.
+ */
+export function createExclusionsHost(
+  parts: HostParts,
+  source: HeadlessHost,
+): HeadlessHost {
+  let own: Record<string, unknown> = {};
+  return {
+    ...parts,
+    loadData: async () => {
+      const shared = (await source.loadData()) as
+        | Record<string, unknown>
+        | null
+        | undefined;
+      const mcpTools = shared?.mcpTools;
+      return mcpTools === undefined ? { ...own } : { ...own, mcpTools };
+    },
+    saveData: async (next) => {
+      const { mcpTools: _dropped, ...rest } = (next ?? {}) as Record<
+        string,
+        unknown
+      >;
+      own = rest;
+    },
+  };
+}
+
+/** `<vault-name>-<8 hex of the vault's realpath hash>`: distinct per vault path. */
+function vaultKey(vaultRealPath: string): string {
+  const hash = createHash("sha256")
+    .update(vaultRealPath)
+    .digest("hex")
+    .slice(0, 8);
+  return `${path.basename(vaultRealPath)}-${hash}`;
+}
+
+/**
  * `<config>/obsidian-mcp-connector/<vault-name>-<8 hex of the vault's
  * realpath hash>.json`, where `<config>` is $XDG_CONFIG_HOME or ~/.config.
  * Two vaults with the same folder name get distinct files.
@@ -101,15 +156,31 @@ export function defaultDataPath(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const config = env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  const hash = createHash("sha256")
-    .update(vaultRealPath)
-    .digest("hex")
-    .slice(0, 8);
   return path.join(
     config,
     "obsidian-mcp-connector",
-    `${path.basename(vaultRealPath)}-${hash}.json`,
+    `${vaultKey(vaultRealPath)}.json`,
   );
+}
+
+/**
+ * `<cache>/obsidian-mcp-connector`, where `<cache>` is $XDG_CACHE_HOME or
+ * ~/.cache. Holds what every vault shares (downloaded models, the ONNX
+ * runtime files) and one folder per vault.
+ */
+export function defaultCacheRoot(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const cache = env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(cache, "obsidian-mcp-connector");
+}
+
+/** The cache folder of one vault: `<cache root>/<vault-name>-<8 hex>`. */
+export function defaultCachePath(
+  vaultRealPath: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return path.join(defaultCacheRoot(env), vaultKey(vaultRealPath));
 }
 
 const SEPARATORS = path.sep === "\\" ? /[\\/]/ : "/";
@@ -195,7 +266,16 @@ function refuseInside(real: string, root: string, file: string): void {
   }
 }
 
-/** Settings persisted to `file`, read once and written through on every save. */
+/** What the client reads when the state file cannot be written. */
+export const SETTINGS_SAVE_FAILED = "The server settings could not be saved";
+
+/**
+ * Settings persisted to `file`, read once and written through on every save.
+ * A save runs inside a tool call (`activate_tool` with `persist`), and the
+ * error of a failed one would reach the client with the state file's path in
+ * it. The client gets fixed text and the error's code instead (see
+ * clientMessage.ts), and the whole error goes to the log.
+ */
 export async function createFileHost(
   parts: HostParts,
   file: string,
@@ -215,7 +295,14 @@ export async function createFileHost(
     loadData: async () => data,
     saveData: async (next) => {
       data = next;
-      await writePrivateFile(file, JSON.stringify(next, null, 2));
+      try {
+        await writePrivateFile(file, JSON.stringify(next, null, 2));
+      } catch (err) {
+        logger.error(`state file: ${SETTINGS_SAVE_FAILED}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw new Error(fixedMessage(SETTINGS_SAVE_FAILED, codeOf(err)));
+      }
     },
   };
 }

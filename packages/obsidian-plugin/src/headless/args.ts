@@ -1,7 +1,7 @@
 /**
  * Command line for the headless server:
  *
- *   obsidian-mcp-headless [vault] [--http [--port N] [--data FILE] [--print-token]]
+ *   obsidian-mcp-headless [vault] [--no-semantic] [--http [--port N] [--data FILE] [--print-token]]
  *
  * The vault path is positional and falls back to $OBSIDIAN_VAULT. Stdio is
  * the default transport, which is what an MCP client that spawns the
@@ -21,6 +21,8 @@ export type HeadlessArgs =
       port?: number;
       data?: string;
       printToken: boolean;
+      /** False under `--no-semantic`: `search_vault_smart` is not registered. */
+      semantic: boolean;
     };
 
 export const USAGE = [
@@ -30,6 +32,7 @@ export const USAGE = [
   "The vault path may also come from the OBSIDIAN_VAULT environment variable.",
   "",
   "Options:",
+  "  --no-semantic    Do not offer search_vault_smart (it downloads a model on first use)",
   "  --http           Serve over HTTP on 127.0.0.1 with a bearer token (default: stdio)",
   "  --port N         HTTP port (default: the first free port from 27201)",
   "  --data FILE      State file for the HTTP token (default: under the user config dir)",
@@ -66,6 +69,7 @@ export function parseArgs(
   let port: number | undefined;
   let data: string | undefined;
   let printToken = false;
+  let semantic = true;
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -79,6 +83,9 @@ export function parseArgs(
         break;
       case "--print-token":
         printToken = true;
+        break;
+      case "--no-semantic":
+        semantic = false;
         break;
       case "--port": {
         const raw = value();
@@ -123,5 +130,5 @@ export function parseArgs(
       message: "--port, --data and --print-token only apply with --http",
     };
   }
-  return { kind: "run", vault, http, port, data, printToken };
+  return { kind: "run", vault, http, port, data, printToken, semantic };
 }

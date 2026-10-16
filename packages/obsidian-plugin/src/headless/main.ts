@@ -35,6 +35,8 @@ import {
   withFixedPort,
   type HostParts,
 } from "./hostData";
+import { createHeadlessSemantic } from "./semanticSearch";
+import { createShutdown, unrefTimer } from "./shutdown";
 import { routeConsoleToStderr, stderrLogFs } from "./stderrLogFs";
 
 /** The token id a stdio session is served under; there is no real token. */
@@ -47,23 +49,27 @@ function say(line: string): void {
 }
 
 function onShutdown(cleanup: () => Promise<void>): void {
-  let started = false;
-  const shutdown = () => {
-    if (started) return;
-    started = true;
-    void cleanup()
-      .catch((err: unknown) => say(`Shutdown error: ${String(err)}`))
-      .finally(() => process.exit(0));
-  };
+  const shutdown = createShutdown(cleanup, {
+    exit: (code) => process.exit(code),
+    say,
+    startTimer: unrefTimer,
+  });
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
   process.stdin.once("end", shutdown);
 }
 
-async function serveOverStdio(vaultDir: string): Promise<void> {
+async function serveOverStdio(
+  vaultDir: string,
+  semantic: boolean,
+): Promise<void> {
   routeConsoleToStderr();
   const { app, close } = await createHeadlessApp(vaultDir);
   const host = createMemoryHost({ app, manifest: hostManifest });
+  const search = semantic
+    ? createHeadlessSemantic(app, await fs.realpath(vaultDir), host)
+    : undefined;
+  host.semanticGate = search?.gate;
   // No token means no stored policy, and an unknown id would get the
   // restricted "adaptive" profile. A client that spawned this process owns
   // it, so the whole tool set is its surface.
@@ -83,6 +89,7 @@ async function serveOverStdio(vaultDir: string): Promise<void> {
   onShutdown(async () => {
     await handle.close();
     await destroyMcpService(service);
+    await search?.teardown();
     close();
     await logger.flush();
   });
@@ -90,7 +97,12 @@ async function serveOverStdio(vaultDir: string): Promise<void> {
 
 async function serveOverHttp(
   vaultDir: string,
-  options: { port?: number; data?: string; printToken: boolean },
+  options: {
+    port?: number;
+    data?: string;
+    printToken: boolean;
+    semantic: boolean;
+  },
 ): Promise<void> {
   const real = await fs.realpath(vaultDir);
   const dataFile = await checkDataOutsideVault(
@@ -117,8 +129,13 @@ async function serveOverHttp(
   );
   const host =
     options.port === undefined ? stored : withFixedPort(stored, options.port);
+  const search = options.semantic
+    ? createHeadlessSemantic(app, real, host)
+    : undefined;
+  host.semanticGate = search?.gate;
   const result = await setup(asPlugin(host));
   if (!result.success) {
+    await search?.teardown();
     close();
     throw new Error(
       options.port !== undefined && result.error.includes("is in use")
@@ -133,6 +150,7 @@ async function serveOverHttp(
   say(`Bearer token: run with --http --print-token (state file: ${dataFile})`);
   onShutdown(async () => {
     await teardown(result.state);
+    await search?.teardown();
     close();
     await logger.flush();
   });
@@ -157,7 +175,7 @@ async function main(): Promise<void> {
   }
   logger.configure({ dir: "", level: DEFAULT_LOG_LEVEL, fs: stderrLogFs });
   if (args.http) await serveOverHttp(args.vault, args);
-  else await serveOverStdio(args.vault);
+  else await serveOverStdio(args.vault, args.semantic);
 }
 
 main().catch((err: unknown) => {

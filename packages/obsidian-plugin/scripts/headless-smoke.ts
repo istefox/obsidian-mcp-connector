@@ -7,7 +7,9 @@
  * and speaks newline-delimited JSON-RPC. Checked in order:
  *   - stdout carries only JSON-RPC messages, also after a JsonLogic `log`
  *     query, which prints through `console.log`;
- *   - `initialize` and `tools/list` answer, and desktop-only tools are absent;
+ *   - `initialize` and `tools/list` answer, desktop-only tools are absent, and
+ *     `search_vault_smart` is listed but nothing is downloaded by starting
+ *     (it is never called here: the first call downloads a model);
  *   - a note reads back;
  *   - a created note is immediately visible to properties, tags and backlinks;
  *   - an edit made outside the server becomes visible, polled against a
@@ -24,13 +26,25 @@
  * its "Listening on" line, so no other process can take it in between): no
  * token is 401, a token lists tools in both protocol eras, SIGTERM exits 0.
  *
- * Nothing here touches any host but 127.0.0.1. Temp dirs are removed.
+ * Then `--no-semantic`, which must leave `search_vault_smart` unlisted.
+ *
+ * Then the index lock, with no download: this script holds a vault's lock
+ * as another server would, and the first `search_vault_smart` call must be
+ * refused as `semantic_search_unavailable`. That runs the bundle's
+ * `node:sqlite` lock under real Node without wiring the feature or
+ * fetching a model.
+ *
+ * Nothing here touches any host but 127.0.0.1. Temp dirs are removed, and
+ * the semantic-search cache is pointed at one of them so the user's own
+ * cache is never read or written.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
   existsSync,
+  realpathSync,
+  readdirSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -38,8 +52,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acquireLock, lockFilePath } from "../src/headless/cacheLock";
+import { defaultCachePath, defaultCacheRoot } from "../src/headless/hostData";
 import { DESKTOP_ONLY_TOOLS } from "../src/headless/toolSets";
 import { WATCH_DEBOUNCE_MS } from "../src/headless/watcher";
+
+/** The cache folder the server creates under $XDG_CACHE_HOME. */
+const ROOT_NAME = "obsidian-mcp-connector";
 
 const BUNDLE = join(
   import.meta.dir,
@@ -177,6 +196,10 @@ async function stdioChecks(vault: string): Promise<void> {
     const leaked = DESKTOP_ONLY_TOOLS.filter((n) => names.includes(n));
     check("stdio: desktop-only tools are absent", leaked.length === 0, leaked);
     check(
+      "stdio: search_vault_smart is served",
+      names.includes("search_vault_smart"),
+    );
+    check(
       "stdio: file-name search and rename are served",
       names.includes("search_files_by_name") &&
         names.includes("rename_vault_file"),
@@ -298,10 +321,90 @@ async function stdioChecks(vault: string): Promise<void> {
     });
     check("stdio: stdout carries only JSON-RPC", jsonOnly, client.stdoutLines);
 
+    // Nothing is wired or fetched before the first semantic search: the
+    // cache folder is not even made.
+    const cacheRoot = join(process.env.XDG_CACHE_HOME!, ROOT_NAME);
+    check(
+      "stdio: starting downloads no model and no runtime files",
+      !existsSync(cacheRoot) ||
+        !readdirSync(cacheRoot).some(
+          (f) => f === "models" || f.startsWith("ort-"),
+        ),
+      existsSync(cacheRoot) ? readdirSync(cacheRoot) : [],
+    );
+
     client.child.stdin!.end();
     check("stdio: closing stdin exits 0", (await exited(client.child)) === 0);
   } catch (err) {
     check("stdio: session completed", false, err);
+    client.child.kill("SIGKILL");
+  }
+}
+
+async function lockChecks(workDir: string): Promise<void> {
+  const vault = join(workDir, "vault-lock");
+  mkdirSync(vault);
+  writeFileSync(join(vault, "Note.md"), "# Note\nSeed body\n");
+  const real = realpathSync(vault);
+  // The cache folder the server will use: XDG_CACHE_HOME is set for the run.
+  const root = defaultCacheRoot();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const other = acquireLock(lockFilePath(root, defaultCachePath(real)));
+  check("lock: the script holds the vault's index lock", other.ok);
+  if (!other.ok) return;
+  const client = new StdioClient(["node", BUNDLE, vault]);
+  try {
+    await client.request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "headless-smoke", version: "0" },
+    });
+    client.notify("notifications/initialized");
+    const refused = await client.tool("search_vault_smart", { query: "note" });
+    check(
+      "lock: a search is refused while another process holds the index",
+      refused.includes("semantic_search_unavailable") &&
+        refused.includes("another obsidian-mcp-headless process"),
+      refused,
+    );
+    client.child.stdin!.end();
+    check("lock: closing stdin exits 0", (await exited(client.child)) === 0);
+  } catch (err) {
+    check("lock: session completed", false, err);
+    client.child.kill("SIGKILL");
+  } finally {
+    other.release();
+  }
+}
+
+async function noSemanticChecks(vault: string): Promise<void> {
+  const client = new StdioClient(["node", BUNDLE, vault, "--no-semantic"]);
+  try {
+    await client.request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "headless-smoke", version: "0" },
+    });
+    client.notify("notifications/initialized");
+    const list = await client.request("tools/list");
+    const names = (
+      (list.result?.tools as Array<{ name: string }> | undefined) ?? []
+    ).map((t) => t.name);
+    check(
+      "no-semantic: vault tools are served",
+      names.includes("get_vault_file"),
+    );
+    check(
+      "no-semantic: search_vault_smart is not listed",
+      !names.includes("search_vault_smart"),
+    );
+    client.child.stdin!.end();
+    check(
+      "no-semantic: closing stdin exits 0",
+      (await exited(client.child)) === 0,
+    );
+  } catch (err) {
+    check("no-semantic: session completed", false, err);
     client.child.kill("SIGKILL");
   }
 }
@@ -450,6 +553,11 @@ async function httpChecks(vault: string, workDir: string): Promise<void> {
       { "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/list" },
     );
     check(
+      "http: search_vault_smart is served",
+      legacy.text.includes("search_vault_smart"),
+      legacy.text.slice(0, 200),
+    );
+    check(
       "http: modern era lists tools",
       modern.status === 200 && modern.text.includes("get_vault_file"),
       modern.text.slice(0, 200),
@@ -486,6 +594,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const workDir = mkdtempSync(join(tmpdir(), "headless-smoke-"));
+  // Inherited by every server this script spawns.
+  process.env.XDG_CACHE_HOME = join(workDir, "cache");
   try {
     const stdioVault = join(workDir, "vault-stdio");
     mkdirSync(stdioVault);
@@ -495,6 +605,8 @@ async function main(): Promise<void> {
     );
     await stdioChecks(stdioVault);
     await installedChecks(stdioVault, workDir);
+    await noSemanticChecks(stdioVault);
+    await lockChecks(workDir);
 
     const httpVault = join(workDir, "vault-http");
     mkdirSync(httpVault);

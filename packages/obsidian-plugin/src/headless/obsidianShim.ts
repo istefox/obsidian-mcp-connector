@@ -9,6 +9,7 @@
  */
 
 import moment from "moment";
+import { logger } from "$/shared/logger";
 
 export { moment };
 export { resolveSubpath } from "./linkResolution";
@@ -78,9 +79,14 @@ export function parseLinktext(linktext: string): {
   return { path: linktext.slice(0, hash), subpath: linktext.slice(hash) };
 }
 
-/** Desktop-only feedback; a headless server has nobody to show it to. */
+/**
+ * Desktop-only feedback. A headless server has nobody to show it to, so a
+ * notice is a log line (stderr) for whoever runs the server.
+ */
 export class Notice {
-  constructor(_message?: string | DocumentFragment, _duration?: number) {}
+  constructor(message?: string | DocumentFragment, _duration?: number) {
+    if (typeof message === "string") logger.info(message);
+  }
   setMessage(): this {
     return this;
   }
