@@ -7,6 +7,7 @@ import {
   wireSemanticSearch,
 } from "./productionWiring";
 import { createEmbeddingStoreRegistry } from "./storeRegistry";
+import type { SemanticIndexer } from "./indexer";
 import {
   FORMAT_VERSION,
   type EmbeddingRecord,
@@ -487,6 +488,139 @@ describe("language sampling timing", () => {
     } finally {
       await state?.teardown();
       resetMockVault();
+    }
+  });
+});
+
+/**
+ * The lazy native indexer start and its vault events. No model is ever
+ * loaded: the vault in these tests holds either nothing to embed or
+ * only files whose stored mtime already matches. Tests wait on the
+ * indexer's own calls, never on a clock.
+ */
+describe("wireSemanticSearch — indexer start and vault events", () => {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  /** A plugin whose vault adapter is in memory, and the layout callbacks it is holding back. */
+  function host() {
+    resetMockVault();
+    const mem = memAdapter();
+    let data: Record<string, unknown> = {};
+    const plugin = mockPlugin({
+      loadData: async () => data,
+      saveData: async (next: unknown) => {
+        data = next as Record<string, unknown>;
+      },
+    });
+    const app = plugin.app as unknown as {
+      vault: Record<string, unknown>;
+      workspace: { onLayoutReady: (cb: () => void) => void };
+    };
+    app.vault.adapter = mem.adapter;
+    app.vault.configDir = ".obsidian";
+    (plugin.manifest as { dir?: string }).dir = "/p";
+    const barrier: Array<() => void> = [];
+    return {
+      plugin,
+      mem,
+      /** From now on, layout-ready callbacks wait until `ready()`. */
+      holdLayout: () => {
+        app.workspace.onLayoutReady = (cb) => {
+          barrier.push(cb);
+        };
+      },
+      ready: () => {
+        for (const cb of barrier.splice(0)) cb();
+      },
+    };
+  }
+
+  /** Counts `start()` calls and keeps the promise of the latest one. */
+  function watchIndexer(indexer: SemanticIndexer) {
+    const start = indexer.start.bind(indexer);
+    let starts = 0;
+    let latest: Promise<void> | undefined;
+    indexer.start = (opts) => {
+      starts += 1;
+      latest = start(opts);
+      return latest;
+    };
+    return { starts: () => starts, latest: () => latest };
+  }
+
+  const fakeTFile = (path: string, extension: string): TFile => {
+    const f = Object.create(TFile.prototype) as TFile;
+    Object.assign(f, { path, extension });
+    return f;
+  };
+
+  test("the first index pass waits for the host's vault listing: a search before it prunes nothing, after it prunes what is missing", async () => {
+    const h = host();
+    const record = (filePath: string): EmbeddingRecord => ({
+      chunkId: `${filePath}#0`,
+      filePath,
+      offset: 0,
+      heading: null,
+      contentHash: "h",
+      vector: new Float32Array(384),
+    });
+    // A session that left records for a note still in the vault and one
+    // that is gone. The mtime of the note matches its stat in the mock
+    // vault, so the next pass skips it instead of embedding it.
+    const earlier = await wireSemanticSearch(h.plugin);
+    await earlier!.store!.init();
+    await earlier!.store!.upsert([record("Notes/a.md"), record("Gone/b.md")]);
+    earlier!.store!.setMtime("Notes/a.md", 0);
+    await earlier!.store!.flush();
+    await earlier!.teardown();
+
+    // The next session starts while the host is still listing the vault:
+    // nothing is listed yet, and layout-ready is a barrier.
+    h.holdLayout();
+    const state = await wireSemanticSearch(h.plugin);
+    const watch = watchIndexer(state!.indexer!);
+    const store = state!.store!;
+    await store.init();
+    try {
+      state?.startIndexerIfNeeded?.();
+      await turn();
+      expect(watch.starts()).toBe(0);
+      expect(store.hasRecords("Notes/a.md")).toBe(true);
+      expect(store.hasRecords("Gone/b.md")).toBe(true);
+
+      // The listing completes, then the host says so.
+      setMockFile("Notes/a.md", "# Title\n");
+      h.ready();
+      await turn();
+      await watch.latest();
+      expect(watch.starts()).toBe(1);
+      expect(store.hasRecords("Notes/a.md")).toBe(true);
+      expect(store.hasRecords("Gone/b.md")).toBe(false);
+    } finally {
+      await state?.teardown();
+    }
+  });
+
+  test("vault rename events reach the indexer for files only, with the old path", async () => {
+    const h = host();
+    const state = await wireSemanticSearch(h.plugin);
+    try {
+      const indexer = state!.indexer!;
+      await indexer.start({ initialRebuild: false });
+
+      // A folder (not a TFile) is ignored: its files get their own events.
+      fireMockVaultEvent("rename", { path: "moved" }, "dir");
+      expect(indexer.pending()).toBe(0);
+
+      // A markdown file schedules both its old and its new path.
+      fireMockVaultEvent("rename", fakeTFile("new.md", "md"), "old.md");
+      expect(indexer.pending()).toBe(2);
+
+      // Renamed away from markdown: only the old path still needs work.
+      fireMockVaultEvent("rename", fakeTFile("a.txt", "txt"), "a.md");
+      expect(indexer.pending()).toBe(3);
+    } finally {
+      await state?.teardown();
     }
   });
 });

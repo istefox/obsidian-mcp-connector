@@ -94,9 +94,21 @@ export async function wireSemanticSearch(
       // contract stays clean.
       const ref = (
         plugin.app.vault as unknown as {
-          on: (event: string, handler: (f: unknown) => void) => EventRef;
+          on: (
+            event: string,
+            handler: (f: unknown, oldPath?: unknown) => void,
+          ) => EventRef;
         }
-      ).on(event, (f: unknown) => {
+      ).on(event, (f: unknown, oldPath?: unknown) => {
+        if (event === "rename") {
+          // Files only, any extension: the indexer needs the old path
+          // even when the new name is no longer markdown. Folders are
+          // skipped, Obsidian also emits one `rename` per file inside.
+          if (f instanceof TFile && typeof oldPath === "string") {
+            handler(f.path, oldPath);
+          }
+          return;
+        }
         if (isIndexableFile(f)) handler(f.path);
       });
       return () => plugin.app.vault.offref(ref);
@@ -275,8 +287,13 @@ export async function wireSemanticSearch(
       // signal.
       state.nativeIndexBuildInProgress = true;
       state.nativeIndexBuildStartedAt = Date.now();
-      indexer
-        .start()
+      // The first pass prunes records of files missing from the vault
+      // listing, so it must not run on a partial listing. A search can
+      // reach here before Obsidian has finished listing the vault.
+      new Promise<void>((resolve) =>
+        plugin.app.workspace.onLayoutReady(resolve),
+      )
+        .then(() => indexer.start())
         .catch((err) => {
           logger.error("semantic-search: indexer start failed", {
             error: err instanceof Error ? err.message : String(err),

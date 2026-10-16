@@ -29,7 +29,7 @@ import type { EmbeddingProvider } from "../types";
 
 export type { ChunkerFn };
 
-export type VaultEvent = "modify" | "create" | "delete";
+export type VaultEvent = "modify" | "create" | "delete" | "rename";
 
 export interface VaultLike {
   /**
@@ -49,8 +49,15 @@ export interface VaultLike {
    * without it, live-edited files simply don't get a persisted mtime.
    */
   getFileMtime?(path: string): number | undefined;
-  /** Returns an unsubscribe function. */
-  on(event: VaultEvent, handler: (path: string) => void): () => void;
+  /**
+   * Returns an unsubscribe function. A `rename` handler also receives
+   * the path the file had before; the host emits it for files only
+   * (extension-agnostic), never for folders.
+   */
+  on(
+    event: VaultEvent,
+    handler: (path: string, oldPath?: string) => void,
+  ): () => void;
 }
 
 export type LiveIndexerOpts = {
@@ -116,6 +123,8 @@ export interface SemanticIndexer {
   pending(): number;
 }
 
+const isMarkdownPath = (path: string): boolean => path.endsWith(".md");
+
 const DEFAULT_DEBOUNCE_MS = 2000;
 const DEFAULT_FLUSH_DEBOUNCE_MS = 5000;
 
@@ -150,6 +159,15 @@ class LiveIndexerImpl implements SemanticIndexer {
       this.opts.vault.on("modify", (p) => this.schedule(p)),
       this.opts.vault.on("create", (p) => this.schedule(p)),
       this.opts.vault.on("delete", (p) => this.schedule(p)),
+      // Obsidian emits only `rename` (never create/delete) when a file
+      // moves: drop the old path's records, index the new path. A
+      // folder rename arrives as one `rename` per file inside it.
+      this.opts.vault.on("rename", (p, oldPath) => {
+        if (oldPath !== undefined && isMarkdownPath(oldPath)) {
+          this.schedule(oldPath);
+        }
+        if (isMarkdownPath(p)) this.schedule(p);
+      }),
     );
 
     if (opts.initialRebuild !== false) {
@@ -187,10 +205,15 @@ class LiveIndexerImpl implements SemanticIndexer {
     }
     // See start(): guard against recordsFor() on an un-inited store.
     await this.opts.store.init();
-    const files = this.opts.vault
-      .getMarkdownFiles()
-      .filter((f) => !this.isExcluded(f.path));
+    const present = this.opts.vault.getMarkdownFiles();
+    const files = present.filter((f) => !this.isExcluded(f.path));
+    // A file renamed or deleted while no indexer was listening leaves
+    // records nothing will ever replace. Paths still in the vault are
+    // kept even when excluded, per the leave-in-place rule on schedule().
+    const presentPaths = new Set(present.map((f) => f.path));
+    const pruned = await this.opts.store.purge((p) => !presentPaths.has(p));
     logger.info("live indexer: rebuildAll starting", {
+      pruned,
       providerKey: this.opts.embedder.providerKey,
       fileCount: files.length,
       force,
@@ -503,6 +526,11 @@ class LowPowerIndexerImpl implements SemanticIndexer {
           this.lastSeenMtime.delete(knownPath);
         }
       }
+
+      // Paths deleted or renamed before this process started are not in
+      // `lastSeenMtime`, so the loop above cannot see them. Excluded
+      // files are in `seenPaths` and stay, as above.
+      await this.opts.store.purge((p) => !seenPaths.has(p));
 
       await this.opts.store.flush();
     })();
