@@ -7,18 +7,6 @@ import { mockApp } from "$/test-setup";
 import { registerTools as registerHeadlessTools } from "./registerTools";
 import { DESKTOP_ONLY_TOOLS as DESKTOP_ONLY } from "./toolSets";
 
-/**
- * Desktop tools that the headless server serves too, but only from a
- * later commit of the series that adds it. Empty once the series is
- * complete.
- */
-const NOT_YET_SERVED = [
-  "fetch",
-  "get_or_create_daily_note",
-  "get_or_create_periodic_note",
-  "append_to_periodic_note",
-];
-
 /** Tools only the headless server has. */
 const HEADLESS_ONLY: string[] = [];
 
@@ -51,11 +39,9 @@ describe("headless tool set", () => {
       })
     ).map((t) => t.name);
 
-    for (const name of [...DESKTOP_ONLY, ...NOT_YET_SERVED]) {
-      expect(desktop).toContain(name);
-    }
+    for (const name of DESKTOP_ONLY) expect(desktop).toContain(name);
     const expected = desktop
-      .filter((n) => !DESKTOP_ONLY.includes(n) && !NOT_YET_SERVED.includes(n))
+      .filter((n) => !DESKTOP_ONLY.includes(n))
       .concat(HEADLESS_ONLY);
     expect(headless).toEqual(expected);
   });

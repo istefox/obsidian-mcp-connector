@@ -16,6 +16,14 @@
  *     bounded deadline derived from the watcher debounce;
  *   - file-name search finds a note, and renaming a note rewrites the links
  *     to it in another note;
+ *   - the vault's `.obsidian` settings apply: a path in "Excluded files" is
+ *     hidden from file-name search, and the daily note tool creates its note
+ *     in the configured folder from the configured template, which
+ *     `append_to_periodic_note` then extends;
+ *   - `fetch` is served, and refuses loopback addresses however they are
+ *     spelled, before any request reaches a server on this machine (a
+ *     successful fetch needs a public host, which this script never
+ *     contacts, so that path is covered by the unit tests);
  *   - closing stdin exits 0.
  * Then the install the README gives: the file copied under an extensionless
  * name into a folder with no package.json and run through its shebang,
@@ -39,6 +47,8 @@
  * cache is never read or written.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   chmodSync,
   copyFileSync,
@@ -48,6 +58,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,6 +81,25 @@ const VISIBLE_DEADLINE_MS = WATCH_DEBOUNCE_MS * 50;
 const POLL_MS = 50;
 /** Hang guard for a reply or an exit, not a timing assertion. */
 const REPLY_GUARD_MS = 15000;
+
+/** The tools that came with desktop parity: periodic notes and `fetch`. */
+const PARITY_TOOLS = [
+  "fetch",
+  "get_or_create_daily_note",
+  "get_or_create_periodic_note",
+  "append_to_periodic_note",
+];
+
+/** Spellings of this machine's loopback address that a URL check could miss. */
+const LOOPBACK_SPELLINGS = (port: number) => [
+  `http://localhost:${port}/page`,
+  `http://localhost.:${port}/page`,
+  `http://pages.localhost:${port}/page`,
+  `http://[::ffff:127.0.0.1]:${port}/page`,
+  `http://[::ffff:7f00:1]:${port}/page`,
+  `http://2130706433:${port}/page`,
+  `http://0x7f.1:${port}/page`,
+];
 
 let failures = 0;
 function check(name: string, ok: boolean, detail?: unknown): void {
@@ -170,7 +200,30 @@ class StdioClient {
   }
 }
 
-async function stdioChecks(vault: string): Promise<void> {
+/** A local HTTP server that counts what reaches it. Closed by the caller. */
+async function startPageServer(): Promise<{
+  server: Server;
+  port: number;
+  hits: () => number;
+}> {
+  let hits = 0;
+  const server = createServer((_req, res) => {
+    hits += 1;
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<html><body><h1>Smoke page</h1></body></html>");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    server,
+    port: (server.address() as AddressInfo).port,
+    hits: () => hits,
+  };
+}
+
+async function stdioChecks(
+  vault: string,
+  page: { port: number; hits: () => number },
+): Promise<void> {
   const client = new StdioClient(["node", BUNDLE, vault]);
   try {
     const init = await client.request("initialize", {
@@ -198,6 +251,12 @@ async function stdioChecks(vault: string): Promise<void> {
     check(
       "stdio: search_vault_smart is served",
       names.includes("search_vault_smart"),
+    );
+    const missing = PARITY_TOOLS.filter((n) => !names.includes(n));
+    check(
+      "stdio: periodic note tools and fetch are served",
+      missing.length === 0,
+      missing,
     );
     check(
       "stdio: file-name search and rename are served",
@@ -296,6 +355,72 @@ async function stdioChecks(vault: string): Promise<void> {
       moved,
     );
 
+    const hidden = await client.tool("search_files_by_name", {
+      query: "hidden",
+    });
+    check(
+      "stdio: a path in Excluded files is hidden from search",
+      !hidden.includes("Ignored/Hidden.md") && !hidden.includes("isError"),
+      hidden,
+    );
+    const shown = await client.tool("search_files_by_name", {
+      query: "visible",
+    });
+    check(
+      "stdio: a path outside Excluded files is still found",
+      shown.includes("Visible.md"),
+      shown,
+    );
+
+    const daily = await client.tool("get_or_create_daily_note", {
+      date: "2026-03-15",
+    });
+    check(
+      "stdio: daily note is created in the configured folder from its template",
+      daily.includes('"path":"Journal/2026-03-15.md"') &&
+        daily.includes('"created":true') &&
+        daily.includes("# 2026-03-15"),
+      daily,
+    );
+    const appended = await client.tool("append_to_periodic_note", {
+      date: "2026-03-15",
+      content: "- smoke entry",
+    });
+    check(
+      "stdio: append_to_periodic_note extends the existing daily note",
+      appended.includes('"appended":true') &&
+        appended.includes('"created":false'),
+      appended,
+    );
+    const dailyFile = await client.tool("get_vault_file", {
+      path: "Journal/2026-03-15.md",
+    });
+    check(
+      "stdio: the daily note holds the template and the appended line",
+      dailyFile.includes("# 2026-03-15") && dailyFile.includes("- smoke entry"),
+      dailyFile,
+    );
+
+    const outcomes: string[] = [];
+    for (const url of LOOPBACK_SPELLINGS(page.port)) {
+      outcomes.push(await client.tool("fetch", { url }));
+    }
+    check(
+      "stdio: fetch refuses every spelling of loopback",
+      outcomes.every((o) => o.includes('"isError"') || o.includes('"error"')),
+      outcomes,
+    );
+    check(
+      "stdio: the network layer, not only the tool's own check, refused some",
+      outcomes.some((o) => o.includes("Refusing to connect")),
+      outcomes,
+    );
+    check(
+      "stdio: no refused fetch reached the local server",
+      page.hits() === 0,
+      page.hits(),
+    );
+
     writeFileSync(join(vault, "External.md"), "Edited outside #ext-tag\n");
     const deadline = Date.now() + VISIBLE_DEADLINE_MS;
     let seen = false;
@@ -339,6 +464,29 @@ async function stdioChecks(vault: string): Promise<void> {
     check("stdio: session completed", false, err);
     client.child.kill("SIGKILL");
   }
+}
+
+/** A symlinked app.json is not followed, and the server says so on stderr. */
+function settingsWarningChecks(workDir: string): void {
+  const vault = join(workDir, "vault-warn");
+  mkdirSync(join(vault, ".obsidian"), { recursive: true });
+  writeFileSync(join(workDir, "elsewhere.json"), '{"userIgnoreFilters":["x"]}');
+  symlinkSync(
+    join(workDir, "elsewhere.json"),
+    join(vault, ".obsidian", "app.json"),
+  );
+  // An empty stdin ends the session as soon as the server is up.
+  const run = spawnSync("node", [BUNDLE, vault], {
+    input: "",
+    encoding: "utf8",
+  });
+  check(
+    "settings: a symlinked app.json is reported on stderr",
+    run.stderr.includes("Ignoring .obsidian/app.json: it is a symlink") &&
+      run.stderr.includes('"Excluded files" is not applied'),
+    run.stderr,
+  );
+  check("settings: the server still starts and exits 0", run.status === 0);
 }
 
 async function lockChecks(workDir: string): Promise<void> {
@@ -603,7 +751,24 @@ async function main(): Promise<void> {
       join(stdioVault, "Note.md"),
       "---\ntitle: Seed\n---\n# Note\nSeed body\n",
     );
-    await stdioChecks(stdioVault);
+    writeFileSync(join(stdioVault, "Visible.md"), "visible\n");
+    mkdirSync(join(stdioVault, "Ignored"));
+    writeFileSync(join(stdioVault, "Ignored/Hidden.md"), "hidden\n");
+    writeFileSync(join(stdioVault, "Daily.md"), "# {{title}}\n");
+    mkdirSync(join(stdioVault, ".obsidian"));
+    const settings = (name: string, value: unknown) =>
+      writeFileSync(join(stdioVault, ".obsidian", name), JSON.stringify(value));
+    settings("app.json", { userIgnoreFilters: ["Ignored/"] });
+    settings("core-plugins.json", ["daily-notes"]);
+    settings("daily-notes.json", { folder: "Journal", template: "Daily" });
+
+    const page = await startPageServer();
+    try {
+      await stdioChecks(stdioVault, page);
+    } finally {
+      page.server.close();
+    }
+    settingsWarningChecks(workDir);
     await installedChecks(stdioVault, workDir);
     await noSemanticChecks(stdioVault);
     await lockChecks(workDir);

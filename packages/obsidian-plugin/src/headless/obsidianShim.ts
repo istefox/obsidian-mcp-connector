@@ -13,6 +13,7 @@ import { logger } from "$/shared/logger";
 
 export { moment };
 export { resolveSubpath } from "./linkResolution";
+export { requestUrl } from "./requestUrl";
 export {
   parseFrontMatterAliases,
   prepareFuzzySearch,
@@ -67,6 +68,18 @@ export class TFolder extends TAbstractFile {
   isRoot(): boolean {
     return this.path === "/";
   }
+}
+
+/**
+ * Obsidian's `normalizePath`: forward slashes, no leading or trailing
+ * slash, no-break spaces as spaces, NFC. The root is "/". The daily notes
+ * library calls it.
+ */
+export function normalizePath(path: string): string {
+  const slashed = path.replace(/[\\/]+/g, "/").replace(/^\/+|\/+$/g, "");
+  return (slashed === "" ? "/" : slashed)
+    .replace(/[\u00A0\u202F]/g, " ")
+    .normalize("NFC");
 }
 
 /** Splits `Note#Heading` into the file part and the `#`-prefixed subpath. */

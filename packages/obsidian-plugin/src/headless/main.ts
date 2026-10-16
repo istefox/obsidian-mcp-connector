@@ -21,8 +21,10 @@ import {
   teardown,
 } from "$/features/mcp-transport/services/setup";
 import { ensureTokenStore } from "$/features/mcp-transport/services/tokenStore";
+import { createGuardedApp } from "$/shared/guardedApp";
 import { logger } from "$/shared/logger";
 import { DEFAULT_LOG_LEVEL } from "$/shared/log/logLine";
+import { pathPolicyFor } from "$/shared/policyProvider";
 import manifest from "../../../../manifest.json";
 import { parseArgs, unsupportedNodeReason } from "./args";
 import { createHeadlessApp } from "./headlessApp";
@@ -33,8 +35,10 @@ import {
   createMemoryHost,
   defaultDataPath,
   withFixedPort,
+  type HeadlessHost,
   type HostParts,
 } from "./hostData";
+import { exposeObsidianGlobals } from "./periodicNotes";
 import { createHeadlessSemantic } from "./semanticSearch";
 import { createShutdown, unrefTimer } from "./shutdown";
 import { routeConsoleToStderr, stderrLogFs } from "./stderrLogFs";
@@ -46,6 +50,16 @@ const hostManifest = { id: manifest.id, version: manifest.version };
 
 function say(line: string): void {
   process.stderr.write(`${line}\n`);
+}
+
+/**
+ * Give the daily notes library the `app` it reads. It is the guarded one,
+ * asked for the policy of the request that is running, so the library meets
+ * the same folder exclusions as the tools.
+ */
+function exposeGuardedApp(host: HeadlessHost): void {
+  const policy = pathPolicyFor(asPlugin(host));
+  exposeObsidianGlobals(createGuardedApp(host.app, () => policy.current()));
 }
 
 function onShutdown(cleanup: () => Promise<void>): void {
@@ -64,8 +78,9 @@ async function serveOverStdio(
   semantic: boolean,
 ): Promise<void> {
   routeConsoleToStderr();
-  const { app, close } = await createHeadlessApp(vaultDir);
+  const { app, close } = await createHeadlessApp(vaultDir, { warn: say });
   const host = createMemoryHost({ app, manifest: hostManifest });
+  exposeGuardedApp(host);
   const search = semantic
     ? createHeadlessSemantic(app, await fs.realpath(vaultDir), host)
     : undefined;
@@ -122,13 +137,14 @@ async function serveOverHttp(
     return;
   }
 
-  const { app, close } = await createHeadlessApp(real);
+  const { app, close } = await createHeadlessApp(real, { warn: say });
   const stored = await createFileHost(
     { app, manifest: hostManifest },
     dataFile,
   );
   const host =
     options.port === undefined ? stored : withFixedPort(stored, options.port);
+  exposeGuardedApp(host);
   const search = options.semantic
     ? createHeadlessSemantic(app, real, host)
     : undefined;

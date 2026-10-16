@@ -132,6 +132,7 @@ import {
   searchVaultSmartSchema,
   type SearchVaultSmartContext,
 } from "$/features/mcp-tools/tools/searchVaultSmart";
+import { fetchHandler, fetchSchema } from "$/features/mcp-tools/tools/fetch";
 import {
   listTagsHandler,
   listTagsSchema,
@@ -176,6 +177,18 @@ import {
   getBacklinksHandler,
   getBacklinksSchema,
 } from "$/features/mcp-tools/tools/getBacklinks";
+import {
+  getOrCreateDailyNoteHandler,
+  getOrCreateDailyNoteSchema,
+} from "$/features/mcp-tools/tools/getOrCreateDailyNote";
+import {
+  getOrCreatePeriodicNoteHandler,
+  getOrCreatePeriodicNoteSchema,
+} from "$/features/mcp-tools/tools/getOrCreatePeriodicNote";
+import {
+  appendToPeriodicNoteHandler,
+  appendToPeriodicNoteSchema,
+} from "$/features/mcp-tools/tools/appendToPeriodicNote";
 import {
   findBrokenLinksHandler,
   findBrokenLinksSchema,
@@ -492,6 +505,24 @@ export async function registerTools(
       },
     );
   }
+
+  // Periodic notes
+  registry.register(getOrCreateDailyNoteSchema, async ({ arguments: args }) =>
+    getOrCreateDailyNoteHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(
+    getOrCreatePeriodicNoteSchema,
+    async ({ arguments: args }) =>
+      getOrCreatePeriodicNoteHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(appendToPeriodicNoteSchema, async ({ arguments: args }) =>
+    appendToPeriodicNoteHandler({ arguments: args, app: ctx.app }),
+  );
+
+  // Misc
+  registry.register(fetchSchema, async ({ arguments: args }) =>
+    fetchHandler({ arguments: args }),
+  );
 
   // Covers the meta-tools registered later in mcpServer.ts too:
   // annotations are looked up by name at list() time.

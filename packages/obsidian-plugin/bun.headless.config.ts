@@ -31,6 +31,12 @@
  *   rewritten to `globalThis`. (Defining a `window` at run time is not an
  *   option: libraries take it as a sign of a browser.)
  *
+ * The daily notes library the periodic note tools use reads `window.app`
+ * and `window.moment`, as Obsidian has them. In that one package `window`
+ * becomes `globalThis`, and the entry sets `app` and `moment` there (see
+ * `periodicNotes.ts`). Nothing else gets a `window`, which libraries read
+ * as a sign of a browser.
+ *
  * Semantic search needs an ONNX runtime. The native onnxruntime-node is
  * an addon and cannot live in one file, so every ONNX import resolves to
  * `ortNodeShim.cjs`, which wraps the CPU build of onnxruntime-web
@@ -72,6 +78,7 @@ const REDIRECTS: ReadonlyArray<{ from: RegExp; to: string }> = [
 ];
 const redirected = new Set<RegExp>();
 let transformersShimUsed = false;
+let dailyNotesPatched = false;
 
 /** The timer calls the define below rewrites, each of which the graph uses. */
 const REWRITTEN_TIMERS = [
@@ -137,6 +144,22 @@ const result = await Bun.build({
       },
     },
     {
+      name: "daily-notes-window",
+      setup(build) {
+        build.onLoad(
+          { filter: /obsidian-daily-notes-interface[\\/]dist[\\/]main\.js$/ },
+          async (args) => {
+            const source = await Bun.file(args.path).text();
+            dailyNotesPatched = /\bwindow\.app\b/.test(source);
+            return {
+              contents: source.replace(/\bwindow\b/g, "globalThis"),
+              loader: "js",
+            };
+          },
+        );
+      },
+    },
+    {
       name: "semantic-search-runtime",
       setup(build) {
         build.onResolve(
@@ -190,6 +213,13 @@ for (const redirect of REDIRECTS) {
     );
     process.exit(1);
   }
+}
+
+if (!dailyNotesPatched) {
+  console.error(
+    "Headless build failed: the daily notes library was not found or no longer reads window.app, so the periodic note tools would fail at run time",
+  );
+  process.exit(1);
 }
 
 if (!transformersShimUsed) {

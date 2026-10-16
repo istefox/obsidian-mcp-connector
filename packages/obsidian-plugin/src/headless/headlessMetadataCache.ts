@@ -47,6 +47,7 @@ export class HeadlessMetadataCache extends HeadlessEvents {
   /** What each cache was parsed from, to tell a stale cache from a current one. */
   private readonly fingerprints = new Map<string, string>();
   private resolver: LinkResolver | null = null;
+  private ignored: (path: string) => boolean = () => false;
   private batchDepth = 0;
   private dirty = false;
   resolvedLinks: LinkMap = {};
@@ -88,9 +89,14 @@ export class HeadlessMetadataCache extends HeadlessEvents {
       : null;
   }
 
-  /** The Files & Links "Excluded files" setting has no headless equivalent. */
-  isUserIgnored(_path: string): boolean {
-    return false;
+  /** The Files & Links "Excluded files" setting, as read at startup. */
+  isUserIgnored(path: string): boolean {
+    return this.ignored(path);
+  }
+
+  /** Set the test `isUserIgnored` answers with. Nothing is ignored until then. */
+  setUserIgnore(ignored: (path: string) => boolean): void {
+    this.ignored = ignored;
   }
 
   getFirstLinkpathDest(linkpath: string, sourcePath: string): TFile | null {

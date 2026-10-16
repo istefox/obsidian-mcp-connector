@@ -29,12 +29,13 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    - *Tool set.* `src/headless/registerTools.ts` exports the same `registerTools` as the desktop `features/mcp-tools/index.ts`, with the same context, and registers the shared schema and handler of every tool that needs only a vault-shaped `App`.
      The shared composition root imports the desktop one, so `bun.headless.config.ts` points that single import at the headless file when it bundles.
      The build fails if the redirect is not used.
-     Headless serves 45 tools plus the three adaptive-loading meta-tools.
+     Headless serves 49 tools plus the three adaptive-loading meta-tools.
      `registerTools.test.ts` builds both registries and requires the headless set to equal the desktop set minus an explicit list of desktop-only tools (`toolSets.ts`: the open file and workspace, commands, Dataview, Templater, bookmarks), with identical schemas, descriptions, annotations and titles.
      A tool added on the desktop therefore fails that test until it is either served or listed as desktop-only.
      `rename_vault_file` and `search_files_by_name` are desktop tools already.
      Headless serves them with the same schema and handler (see decision 8), and the one headless addition is a `warnings` list on a `rename_vault_file` result.
      `search_vault_smart` is registered only when semantic search is on (decision 9).
+     The set also holds `fetch` and the three periodic-note tools (decisions 10 to 12).
    - *Host.* The shared transport and tool code is typed with the plugin class and reads only `app`, `manifest`, `loadData` and `saveData`, plus `mcpTransportState` and `semanticSearchState` that the entry assigns.
      Headless passes an object with those members, cast once in `hostData.ts`.
    - *Timers.* Shared code calls `window.setTimeout` and its three siblings, which do not exist in Node.
@@ -46,6 +47,7 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
    - *Barrels.* The semantic search feature takes its mutex from the `command-permissions` barrel, which pulls in a modal and the Svelte runtime.
      The bundle points that import at `shared/settingsLock`, where the mutex lives, and replaces any other `.svelte` file with a stub that throws when called.
    - *Libraries.* Three more imports are pointed at headless files (decision 9): `onnxruntime-node` and `onnxruntime-web` at a shim over the CPU build, `sharp` at an empty stub, and `@huggingface/transformers` at a wrapper.
+     The daily notes library's reads of `window` become reads of `globalThis` in that one package (decision 11).
    - *Instructions.* The `initialize` text is the desktop one, which also names Dataview and Templater.
      `tools/list` is exact and is what clients use.
      Making the text a parameter would be a shared change, so it is left for later.
@@ -64,7 +66,8 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
 4. **Confinement.**
    Every path is normalised (no `..`, absolute paths, NUL bytes or dot-segments) and joined on the realpath of the vault root, taken once at startup.
    Symlinks inside the vault are ignored: they are not indexed, and a path through one is refused.
-   Dot-folders are not indexed, read or written.
+   Dot-folders are not indexed, and no tool can address a path in one.
+   The vault itself writes to `.trash` for recoverable deletion, and the server reads a few settings files in `.obsidian` at startup (decision 10).
    On POSIX a backslash is a file name character, so a name that holds one is left out of the index and a path that holds one is refused with an explanation, rather than read as a `/` and mapped to a different file.
    Host paths are kept out of error messages by source.
    An error from the vault names the vault root as `<vault>` (decision 3).
@@ -200,14 +203,66 @@ Headless runs in plain Node, so it cannot be part of that crash, and this change
      Peak memory is about 0.55 GB with the model loaded, indexing uses one core for as long as it runs, and a call to another tool can wait for the text being embedded, up to about 0.4 s in the measurement above.
      Retrying a failed first start and dropping files that are gone from the index are the shared feature's own behavior.
 
+10. **The vault's Obsidian settings are read once at startup.**
+    `createHeadlessApp` reads `.obsidian/app.json` and the periodic-note files below before the first scan, through one reader (`vaultSettings.ts`).
+    The reader follows no symlink (a symlink at any level between the vault root, such as `.obsidian` or `.obsidian/plugins/calendar`, and the file counts as unusable), refuses a file over 1 MB and parses JSON.
+    A missing file means Obsidian's defaults, silently.
+    A file that is present and unusable (a symlink, a folder in its place, too large, unreadable, or invalid JSON) also means the defaults, but with one line on stderr that names the file and the reason, and for `app.json` says that "Excluded files" is not applied.
+    Ignoring that setting silently would serve notes the user meant to hide.
+    Nothing watches `.obsidian`, so a changed setting needs a restart.
+    The tools still never touch dot-folders.
+    `userIgnoreFilters` gives `metadataCache.isUserIgnored(path)` real behavior, which every tool and the semantic indexer already reach through `createExclusionFilter`.
+    An entry wrapped in slashes (`/regex/`) is a regular expression tested on the vault-relative path, any other entry is a path prefix, and an empty entry, an empty expression or an invalid expression matches nothing.
+    The match is case sensitive.
+    Obsidian's own implementation is not public, so this follows its documented behavior and was not compared against it.
+    The setting hides files from the tools that honour it on desktop, and the files stay in the vault and in `list_vault_files`, as on desktop.
+    `useMarkdownLinks` and `newLinkFormat` are not read because nothing in the shared or headless path generates link text from settings.
+    `rename_vault_file` keeps each link's own style (decision 8) and `ensure_block_id` returns a wikilink as on desktop.
+
+11. **Periodic notes run the desktop tools and the desktop library.**
+    The three tools, `periodicNotesDetector` and `obsidian-daily-notes-interface` are the desktop ones.
+    The library reads three globals' worth of Obsidian: `window.app` with `internalPlugins`, `plugins.getPlugin` and `foldManager`, and `window.moment`.
+    Headless supplies them.
+    The headless `App` carries `internalPlugins`, `plugins` and `foldManager` shaped as the vault's files describe them: `core-plugins.json` (a list of enabled ids or a map of flags) and `daily-notes.json` for the core plugin, `community-plugins.json` for whether Periodic Notes and Calendar are enabled, and their `data.json` files under `plugins/` for their settings.
+    A plugin that is not enabled, or a file that is missing or invalid, counts as off, and with no plugin on for a period the detector's own fallback applies (an empty note named by ISO date at the vault root).
+    The entry sets `globalThis.app` to the guarded `App` and `globalThis.moment`, as Obsidian does.
+    In that one package the bundle rewrites `window` to `globalThis`.
+    Defining a `window` for the whole bundle would be read as a browser by other libraries, and it is not needed.
+    The build fails if the library no longer reads `window.app`.
+    The `app` the library sees is guarded by the policy of the request in flight, so every read and write it makes meets the same folder exclusions as the tools: a template in an excluded folder reads as missing (an empty note), a note whose folder is excluded is refused before anything is written, and an existing note in an excluded folder is never read.
+    The library's `getNotePath` makes the folder before it creates the note, outside its error handling, so a refused folder rejects the call.
+    Because it is the library itself, the rules for which plugin serves a period, defaults, trimming and template passes are the plugin's by construction.
+    A template is read from the vault by link resolution, so a template in a dot-folder is not found.
+    Only the library's placeholders are substituted, and no template engine runs, so Templater syntax stays as written.
+    Time is the host's timezone, and week-based tokens use the English calendar (Sunday starts the week), because there is no Obsidian language setting to follow.
+
+12. **`fetch` is the desktop tool over a `requestUrl` that enforces its network policy on the connection.**
+    The shim exports a `requestUrl` with the response the tool reads (`status`, lower-cased `headers`, `arrayBuffer`, `text`, `json`), `throw: false`, and an error with `status` and the message `Request failed, status N` for a status of 400 or more.
+    The desktop tool checks only the URL string, and Node can reach more than that.
+    So the headless `requestUrl` is built on `node:http` and `node:https`, not on `fetch`, and enforces the policy itself:
+    - It refuses `localhost`, `*.localhost` and their trailing-dot forms before resolving anything.
+    - It resolves the host through a `lookup` hook, refuses the whole answer if any address is loopback, private, link-local, unspecified, multicast, CGNAT, benchmarking, documentation or reserved, or an IPv6 unique-local, link-local, 6to4 or Teredo address, and decodes the IPv4-mapped, translated, compatible and NAT64 forms to apply the IPv4 rules.
+      Literals are checked directly.
+    - The hook hands the socket only validated addresses, so the connection goes to the address that was checked, and a second DNS answer cannot swap it (DNS rebinding).
+      For https the host name is kept for SNI and the certificate check.
+    - Redirects are followed by hand, at most 5, with scheme and address checked again on every hop.
+      A 303, and a 301 or 302 after a POST, become a GET, and credentials are dropped when a redirect leaves the origin.
+    - The body is capped at 10 MB, on the wire and after decompression, and a declared `Content-Length` over the cap is refused before reading.
+      Whatever ends the call (the cap, the time budget, an error or the end of the body) also destroys the response and its decompressor, so a small compressed body cannot keep inflating after it was refused.
+    - The whole call has a 40 second budget, which is longer than the tool's own 30 second race so that the tool still reports `fetch_timeout`, and frees the socket afterwards.
+    The tool's own guard still applies (http and https only, no localhost, link-local or private network host literals), and so do its 30 second race and its output cap.
+    The one change a build needs from the tool is `globalThis.setTimeout` in place of `window.setTimeout`, which the bundle makes (decision 2).
+    The desktop tool and its guard are unchanged, and the desktop side is the maintainer's to harden.
+    Turndown resolves to its Node build in the CommonJS bundle and uses its bundled `domino` document, a dependency Turndown already has, so nothing new is added.
+    The tool sends a plain `obsidian-mcp-headless` user agent where Obsidian sends a browser one.
+    Known gaps: HTTP proxy variables are ignored, and a response is read whole up to the cap.
+
 ## Consequences
 
 - Tool names and response shapes stay identical, so client integrations carry over.
 - The parser and the link resolver are approximations of Obsidian's.
   Differences show up in edge cases such as setext headings, footnotes and unusual tag forms, and the tests pin the behaviour the tools rely on.
-- The "Excluded files" setting has no equivalent (so `search_files_by_name` omits nothing), and `get_server_info` reports a loopback endpoint, which is correct because headless binds `127.0.0.1` only.
-- `fetch` and the daily and periodic note tools are not in this step.
-  They arrive in the next changes of the series, which also leave the desktop bundle unchanged.
+- The "Excluded files" setting applies from startup (decision 10), and `get_server_info` reports a loopback endpoint, which is correct because headless binds `127.0.0.1` only.
 - The desktop plugin gains nothing from this change and loses nothing: its code, its tool order and its bundle are the same.
 - Because the redirects live in the headless build, the bundle's composition differs from what a unit test of the shared code sees.
   The smoke test runs the real bundle for that reason.

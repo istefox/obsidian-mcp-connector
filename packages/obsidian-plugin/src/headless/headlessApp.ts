@@ -6,13 +6,16 @@
  */
 
 import type { App } from "obsidian";
+import { logger } from "$/shared/logger";
 import { errorWithReason } from "./domainError";
 import { editFrontmatter } from "./frontmatterEdit";
 import { HeadlessVault, type HeadlessVaultOptions } from "./headlessVault";
 import { TFile, TFolder, type TAbstractFile } from "./obsidianShim";
+import { loadPeriodicNotesConfig, periodicNotesMembers } from "./periodicNotes";
 import { createLinkRewriter, type LinkRewriter } from "./renameLinks";
 import { baseRefersToRename, rewriteCanvas } from "./renameReferences";
 import { reportRenameWarning } from "./renameWarnings";
+import { createIgnoreMatcher, loadVaultSettings } from "./vaultSettings";
 import { VaultWatcher } from "./watcher";
 
 export class HeadlessFileManager {
@@ -162,16 +165,29 @@ export type HeadlessAppHandle = {
   close: () => void;
 };
 
+export type HeadlessAppOptions = HeadlessVaultOptions & {
+  /** Receives one line for each settings file that is present but unusable. */
+  warn?: (message: string) => void;
+};
+
 /**
  * Start watching the vault directory, index it, and return the app. The
  * watcher opens first and holds its events through the scan, so an edit
  * made while the scan runs is reconciled once it is done.
+ *
+ * The vault's Obsidian settings are read here, once: the "Excluded files"
+ * list and the daily and periodic note configuration (see
+ * periodicNotes.ts). A change to them needs a restart.
  */
 export async function createHeadlessApp(
   vaultDir: string,
-  options: HeadlessVaultOptions = {},
+  options: HeadlessAppOptions = {},
 ): Promise<HeadlessAppHandle> {
-  const vault = await HeadlessVault.open(vaultDir, options);
+  const { warn = (message) => logger.warn(message), ...vaultOptions } = options;
+  const vault = await HeadlessVault.open(vaultDir, vaultOptions);
+  const settings = await loadVaultSettings(vault.root, warn);
+  vault.metadata.setUserIgnore(createIgnoreMatcher(settings.userIgnoreFilters));
+  const periodicConfig = await loadPeriodicNotesConfig(vault.root, warn);
   const watcher = new VaultWatcher(vault);
   watcher.start({ held: true });
   vault.flushPending = () => watcher.flush();
@@ -187,9 +203,11 @@ export async function createHeadlessApp(
     metadataCache: vault.metadata,
     fileManager: new HeadlessFileManager(vault),
     workspace,
-    // Dataview and Templater are desktop plugins; `search_vault` reads this
-    // to answer `dataview_not_installed`.
-    plugins: { plugins: {} },
+    // The plugin registry. Dataview and Templater are desktop plugins, so
+    // `search_vault` finds no Dataview and answers `dataview_not_installed`.
+    // The daily and periodic note plugins appear as the vault's files
+    // describe them, for the library the periodic note tools use.
+    ...periodicNotesMembers(periodicConfig),
   } as unknown as App;
   return { app, vault, close: () => watcher.stop() };
 }
