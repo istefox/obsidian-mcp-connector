@@ -58,8 +58,13 @@ export function isIndexableFile(f: unknown): f is TFile {
   return f instanceof TFile && f.extension === "md";
 }
 
+/** First wait after a failed native first start, doubling up to the cap. */
+const START_RETRY_BASE_MS = 30_000;
+const START_RETRY_CAP_MS = 10 * 60_000;
+
 export async function wireSemanticSearch(
   plugin: McpToolsPlugin,
+  { now = Date.now }: { now?: () => number } = {},
 ): Promise<SemanticSearchState | undefined> {
   const ssAdapter: VaultAdapter = {
     exists: (p) => plugin.app.vault.adapter.exists(p),
@@ -277,8 +282,14 @@ export async function wireSemanticSearch(
     state.indexer = indexer;
 
     let indexerStarted = false;
+    let closed = false;
+    // A start that keeps failing (say, one note the embedder always
+    // chokes on) is retried by the next search, so the retries back off
+    // instead of running a whole new attempt per search call.
+    let failedStarts = 0;
+    let retryNotBefore = 0;
     state.startIndexerIfNeeded = () => {
-      if (indexerStarted) return;
+      if (indexerStarted || closed || now() < retryNotBefore) return;
       indexerStarted = true;
       // #344: mark the build in-flight before kicking it off so a
       // search_vault_smart call landing in this same tick already sees
@@ -286,18 +297,32 @@ export async function wireSemanticSearch(
       // must not permanently block search with a stale "still building"
       // signal.
       state.nativeIndexBuildInProgress = true;
-      state.nativeIndexBuildStartedAt = Date.now();
+      state.nativeIndexBuildStartedAt = now();
       // The first pass prunes records of files missing from the vault
       // listing, so it must not run on a partial listing. A search can
       // reach here before Obsidian has finished listing the vault.
       new Promise<void>((resolve) =>
         plugin.app.workspace.onLayoutReady(resolve),
       )
-        .then(() => indexer.start())
-        .catch((err) => {
+        .then(() => (closed ? undefined : indexer.start()))
+        .catch(async (err) => {
           logger.error("semantic-search: indexer start failed", {
             error: err instanceof Error ? err.message : String(err),
           });
+          // Let the next search retry. A failed start (say, the model
+          // download with no network) must not disable search until
+          // restart. stop() first: start() returns at once on an indexer
+          // that still thinks it is running, so a retry would build
+          // nothing. Partial progress is flushed and kept.
+          await indexer.stop().catch(() => {});
+          failedStarts += 1;
+          retryNotBefore =
+            now() +
+            Math.min(
+              START_RETRY_BASE_MS * 2 ** (failedStarts - 1),
+              START_RETRY_CAP_MS,
+            );
+          indexerStarted = false;
         })
         .finally(() => {
           state.nativeIndexBuildInProgress = false;
@@ -367,7 +392,9 @@ export async function wireSemanticSearch(
     // intact so post-rebuild edits keep flowing.
     const _rebuildingProviders = new Set<string>();
     state.startRebuildFor = (providerKey: string) => {
-      if (_rebuildingProviders.has(providerKey)) return;
+      // After teardown nothing may build or start an indexer: it would
+      // be untracked and keep receiving vault events.
+      if (closed || _rebuildingProviders.has(providerKey)) return;
       _rebuildingProviders.add(providerKey);
       const epKey = providerKey as keyof typeof embeddingProviders;
       const ep = embeddingProviders[epKey];
@@ -426,6 +453,7 @@ export async function wireSemanticSearch(
       if (!dlcIndexer) return;
       state.dlcIndexers?.set(providerKey, dlcIndexer);
       plugin.app.workspace.onLayoutReady(() => {
+        if (closed) return;
         dlcIndexer.start({ initialRebuild: false }).catch((err) => {
           logger.error("semantic-search: DLC auto-subscribe failed", {
             providerKey,
@@ -480,12 +508,14 @@ export async function wireSemanticSearch(
     };
 
     state.teardown = async () => {
-      if (indexerStarted) {
-        try {
-          await indexer.stop();
-        } catch {
-          // best-effort
-        }
+      closed = true;
+      // Always, not only after the first search: the settings "Rebuild"
+      // button runs `rebuildAll()` on this indexer before any search has
+      // started it, and stop() waits for that rebuild's writes.
+      try {
+        await indexer.stop();
+      } catch {
+        // best-effort
       }
       // Stop every persistent DLC indexer so its debounced flush
       // drains to disk before the plugin unloads.

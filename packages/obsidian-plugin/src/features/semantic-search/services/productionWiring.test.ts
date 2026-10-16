@@ -502,10 +502,10 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
   const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
   /** A plugin whose vault adapter is in memory, and the layout callbacks it is holding back. */
-  function host() {
+  function host(initial: Record<string, unknown> = {}) {
     resetMockVault();
     const mem = memAdapter();
-    let data: Record<string, unknown> = {};
+    let data: Record<string, unknown> = initial;
     const plugin = mockPlugin({
       loadData: async () => data,
       saveData: async (next: unknown) => {
@@ -535,17 +535,39 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
     };
   }
 
-  /** Counts `start()` calls and keeps the promise of the latest one. */
-  function watchIndexer(indexer: SemanticIndexer) {
+  /**
+   * Counts `start()` calls and keeps the promise of the latest one.
+   * `startWith` replaces the real start, say with one that fails.
+   * `nextStop()` resolves once the next `stop()` has finished and its
+   * caller has run on.
+   */
+  function watchIndexer(
+    indexer: SemanticIndexer,
+    startWith?: () => Promise<void>,
+  ) {
     const start = indexer.start.bind(indexer);
+    const stop = indexer.stop.bind(indexer);
+    const waiting: Array<() => void> = [];
     let starts = 0;
     let latest: Promise<void> | undefined;
     indexer.start = (opts) => {
       starts += 1;
-      latest = start(opts);
+      latest = startWith ? startWith() : start(opts);
       return latest;
     };
-    return { starts: () => starts, latest: () => latest };
+    indexer.stop = async () => {
+      try {
+        await stop();
+      } finally {
+        waiting.shift()?.();
+      }
+    };
+    return {
+      starts: () => starts,
+      latest: () => latest,
+      nextStop: () =>
+        new Promise<void>((resolve) => waiting.push(resolve)).then(turn),
+    };
   }
 
   const fakeTFile = (path: string, extension: string): TFile => {
@@ -599,6 +621,194 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
     } finally {
       await state?.teardown();
     }
+  });
+
+  test("a failed indexer start is retried by a later call, not latched until restart", async () => {
+    const h = host();
+    let now = 0;
+    const state = await wireSemanticSearch(h.plugin, { now: () => now });
+    const watch = watchIndexer(state!.indexer!, () =>
+      Promise.reject(new Error("offline")),
+    );
+    try {
+      // Two calls in the same tick are one start.
+      const failed = watch.nextStop();
+      state?.startIndexerIfNeeded?.();
+      state?.startIndexerIfNeeded?.();
+      expect(state?.nativeIndexBuildInProgress).toBe(true);
+      await failed;
+      expect(watch.starts()).toBe(1);
+      expect(state?.nativeIndexBuildInProgress).toBe(false);
+
+      // The failure did not disable search: once the wait is over the
+      // next call starts again.
+      now = 30_000;
+      const failedAgain = watch.nextStop();
+      state?.startIndexerIfNeeded?.();
+      expect(state?.nativeIndexBuildInProgress).toBe(true);
+      await failedAgain;
+      expect(watch.starts()).toBe(2);
+      expect(state?.nativeIndexBuildInProgress).toBe(false);
+    } finally {
+      await state?.teardown();
+    }
+  });
+
+  test("repeated failed starts wait 30 s, doubling to a 10 minute cap, and a call that waits claims no build", async () => {
+    const h = host();
+    let now = 0;
+    const state = await wireSemanticSearch(h.plugin, { now: () => now });
+    const watch = watchIndexer(state!.indexer!, () =>
+      Promise.reject(new Error("offline")),
+    );
+    try {
+      let failedAt = 0;
+      let starts = 0;
+      for (const wait of [
+        30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000,
+      ]) {
+        now = failedAt;
+        const failed = watch.nextStop();
+        state?.startIndexerIfNeeded?.();
+        await failed;
+        starts += 1;
+        expect(watch.starts()).toBe(starts);
+
+        // Until the wait is over a call starts nothing, and a search that
+        // sees the state is not told a build is running.
+        now = failedAt + wait - 1;
+        state?.startIndexerIfNeeded?.();
+        await turn();
+        expect(watch.starts()).toBe(starts);
+        expect(state?.nativeIndexBuildInProgress).toBe(false);
+        failedAt += wait;
+      }
+    } finally {
+      await state?.teardown();
+    }
+  });
+
+  test("a start that is still running is not started again", async () => {
+    const h = host();
+    const state = await wireSemanticSearch(h.plugin);
+    let fail!: () => void;
+    const watch = watchIndexer(
+      state!.indexer!,
+      () =>
+        new Promise<void>((_, reject) => {
+          fail = () => reject(new Error("stop"));
+        }),
+    );
+    try {
+      state?.startIndexerIfNeeded?.();
+      await turn();
+      state?.startIndexerIfNeeded?.();
+      await turn();
+      expect(watch.starts()).toBe(1);
+      expect(state?.nativeIndexBuildInProgress).toBe(true);
+    } finally {
+      const stopped = watch.nextStop();
+      fail();
+      await stopped;
+      await state?.teardown();
+    }
+  });
+
+  test("a teardown before the host is ready keeps the pending first pass from starting", async () => {
+    const h = host();
+    h.holdLayout();
+    const state = await wireSemanticSearch(h.plugin);
+    const watch = watchIndexer(state!.indexer!);
+    state?.startIndexerIfNeeded?.();
+    await turn();
+    await state?.teardown();
+    h.ready();
+    await turn();
+    expect(watch.starts()).toBe(0);
+  });
+
+  test("teardown waits for a manual rebuild started before any search, and no store write follows it", async () => {
+    const h = host();
+    const record = (filePath: string): EmbeddingRecord => ({
+      chunkId: `${filePath}#0`,
+      filePath,
+      offset: 0,
+      heading: null,
+      contentHash: "h",
+      vector: new Float32Array(384),
+    });
+    const state = await wireSemanticSearch(h.plugin);
+    const store = state!.store!;
+    await store.init();
+    // A record for a note that is not in the vault: the rebuild prunes it.
+    await store.upsert([record("Gone/b.md")]);
+
+    const realPurge = store.purge.bind(store);
+    let parked!: () => void;
+    const purgeReached = new Promise<void>((resolve) => (parked = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    store.purge = async (isExcluded) => {
+      parked();
+      await released;
+      return realPurge(isExcluded);
+    };
+    let tornDown = false;
+    let lateWrites = 0;
+    for (const name of ["upsert", "delete", "flush", "setMtime"] as const) {
+      const real = (store[name] as (...a: never[]) => unknown).bind(store);
+      (store as unknown as Record<string, unknown>)[name] = (
+        ...args: never[]
+      ) => {
+        if (tornDown) lateWrites += 1;
+        return real(...args);
+      };
+    }
+
+    // What the settings "Rebuild" button does, with no search before it.
+    let rebuildDone = false;
+    const rebuilt = state!.indexer!.rebuildAll().then(() => {
+      rebuildDone = true;
+    });
+    await purgeReached;
+    let tearDownDone = false;
+    const tearing = state!.teardown().then(() => {
+      tearDownDone = true;
+      tornDown = true;
+    });
+    for (let i = 0; i < 3; i++) await turn();
+    expect(tearDownDone).toBe(false);
+
+    release();
+    await rebuilt;
+    await tearing;
+    expect(rebuildDone).toBe(true);
+    for (let i = 0; i < 3; i++) await turn();
+    expect(lateWrites).toBe(0);
+  });
+
+  test("a teardown before the host is ready keeps a deferred DLC start from running", async () => {
+    // An active provider whose store already holds records is subscribed
+    // to vault events once the layout is ready.
+    const h = host({ semanticSearch: { provider: "embedding-gemma" } });
+    seedStore(h.mem, "embedding-gemma-300m", FORMAT_VERSION, 3);
+    h.holdLayout();
+    const state = await wireSemanticSearch(h.plugin);
+    const dlc = state!.dlcIndexers!.get("embedding-gemma-300m")!;
+    expect(dlc).toBeDefined();
+    const watch = watchIndexer(dlc);
+
+    await state?.teardown();
+    h.ready();
+    await turn();
+    expect(watch.starts()).toBe(0);
+    // No subscription was installed: a vault event schedules nothing.
+    fireMockVaultEvent("modify", fakeTFile("Notes/a.md", "md"));
+    expect(dlc.pending()).toBe(0);
+
+    // A rebuild asked for after teardown builds no indexer either.
+    state?.startRebuildFor?.("embedding-gemma-300m");
+    expect(state?.dlcIndexers?.size).toBe(0);
   });
 
   test("vault rename events reach the indexer for files only, with the old path", async () => {

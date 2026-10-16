@@ -1767,3 +1767,197 @@ describe("indexer — lazy store init", () => {
     await idx2.stop();
   });
 });
+
+describe("indexer — stop during start", () => {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  /** A promise and the function that settles it, for barrier control. */
+  function barrier() {
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (release = resolve));
+    return { reached, release };
+  }
+
+  test("stop() waits for a start still on store init, which then does nothing", async () => {
+    const store = await makeStore();
+    const realInit = store.init.bind(store);
+    const entered = barrier();
+    const gate = barrier();
+    store.init = async () => {
+      entered.release();
+      await gate.reached;
+      await realInit();
+    };
+    const { vault, emit } = makeVault({ "a.md": "alpha" });
+    const { embedder, embedCalls } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+
+    const started = indexer.start();
+    await entered.reached;
+    let stopDone = false;
+    const stopped = indexer.stop().then(() => {
+      stopDone = true;
+    });
+    await turn();
+    expect(stopDone).toBe(false);
+
+    gate.release();
+    await started;
+    await stopped;
+
+    emit("create", "a.md");
+    expect(indexer.pending()).toBe(0);
+    expect(embedCalls()).toEqual([]);
+    expect(store.size()).toBe(0);
+  });
+
+  test("stop() during the first rebuild keeps later files out of the store", async () => {
+    const store = await makeStore();
+    const { vault } = makeVault({ "a.md": "alpha", "b.md": "bravo" });
+    const base = fakeEmbeddingProvider();
+    const entered = barrier();
+    const gate = barrier();
+    const embedder: EmbeddingProvider = {
+      ...base.embedder,
+      embed: async (texts, role) => {
+        entered.release();
+        await gate.reached;
+        return base.embedder.embed(texts, role);
+      },
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+
+    const started = indexer.start();
+    await entered.reached;
+    const stopped = indexer.stop();
+    gate.release();
+    await started;
+    await stopped;
+
+    expect(base.embeds()).toEqual(["alpha"]);
+  });
+
+  test("low-power stop() during the first cycle installs no interval", async () => {
+    const store = await makeStore();
+    const { vault } = makeMtimeVault({
+      "a.md": { content: "alpha", mtime: 1 },
+    });
+    const base = fakeEmbeddingProvider();
+    const entered = barrier();
+    const gate = barrier();
+    const embedder: EmbeddingProvider = {
+      ...base.embedder,
+      embed: async (texts, role) => {
+        entered.release();
+        await gate.reached;
+        return base.embedder.embed(texts, role);
+      },
+    };
+    const indexer = createLowPowerIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      intervalMs: 10_000,
+    });
+    const realSetInterval = globalThis.setInterval;
+    const installed: unknown[] = [];
+    globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+      const handle = realSetInterval(...args);
+      installed.push(handle);
+      return handle;
+    }) as typeof setInterval;
+    try {
+      const started = indexer.start();
+      await entered.reached;
+      const stopped = indexer.stop();
+      gate.release();
+      await started;
+      await stopped;
+      expect(installed).toEqual([]);
+    } finally {
+      globalThis.setInterval = realSetInterval;
+      for (const h of installed) {
+        globalThis.clearInterval(h as ReturnType<typeof setInterval>);
+      }
+    }
+  });
+});
+
+describe("indexer — stop during a manual rebuild", () => {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  function barrier() {
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (release = resolve));
+    return { reached, release };
+  }
+
+  test("stop() waits for a rebuild that is pruning, and no store write follows it", async () => {
+    const store = await makeStore();
+    const { vault, files } = makeVault({ "a.md": "alpha", "gone.md": "bravo" });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    expect(pathsOf(await collect(store))).toEqual(new Set(["a.md", "gone.md"]));
+
+    // A file deleted since: the next rebuild prunes it, and the prune parks.
+    files.delete("gone.md");
+    const realPurge = store.purge.bind(store);
+    const entered = barrier();
+    const gate = barrier();
+    store.purge = async (isExcluded) => {
+      entered.release();
+      await gate.reached;
+      return realPurge(isExcluded);
+    };
+    // Every write path of the store, counted once stop() has returned.
+    let stopped = false;
+    let lateWrites = 0;
+    for (const name of ["upsert", "delete", "flush", "setMtime"] as const) {
+      const real = (store[name] as (...a: never[]) => unknown).bind(store);
+      (store as unknown as Record<string, unknown>)[name] = (
+        ...args: never[]
+      ) => {
+        if (stopped) lateWrites += 1;
+        return real(...args);
+      };
+    }
+
+    const rebuilt = indexer.rebuildAll();
+    await entered.reached;
+    let stopDone = false;
+    const stopping = indexer.stop().then(() => {
+      stopDone = true;
+      stopped = true;
+    });
+    for (let i = 0; i < 3; i++) await turn();
+    expect(stopDone).toBe(false);
+
+    gate.release();
+    await rebuilt;
+    await stopping;
+    for (let i = 0; i < 3; i++) await turn();
+    expect(lateWrites).toBe(0);
+    // The prune itself finished before stop() returned.
+    expect(pathsOf(await collect(store))).toEqual(new Set(["a.md"]));
+  });
+});

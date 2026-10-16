@@ -133,6 +133,15 @@ class LiveIndexerImpl implements SemanticIndexer {
   private inFlight = new Map<string, Promise<void>>();
   private unsubs: Array<() => void> = [];
   private running = false;
+  /**
+   * Bumped by `stop()`. A start or rebuild remembers the value it began
+   * under and bails out after any await that finds it changed, so a
+   * stop that lands mid-start is not undone by the start resuming.
+   */
+  private epoch = 0;
+  private startInFlight: Promise<void> | null = null;
+  /** Rebuilds still running, however they were started. */
+  private rebuilds = new Set<Promise<void>>();
   private flushTimer: number | null = null;
   private flushInFlight: Promise<void> | null = null;
   private readonly debounceMs: number;
@@ -148,12 +157,22 @@ class LiveIndexerImpl implements SemanticIndexer {
   async start(opts: StartOpts = {}): Promise<void> {
     if (this.running) return;
     this.running = true;
+    const run = this.runStart(opts, this.epoch);
+    this.startInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (this.startInFlight === run) this.startInFlight = null;
+    }
+  }
 
+  private async runStart(opts: StartOpts, epoch: number): Promise<void> {
     // With lazy store loading the store may not be initialized yet.
     // processOnePath reads recordsFor() (sync, no defensive init): on
     // an un-inited store it would see zero records and silently
     // re-embed the whole vault. Idempotent, cheap when already inited.
     await this.opts.store.init();
+    if (epoch !== this.epoch) return;
 
     this.unsubs.push(
       this.opts.vault.on("modify", (p) => this.schedule(p)),
@@ -179,10 +198,18 @@ class LiveIndexerImpl implements SemanticIndexer {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.epoch++;
     for (const t of this.timers.values()) window.clearTimeout(t);
     this.timers.clear();
     for (const u of this.unsubs) u();
     this.unsubs = [];
+    // A start still waiting on the store would otherwise install its
+    // subscriptions and begin embedding after the caller closed the
+    // store. It sees the new epoch and returns; wait for that.
+    await this.startInFlight?.catch(() => {});
+    // Same for a rebuild: it sees the new epoch at its next check, but
+    // its prune or file loop may be mid-write right now.
+    await Promise.allSettled([...this.rebuilds]);
     // Wait for any in-flight processing to finish so the store is
     // not mid-mutation when the caller drops it.
     await Promise.all(this.inFlight.values());
@@ -196,15 +223,28 @@ class LiveIndexerImpl implements SemanticIndexer {
   }
 
   async rebuildAll(opts: RebuildOpts = {}): Promise<void> {
+    const run = this.runRebuild(opts);
+    this.rebuilds.add(run);
+    try {
+      await run;
+    } finally {
+      this.rebuilds.delete(run);
+    }
+  }
+
+  private async runRebuild(opts: RebuildOpts): Promise<void> {
     const force = opts.force ?? true;
+    const epoch = this.epoch;
     if (!(await this.opts.embedder.isAvailable())) {
       logger.warn(
         "live indexer: embedding provider not available, skipping rebuild",
       );
       return;
     }
+    if (epoch !== this.epoch) return;
     // See start(): guard against recordsFor() on an un-inited store.
     await this.opts.store.init();
+    if (epoch !== this.epoch) return;
     const present = this.opts.vault.getMarkdownFiles();
     const files = present.filter((f) => !this.isExcluded(f.path));
     // A file renamed or deleted while no indexer was listening leaves
@@ -212,6 +252,7 @@ class LiveIndexerImpl implements SemanticIndexer {
     // kept even when excluded, per the leave-in-place rule on schedule().
     const presentPaths = new Set(present.map((f) => f.path));
     const pruned = await this.opts.store.purge((p) => !presentPaths.has(p));
+    if (epoch !== this.epoch) return;
     logger.info("live indexer: rebuildAll starting", {
       pruned,
       providerKey: this.opts.embedder.providerKey,
@@ -220,6 +261,7 @@ class LiveIndexerImpl implements SemanticIndexer {
     });
     let skipped = 0;
     for (const f of files) {
+      if (epoch !== this.epoch) return;
       // Session-start pass: a file whose persisted mtime matches and
       // whose records are present is current — skip the read entirely.
       // The hasRecords guard self-heals a stale sidecar (e.g. records
@@ -427,6 +469,9 @@ class LowPowerIndexerImpl implements SemanticIndexer {
     if (opts.initialRebuild !== false) {
       await this.runCycle();
     }
+    // stop() during the first cycle must not be undone by an interval
+    // installed after it.
+    if (!this.running) return;
     this.timer = window.setInterval(() => {
       // Skip if a cycle is still in flight to avoid stacking.
       if (this.cycleInFlight) return;
