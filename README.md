@@ -558,6 +558,83 @@ curl http://127.0.0.1:27200/_obsidian_mcp_broker/health
 # {"name":"obsidian-mcp-discovery-broker","version":3}
 ```
 
+## Headless mode
+
+`obsidian-mcp-headless` serves a vault folder over MCP from a plain Node process, so a server with no desktop and no Obsidian can use the same tools. Tool names and response shapes match the plugin, so client setups carry over. It needs Node 24.11 or newer, the first Node 24 LTS release.
+
+### Install and connect
+
+Download `obsidian-mcp-headless.js` from the [latest GitHub release](https://github.com/istefox/obsidian-mcp-connector/releases/latest) or build it with `bun run build:headless` (the file lands in `packages/obsidian-plugin/dist/headless/`). Put it on your `PATH`:
+
+```bash
+install -m 755 obsidian-mcp-headless.js ~/.local/bin/obsidian-mcp-headless
+```
+
+Then register it with your client. The client starts the server itself over stdio, so there is no port and no token:
+
+```bash
+claude mcp add obsidian -- obsidian-mcp-headless /path/to/vault
+```
+
+For Codex, add this to `config.toml`:
+
+```toml
+[mcp_servers.obsidian]
+command = "obsidian-mcp-headless"
+args = ["/path/to/vault"]
+```
+
+Without `PATH`, give the absolute path of the file instead: `node /absolute/path/to/obsidian-mcp-headless.js /path/to/vault`. The vault path can also come from the `OBSIDIAN_VAULT` environment variable. Stdio sessions get every headless tool. Logs go to stderr and stdout carries only protocol messages. The server exits when the client closes stdin, and on `SIGINT` or `SIGTERM`.
+
+### What works
+
+These tools are served, 45 in all with the three adaptive-loading meta-tools:
+
+- Files: `list_vault_files`, `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `create_vault_directory`, `delete_vault_directory`, `search_and_replace`, `get_file_info`, `list_attachments`, `get_recent_files`, `get_vault_overview`
+- Search: `search_vault_simple`, and `search_vault` with JsonLogic queries (a Dataview query returns `dataview_not_installed`)
+- Properties and tags: `get_note_property`, `get_note_properties`, `set_note_property`, `delete_note_property`, `update_note_properties`, `list_property_values`, `list_tags`, `get_files_by_tag`, `rename_tag`
+- Structure and tasks: `get_note_outline`, `rename_heading`, `ensure_block_id`, `list_tasks`, `set_task_status`
+- Links: `get_outgoing_links`, `find_broken_links`, `get_backlinks`, `find_orphaned_notes`
+- Canvas: `get_canvas`, `add_canvas_node`, `connect_canvas_nodes`, `update_canvas_node`, `delete_canvas_node`
+- Server and loading: `get_server_info`, `tool_catalog`, `activate_tool`, `activate_tools`
+
+Not served, because they need the desktop app or a plugin: `rename_vault_file`, `search_files_by_name`, `fetch`, the daily and periodic note tools, every workspace, active-file, command, Dataview, Templater and bookmark tool, and `search_vault_smart`. Semantic search in headless mode is planned.
+
+The server reads tags, links, headings, blocks and tasks with its own parser, which follows Obsidian's rules closely but is not Obsidian's. Edits made outside the server (an editor, a sync client, `git pull`) are picked up by a file watcher within a fraction of a second. Folders whose name starts with a dot, such as `.obsidian` and `.git`, are neither read nor written, and a path that leads outside the vault folder is refused. Symlinks inside the vault are ignored. A tool that trashes a file or folder moves it to `.trash/` in the vault. If a file is edited elsewhere while a tool is editing it, the tool fails with a message to retry instead of overwriting that edit. On Linux and macOS a file whose name contains a backslash is not served. Obsidian's "Excluded files" setting does not apply.
+
+### HTTP service mode
+
+For an always-on server that several clients share, run it over HTTP:
+
+```bash
+obsidian-mcp-headless /path/to/vault --http --port 27124
+obsidian-mcp-headless /path/to/vault --http --print-token
+```
+
+The server binds `127.0.0.1` only and requires a bearer token. `--print-token` prints the token and exits, creating it on first use. The token lives in a state file outside the vault, `$XDG_CONFIG_HOME/obsidian-mcp-connector/<vault name>-<hash>.json` (or under `~/.config`), with mode `0600`. `--data FILE` picks another file, which must be outside the vault, and `--port` defaults to the first free port from 27201. The token starts on the All tools profile, as the first token of a fresh vault does on the desktop, so every tool the server serves is listed from the first call.
+
+To reach it from another machine, forward the port over SSH instead of exposing it:
+
+```bash
+ssh -L 27123:127.0.0.1:27124 server
+```
+
+A minimal systemd user unit, saved as `~/.config/systemd/user/obsidian-mcp-headless.service`:
+
+```ini
+[Unit]
+Description=Obsidian MCP headless server
+
+[Service]
+ExecStart=%h/.local/bin/obsidian-mcp-headless %h/vault --http --port 27124
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it with `systemctl --user enable --now obsidian-mcp-headless`. On a machine without a login session, run `loginctl enable-linger $USER` once so the unit starts at boot.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -624,6 +701,8 @@ bun test              # 1700+ unit tests, colocated
 bun run format:check  # CI enforces this; the other gates pass without it
 bun run build         # production bundle
 bun run release       # build + zip (no .mcpb — that is a per-token export from the plugin)
+bun run build:headless  # the headless server, one file under packages/obsidian-plugin/dist/headless/
+bun run test:headless   # build it and smoke-test the real file under Node
 ```
 
 Full gate before calling anything done: `bun run check && bun test && bun run format:check`.

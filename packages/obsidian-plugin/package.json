@@ -19,6 +19,8 @@
 		"gen:mcp-app": "bun scripts/gen-mcp-app-source.ts",
 		"release": "bun run build && bun run zip",
 		"zip": "bun scripts/zip.ts",
+		"build:headless": "bun bun.headless.config.ts",
+		"test:headless": "bun run build:headless && bun scripts/headless-smoke.ts",
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
 		"test:conformance": "bash scripts/conformance/run.sh",
 		"test:spec-coverage": "bash scripts/spec-coverage-converge-anchors.sh",
@@ -36,7 +38,8 @@
 		"obsidian-daily-notes-interface": "^0.9.4",
 		"shared": "workspace:*",
 		"svelte": "^5.56.3",
-		"turndown": "^7.2.0"
+		"turndown": "^7.2.0",
+		"yaml": "^2.9.1"
 	},
 	"devDependencies": {
 		"@modelcontextprotocol/ext-apps": "2.0.3",
