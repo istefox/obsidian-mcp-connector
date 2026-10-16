@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Added
+
+- **Headless mode serves the vault tools from a folder, without Obsidian.** `obsidian-mcp-headless` is a standalone Node 24.11+ server, one file attached to each release. It speaks stdio by default and HTTP with `--http`, and offers semantic search unless you pass `--no-semantic`. It reads the vault's Excluded files and periodic-note settings, and the desktop plugin is unchanged. See [Headless mode](README.md#headless-mode)
+
 ### Fixed
 
 - **Background work now applies the vault-wide excluded-folder list.** Semantic indexing and the check that decides whether to announce a changed prompt list read the policy of whichever request happened to be in flight when a vault event fired. They now read the vault-wide list explicitly. Nothing changes today, because there is one list for every client, and the fix keeps it that way once clients get lists of their own. The indexer half was proposed by @Neonsy in #616.
