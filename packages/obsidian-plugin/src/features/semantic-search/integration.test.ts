@@ -113,13 +113,17 @@ function memVaultAdapter(): VaultAdapter {
 function memVault(initial: Record<string, string>): {
   vault: VaultLike;
   files: Map<string, string>;
-  emit: (event: VaultEvent, path: string) => void;
+  emit: (event: VaultEvent, path: string, oldPath?: string) => void;
 } {
   const files = new Map(Object.entries(initial));
-  const handlers: Record<VaultEvent, Set<(p: string) => void>> = {
+  const handlers: Record<
+    VaultEvent,
+    Set<(p: string, oldPath?: string) => void>
+  > = {
     modify: new Set(),
     create: new Set(),
     delete: new Set(),
+    rename: new Set(),
   };
   const vault: VaultLike = {
     getMarkdownFiles: () => Array.from(files.keys()).map((path) => ({ path })),
@@ -138,8 +142,8 @@ function memVault(initial: Record<string, string>): {
   return {
     vault,
     files,
-    emit: (event, path) => {
-      for (const h of handlers[event]) h(path);
+    emit: (event, path, oldPath) => {
+      for (const h of handlers[event]) h(path, oldPath);
     },
   };
 }

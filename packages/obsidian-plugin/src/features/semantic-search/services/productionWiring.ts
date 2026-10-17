@@ -58,8 +58,13 @@ export function isIndexableFile(f: unknown): f is TFile {
   return f instanceof TFile && f.extension === "md";
 }
 
+/** First wait after a failed native first start, doubling up to the cap. */
+const START_RETRY_BASE_MS = 30_000;
+const START_RETRY_CAP_MS = 10 * 60_000;
+
 export async function wireSemanticSearch(
   plugin: McpToolsPlugin,
+  { now = Date.now }: { now?: () => number } = {},
 ): Promise<SemanticSearchState | undefined> {
   const ssAdapter: VaultAdapter = {
     exists: (p) => plugin.app.vault.adapter.exists(p),
@@ -94,9 +99,21 @@ export async function wireSemanticSearch(
       // contract stays clean.
       const ref = (
         plugin.app.vault as unknown as {
-          on: (event: string, handler: (f: unknown) => void) => EventRef;
+          on: (
+            event: string,
+            handler: (f: unknown, oldPath?: unknown) => void,
+          ) => EventRef;
         }
-      ).on(event, (f: unknown) => {
+      ).on(event, (f: unknown, oldPath?: unknown) => {
+        if (event === "rename") {
+          // Files only, any extension: the indexer needs the old path
+          // even when the new name is no longer markdown. Folders are
+          // skipped, Obsidian also emits one `rename` per file inside.
+          if (f instanceof TFile && typeof oldPath === "string") {
+            handler(f.path, oldPath);
+          }
+          return;
+        }
         if (isIndexableFile(f)) handler(f.path);
       });
       return () => plugin.app.vault.offref(ref);
@@ -265,8 +282,14 @@ export async function wireSemanticSearch(
     state.indexer = indexer;
 
     let indexerStarted = false;
+    let closed = false;
+    // A start that keeps failing (say, one note the embedder always
+    // chokes on) is retried by the next search, so the retries back off
+    // instead of running a whole new attempt per search call.
+    let failedStarts = 0;
+    let retryNotBefore = 0;
     state.startIndexerIfNeeded = () => {
-      if (indexerStarted) return;
+      if (indexerStarted || closed || now() < retryNotBefore) return;
       indexerStarted = true;
       // #344: mark the build in-flight before kicking it off so a
       // search_vault_smart call landing in this same tick already sees
@@ -274,13 +297,32 @@ export async function wireSemanticSearch(
       // must not permanently block search with a stale "still building"
       // signal.
       state.nativeIndexBuildInProgress = true;
-      state.nativeIndexBuildStartedAt = Date.now();
-      indexer
-        .start()
-        .catch((err) => {
+      state.nativeIndexBuildStartedAt = now();
+      // The first pass prunes records of files missing from the vault
+      // listing, so it must not run on a partial listing. A search can
+      // reach here before Obsidian has finished listing the vault.
+      new Promise<void>((resolve) =>
+        plugin.app.workspace.onLayoutReady(resolve),
+      )
+        .then(() => (closed ? undefined : indexer.start()))
+        .catch(async (err) => {
           logger.error("semantic-search: indexer start failed", {
             error: err instanceof Error ? err.message : String(err),
           });
+          // Let the next search retry. A failed start (say, the model
+          // download with no network) must not disable search until
+          // restart. stop() first: start() returns at once on an indexer
+          // that still thinks it is running, so a retry would build
+          // nothing. Partial progress is flushed and kept.
+          await indexer.stop().catch(() => {});
+          failedStarts += 1;
+          retryNotBefore =
+            now() +
+            Math.min(
+              START_RETRY_BASE_MS * 2 ** (failedStarts - 1),
+              START_RETRY_CAP_MS,
+            );
+          indexerStarted = false;
         })
         .finally(() => {
           state.nativeIndexBuildInProgress = false;
@@ -349,8 +391,15 @@ export async function wireSemanticSearch(
     // run a fresh `rebuildAll()` against it; the subscription stays
     // intact so post-rebuild edits keep flowing.
     const _rebuildingProviders = new Set<string>();
+    // The finishing step of each rebuild that ran to the end (flush, mark
+    // ready, provider swap). Teardown waits for these before it closes the
+    // stores. Only this step is tracked, not the rebuild itself, which
+    // settles once stop() has cut it short.
+    const _completingRebuilds = new Set<Promise<void>>();
     state.startRebuildFor = (providerKey: string) => {
-      if (_rebuildingProviders.has(providerKey)) return;
+      // After teardown nothing may build or start an indexer: it would
+      // be untracked and keep receiving vault events.
+      if (closed || _rebuildingProviders.has(providerKey)) return;
       _rebuildingProviders.add(providerKey);
       const epKey = providerKey as keyof typeof embeddingProviders;
       const ep = embeddingProviders[epKey];
@@ -372,17 +421,31 @@ export async function wireSemanticSearch(
       const work = existing ? dlcIndexer.rebuildAll() : dlcIndexer.start();
 
       work
-        .then(async () => {
-          const dlcStore = registry.storeFor(providerKey, ep.dimensions);
-          await dlcStore.flush();
-          registry.markReady(providerKey);
-          if (state.pendingProvider === providerKey) {
-            state.pendingProvider = null;
-            state.pendingProviderStartedAt = null;
-          }
-          if (state.chooser) {
-            state.provider = state.chooser(state.settings);
-          }
+        .then(() => {
+          // A rebuild that stop() cut short returns as if it had finished.
+          // Only teardown stops a DLC indexer, so a closed wiring means the
+          // index is partial: leave it unready and the banner up, and touch
+          // nothing that teardown is closing. The next session finishes it.
+          if (closed) return;
+          const completion = (async () => {
+            const dlcStore = registry.storeFor(providerKey, ep.dimensions);
+            await dlcStore.flush();
+            // Teardown may have started during the flush. It waits for this
+            // step, but it must not find the provider swapped in behind it.
+            if (closed) return;
+            registry.markReady(providerKey);
+            if (state.pendingProvider === providerKey) {
+              state.pendingProvider = null;
+              state.pendingProviderStartedAt = null;
+            }
+            if (state.chooser) {
+              state.provider = state.chooser(state.settings);
+            }
+          })();
+          _completingRebuilds.add(completion);
+          return completion.finally(() => {
+            _completingRebuilds.delete(completion);
+          });
         })
         .catch((err) => {
           logger.error("semantic-search: DLC rebuild failed", {
@@ -396,11 +459,12 @@ export async function wireSemanticSearch(
     };
 
     // Auto-subscribe active DLC provider at plugin load when its
-    // store already has content. Skips the initial rebuild (existing
-    // store is current) and only wires up vault event subscriptions
-    // so future create/modify/delete events update the index live.
-    // Deferred to onLayoutReady to match the same vault-scan-ready
-    // guarantee as the migration auto-trigger below.
+    // store already has content. Subscribes to vault events and runs the
+    // session-start pass, as the native indexer does: files whose stored
+    // mtime matches are skipped unread, so an index that an interrupted
+    // build left partial is completed. Deferred to onLayoutReady to
+    // match the same vault-scan-ready guarantee as the migration
+    // auto-trigger below.
     const _autoSubscribeDlc = (
       providerKey: keyof typeof embeddingProviders,
     ): void => {
@@ -409,7 +473,8 @@ export async function wireSemanticSearch(
       if (!dlcIndexer) return;
       state.dlcIndexers?.set(providerKey, dlcIndexer);
       plugin.app.workspace.onLayoutReady(() => {
-        dlcIndexer.start({ initialRebuild: false }).catch((err) => {
+        if (closed) return;
+        dlcIndexer.start().catch((err) => {
           logger.error("semantic-search: DLC auto-subscribe failed", {
             providerKey,
             error: err instanceof Error ? err.message : String(err),
@@ -463,12 +528,14 @@ export async function wireSemanticSearch(
     };
 
     state.teardown = async () => {
-      if (indexerStarted) {
-        try {
-          await indexer.stop();
-        } catch {
-          // best-effort
-        }
+      closed = true;
+      // Always, not only after the first search: the settings "Rebuild"
+      // button runs `rebuildAll()` on this indexer before any search has
+      // started it, and stop() waits for that rebuild's writes.
+      try {
+        await indexer.stop();
+      } catch {
+        // best-effort
       }
       // Stop every persistent DLC indexer so its debounced flush
       // drains to disk before the plugin unloads.
@@ -485,6 +552,11 @@ export async function wireSemanticSearch(
         }
         state.dlcIndexers.clear();
       }
+      // A rebuild that stop() cut short takes the closed path at once. One
+      // that had already finished may be mid-flush, and closing the registry
+      // under it would let it write after teardown. Nothing here holds it
+      // up: its rebuild is over and only the flush is left.
+      await Promise.allSettled([..._completingRebuilds]);
       try {
         await embedder.unload();
       } catch {
