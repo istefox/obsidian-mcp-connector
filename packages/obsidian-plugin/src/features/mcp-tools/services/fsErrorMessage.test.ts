@@ -59,6 +59,25 @@ describe("fsErrorMessage", () => {
     }
   });
 
+  test("a quoted path with spaces is replaced whole", () => {
+    expect(
+      fsErrorMessage(new Error("open '/home/jane/My Vault/sub' failed")),
+    ).toBe("open '<path>' failed");
+    expect(
+      fsErrorMessage(
+        new Error(
+          "rename '/Users/a b/Vault/x.md' -> '/Users/a b/Vault/y z.md'",
+        ),
+      ),
+    ).toBe("rename '<path>' -> '<path>'");
+    expect(
+      fsErrorMessage(new Error("open 'C:\\Users\\Jane Doe\\Vault\\n.md'")),
+    ).toBe("open '<path>'");
+    expect(
+      fsErrorMessage(new Error("open '/home/o'Brien/My Vault/n.md'")),
+    ).toBe("open '<path>'");
+  });
+
   test("an unknown errno names the failure class without the trailer", () => {
     expect(
       fsErrorMessage(errnoError("EIO", "EIO: i/o error, write '/abs/path'")),

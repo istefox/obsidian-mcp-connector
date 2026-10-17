@@ -39,6 +39,16 @@ const ERRNO_MESSAGES: Record<string, string> = {
 const ABSOLUTE_PATH_SPAN =
   /(^|[\s'"`(=])((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`]+)/g;
 
+/**
+ * A quoted absolute path, which Node uses for every path it reports and
+ * which may hold spaces (`'/home/jane/My Vault/sub'`). It runs to the
+ * closing quote that ends the token, so a quote inside a name (`O'Brien`)
+ * does not cut it short. Applied before the unquoted pattern, which would
+ * stop at the first space.
+ */
+const QUOTED_ABSOLUTE_PATH =
+  /(['"`])(?:[A-Za-z]:[\\/]|\\\\|\/).*?\1(?=$|[\s,;:)\]])/g;
+
 /** Message for a caught fs error with absolute host paths suppressed. */
 export function fsErrorMessage(e: unknown): string {
   const errno = (e as NodeJS.ErrnoException | undefined)?.code;
@@ -50,5 +60,7 @@ export function fsErrorMessage(e: unknown): string {
     return `file system error (${errno})`;
   }
   const raw = e instanceof Error ? e.message : String(e);
-  return raw.replace(ABSOLUTE_PATH_SPAN, "$1<path>");
+  return raw
+    .replace(QUOTED_ABSOLUTE_PATH, "$1<path>$1")
+    .replace(ABSOLUTE_PATH_SPAN, "$1<path>");
 }
