@@ -31,7 +31,7 @@ export const patchVaultFileSchema = type({
       "Allows targeting an H2-or-deeper heading with no H1 parent in a file that has an H1 elsewhere (otherwise rejected when createTargetIfMissing=false). Default false.",
     ),
     "expectedContent?": type("string").describe(
-      "For operation=replace only: the text you believe currently occupies the target, as read via get_vault_file. When it no longer matches, the patch is refused instead of overwriting a change you have not seen. Whitespace-insensitive. Ignored for append/prepend.",
+      "For operation=replace only: the text you believe currently occupies the target. When it no longer matches, the patch is refused instead of overwriting a change you have not seen. Whitespace-insensitive. Ignored for append/prepend.",
     ),
   },
 }).describe(

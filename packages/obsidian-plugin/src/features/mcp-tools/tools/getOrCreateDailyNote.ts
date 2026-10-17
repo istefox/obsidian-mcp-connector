@@ -16,14 +16,14 @@ export const getOrCreateDailyNoteSchema = type({
   name: '"get_or_create_daily_note"',
   arguments: {
     "date?": type("string").describe(
-      "ISO date `YYYY-MM-DD`. Default: today in the plugin process timezone (the user's machine TZ in the in-process / desktop deployment, which is the 99% case). For headless or multi-host setups where the MCP server runs on a different host than the Obsidian client, pass an explicit `date` to avoid TZ-driven off-by-one resolution.",
+      "ISO date `YYYY-MM-DD`. Default: today in the plugin process timezone (the user's machine). When the MCP server runs on a different host than Obsidian, pass an explicit `date` to avoid an off-by-one day.",
     ),
     "heading?": type("string>0").describe(
       "A heading in the note. When present, the returned obsidian:// URI navigates directly to it. Use get_note_outline to discover a note's headings.",
     ),
   },
 }).describe(
-  "Reads today's daily note (or the one at `date`), creating it if missing. Returns `{path, content, created}`. With the Daily Notes or Periodic Notes plugin enabled, creation runs the configured template; otherwise the note is created empty at the ISO path under the vault root. For weekly/monthly/quarterly/yearly notes use `get_or_create_periodic_note`.",
+  "Reads today's daily note (or the one at `date`), creating it if missing. Returns `{path, content, created}`. With Daily Notes or Periodic Notes enabled, creation runs the configured template; otherwise the note is created empty at the ISO path. For weekly, monthly, quarterly or yearly notes use `get_or_create_periodic_note`.",
 );
 
 export type GetOrCreateDailyNoteContext = {

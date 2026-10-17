@@ -38,7 +38,7 @@ export const searchVaultSimpleSchema = type({
     ),
   },
 }).describe(
-  "Text search across the markdown files of the vault, or of a `scope` of files and folders: a case-insensitive literal substring by default, case-sensitive with `caseSensitive`, a JavaScript regex with `regex`. Returns each matching file with surrounding context for each hit, including the 0-indexed line each match starts at and, for regex searches, the matched `text`.",
+  "Text search across the vault's markdown files, or a `scope` of files and folders: case-insensitive literal substring by default, `caseSensitive`, or a JavaScript `regex`. Returns each matching file with context per hit, including the 0-indexed start line and, for regex, the matched `text`.",
 );
 
 export type SearchVaultSimpleContext = {

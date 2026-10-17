@@ -21,10 +21,10 @@ export const patchActiveFileSchema = type({
     "targetDelimiter?": "string",
     "createTargetIfMissing?": "boolean",
     "allowRootHeadings?": type("boolean").describe(
-      "When true, allow targeting a level-2-or-deeper heading with no level-1 (#) parent even when the document contains an H1 elsewhere (the ambiguous 'mixed' case the H2-root guard rejects with createTargetIfMissing=false). Files with no H1 at all are accepted without this flag. Default false.",
+      "When true, allow targeting an H2-or-deeper heading with no H1 parent even when the document has an H1 elsewhere (the ambiguous case the H2-root guard rejects with createTargetIfMissing=false). Files with no H1 at all are accepted without this flag. Default false.",
     ),
     "expectedContent?": type("string").describe(
-      "For operation=replace only: the text you believe currently occupies the target, as read via get_vault_file. When it no longer matches, the patch is refused instead of overwriting a change you have not seen. Whitespace-insensitive. Ignored for append/prepend.",
+      "For operation=replace only: the text you believe currently occupies the target. When it no longer matches, the patch is refused instead of overwriting a change you have not seen. Whitespace-insensitive. Ignored for append/prepend.",
     ),
   },
 }).describe(

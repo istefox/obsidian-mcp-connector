@@ -14,14 +14,14 @@ export const createVaultBinaryFileSchema = type({
       "Vault-relative path including extension (e.g. 'Images/Journal/sketch.png'). Any missing parent directories are created automatically.",
     ),
     content: type("string.base64").describe(
-      "Base64-encoded file bytes. Full content of the file; if the path already exists, it is overwritten — pass overwrite: true to confirm that deliberately. If this vault requires write preconditions, overwrite: true is mandatory to replace an existing file.",
+      "Base64-encoded file bytes. An existing path is overwritten: pass overwrite: true to confirm (mandatory if this vault requires write preconditions).",
     ),
     "overwrite?": type("boolean").describe(
-      "Only meaningful when the path already exists. Must be true to replace an existing file when this vault requires write preconditions; when the setting is off, an existing file is overwritten by default unless this is explicitly false. Ignored when the path does not exist yet — creating a brand-new file is never blocked by this or by the setting. A plain boolean rather than a content comparison (contrast create_vault_file's expectedContent): binary bytes have no meaningful whole-file diff to show a caller, and the risk here is writing to the wrong path, not stale content.",
+      "Only meaningful when the path already exists. Must be true to replace an existing file when this vault requires write preconditions; when the setting is off, an existing file is overwritten unless this is explicitly false. Ignored for a new path. A plain boolean, not a content comparison: the risk here is the wrong path, not stale content.",
     ),
   },
 }).describe(
-  "Creates a binary file (image, audio, or any other non-text file) from base64-encoded content, overwriting an existing one when `overwrite` allows it. Missing parent directories are created automatically. Use create_vault_file for plain text. Request bodies are capped at 1 MiB, so the largest writable file is roughly 750 KB after base64 overhead; anything larger fails with HTTP 413 before reaching this tool.",
+  "Creates a binary file (image, audio, any non-text file) from base64 content, overwriting an existing one when `overwrite` allows it; missing parent directories are created. Use create_vault_file for plain text. Request bodies are capped at 1 MiB (about 750 KB of file after base64); larger fails with HTTP 413.",
 );
 
 export type CreateVaultBinaryFileContext = {

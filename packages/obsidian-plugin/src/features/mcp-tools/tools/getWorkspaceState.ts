@@ -10,7 +10,7 @@ export const getWorkspaceStateSchema = type({
     ),
   },
 }).describe(
-  "Returns what is open in Obsidian right now: every tab (leaf) with its location, view type, title, file, editor mode, pin state and whether it is the active one; the active file; and the recently opened files, most recent first. Read-only, no I/O. Use it to see what the user is working on before reading or editing, or to find the tab a note is already open in.",
+  "Returns what is open in Obsidian right now: every tab (leaf) with location, view type, title, file, editor mode, pin state and active flag; the active file; and recently opened files, newest first. Read-only. Use it to see what the user is working on before reading or editing, or to find the tab a note is already open in.",
 );
 
 export type GetWorkspaceStateContext = {

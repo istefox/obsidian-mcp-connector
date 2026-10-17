@@ -88,7 +88,7 @@ export const getVaultFileSchema = type({
     ),
   },
 }).describe(
-  "Reads a file from the vault. Markdown and other text files return a text content block. Image and audio files up to 10 MiB return native MCP image/audio content blocks. Video, PDF, Office documents, archives, and oversized audio/image files return a structured JSON metadata hint. Text past a configurable size ceiling is truncated with a hint to use get_vault_file_partial for a specific range.",
+  "Reads a file from the vault. Text files return a text block; image and audio up to 10 MiB return native MCP image/audio blocks; video, PDF, Office files, archives and oversized media return a JSON metadata hint. Text past the size ceiling is truncated with a hint to use `get_vault_file_partial` for a range.",
 );
 
 export type GetVaultFileContext = {

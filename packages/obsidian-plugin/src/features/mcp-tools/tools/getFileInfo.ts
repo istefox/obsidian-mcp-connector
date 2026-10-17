@@ -16,7 +16,7 @@ export const getFileInfoSchema = type({
     path: type("string>0").describe("Vault-relative path to the file."),
   },
 }).describe(
-  "Describes a file without reading its body: name, extension, `kind` (markdown, canvas, image, audio, video, pdf, text, binary, ...), MIME type, size, `ctime`/`mtime`, an `obsidian://` URI, how many files link to it (`backlinks.files` / `backlinks.references`) and how many links it holds (`outgoingLinks.resolved` / `unresolved`). For markdown notes `markdown` adds counts from the metadata cache: frontmatter keys, headings, inline tags, links, embeds, list items and tasks (open/done). Read-only, metadata cache only; use `get_vault_file` for the content.",
+  "Describes a file without reading its body: name, extension, `kind`, MIME type, size, `ctime`/`mtime`, `obsidian://` URI, backlink counts and outgoing-link counts. For markdown notes, `markdown` adds counts of frontmatter keys, headings, tags, links, embeds, list items and tasks. Read-only, metadata cache only; use `get_vault_file` for content.",
 );
 
 export type GetFileInfoContext = {

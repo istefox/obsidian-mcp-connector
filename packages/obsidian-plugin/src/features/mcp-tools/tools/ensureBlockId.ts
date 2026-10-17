@@ -35,7 +35,7 @@ export const ensureBlockIdSchema = type({
     ),
   },
 }).describe(
-  "Returns a stable `^block-id` for a block of a note, creating one when the block has none, so it can be linked or embedded with `[[note#^id]]` / `![[note#^id]]`. Follows Obsidian's placement rules: at the end of a paragraph's last line, directly on a list item's line, or on its own line after a table, fenced code block, quote or callout. Idempotent: calling it again returns the existing id. Atomic write through `vault.process`; nothing else in the file changes. Returns `id`, `created`, the line the id sits on, the ready-made `link` and an `obsidian://` URI.",
+  "Returns a stable `^block-id` for a block of a note, creating one when missing, so it can be linked or embedded with `[[note#^id]]`. Placed per Obsidian's rules (end of a paragraph, on a list item's line, or on its own line after a table, code block, quote or callout). Idempotent. Returns `id`, `created`, `line`, `link` and an `obsidian://` URI.",
 );
 
 export type EnsureBlockIdContext = {

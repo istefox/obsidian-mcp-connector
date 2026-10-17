@@ -14,10 +14,10 @@ export const createVaultFileSchema = type({
       "Vault-relative path including extension (e.g. 'Notes/new.md'). Any missing parent directories are created automatically.",
     ),
     content: type("string").describe(
-      "Full content of the file. If the path already exists, the content is overwritten — pass expectedContent to guard against silently overwriting a change you have not seen. If this vault requires write preconditions, expectedContent is mandatory to overwrite an existing file.",
+      "Full content of the file. An existing path is overwritten: pass expectedContent to guard against overwriting a change you have not seen (mandatory if this vault requires write preconditions).",
     ),
     "expectedContent?": type("string").describe(
-      "The whole current content of the file, as read via get_vault_file — only meaningful when the path already exists. When it no longer matches, the write is refused instead of silently overwriting a change you have not seen. Whitespace-insensitive. Comparison is over the WHOLE file: to change only part of an existing file, use patch_vault_file instead. Omit (or pass an empty string) when creating a brand-new file — a non-empty value is refused if the path does not exist yet.",
+      "The whole current content of the file, as read via get_vault_file; only for an existing path. When it no longer matches, the write is refused instead of overwriting a change you have not seen. Whitespace-insensitive, compared over the WHOLE file: to change part of a file use patch_vault_file. Omit it for a new file; a non-empty value is refused if the path does not exist.",
     ),
   },
 }).describe(

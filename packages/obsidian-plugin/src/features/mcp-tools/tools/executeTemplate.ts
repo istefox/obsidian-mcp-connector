@@ -38,7 +38,7 @@ export const executeTemplateSchema = type({
       "Vault-relative path to the Templater template file (e.g. 'Templates/daily.md').",
     ),
     "targetPath?": type("string").describe(
-      "Optional vault-relative path of the note to create. With createFile true, the note is created first and Templater renders against it, so tp.file.title/folder/path and on_all_templates_executed hooks see the new note, as with Templater's own 'Create new note from template'. If omitted, the template is rendered and returned without writing a file, and tp.file.* describe the template itself.",
+      "Optional path of the note to create. With createFile true the note is created first and Templater renders against it, so tp.file.title/folder/path and on_all_templates_executed hooks see the new note. If omitted, the template is rendered and returned without writing a file, and tp.file.* describe the template itself.",
     ),
     // A real boolean: the registry's coerceBooleanParams turns the "true" /
     // "false" strings some clients still send into booleans before the
@@ -51,7 +51,7 @@ export const executeTemplateSchema = type({
     ),
   },
 }).describe(
-  "Renders a template via Templater when installed, else the core Templates plugin ({{title}}/{{date}}/{{time}} only). With targetPath and createFile true also creates the note at targetPath and renders against it (tp.file.* = the new note). Without a target, tp.file.* describe the template. Error codes: templater_not_installed, template_not_found, file_exists, template_execution_failed, core_templates_execution_failed. `arguments` is Templater-only (warning on the core path).",
+  "Renders a template with Templater, else the core Templates plugin ({{title}}/{{date}}/{{time}} only). With targetPath and createFile true it also creates the note and renders against it; otherwise tp.file.* describe the template. Errors: templater_not_installed, template_not_found, file_exists, *_execution_failed. `arguments` is Templater-only.",
 );
 
 export type ExecuteTemplateContext = {

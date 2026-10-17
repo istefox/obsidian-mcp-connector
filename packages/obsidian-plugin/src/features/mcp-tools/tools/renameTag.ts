@@ -25,7 +25,7 @@ export const renameTagSchema = type({
     ),
   },
 }).describe(
-  "Renames a tag everywhere: inline `#tag` occurrences (located through Obsidian's metadata cache, so text inside code blocks, URLs and headings that merely contains the word is left alone) and the `tags` / `tag` frontmatter properties, with nested tags following by default. Dry run by default; pass `dry_run: false` to apply. Each file is rewritten atomically. Returns per-file counts of inline and frontmatter replacements.",
+  "Renames a tag everywhere: inline `#tag` occurrences (found through the metadata cache, so code blocks, URLs and headings that merely contain the word are left alone) and `tags`/`tag` frontmatter, nested tags following by default. Dry run by default; pass `dry_run: false` to apply. Returns per-file replacement counts.",
 );
 
 export type RenameTagContext = {

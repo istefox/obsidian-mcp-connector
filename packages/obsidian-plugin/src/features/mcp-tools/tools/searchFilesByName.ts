@@ -30,7 +30,7 @@ export const searchFilesByNameSchema = type({
     ),
   },
 }).describe(
-  "Finds files by name the way Obsidian's quick switcher does: fuzzy match on the file name, its frontmatter `aliases` and the full path, using Obsidian's own `prepareFuzzySearch` scoring, best match first. Each hit carries `path`, `basename`, `extension`, `matchedOn` (`basename`, `alias` or `path`), the matching `alias` when relevant, Obsidian's `score`, the `[from, to]` character ranges that matched and an `obsidian://` URI. Use it to resolve a half-remembered title to a path before `get_vault_file`; use `search_vault_simple` to search inside the content instead. Files excluded in Obsidian's `Files & Links → Excluded files` are omitted. Read-only.",
+  "Finds files by name like Obsidian's quick switcher: fuzzy match on file name, frontmatter `aliases` and full path, best first. Each hit has `path`, `basename`, `matchedOn`, `alias`, `score`, matched ranges and an `obsidian://` URI. Use it to resolve a half-remembered title to a path before `get_vault_file`; use `search_vault_simple` for content.",
 );
 
 export type SearchFilesByNameContext = {

@@ -35,7 +35,7 @@ export const listAttachmentsSchema = type({
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
-  "Lists attachments (every file that is not a `.md`, `.canvas` or `.base` note: images, PDFs, audio, video, office documents, ...) across the vault, under one folder, or linked from one note. Each entry carries `path`, `extension`, `kind`, `mime`, `size`, `mtime`, and how many files reference it (`referencedBy`) with the total `references`. `unreferencedOnly` finds orphaned attachments; `totalBytes` sums the listed set. Files excluded in Obsidian's `Files & Links → Excluded files` are omitted. Read-only.",
+  "Lists attachments (every file that is not a `.md`, `.canvas` or `.base` note) across the vault, under one folder, or linked from one note. Each entry has `path`, `extension`, `kind`, `mime`, `size`, `mtime`, `referencedBy` and `references`. `unreferencedOnly` finds orphans; `totalBytes` sums the set. Excluded files are omitted. Read-only.",
 );
 
 export type ListAttachmentsContext = {

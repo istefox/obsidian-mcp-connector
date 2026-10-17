@@ -16,7 +16,7 @@ export const findBrokenLinksSchema = type({
     "limit?": type("number>0").describe("Max results returned (default 200)."),
   },
 }).describe(
-  "Scans the vault (or a scoped subset) for unresolved links (wiki-links, markdown links, embeds, frontmatter links) and returns every broken link with its source file, 1-based line number, link target, original syntax, link type, and a reason (`file_not_found` or `subpath_not_found`, the latter for a `#heading`/`#^block` anchor that does not exist in an otherwise-valid file). Uses Obsidian's metadata cache — no file I/O. Always read-only.",
+  "Scans the vault (or a scoped subset) for unresolved links (wiki-links, markdown links, embeds, frontmatter links) and returns each with source file, 1-based line, target, syntax, type and a reason (`file_not_found`, or `subpath_not_found` for a missing `#heading`/`#^block` anchor). Metadata cache only. Read-only.",
 );
 
 export type FindBrokenLinksContext = {

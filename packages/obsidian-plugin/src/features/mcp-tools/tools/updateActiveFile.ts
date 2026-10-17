@@ -13,7 +13,7 @@ export const updateActiveFileSchema = type({
       "Full new markdown content to replace the current active file's content with. Pass expectedContent to guard against silently overwriting a change you have not seen.",
     ),
     "expectedContent?": type("string").describe(
-      "The whole current content of the active note, as read via get_active_file. When it no longer matches, the write is refused instead of silently overwriting a change you have not seen. Whitespace-insensitive. Comparison is over the WHOLE file: to change only part of it, use patch_active_file instead. Mandatory if this vault requires write preconditions.",
+      "The whole current content of the active note, as read via get_active_file. When it no longer matches, the write is refused instead of overwriting a change you have not seen. Whitespace-insensitive, compared over the WHOLE file: to change part of it use patch_active_file. Mandatory if this vault requires write preconditions.",
     ),
   },
 }).describe(

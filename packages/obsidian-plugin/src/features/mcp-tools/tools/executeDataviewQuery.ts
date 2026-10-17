@@ -13,7 +13,7 @@ export const executeDataviewQuerySchema = type({
     ),
   },
 }).describe(
-  'Run a Dataview DQL query against the vault and return the native typed result: TABLE → `{type:"table", headers, values}`, LIST → `{type:"list", values}`, TASK → `{type:"task", values}`, CALENDAR → `{type:"calendar", values}`. Requires the Dataview community plugin: `dataview_not_installed` if absent, `dataview_not_ready` if the index has not finished building (retry shortly), `dataview_query_failed` if the DQL itself is rejected (the underlying error is surfaced verbatim).',
+  'Run a Dataview DQL query and return the native typed result: `{type:"table", headers, values}` for TABLE, `{type:"list"|"task"|"calendar", values}` for the others. Needs the Dataview plugin; errors `dataview_not_installed`, `dataview_not_ready` (index building, retry shortly), `dataview_query_failed` (DQL rejected, underlying error verbatim).',
 );
 
 export type ExecuteDataviewQueryContext = {

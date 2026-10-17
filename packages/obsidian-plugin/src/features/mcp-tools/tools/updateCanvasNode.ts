@@ -32,7 +32,7 @@ export const updateCanvasNodeSchema = type({
     "height?": "number>0",
   },
 }).describe(
-  "Changes one existing canvas node in place: content (`text`, `file`/`subpath`, `url`, `label` according to the node type), `color`, position and size. Only the fields passed change; the node keeps its id, type, edges and every other field. A content field that does not belong to the node's type is refused. Atomic write. Returns the node after the change.",
+  "Changes one existing canvas node in place: content (`text`, `file`/`subpath`, `url` or `label`, by node type), `color`, position and size. Only the fields passed change; id, type and edges are kept. A content field foreign to the node's type is refused. Atomic write. Returns the node after the change.",
 );
 
 export type UpdateCanvasNodeContext = {

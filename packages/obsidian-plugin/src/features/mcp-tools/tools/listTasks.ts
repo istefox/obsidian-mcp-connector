@@ -26,7 +26,7 @@ export const listTasksSchema = type({
     ),
   },
 }).describe(
-  "Lists markdown tasks (`- [ ]`, `- [x]`, `- [/]`, ...) across the vault, one file or one folder, from Obsidian's metadata cache. Each task carries `path`, 0-indexed `line`, `status`, the raw `marker` character, the task `text`, and `parentLine` for a nested task. Ordered by path then line. Read-only; use the `line` with `set_task_status` to tick or untick one.",
+  "Lists markdown tasks (`- [ ]`, `- [x]`, ...) across the vault, one file or one folder, from the metadata cache. Each task has `path`, 0-indexed `line`, `status`, raw `marker`, `text` and `parentLine` when nested, ordered by path then line. Read-only; pass the `line` to `set_task_status` to tick or untick one.",
 );
 
 export type ListTasksContext = {

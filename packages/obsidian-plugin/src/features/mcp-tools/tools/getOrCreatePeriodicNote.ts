@@ -20,7 +20,7 @@ export const getOrCreatePeriodicNoteSchema = type({
     ),
   },
 }).describe(
-  "Reads the periodic note for `period` (and optional `date`), creating it if missing. Returns `{path, content, created}`. Uses the Daily Notes / Periodic Notes plugin API when available (so configured templates run); otherwise creates an empty file at the ISO path. For structured edits, take the returned path and use `set_note_property` or `patch_vault_file`.",
+  "Reads the periodic note for `period` (and optional `date`), creating it if missing. Returns `{path, content, created}`. Uses the Daily/Periodic Notes plugin API when available (configured templates run); otherwise creates an empty file at the ISO path. For structured edits use `set_note_property` or `patch_vault_file` on the returned path.",
 );
 
 export type GetOrCreatePeriodicNoteContext = {
