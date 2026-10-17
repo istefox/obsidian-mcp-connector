@@ -558,6 +558,114 @@ curl http://127.0.0.1:27200/_obsidian_mcp_broker/health
 # {"name":"obsidian-mcp-discovery-broker","version":3}
 ```
 
+## Headless mode
+
+`obsidian-mcp-headless` serves a vault folder over MCP from a plain Node process, so a server with no desktop and no Obsidian can use the same tools. Tool names and response shapes match the plugin, so client setups carry over. It needs Node 24.11 or newer, the first Node 24 LTS release.
+
+### Install and connect
+
+Download `obsidian-mcp-headless.js` from the [latest GitHub release](https://github.com/istefox/obsidian-mcp-connector/releases/latest) or build it with `bun run build:headless` (the file lands in `packages/obsidian-plugin/dist/headless/`). Put it on your `PATH`:
+
+```bash
+install -m 755 obsidian-mcp-headless.js ~/.local/bin/obsidian-mcp-headless
+```
+
+Then register it with your client. The client starts the server itself over stdio, so there is no port and no token:
+
+```bash
+claude mcp add obsidian -- obsidian-mcp-headless /path/to/vault
+```
+
+For Codex, add this to `config.toml`:
+
+```toml
+[mcp_servers.obsidian]
+command = "obsidian-mcp-headless"
+args = ["/path/to/vault"]
+```
+
+Without `PATH`, give the absolute path of the file instead: `node /absolute/path/to/obsidian-mcp-headless.js /path/to/vault`. The vault path can also come from the `OBSIDIAN_VAULT` environment variable. Stdio sessions get every headless tool. Logs go to stderr and stdout carries only protocol messages. The server exits when the client closes stdin, and on `SIGINT` or `SIGTERM`.
+
+### What works
+
+These tools are served, 52 in all with the three adaptive-loading meta-tools (51 with `--no-semantic`):
+
+- Files: `list_vault_files`, `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `create_vault_directory`, `delete_vault_directory`, `search_and_replace`, `get_file_info`, `list_attachments`, `get_recent_files`, `get_vault_overview`
+- Search: `search_files_by_name`, `search_vault_simple`, `search_vault_smart` (see [Semantic search](#semantic-search)), and `search_vault` with JsonLogic queries (a Dataview query returns `dataview_not_installed`)
+- Properties and tags: `get_note_property`, `get_note_properties`, `set_note_property`, `delete_note_property`, `update_note_properties`, `list_property_values`, `list_tags`, `get_files_by_tag`, `rename_tag`
+- Structure and tasks: `get_note_outline`, `rename_heading`, `ensure_block_id`, `list_tasks`, `set_task_status`
+- Links: `get_outgoing_links`, `find_broken_links`, `get_backlinks`, `find_orphaned_notes`
+- Canvas: `get_canvas`, `add_canvas_node`, `connect_canvas_nodes`, `update_canvas_node`, `delete_canvas_node`
+- Periodic notes: `get_or_create_daily_note`, `get_or_create_periodic_note`, `append_to_periodic_note` (see [Vault settings](#vault-settings))
+- Web: `fetch` (see [Fetch](#fetch))
+- Server and loading: `get_server_info`, `tool_catalog`, `activate_tool`, `activate_tools`
+
+Not served, because they need the desktop app or a plugin: every workspace, active-file, command, Dataview, Templater and bookmark tool.
+
+The server reads tags, links, headings, blocks and tasks with its own parser, which follows Obsidian's rules closely but is not Obsidian's. Edits made outside the server (an editor, a sync client, `git pull`) are picked up by a file watcher within a fraction of a second. Folders whose name starts with a dot, such as `.obsidian` and `.git`, are neither read nor written, and a path that leads outside the vault folder is refused. Symlinks inside the vault are ignored. A tool that trashes a file or folder moves it to `.trash/` in the vault. If a file is edited elsewhere while a tool is editing it, the tool fails with a message to retry instead of overwriting that edit. On Linux and macOS a file whose name contains a backslash is not served.
+
+`search_files_by_name` ranks with its own fuzzy scorer, which follows Obsidian's quick switcher in spirit (in-order characters, contiguous runs and word starts rank higher) but gives different scores, although the tool description still says Obsidian's. `rename_vault_file` moves a file or folder and rewrites the links to it in every other note: wikilinks, embeds, markdown links (URL-encoded and `<angle bracket>` paths too) and frontmatter links, each keeping its own style, with subpaths and aliases intact. Relative links inside a moved note are recomputed so they still reach the same files. It also updates canvases (file nodes that name the moved file or a file under a renamed folder, and links in text nodes). A `.base` file is never changed, because its filters are expressions. Every base that links to the moved file or names its path is listed in a `warnings` list on the result, so you can check it by hand. Reference-style markdown links (`[x][ref]`) are not updated. If the move succeeds but a note cannot be rewritten, the error names that note. The link style is taken from each link, not from Obsidian's Files & Links settings.
+
+### Vault settings
+
+The server reads a few of the vault's Obsidian settings once, when it starts. A change to any of them needs a restart, and nothing watches `.obsidian`. A missing file means Obsidian's defaults. A file that is there and cannot be used (a symlink, which is never followed, a file over 1 MB, one that cannot be read, or one that is not valid JSON) is also treated as missing, and the server says so on stderr at startup, naming the file and the reason. The tools themselves still never read or write dot-folders.
+
+- **Excluded files:** `userIgnoreFilters` in `.obsidian/app.json`. An entry is a path prefix (`Private/`) or, wrapped in slashes, a regular expression tested against the vault-relative path (`/\.png$/`). Excluded files stay in the vault but are left out of the tools that honour the setting in the plugin too, such as `search_files_by_name`, `list_tasks`, `list_attachments`, `get_recent_files` and semantic search. An invalid expression excludes nothing. If `app.json` cannot be used, nothing is excluded, so read the startup warning.
+- **Daily and periodic notes:** the tools run the same library as the plugin, over the vault's settings, so notes are created where the plugin would put them. The core Daily notes plugin is read from `.obsidian/core-plugins.json` and `.obsidian/daily-notes.json`. The Periodic Notes plugin is read from `.obsidian/community-plugins.json` and `.obsidian/plugins/periodic-notes/data.json`, and the Calendar plugin (weekly notes only) from `.obsidian/plugins/calendar/data.json`. A plugin counts only when it is enabled, and an enabled Periodic Notes section replaces the core plugin's settings for that period. Folder, date format and template apply. With no plugin enabled, a note is created empty at the vault root, named by ISO date. A folder that the tools hide (`mcpTools.excludedFolders` in HTTP mode) is never read or written by these tools either.
+- **Templates:** a template is a note in the vault, found the way Obsidian finds a link target. The library substitutes `{{date}}`, `{{time}}`, `{{title}}`, `{{yesterday}}`, `{{tomorrow}}` and the weekday placeholders of weekly notes. It does not run Templater, so Templater syntax stays as written, and a template that cannot be read gives an empty note. A template inside a dot-folder cannot be read.
+- **Time:** dates and week numbers use the server's timezone and an English calendar, so weeks start on Sunday in `gggg-[W]ww` formats.
+
+### Fetch
+
+`fetch` returns a page as Markdown or HTML. Its own check refuses non-http(s) URLs and localhost and private-network host names, as in the plugin. Headless adds checks on the connection itself, because a host name can point anywhere. It refuses `localhost`, `*.localhost` and the trailing-dot forms, and it resolves the name and refuses it if any address is loopback, private, link-local, CGNAT, multicast, documentation, benchmarking or reserved, in IPv4 or IPv6 and in the IPv4-mapped forms of both. The connection goes to the address that was checked, so a second DNS answer cannot swap it, and every redirect (at most 5) is checked again. A response over 10 MB (compressed or not) is cut off, and a whole call takes at most 40 seconds. The request carries a plain `obsidian-mcp-headless` user agent.
+
+### Semantic search
+
+`search_vault_smart` ranks notes by meaning, with the same native model the plugin uses by default (`Xenova/all-MiniLM-L6-v2`), run on the CPU. It is on by default and nothing is set up when the server starts. Pass `--no-semantic` to leave the tool out.
+
+The first call sets the feature up and downloads about 36 MB once (the model at 8-bit precision, about 23 MB, and the ONNX runtime files, about 13 MB), then builds the index in the background. Until the index is ready the call returns an `index_building` error with progress and an estimated retry time, so call again a few seconds later. After that, calls answer from the index, notes you edit are embedded again as they change, and a restart skips every note that has not changed and drops notes that were renamed or deleted meanwhile. Building the first index of 50 notes took about 23 seconds in our test, and the server's peak memory was about 0.55 GB with the model loaded.
+
+- **Where files live:** `$XDG_CACHE_HOME/obsidian-mcp-connector/` or, without it, `~/.cache/obsidian-mcp-connector/`. `models/` and `ort-1.26.0/` are shared by all vaults, and `<vault name>-<hash>/embeddings/` is the index of one vault. The index keeps note paths and headings in clear text, so the folders are created with mode `0700` and the index files with `0600`. Delete the folder to start over.
+- **What is downloaded and checked:** the two ONNX runtime files come from the same jsDelivr URL the plugin uses and are checked against a SHA-256 pinned in the server before they are used. The model comes from Hugging Face without a pinned revision, like the plugin. A request that gets no response within 30 seconds is abandoned. If a download fails, for example offline, that call fails and the next call tries again.
+- **CPU:** indexing keeps one core busy. It runs on the server's own thread, one text at a time with a turn for other requests in between, so other tool calls are still answered meanwhile, with pauses of up to about 0.4 seconds in our test.
+- **One server per index:** the first search takes an exclusive lock on a small file in the cache folder (through Node's built-in SQLite), and only then touches the index. If another headless server already holds it, `search_vault_smart` returns `semantic_search_unavailable` and a later call tries again. The operating system holds the lock, so a server that exits or is killed frees it at once, and nothing needs cleaning up. In HTTP mode the folders listed in `mcpTools.excludedFolders` are never indexed.
+- **Shutdown:** on SIGINT, SIGTERM or the end of stdin the server waits at most 5 seconds for the indexer to stop, then exits and says so on stderr.
+- **Weights:** the headless server loads the 8-bit quantized model (23 MB, against 90 MB at full precision), so scores differ slightly from the plugin's native provider.
+- **Not available:** the plugin's other providers (EmbeddingGemma, multilingual E5, Smart Connections), its semantic search settings and any GPU backend.
+
+### HTTP service mode
+
+For an always-on server that several clients share, run it over HTTP:
+
+```bash
+obsidian-mcp-headless /path/to/vault --http --port 27124
+obsidian-mcp-headless /path/to/vault --http --print-token
+```
+
+The server binds `127.0.0.1` only and requires a bearer token. `--print-token` prints the token and exits, creating it on first use. The token lives in a state file outside the vault, `$XDG_CONFIG_HOME/obsidian-mcp-connector/<vault name>-<hash>.json` (or under `~/.config`), with mode `0600`. `--data FILE` picks another file, which must be outside the vault, and `--port` defaults to the first free port from 27201. The token starts on the All tools profile, as the first token of a fresh vault does on the desktop, so every tool the server serves is listed from the first call.
+
+To reach it from another machine, forward the port over SSH instead of exposing it:
+
+```bash
+ssh -L 27123:127.0.0.1:27124 server
+```
+
+A minimal systemd user unit, saved as `~/.config/systemd/user/obsidian-mcp-headless.service`:
+
+```ini
+[Unit]
+Description=Obsidian MCP headless server
+
+[Service]
+ExecStart=%h/.local/bin/obsidian-mcp-headless %h/vault --http --port 27124
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it with `systemctl --user enable --now obsidian-mcp-headless`. On a machine without a login session, run `loginctl enable-linger $USER` once so the unit starts at boot.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -624,6 +732,8 @@ bun test              # 1700+ unit tests, colocated
 bun run format:check  # CI enforces this; the other gates pass without it
 bun run build         # production bundle
 bun run release       # build + zip (no .mcpb — that is a per-token export from the plugin)
+bun run build:headless  # the headless server, one file under packages/obsidian-plugin/dist/headless/
+bun run test:headless   # build it and smoke-test the real file under Node
 ```
 
 Full gate before calling anything done: `bun run check && bun test && bun run format:check`.

@@ -69,10 +69,15 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bun --filter '@obsidian-mcp-tools/obsidian-plugin' release
 
+      - name: Build headless server
+        run: bun run build:headless
+
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: main.js
+          subject-path: |
+            main.js
+            packages/obsidian-plugin/dist/headless/obsidian-mcp-headless.js
 
       # Community-verified attestation recipe ordering
       # (forum.obsidian.md/t/114445): the attestation must exist BEFORE the
@@ -99,8 +104,11 @@ jobs:
           files: |
             main.js
             manifest.json
+            packages/obsidian-plugin/dist/headless/obsidian-mcp-headless.js
           body: |
             ---
+            **Headless server:** `obsidian-mcp-headless.js` serves a vault folder over MCP without Obsidian. Put it on your PATH (`install -m 755 obsidian-mcp-headless.js ~/.local/bin/obsidian-mcp-headless`), then run `obsidian-mcp-headless /path/to/vault` (Node 24.11 or newer).
+
             **Claude Desktop:** the `.mcpb` extension is exported from inside Obsidian — **Settings → MCP Connector → Access control**, then `.mcpb` on your token's row. It is not attached here: a bundle built by CI has no vault path and no token id to carry.
 
             ✨ This release includes attested build artifacts.

@@ -38,6 +38,7 @@ import {
   type SemanticSearchState,
 } from "./features/semantic-search";
 import { wireSemanticSearch } from "./features/semantic-search/services/productionWiring";
+import { createSemanticWiring } from "./features/semantic-search/services/wiringLifecycle";
 import { loadSmartSearchAPI } from "./shared";
 import { createGuardedApp, isGuardedApp } from "./shared/guardedApp";
 import { pathPolicyFor } from "./shared/policyProvider";
@@ -66,6 +67,15 @@ export default class McpToolsPlugin extends Plugin {
   promptsState?: PromptsFeatureState;
 
   semanticSearchState?: SemanticSearchState;
+
+  /**
+   * Tracks the pending semantic-search wiring. Obsidian awaits neither
+   * onload nor onunload, so a wiring that finishes after unload tears
+   * itself down instead of being assigned, and onunload waits for it.
+   */
+  private readonly semanticWiring = createSemanticWiring(() =>
+    wireSemanticSearch(this),
+  );
 
   /**
    * Resolved Smart Connections search API, populated best-effort at
@@ -219,12 +229,15 @@ export default class McpToolsPlugin extends Plugin {
     // 0.4.0 semantic search — Phase 3 production wiring, extracted to
     // services/productionWiring.ts for testability.
     try {
-      this.semanticSearchState = await wireSemanticSearch(this);
+      this.semanticSearchState = await this.semanticWiring.wire();
     } catch (error) {
       logger.error("Semantic search wiring failed", {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    // onunload ran while wiring: its state is already torn down, and the
+    // Smart Connections poll below must not start.
+    if (this.semanticWiring.unloaded) return;
 
     // 0.4.0: the in-process server has no binary to install.
     // 0.17.0: the 0.3.x migration wizard was removed; users coming
@@ -281,6 +294,7 @@ export default class McpToolsPlugin extends Plugin {
     // First and synchronous: no queued transport or route operation runs
     // after this, and one still running tears down what it creates
     this.routeQueue.close();
+    const wiringSettled = this.semanticWiring.unload();
     disableSettingsReadCache(this);
     this.cancelSmartSearchPoll?.();
     this.cancelSmartSearchPoll = undefined;
@@ -306,6 +320,8 @@ export default class McpToolsPlugin extends Plugin {
       await mcpTransportTeardown(this.mcpTransportState);
       this.mcpTransportState = undefined;
     }
+    // A wiring still pending tears its own state down once it finishes.
+    await wiringSettled;
     if (this.semanticSearchState) {
       await semanticSearchTeardown(this.semanticSearchState);
       this.semanticSearchState = undefined;

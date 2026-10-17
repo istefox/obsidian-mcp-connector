@@ -20,13 +20,17 @@ const DIM = 4;
 function makeVault(initial: Record<string, string> = {}): {
   vault: VaultLike;
   files: Map<string, string>;
-  emit(event: VaultEvent, path: string): void;
+  emit(event: VaultEvent, path: string, oldPath?: string): void;
 } {
   const files = new Map<string, string>(Object.entries(initial));
-  const handlers: Record<VaultEvent, Set<(p: string) => void>> = {
+  const handlers: Record<
+    VaultEvent,
+    Set<(p: string, oldPath?: string) => void>
+  > = {
     modify: new Set(),
     create: new Set(),
     delete: new Set(),
+    rename: new Set(),
   };
   const vault: VaultLike = {
     getMarkdownFiles: () => Array.from(files.keys()).map((path) => ({ path })),
@@ -42,8 +46,8 @@ function makeVault(initial: Record<string, string> = {}): {
       };
     },
   };
-  function emit(event: VaultEvent, path: string) {
-    for (const h of handlers[event]) h(path);
+  function emit(event: VaultEvent, path: string, oldPath?: string) {
+    for (const h of handlers[event]) h(path, oldPath);
   }
   return { vault, files, emit };
 }
@@ -149,6 +153,10 @@ async function collect(
   const out: EmbeddingRecord[] = [];
   for await (const r of store.scan()) out.push(r);
   return out;
+}
+
+function pathsOf(recs: EmbeddingRecord[]): Set<string> {
+  return new Set(recs.map((r) => r.filePath));
 }
 
 describe("live indexer", () => {
@@ -269,6 +277,106 @@ describe("live indexer", () => {
     expect(store.size()).toBe(1);
     const recs = await collect(store);
     expect(recs[0]?.filePath).toBe("kept.md");
+
+    await indexer.stop();
+  });
+
+  test("rename: drops the old path's records and indexes the new path", async () => {
+    const { vault, files, emit } = makeVault({
+      "old.md": "alpha---CHUNK---beta",
+      "kept.md": "x",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await indexer.start();
+    expect(store.size()).toBe(3);
+
+    files.set("new.md", files.get("old.md") as string);
+    files.delete("old.md");
+    emit("rename", "new.md", "old.md");
+    await indexer.flush();
+
+    const paths = new Set((await collect(store)).map((r) => r.filePath));
+    expect(paths).toEqual(new Set(["new.md", "kept.md"]));
+    expect(store.size()).toBe(3);
+
+    await indexer.stop();
+  });
+
+  test("rename: a folder rename arrives as one event per file and covers each", async () => {
+    const { vault, files, emit } = makeVault({
+      "dir/a.md": "alpha",
+      "dir/sub/b.md": "bravo",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await indexer.start();
+
+    files.set("moved/a.md", "alpha");
+    files.set("moved/sub/b.md", "bravo");
+    files.delete("dir/a.md");
+    files.delete("dir/sub/b.md");
+    emit("rename", "moved/a.md", "dir/a.md");
+    emit("rename", "moved/sub/b.md", "dir/sub/b.md");
+    await indexer.flush();
+
+    const paths = (await collect(store)).map((r) => r.filePath).sort();
+    expect(paths).toEqual(["moved/a.md", "moved/sub/b.md"]);
+
+    await indexer.stop();
+  });
+
+  test("rename: to a non-markdown name drops the old records and indexes nothing", async () => {
+    const { vault, files, emit } = makeVault({ "a.md": "alpha" });
+    const { embedder, embeds } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await indexer.start();
+    const embedsAfterBuild = embeds().length;
+
+    files.set("a.txt", "alpha");
+    files.delete("a.md");
+    emit("rename", "a.txt", "a.md");
+    await indexer.flush();
+
+    expect(store.size()).toBe(0);
+    expect(embeds().length).toBe(embedsAfterBuild);
+
+    await indexer.stop();
+  });
+
+  test("rename: of a non-indexable file schedules nothing", async () => {
+    const { vault, emit } = makeVault({ "a.md": "alpha" });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await indexer.start();
+
+    emit("rename", "img/new.png", "img/old.png");
+    expect(indexer.pending()).toBe(0);
+    expect(store.size()).toBe(1);
 
     await indexer.stop();
   });
@@ -447,6 +555,73 @@ describe("live indexer", () => {
 
     expect(embeds).toEqual([]);
     expect(store.size()).toBe(0);
+  });
+
+  test("a path renamed or deleted while no indexer ran is pruned on the next start", async () => {
+    const { vault, files } = makeVault({
+      "old.md": "alpha",
+      "kept.md": "bravo",
+      "gone.md": "charlie",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const first = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await first.start();
+    await first.stop();
+    expect(pathsOf(await collect(store))).toEqual(
+      new Set(["old.md", "kept.md", "gone.md"]),
+    );
+
+    // Offline: one file renamed, one deleted.
+    files.set("new.md", files.get("old.md") ?? "");
+    files.delete("old.md");
+    files.delete("gone.md");
+    const second = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 30,
+    });
+    await second.start();
+    await second.stop();
+
+    expect(pathsOf(await collect(store))).toEqual(
+      new Set(["new.md", "kept.md"]),
+    );
+    expect(store.mtimeFor("old.md")).toBeUndefined();
+  });
+
+  test("prune keeps records of a file that is excluded but still in the vault", async () => {
+    const { vault } = makeVault({ "keep.md": "alpha", "later.md": "bravo" });
+    const { embedder } = fakeEmbeddingProvider();
+    const excluded = new Set<string>();
+    const make = () =>
+      createLiveIndexer({
+        vault,
+        chunker: fakeChunker,
+        embedder,
+        store,
+        isExcluded: (p) => excluded.has(p),
+        debounceMs: 30,
+      });
+    const first = make();
+    await first.start();
+    await first.stop();
+
+    excluded.add("later.md");
+    const second = make();
+    await second.start();
+    await second.stop();
+
+    expect(pathsOf(await collect(store))).toEqual(
+      new Set(["keep.md", "later.md"]),
+    );
   });
 
   test("overlap context is prepended to consecutive chunk embed inputs", async () => {
@@ -847,6 +1022,38 @@ function countingAdapter(): {
 }
 
 describe("low-power indexer", () => {
+  test("first cycle after a restart prunes paths that vanished while stopped", async () => {
+    const localStore = await makeStore();
+    const { vault, files } = makeMtimeVault({
+      "old.md": { content: "alpha", mtime: 100 },
+      "kept.md": { content: "bravo", mtime: 100 },
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const make = () =>
+      createLowPowerIndexer({
+        vault,
+        chunker: fakeChunker,
+        embedder,
+        store: localStore,
+        intervalMs: 1_000_000,
+      });
+    const first = make();
+    await first.start();
+    await first.stop();
+
+    files.set("new.md", { content: "alpha", mtime: 100 });
+    files.delete("old.md");
+    // A fresh indexer has an empty lastSeenMtime: only the store knows
+    // about old.md.
+    const second = make();
+    await second.start();
+    await second.stop();
+
+    expect(pathsOf(await collect(localStore))).toEqual(
+      new Set(["new.md", "kept.md"]),
+    );
+  });
+
   test("first start processes every file (lastSeenMtime is empty)", async () => {
     const localStore = await makeStore();
     const { vault } = makeMtimeVault({
@@ -1012,10 +1219,6 @@ describe("low-power indexer", () => {
 // event listener, otherwise a newly edited file in an excluded folder
 // re-enters the index on the next vault event.
 describe("indexer — isUserIgnored exclusion (#238)", () => {
-  function pathsOf(recs: EmbeddingRecord[]): Set<string> {
-    return new Set(recs.map((r) => r.filePath));
-  }
-
   test("rebuild path: excluded files are not indexed", async () => {
     const store = await makeStore();
     const { vault } = makeVault({
@@ -1562,5 +1765,199 @@ describe("indexer — lazy store init", () => {
     expect(embedCalls()).toEqual([["keep\nNEW"]]);
     expect(store2.size()).toBe(2);
     await idx2.stop();
+  });
+});
+
+describe("indexer — stop during start", () => {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  /** A promise and the function that settles it, for barrier control. */
+  function barrier() {
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (release = resolve));
+    return { reached, release };
+  }
+
+  test("stop() waits for a start still on store init, which then does nothing", async () => {
+    const store = await makeStore();
+    const realInit = store.init.bind(store);
+    const entered = barrier();
+    const gate = barrier();
+    store.init = async () => {
+      entered.release();
+      await gate.reached;
+      await realInit();
+    };
+    const { vault, emit } = makeVault({ "a.md": "alpha" });
+    const { embedder, embedCalls } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+
+    const started = indexer.start();
+    await entered.reached;
+    let stopDone = false;
+    const stopped = indexer.stop().then(() => {
+      stopDone = true;
+    });
+    await turn();
+    expect(stopDone).toBe(false);
+
+    gate.release();
+    await started;
+    await stopped;
+
+    emit("create", "a.md");
+    expect(indexer.pending()).toBe(0);
+    expect(embedCalls()).toEqual([]);
+    expect(store.size()).toBe(0);
+  });
+
+  test("stop() during the first rebuild keeps later files out of the store", async () => {
+    const store = await makeStore();
+    const { vault } = makeVault({ "a.md": "alpha", "b.md": "bravo" });
+    const base = fakeEmbeddingProvider();
+    const entered = barrier();
+    const gate = barrier();
+    const embedder: EmbeddingProvider = {
+      ...base.embedder,
+      embed: async (texts, role) => {
+        entered.release();
+        await gate.reached;
+        return base.embedder.embed(texts, role);
+      },
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+
+    const started = indexer.start();
+    await entered.reached;
+    const stopped = indexer.stop();
+    gate.release();
+    await started;
+    await stopped;
+
+    expect(base.embeds()).toEqual(["alpha"]);
+  });
+
+  test("low-power stop() during the first cycle installs no interval", async () => {
+    const store = await makeStore();
+    const { vault } = makeMtimeVault({
+      "a.md": { content: "alpha", mtime: 1 },
+    });
+    const base = fakeEmbeddingProvider();
+    const entered = barrier();
+    const gate = barrier();
+    const embedder: EmbeddingProvider = {
+      ...base.embedder,
+      embed: async (texts, role) => {
+        entered.release();
+        await gate.reached;
+        return base.embedder.embed(texts, role);
+      },
+    };
+    const indexer = createLowPowerIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      intervalMs: 10_000,
+    });
+    const realSetInterval = globalThis.setInterval;
+    const installed: unknown[] = [];
+    globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
+      const handle = realSetInterval(...args);
+      installed.push(handle);
+      return handle;
+    }) as typeof setInterval;
+    try {
+      const started = indexer.start();
+      await entered.reached;
+      const stopped = indexer.stop();
+      gate.release();
+      await started;
+      await stopped;
+      expect(installed).toEqual([]);
+    } finally {
+      globalThis.setInterval = realSetInterval;
+      for (const h of installed) {
+        globalThis.clearInterval(h as ReturnType<typeof setInterval>);
+      }
+    }
+  });
+});
+
+describe("indexer — stop during a manual rebuild", () => {
+  const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  function barrier() {
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => (release = resolve));
+    return { reached, release };
+  }
+
+  test("stop() waits for a rebuild that is pruning, and no store write follows it", async () => {
+    const store = await makeStore();
+    const { vault, files } = makeVault({ "a.md": "alpha", "gone.md": "bravo" });
+    const { embedder } = fakeEmbeddingProvider();
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      debounceMs: 10,
+    });
+    await indexer.start();
+    expect(pathsOf(await collect(store))).toEqual(new Set(["a.md", "gone.md"]));
+
+    // A file deleted since: the next rebuild prunes it, and the prune parks.
+    files.delete("gone.md");
+    const realPurge = store.purge.bind(store);
+    const entered = barrier();
+    const gate = barrier();
+    store.purge = async (isExcluded) => {
+      entered.release();
+      await gate.reached;
+      return realPurge(isExcluded);
+    };
+    // Every write path of the store, counted once stop() has returned.
+    let stopped = false;
+    let lateWrites = 0;
+    for (const name of ["upsert", "delete", "flush", "setMtime"] as const) {
+      const real = (store[name] as (...a: never[]) => unknown).bind(store);
+      (store as unknown as Record<string, unknown>)[name] = (
+        ...args: never[]
+      ) => {
+        if (stopped) lateWrites += 1;
+        return real(...args);
+      };
+    }
+
+    const rebuilt = indexer.rebuildAll();
+    await entered.reached;
+    let stopDone = false;
+    const stopping = indexer.stop().then(() => {
+      stopDone = true;
+      stopped = true;
+    });
+    for (let i = 0; i < 3; i++) await turn();
+    expect(stopDone).toBe(false);
+
+    gate.release();
+    await rebuilt;
+    await stopping;
+    for (let i = 0; i < 3; i++) await turn();
+    expect(lateWrites).toBe(0);
+    // The prune itself finished before stop() returned.
+    expect(pathsOf(await collect(store))).toEqual(new Set(["a.md"]));
   });
 });

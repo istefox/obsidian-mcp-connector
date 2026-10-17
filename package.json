@@ -21,6 +21,8 @@
     "check": "tsc --noEmit && bun --filter '*' check",
     "format": "prettier --write \"packages/obsidian-plugin/src/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/obsidian-plugin/scripts/**/*.ts\" \"packages/obsidian-plugin/scripts/**/*.js\" \"packages/obsidian-plugin/*.ts\" \"scripts/**/*.ts\"",
     "format:check": "prettier --check \"packages/obsidian-plugin/src/**/*.ts\" \"packages/shared/src/**/*.ts\" \"packages/obsidian-plugin/scripts/**/*.ts\" \"packages/obsidian-plugin/scripts/**/*.js\" \"packages/obsidian-plugin/*.ts\" \"scripts/**/*.ts\"",
+    "build:headless": "bun --filter '@obsidian-mcp-tools/obsidian-plugin' build:headless",
+    "test:headless": "bun --filter '@obsidian-mcp-tools/obsidian-plugin' test:headless",
     "dev": "bun --filter '*' dev",
     "version": "bun scripts/version.ts",
     "version:tag": "bun scripts/version.ts --tag",

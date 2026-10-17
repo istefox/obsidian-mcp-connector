@@ -1392,6 +1392,9 @@ export function mockApp(): App {
   };
 
   const workspace = {
+    // A mock vault is complete from the start, like a desktop whose layout
+    // is already ready: callbacks run at once.
+    onLayoutReady: (callback: () => void): void => callback(),
     getActiveFile: (): ApiTFile | null => {
       if (!_mockState.activeFilePath) return null;
       return fileFromPath(

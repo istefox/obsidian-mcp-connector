@@ -157,7 +157,7 @@ The current release pipeline (`release.yml`) attests `main.js` with `actions/att
 gh attestation verify main.js --repo istefox/obsidian-mcp-connector
 ```
 
-The command exits 0 when the file matches the attestation recorded for that release. Only `main.js` is attested, not `manifest.json`. A version tag is created only by the **Release tag** workflow, after a maintainer approves the `release` environment, because a tag ruleset limits tag creation to the release GitHub App (ADR-0030).
+The command exits 0 when the file matches the attestation recorded for that release. Releases that ship the headless server also attest `obsidian-mcp-headless.js`, which verifies the same way. `manifest.json` is not attested. A version tag is created only by the **Release tag** workflow, after a maintainer approves the `release` environment, because a tag ruleset limits tag creation to the release GitHub App (ADR-0030).
 
 ## Supported Versions
 
