@@ -75,6 +75,11 @@ search results is not an access control.**
   here**, and it may be unrelated to the blank window in #597 and #609. The change described under
   D11 narrows `AsyncLocalStorage` to request paths on correctness grounds and leaves the
   availability question open.
+  Later the same day the delete crash was reproduced on Windows with Electron 43.1.1. The trigger
+  is a keyboard delete while an MCP request is in flight: 3.0.3 crashed on the second of two
+  deletes (exit code 0xFFFF7003), and a build whose indexer reads `vaultWide` survived three
+  deletes and three renames under the same conditions. With no request in flight, 3.0.3 survived
+  three deletes. The load-time blank window in #597 and #609 is still unreproduced.
 
 ### Prior art in this repository
 
