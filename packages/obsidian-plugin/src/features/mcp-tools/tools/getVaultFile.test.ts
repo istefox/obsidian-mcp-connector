@@ -105,7 +105,7 @@ describe("get_vault_file tool", () => {
     expect(parsed.path).toBe("big.md");
   });
 
-  test("polymorphic contract: default format has no structuredContent, format=json does", async () => {
+  test("polymorphic contract: neither default format nor format=json carries structuredContent", async () => {
     setMockFile("a.md", "# Body");
     const plain = await getVaultFileHandler({
       arguments: { path: "a.md" },
@@ -121,10 +121,14 @@ describe("get_vault_file tool", () => {
       arguments: { path: "a.md", format: "json" },
       app: mockApp(),
     });
-    expect(json.structuredContent).toBeDefined();
+    // The JSON travels once, in the text block (#627).
+    expect(json.structuredContent).toBeUndefined();
+    expect(JSON.parse((json.content[0] as { text: string }).text).path).toBe(
+      "a.md",
+    );
   });
 
-  test("getVaultFileOutputSchema accepts the actual format=json structuredContent", async () => {
+  test("getVaultFileOutputSchema accepts the actual format=json payload", async () => {
     setMockFile("a.md", "---\ntags: [foo]\n---\n# Body");
     setMockMetadata("a.md", {
       frontmatter: { tags: ["foo"] },
@@ -136,13 +140,10 @@ describe("get_vault_file tool", () => {
     });
 
     // Schema-vs-actual consistency: the real handler output must satisfy the
-    // declared outputSchema, or clients validating structuredContent break.
-    expect(result.structuredContent).toBeDefined();
-    const validated = getVaultFileOutputSchema(result.structuredContent);
+    // contract, so the schema can be declared later without breaking clients.
+    const payload = JSON.parse((result.content[0] as { text: string }).text);
+    const validated = getVaultFileOutputSchema(payload);
     expect(validated instanceof type.errors).toBe(false);
-    expect(result.structuredContent).toEqual(
-      JSON.parse((result.content[0] as { text: string }).text),
-    );
   });
 
   test("returns image content block for .png file — no second URI block (ADR-0026 D6: native image/audio blocks are excluded)", async () => {

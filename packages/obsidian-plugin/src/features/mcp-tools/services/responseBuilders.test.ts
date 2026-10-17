@@ -30,46 +30,51 @@ describe("responseBuilders", () => {
   });
 });
 
-describe("successJson — structuredContent dual-emit", () => {
-  test("plain object sets structuredContent to the object itself", () => {
+describe("successJson — structuredContent is opt-in (#627)", () => {
+  test("default: the payload travels once, in the text block", () => {
     const result = successJson({ a: 1 });
-    expect(result.structuredContent).toEqual({ a: 1 });
-  });
-
-  test("text is byte-identical for plain object", () => {
-    const result = successJson({ a: 1 });
+    expect("structuredContent" in result).toBe(false);
     expect(result.content[0].text).toBe('{"a":1}');
   });
 
-  test("array is wrapped as { result: [...] } in structuredContent", () => {
-    const result = successJson([1, 2]);
+  test("default: arrays and primitives carry no structuredContent either", () => {
+    for (const v of [[1, 2], 42, "hello", true, null, {}]) {
+      expect("structuredContent" in successJson(v)).toBe(false);
+    }
+  });
+
+  test("structured: plain object sets structuredContent to the object itself", () => {
+    const result = successJson({ a: 1 }, { structured: true });
+    expect(result.structuredContent).toEqual({ a: 1 });
+    expect(result.content[0].text).toBe('{"a":1}');
+  });
+
+  test("structured: array is wrapped as { result: [...] }", () => {
+    const result = successJson([1, 2], { structured: true });
     expect(result.structuredContent).toEqual({ result: [1, 2] });
     expect(result.content[0].text).toBe("[1,2]");
   });
 
-  test("number primitive is wrapped as { result: 42 }", () => {
-    const result = successJson(42);
-    expect(result.structuredContent).toEqual({ result: 42 });
+  test("structured: primitives are wrapped as { result }", () => {
+    expect(successJson(42, { structured: true }).structuredContent).toEqual({
+      result: 42,
+    });
+    expect(successJson("hi", { structured: true }).structuredContent).toEqual({
+      result: "hi",
+    });
+    expect(successJson(true, { structured: true }).structuredContent).toEqual({
+      result: true,
+    });
   });
 
-  test("string primitive is wrapped as { result: 'hello' }", () => {
-    const result = successJson("hello");
-    expect(result.structuredContent).toEqual({ result: "hello" });
-  });
-
-  test("boolean primitive is wrapped as { result: true }", () => {
-    const result = successJson(true);
-    expect(result.structuredContent).toEqual({ result: true });
-  });
-
-  test("null is wrapped as { result: null } and text stays 'null'", () => {
-    const result = successJson(null);
+  test("structured: null is wrapped as { result: null } and text stays 'null'", () => {
+    const result = successJson(null, { structured: true });
     expect(result.structuredContent).toEqual({ result: null });
     expect(result.content[0].text).toBe("null");
   });
 
-  test("undefined omits structuredContent entirely", () => {
-    const result = successJson(undefined);
+  test("undefined omits structuredContent even when opted in", () => {
+    const result = successJson(undefined, { structured: true });
     expect("structuredContent" in result).toBe(false);
     // text must remain a valid JSON string, never the JS value undefined
     // (which would be dropped from the wire object on serialization).
@@ -77,14 +82,11 @@ describe("successJson — structuredContent dual-emit", () => {
     expect(result.content[0].text).toBe("null");
   });
 
-  test("empty object passes through as structuredContent", () => {
-    const result = successJson({});
-    expect(result.structuredContent).toEqual({});
-  });
-
-  test("nested object passes through verbatim", () => {
-    const result = successJson({ x: { y: [1] } });
-    expect(result.structuredContent).toEqual({ x: { y: [1] } });
+  test("structured: empty and nested objects pass through verbatim", () => {
+    expect(successJson({}, { structured: true }).structuredContent).toEqual({});
+    expect(
+      successJson({ x: { y: [1] } }, { structured: true }).structuredContent,
+    ).toEqual({ x: { y: [1] } });
   });
 
   test("errorJson carries no structuredContent", () => {

@@ -1,6 +1,6 @@
 # ADR-0009: Structured tool output (structuredContent dual-emit)
 
-**Status:** Accepted  
+**Status:** Accepted, dual-emit amended by #627 (see Amendment below)  
 **Date:** 2026-06-14  
 **Deciders:** Stefano Ferri
 
@@ -141,6 +141,29 @@ centralized `successJson` path is cleaner.
   call sites is needed.
 - The existing 1255-test suite must pass with no edits to any existing test
   file, confirmed by the regression task.
+
+---
+
+## Amendment (2026-10-17, #627): `structuredContent` is opt-in
+
+Dual-emit doubled every payload: `get_vault_file` with `format=json` on a 60-line note measured
+17,368 bytes against about 8,700 for one copy, across 22 tools. `successJson` now emits the text
+block only; `successJson(value, { structured: true })` adds `structuredContent` for a tool that
+needs it. No tool opts in today.
+
+What was checked before removing it:
+
+- No tool declares an `outputSchema` (README, "On `outputSchema`, deliberately absent"), so no
+  client validates `structuredContent` against one, and the text block is always present.
+- The MCP Apps view reads its rows from the result's `_meta` (ADR-0018 D4: "`structuredContent`
+  is not used"), not from `structuredContent`.
+- The official client SDK reads `structuredContent` only to validate it against an advertised
+  `outputSchema`.
+- Third-party clients were not tested. A client that reads `structuredContent` and ignores the
+  text block would lose the payload. The fix for one tool is a single `{ structured: true }`.
+
+This amends the dual-emit decision above, and ADR-0023 D12 deferred reopening it until the next
+spec revision. The change is one function and halves the response, so it did not wait.
 
 ---
 

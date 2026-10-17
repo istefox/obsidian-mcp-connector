@@ -438,7 +438,7 @@ describe("end-to-end: HTTP → McpServer", () => {
     }
   });
 
-  test("tools/call result carries structuredContent in the wire response", async () => {
+  test("tools/call result carries the payload once, as text, on the wire (#627)", async () => {
     const { startHttpServer } = await import("./httpServer");
     const svc = await createMcpService({
       app: mockApp(),
@@ -477,13 +477,8 @@ describe("end-to-end: HTTP → McpServer", () => {
       const parsed = JSON.parse(text);
       expect(parsed.status).toBe("ok");
 
-      // structuredContent must be present and be the same object
-      const sc = body?.result?.structuredContent as Record<string, unknown>;
-      expect(sc).toBeDefined();
-      expect(typeof sc).toBe("object");
-      expect(sc.status).toBe("ok");
-      // structuredContent object matches the parsed text blob
-      expect(sc).toEqual(parsed);
+      // No second copy: a tool that does not opt in sends no structuredContent.
+      expect(body?.result?.structuredContent).toBeUndefined();
     } finally {
       await new Promise<void>((r) => server.server.close(() => r()));
     }
