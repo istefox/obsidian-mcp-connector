@@ -7,6 +7,8 @@ import {
   wireSemanticSearch,
 } from "./productionWiring";
 import { createEmbeddingStoreRegistry } from "./storeRegistry";
+import { createEmbeddingGemmaProvider } from "./embeddingGemmaProvider";
+import { applySettings } from "..";
 import type { SemanticIndexer } from "./indexer";
 import {
   FORMAT_VERSION,
@@ -20,6 +22,7 @@ import {
   mockPlugin,
   resetMockVault,
   setMockFile,
+  setMockFileStat,
 } from "$/test-setup";
 import { pathPolicyFor } from "$/shared/policyProvider";
 import { captureLogLines } from "$/shared/log/logCapture";
@@ -809,6 +812,250 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
     // A rebuild asked for after teardown builds no indexer either.
     state?.startRebuildFor?.("embedding-gemma-300m");
     expect(state?.dlcIndexers?.size).toBe(0);
+  });
+
+  /**
+   * Stands in for the DLC model: no pipeline is loaded. `embedded` lists
+   * every text the indexer asked to embed, in order, and `chunked()` counts
+   * the notes it read and chunked (the chunker asks the provider for its
+   * token limit once per note). `gate` runs before each embed returns, to
+   * park a rebuild at a chosen point.
+   */
+  function standInModel(gate?: () => Promise<void>) {
+    const proto = Object.getPrototypeOf(
+      createEmbeddingGemmaProvider(async () => {
+        throw new Error("model not available in tests");
+      }),
+    ) as {
+      embed: (texts: string[]) => Promise<Float32Array[]>;
+      getMaxInputTokens: () => Promise<number>;
+    };
+    const embedded: string[] = [];
+    const embed = spyOn(proto, "embed").mockImplementation(async (texts) => {
+      embedded.push(...texts);
+      await gate?.();
+      return texts.map(() => new Float32Array(768));
+    });
+    const tokens = spyOn(proto, "getMaxInputTokens").mockResolvedValue(512);
+    return {
+      embedded,
+      chunked: () => tokens.mock.calls.length,
+      restore: () => {
+        embed.mockRestore();
+        tokens.mockRestore();
+      },
+    };
+  }
+
+  const DLC_KEY = "embedding-gemma-300m";
+  const noteText = (name: string) =>
+    `${name} ${"plain ascii text ".repeat(40)}`;
+  const addNotes = (...names: string[]) => {
+    names.forEach((name, i) => {
+      setMockFile(`${name}.md`, noteText(name));
+      setMockFileStat(`${name}.md`, { mtime: 100 + i });
+    });
+  };
+
+  /**
+   * Switches a session to the Gemma provider, starts its rebuild, and
+   * tears the session down while the rebuild is parked on its first
+   * embed. Returns the state, and what the rebuild's success path touched.
+   */
+  async function interruptRebuild(h: ReturnType<typeof host>) {
+    let reached!: () => void;
+    const embedReached = new Promise<void>((resolve) => (reached = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    const model = standInModel(async () => {
+      if (!first) return;
+      first = false;
+      reached();
+      await released;
+    });
+    const state = (await wireSemanticSearch(h.plugin))!;
+    try {
+      // What the settings UI does: persist the choice, keep the old
+      // provider and show the banner until the index is built.
+      await applySettings(h.plugin, state, {
+        ...state.settings,
+        provider: "embedding-gemma",
+      });
+      expect(state.pendingProvider).toBe(DLC_KEY);
+      const providerBefore = state.provider;
+
+      const swaps: unknown[] = [];
+      const chooser = state.chooser!;
+      state.chooser = (settings) => {
+        swaps.push(settings);
+        return chooser(settings);
+      };
+      const marked: string[] = [];
+      const markReady = state.registry!.markReady.bind(state.registry);
+      state.registry!.markReady = (key) => {
+        marked.push(key);
+        markReady(key);
+      };
+      state.startRebuildFor?.(DLC_KEY);
+      const dlc = state.dlcIndexers!.get(DLC_KEY)!;
+      let stopCalled!: () => void;
+      const stopping = new Promise<void>((resolve) => (stopCalled = resolve));
+      const stop = dlc.stop.bind(dlc);
+      dlc.stop = () => {
+        stopCalled();
+        return stop();
+      };
+
+      await embedReached;
+      const tearing = state.teardown();
+      await stopping;
+      release();
+      await tearing;
+      for (let i = 0; i < 3; i++) await turn();
+      return {
+        state,
+        providerBefore,
+        swaps,
+        marked,
+        embedded: model.embedded,
+      };
+    } finally {
+      model.restore();
+    }
+  }
+
+  test("a DLC rebuild cut short by teardown is not marked ready or swapped in", async () => {
+    const h = host();
+    addNotes("A", "B", "C");
+    const run = await interruptRebuild(h);
+    // The rebuild reached the first note only.
+    expect(run.embedded.some((t) => t.startsWith("A "))).toBe(true);
+    expect(run.embedded.some((t) => t.startsWith("B "))).toBe(false);
+
+    expect(run.marked).toEqual([]);
+    expect(run.state.pendingProvider).toBe(DLC_KEY);
+    expect(run.swaps).toEqual([]);
+    expect(run.state.provider).toBe(run.providerBefore);
+  });
+
+  test("a teardown that starts while a finished DLC rebuild is flushing waits for it, and nothing is marked ready or written after it", async () => {
+    const h = host();
+    addNotes("A");
+    const model = standInModel();
+    const state = (await wireSemanticSearch(h.plugin))!;
+    try {
+      await applySettings(h.plugin, state, {
+        ...state.settings,
+        provider: "embedding-gemma",
+      });
+      expect(state.pendingProvider).toBe(DLC_KEY);
+      const providerBefore = state.provider;
+      const swaps: unknown[] = [];
+      const chooser = state.chooser!;
+      state.chooser = (settings) => {
+        swaps.push(settings);
+        return chooser(settings);
+      };
+      const marked: string[] = [];
+      const markReady = state.registry!.markReady.bind(state.registry);
+      state.registry!.markReady = (key) => {
+        marked.push(key);
+        markReady(key);
+      };
+
+      // Learn when the rebuild itself is over: what follows is the
+      // completion step, whose flush is parked below.
+      let rebuildOver = false;
+      const set = state.dlcIndexers!.set.bind(state.dlcIndexers!);
+      state.dlcIndexers!.set = (key, indexer) => {
+        const start = indexer.start.bind(indexer);
+        indexer.start = (opts) =>
+          start(opts).finally(() => {
+            rebuildOver = true;
+          });
+        return set(key, indexer);
+      };
+
+      const store = state.registry!.storeFor(DLC_KEY, 768);
+      let tornDown = false;
+      let lateWrites = 0;
+      let reached!: () => void;
+      const flushReached = new Promise<void>((resolve) => (reached = resolve));
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let parked = false;
+      for (const name of ["upsert", "delete", "flush", "setMtime"] as const) {
+        const real = (store[name] as (...a: never[]) => unknown).bind(store);
+        (store as unknown as Record<string, unknown>)[name] = async (
+          ...args: never[]
+        ) => {
+          if (name === "flush" && rebuildOver && !parked) {
+            parked = true;
+            reached();
+            await released;
+          }
+          if (tornDown) lateWrites += 1;
+          return real(...args);
+        };
+      }
+
+      state.startRebuildFor?.(DLC_KEY);
+      await flushReached;
+      let tearDownDone = false;
+      const tearing = state.teardown().then(() => {
+        tearDownDone = true;
+        tornDown = true;
+      });
+      for (let i = 0; i < 5; i++) await turn();
+      // The flush is still in flight, so teardown must not have closed
+      // the stores under it.
+      expect(tearDownDone).toBe(false);
+
+      release();
+      await tearing;
+      for (let i = 0; i < 3; i++) await turn();
+      expect(lateWrites).toBe(0);
+      expect(marked).toEqual([]);
+      expect(swaps).toEqual([]);
+      expect(state.pendingProvider).toBe(DLC_KEY);
+      expect(state.provider).toBe(providerBefore);
+    } finally {
+      model.restore();
+    }
+  });
+
+  test("the next session indexes the notes an interrupted DLC build never reached, and skips the ones it did", async () => {
+    const h = host();
+    addNotes("A", "B", "C");
+    await interruptRebuild(h);
+
+    // The store the interrupted session left is current and non-empty,
+    // so the next session treats it as ready and subscribes to it.
+    const model = standInModel();
+    h.holdLayout();
+    const state = await wireSemanticSearch(h.plugin);
+    try {
+      expect(state?.registry?.isReady(DLC_KEY)).toBe(true);
+      const watch = watchIndexer(state!.dlcIndexers!.get(DLC_KEY)!);
+      h.ready();
+      await turn();
+      await watch.latest();
+
+      const store = state!.registry!.storeFor(DLC_KEY, 768);
+      expect(store.hasRecords("A.md")).toBe(true);
+      expect(store.hasRecords("B.md")).toBe(true);
+      expect(store.hasRecords("C.md")).toBe(true);
+      // The note the first session finished is neither read nor embedded.
+      expect(model.chunked()).toBe(2);
+      expect(model.embedded.map((t) => t.slice(0, 1)).sort()).toEqual([
+        "B",
+        "C",
+      ]);
+    } finally {
+      model.restore();
+      await state?.teardown();
+    }
   });
 
   test("vault rename events reach the indexer for files only, with the old path", async () => {

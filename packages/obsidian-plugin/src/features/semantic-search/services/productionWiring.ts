@@ -391,6 +391,11 @@ export async function wireSemanticSearch(
     // run a fresh `rebuildAll()` against it; the subscription stays
     // intact so post-rebuild edits keep flowing.
     const _rebuildingProviders = new Set<string>();
+    // The finishing step of each rebuild that ran to the end (flush, mark
+    // ready, provider swap). Teardown waits for these before it closes the
+    // stores. Only this step is tracked, not the rebuild itself, which
+    // settles once stop() has cut it short.
+    const _completingRebuilds = new Set<Promise<void>>();
     state.startRebuildFor = (providerKey: string) => {
       // After teardown nothing may build or start an indexer: it would
       // be untracked and keep receiving vault events.
@@ -416,17 +421,31 @@ export async function wireSemanticSearch(
       const work = existing ? dlcIndexer.rebuildAll() : dlcIndexer.start();
 
       work
-        .then(async () => {
-          const dlcStore = registry.storeFor(providerKey, ep.dimensions);
-          await dlcStore.flush();
-          registry.markReady(providerKey);
-          if (state.pendingProvider === providerKey) {
-            state.pendingProvider = null;
-            state.pendingProviderStartedAt = null;
-          }
-          if (state.chooser) {
-            state.provider = state.chooser(state.settings);
-          }
+        .then(() => {
+          // A rebuild that stop() cut short returns as if it had finished.
+          // Only teardown stops a DLC indexer, so a closed wiring means the
+          // index is partial: leave it unready and the banner up, and touch
+          // nothing that teardown is closing. The next session finishes it.
+          if (closed) return;
+          const completion = (async () => {
+            const dlcStore = registry.storeFor(providerKey, ep.dimensions);
+            await dlcStore.flush();
+            // Teardown may have started during the flush. It waits for this
+            // step, but it must not find the provider swapped in behind it.
+            if (closed) return;
+            registry.markReady(providerKey);
+            if (state.pendingProvider === providerKey) {
+              state.pendingProvider = null;
+              state.pendingProviderStartedAt = null;
+            }
+            if (state.chooser) {
+              state.provider = state.chooser(state.settings);
+            }
+          })();
+          _completingRebuilds.add(completion);
+          return completion.finally(() => {
+            _completingRebuilds.delete(completion);
+          });
         })
         .catch((err) => {
           logger.error("semantic-search: DLC rebuild failed", {
@@ -440,11 +459,12 @@ export async function wireSemanticSearch(
     };
 
     // Auto-subscribe active DLC provider at plugin load when its
-    // store already has content. Skips the initial rebuild (existing
-    // store is current) and only wires up vault event subscriptions
-    // so future create/modify/delete events update the index live.
-    // Deferred to onLayoutReady to match the same vault-scan-ready
-    // guarantee as the migration auto-trigger below.
+    // store already has content. Subscribes to vault events and runs the
+    // session-start pass, as the native indexer does: files whose stored
+    // mtime matches are skipped unread, so an index that an interrupted
+    // build left partial is completed. Deferred to onLayoutReady to
+    // match the same vault-scan-ready guarantee as the migration
+    // auto-trigger below.
     const _autoSubscribeDlc = (
       providerKey: keyof typeof embeddingProviders,
     ): void => {
@@ -454,7 +474,7 @@ export async function wireSemanticSearch(
       state.dlcIndexers?.set(providerKey, dlcIndexer);
       plugin.app.workspace.onLayoutReady(() => {
         if (closed) return;
-        dlcIndexer.start({ initialRebuild: false }).catch((err) => {
+        dlcIndexer.start().catch((err) => {
           logger.error("semantic-search: DLC auto-subscribe failed", {
             providerKey,
             error: err instanceof Error ? err.message : String(err),
@@ -532,6 +552,11 @@ export async function wireSemanticSearch(
         }
         state.dlcIndexers.clear();
       }
+      // A rebuild that stop() cut short takes the closed path at once. One
+      // that had already finished may be mid-flush, and closing the registry
+      // under it would let it write after teardown. Nothing here holds it
+      // up: its rebuild is over and only the flush is left.
+      await Promise.allSettled([..._completingRebuilds]);
       try {
         await embedder.unload();
       } catch {
