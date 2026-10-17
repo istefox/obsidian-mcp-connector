@@ -13,15 +13,30 @@ const MAX_LENGTH_CEILING = 500_000;
 // hung host cannot pin the handler indefinitely.
 const REQUEST_TIMEOUT_MS = 30_000;
 
+// Private, loopback and link-local IPv4 ranges.
+function isPrivateIPv4(a: number, b: number): boolean {
+  if (a === 127) return true; // 127.0.0.0/8 loopback
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  return false;
+}
+
 // Loopback / link-local / RFC-1918 ranges that an MCP client (semi-
 // untrusted in this project's threat model) must not be able to reach
 // via `requestUrl`, which on desktop resolves internal hosts.
 function isPrivateOrLoopbackHost(hostname: string): boolean {
-  // Strip IPv6 brackets if present (URL.hostname keeps them for literals).
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  // Strip IPv6 brackets if present (URL.hostname keeps them for literals)
+  // and the root-label dot: `localhost.` names the same host as `localhost`.
+  const host = hostname
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "")
+    .toLowerCase();
 
   if (
     host === "localhost" ||
+    host.endsWith(".localhost") || // RFC 6761: any name under it is loopback
     host.endsWith(".local") ||
     host === "0.0.0.0" ||
     host === "::" ||
@@ -32,18 +47,27 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
 
   // IPv4 literal.
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 127) return true; // 127.0.0.0/8 loopback
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    return false;
-  }
+  if (v4) return isPrivateIPv4(Number(v4[1]), Number(v4[2]));
 
-  // IPv6 literal: ::1 handled above; fc00::/7 = unique-local (fc/fd prefix).
   if (host.includes(":")) {
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d). `new URL` rewrites the dotted
+    // form to hex (::ffff:7f00:1), so accept both and run the embedded
+    // address through the IPv4 rules.
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mappedHex) {
+      return isPrivateIPv4(
+        parseInt(mappedHex[1], 16) >> 8,
+        parseInt(mappedHex[1], 16) & 0xff,
+      );
+    }
+    const mappedDotted = /^::ffff:(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(
+      host,
+    );
+    if (mappedDotted) {
+      return isPrivateIPv4(Number(mappedDotted[1]), Number(mappedDotted[2]));
+    }
+
+    // ::1 handled above; fc00::/7 = unique-local (fc/fd prefix).
     if (/^f[cd][0-9a-f]{0,2}:/.test(host)) return true; // fc00::/7
     if (/^fe[89ab][0-9a-f]:/.test(host)) return true; // fe80::/10 link-local
   }
@@ -54,7 +78,9 @@ function isPrivateOrLoopbackHost(hostname: string): boolean {
 // Validate the URL before any request is made. Blocks the non-http(s)
 // schemes (file:/data:/blob: — the local-file-read vector) and
 // internal/loopback/RFC-1918 hosts (SSRF). DNS resolution is out of
-// scope, so DNS-rebinding to a private IP is NOT covered here.
+// scope, so DNS-rebinding to a private IP is NOT covered here. Redirects
+// are not rechecked either: Obsidian's `requestUrl` takes no redirect
+// option and returns no final URL, so a hop cannot be inspected or refused.
 function validateFetchUrl(raw: string): string | null {
   let parsed: URL;
   try {

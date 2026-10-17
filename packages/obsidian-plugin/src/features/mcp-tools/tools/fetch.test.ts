@@ -99,12 +99,36 @@ describe("fetch tool", () => {
     ["http://169.254.169.254/latest/meta-data/", /internal|loopback/i],
     ["http://[::1]/", /internal|loopback/i],
     ["http://printer.local/", /internal|loopback/i],
+    // Spellings that used to slip past the host check (#623).
+    ["http://localhost./", /internal|loopback/i],
+    ["http://x.localhost/", /internal|loopback/i],
+    ["http://a.b.localhost./", /internal|loopback/i],
+    ["http://[::ffff:127.0.0.1]/", /internal|loopback/i],
+    ["http://[::ffff:10.0.0.1]/", /internal|loopback/i],
+    ["http://[::ffff:172.16.0.1]/", /internal|loopback/i],
+    ["http://[::ffff:172.31.255.255]/", /internal|loopback/i],
+    ["http://[::ffff:192.168.1.1]/", /internal|loopback/i],
+    ["http://[::ffff:169.254.169.254]/", /internal|loopback/i],
     ["not a url", /invalid url/i],
   ])("rejects %s without performing a request", async (url, pattern) => {
     const result = await fetchHandler({ arguments: { url } });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/Fetch rejected/);
     expect(result.content[0].text).toMatch(pattern);
+  });
+
+  test.each([
+    "http://[::ffff:8.8.8.8]/",
+    "http://[::ffff:172.32.0.1]/",
+    "http://notlocalhost.example/",
+  ])("does not reject public host %s", async (url) => {
+    setMockRequestUrl(url, {
+      status: 200,
+      text: "ok",
+      headers: { "content-type": "text/plain" },
+    });
+    const result = await fetchHandler({ arguments: { url } });
+    expect(result.isError).toBeUndefined();
   });
 
   test("accepts a normal public https URL", async () => {
