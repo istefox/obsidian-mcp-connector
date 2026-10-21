@@ -8,6 +8,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 ### Added
 
 - **Headless mode serves the vault tools from a folder, without Obsidian.** `obsidian-mcp-headless` is a standalone Node 24.11+ server, one file attached to each release. It speaks stdio by default and HTTP with `--http`, and offers semantic search unless you pass `--no-semantic`. It reads the vault's Excluded files and periodic-note settings, and the desktop plugin is unchanged. See [Headless mode](README.md#headless-mode)
+- **Agents can see the folder tree, empty folders included.** `list_vault_folders` lists folders under a directory, optionally recursive, with an `empty` flag; `get_vault_tree` returns the nested hierarchy from the vault root or a subtree, with depth and file-name options. Both are read-only, honour Excluded files, and are served in headless mode too
 
 ### Changed
 
