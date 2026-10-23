@@ -1,7 +1,7 @@
 # MCP Connector for Obsidian
 
 > [!WARNING]
-> **Known issue: on Obsidian 1.14.4 the window can go blank while this plugin loads.** It affects macOS and Windows and is a crash of Obsidian's renderer inside Electron 43, not in this plugin's code. In my tests it happens in roughly one plugin load out of ten, at random. Restart Obsidian and enable the plugin again: that usually works. I saw no crash on Electron 39.8.3 (Obsidian installer 1.12.7), so I believe the cause is in the Electron and V8 build that Obsidian 1.14.4 ships. I have no workaround from the plugin side yet. Reported to Obsidian [on their forum](https://forum.obsidian.md/t/renderer-sigsegv-on-macos-and-windows-with-electron-43-obsidian-1-14-4-when-a-large-community-plugin-loads-none-on-electron-39-8-3/119487), tracked here in [#597](https://github.com/istefox/obsidian-mcp-connector/issues/597) and [#609](https://github.com/istefox/obsidian-mcp-connector/issues/609).
+> **Known issue: on Obsidian 1.14 (Electron 43) the window can go blank while this plugin loads.** It affects macOS and Windows and is a crash of Obsidian's renderer, not an error thrown by this plugin. **Update to 3.1.0: it makes the crash much rarer, but does not remove it.** 3.1.0 no longer uses Node's `AsyncLocalStorage` inside Obsidian, the strongest lead on the crash. Measured on one Mac with Obsidian 1.14.5 (Electron 43.8.3), toggling the plugin off and on: 3.0.3 crashed on the first reload, 3.1.0-alpha.2 (the same fix as 3.1.0) crashed once in 200. The crash left has a different signature, a failed V8 check on a background thread, and its cause is not known. The Electron 43.8.3 that ships with the Obsidian 1.14.5 installer does not fix it on its own. I saw no crash on Electron 39.8.3 (Obsidian installer 1.12.7). If the window goes blank, restart Obsidian: the plugin usually loads on the next try. Reported to Obsidian [on their forum](https://forum.obsidian.md/t/renderer-sigsegv-on-macos-and-windows-with-electron-43-obsidian-1-14-4-when-a-large-community-plugin-loads-none-on-electron-39-8-3/119487), tracked here in [#597](https://github.com/istefox/obsidian-mcp-connector/issues/597) and [#609](https://github.com/istefox/obsidian-mcp-connector/issues/609).
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/istefox/obsidian-mcp-connector?display_name=tag)](https://github.com/istefox/obsidian-mcp-connector/releases/latest)
 [![Build status](https://img.shields.io/github/actions/workflow/status/istefox/obsidian-mcp-connector/release.yml)](https://github.com/istefox/obsidian-mcp-connector/actions)
@@ -43,6 +43,17 @@ Four things follow from that shape:
 - **No binary ships from this repo.** The server is plugin code running in Obsidian's renderer, which removes the supply-chain surface of downloading and executing a prebuilt executable.
 - **Semantic search is on-device.** Transformers.js runs the embedding model locally. No API key, no Smart Connections requirement.
 - **Every request carries its own credentials.** The transport keeps no session state, which is what makes per-client tool surfaces possible.
+
+## What's new in 3.1.0
+
+| Change | Why it matters |
+|---|---|
+| **Fewer blank windows on Obsidian 1.14** | The plugin no longer uses `AsyncLocalStorage` inside Obsidian. On one Mac the crash rate fell from a crash on the first reload (3.0.3) to one in 200 reloads. See the known issue at the top. |
+| **Headless mode** | `obsidian-mcp-headless` serves the vault tools from a folder without Obsidian running. See [Headless mode](#headless-mode). |
+| **Lighter plugin load** | The semantic search engine loads the first time a search needs it, not at startup. |
+| **Smaller tool results** | Each result carries its data once instead of twice. |
+
+The full list is in the [CHANGELOG](CHANGELOG.md).
 
 ## What's new in 3.0.0
 
@@ -670,6 +681,7 @@ Enable it with `systemctl --user enable --now obsidian-mcp-headless`. On a machi
 
 | Symptom | Cause and fix |
 |---|---|
+| Obsidian window goes blank (white) while the plugin loads, on Obsidian 1.14 | A renderer crash inside Electron 43, see the known issue at the top. Update to 3.1.0 or later, which makes it much rarer, then restart Obsidian. If it keeps happening, add your crash report to [#597](https://github.com/istefox/obsidian-mcp-connector/issues/597) |
 | `401` on every call | The token matches no row, usually after a secret was replaced or a token revoked. Copy the current string from that row, or add a new token if the row is gone. |
 | `ECONNREFUSED 127.0.0.1:<port>` | Nothing listens there. On port 27200, open a vault with the plugin enabled, since the shared broker runs inside Obsidian. Any other port comes from a fixed port or an older direct config: compare it with **Server port** in Access control, or copy the config again from the token's row. Claude Desktop reads its config only at launch, so quit fully (Cmd+Q) and reopen after a change |
 | Notice: "Port 27200 is used by another program or by a vault server…" | A vault running an older MCP Connector version, a vault whose fixed port is 27200, or an unrelated program holds the broker port. Update or close that vault, change its fixed port, or stop the program. Direct vault ports keep working meanwhile, and the plugin keeps retrying |
