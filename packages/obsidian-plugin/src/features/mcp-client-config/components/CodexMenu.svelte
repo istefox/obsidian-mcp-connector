@@ -107,7 +107,8 @@
       });
       if (
         prepared.preview.action === "unchanged" &&
-        prepared.profileOffer === null
+        prepared.profileOffer === null &&
+        !prepared.searchViewOffer
       ) {
         new Notice(
           `The Codex entry '${serverId}' in ${target.configPath} is already up to date.`,
@@ -117,6 +118,7 @@
       const modal = new CodexInstallModal(plugin.app, {
         preview: prepared.preview,
         profileOffer: prepared.profileOffer,
+        searchViewOffer: prepared.searchViewOffer,
         tokenLabel,
         ...(homeSource ? { homeSource } : {}),
       });
@@ -126,7 +128,8 @@
       const outcome = await commitCodexInstall(plugin, prepared, decision);
       if (outcome.status === "cancelled") return;
       new Notice(codexInstallNotice(outcome), NOTICE_MS);
-      if (outcome.profileSwitched) dispatch("policychange");
+      if (outcome.profileSwitched || outcome.searchViewHidden)
+        dispatch("policychange");
     } catch (err) {
       failure("to install the Codex config", err);
     } finally {

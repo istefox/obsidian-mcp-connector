@@ -4,6 +4,11 @@ import {
 } from "$/features/adaptive-tool-loading/tokenPolicyStore";
 import type { PluginDataLike } from "$/shared/types";
 import {
+  hideSearchResultsViewIfInherited,
+  inheritsSearchResultsView,
+  SEARCH_VIEW_HIDDEN_NOTICE,
+} from "./searchViewDefaults";
+import {
   CODEX_TOKEN_ENV_VAR,
   CodexInstallError,
   codexEntryFor,
@@ -50,6 +55,11 @@ export type PreparedCodexInstall = {
   target: CodexInstallTarget;
   preview: CodexInstallPreview;
   profileOffer: CodexProfileOffer;
+  /**
+   * True when the token still inherits the search-results view, so the
+   * modal can offer to turn it off: Codex cannot render it (#626).
+   */
+  searchViewOffer: boolean;
 };
 
 /** Build the entry and preview the install. Writes nothing. */
@@ -86,12 +96,15 @@ export async function prepareCodexInstall(
     target: request.target,
     preview,
     profileOffer: await codexProfileOffer(plugin, request.tokenId),
+    searchViewOffer: await inheritsSearchResultsView(plugin, request.tokenId),
   };
 }
 
 export type CodexInstallDecision = {
   confirmed: boolean;
   switchProfile: boolean;
+  /** Turn the search-results view off for the token (#626). */
+  hideSearchView?: boolean;
 };
 
 export type CodexInstallOutcome =
@@ -100,6 +113,7 @@ export type CodexInstallOutcome =
       status: "installed";
       result: CodexInstallResult;
       profileSwitched: boolean;
+      searchViewHidden?: boolean;
     };
 
 /**
@@ -136,7 +150,16 @@ export async function commitCodexInstall(
     await updateTokenPolicy(plugin, offer.tokenId, { profile: offer.to });
     profileSwitched = true;
   }
-  return { status: "installed", result, profileSwitched };
+  const searchViewHidden =
+    decision.hideSearchView === true &&
+    prepared.searchViewOffer &&
+    (await hideSearchResultsViewIfInherited(plugin, prepared.tokenId));
+  return {
+    status: "installed",
+    result,
+    profileSwitched,
+    ...(searchViewHidden ? { searchViewHidden } : {}),
+  };
 }
 
 /** The Notice after an install. Never carries the token. */
@@ -163,5 +186,6 @@ export function codexInstallNotice(
   if (result.scope === "project")
     parts.push("Codex loads this file only for a trusted project.");
   if (outcome.profileSwitched) parts.push("The token now uses All tools.");
+  if (outcome.searchViewHidden) parts.push(SEARCH_VIEW_HIDDEN_NOTICE);
   return parts.join(" ");
 }

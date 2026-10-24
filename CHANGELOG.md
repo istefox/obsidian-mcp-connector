@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Changed
 
+- **Installing for Codex or copying the Claude Code config turns off the search-results view for that token.** Neither client can show the MCP Apps view, but both received its payload on every search, about 3.8 KB on a 3-result `search_vault_simple`, more than the result itself (roughly 1k tokens per search). The Codex install preview now has a "Turn off the search-results view" box, ticked by default, and the Claude Code copy buttons turn it off after copying and say so in the notice. Only a token that still inherits the vault-wide setting is changed; one where you chose on or off is left alone, and the switch stays in the token's Tool Loading panel (#626, ADR-0028)
 - **`show_file_in_obsidian` no longer takes `createIfMissing`, so it never writes.** The tool is annotated read-only, but `createIfMissing: true` created an empty file. Clients that skip confirmation for read-only tools let that write through without asking, and the "Disable write operations" preset left it reachable. The tool now only opens an existing file; a missing one is a `file_not_found` error that points at `create_vault_file`. A client that still passes `createIfMissing` gets the same error instead of a new file (#631, ADR-0022)
 
 ## [3.1.1] — 2026-10-24

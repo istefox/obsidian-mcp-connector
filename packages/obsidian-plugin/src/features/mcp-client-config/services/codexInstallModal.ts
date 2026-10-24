@@ -4,8 +4,9 @@
  * Same settle-once pattern as `ExcludedFoldersConsentModal`: a button
  * click and the `onClose` it triggers cannot resolve twice, and every
  * dismissal (Esc, the X, a backdrop click, a programmatic `close()`)
- * resolves to "do not install, do not switch". A profile switch is only
- * ever part of a confirmed install.
+ * resolves to "do not install, do not switch". A profile switch, like
+ * turning the search-results view off, is only ever part of a confirmed
+ * install.
  *
  * The caller must `await` the decision OUTSIDE any `updateSlice` recipe:
  * `globalSettingsMutex` is non-re-entrant, so awaiting a human inside it
@@ -31,6 +32,7 @@ export class CodexInstallModal extends Modal {
   private readonly opts: {
     preview: CodexInstallPreview;
     profileOffer: CodexProfileOffer;
+    searchViewOffer: boolean;
     tokenLabel: string;
     /** Where a user-config target came from, shown in the preview (D5). */
     homeSource?: "CODEX_HOME" | "default";
@@ -45,6 +47,7 @@ export class CodexInstallModal extends Modal {
     opts: {
       preview: CodexInstallPreview;
       profileOffer: CodexProfileOffer;
+      searchViewOffer: boolean;
       tokenLabel: string;
       homeSource?: "CODEX_HOME" | "default";
     },
@@ -68,10 +71,13 @@ export class CodexInstallModal extends Modal {
   }
 
   private handleDecision = (decision: CodexInstallDecision) => {
-    // A switch without a confirmed install is no switch at all
+    // A switch without a confirmed install is no switch at all, and the
+    // same holds for turning the search-results view off (#626)
+    const hideSearchView = decision.confirmed && decision.hideSearchView;
     this.settle({
       confirmed: decision.confirmed,
       switchProfile: decision.confirmed && decision.switchProfile,
+      ...(hideSearchView ? { hideSearchView: true } : {}),
     });
     this.close();
   };
@@ -82,6 +88,7 @@ export class CodexInstallModal extends Modal {
       props: {
         preview: this.opts.preview,
         profileOffer: this.opts.profileOffer,
+        searchViewOffer: this.opts.searchViewOffer,
         tokenLabel: this.opts.tokenLabel,
         homeSource: this.opts.homeSource,
         onDecision: this.handleDecision,

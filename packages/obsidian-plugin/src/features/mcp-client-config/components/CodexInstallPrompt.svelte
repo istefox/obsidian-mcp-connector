@@ -14,17 +14,28 @@
   interface Props {
     preview: CodexInstallPreview;
     profileOffer: CodexProfileOffer;
+    /** The token still inherits the search-results view (#626). */
+    searchViewOffer: boolean;
     tokenLabel: string;
     /** Where a user-config target came from; absent for a project. */
     homeSource?: "CODEX_HOME" | "default";
     onDecision: (decision: CodexInstallDecision) => void;
   }
 
-  let { preview, profileOffer, tokenLabel, homeSource, onDecision }: Props =
-    $props();
+  let {
+    preview,
+    profileOffer,
+    searchViewOffer,
+    tokenLabel,
+    homeSource,
+    onDecision,
+  }: Props = $props();
 
   // Unticked by default (ADR-0028 D8)
   let switchProfile = $state(false);
+  // Ticked by default: Codex cannot render the view, and the setting
+  // stays editable in Access Control (#626, ADR-0028 amendment)
+  let hideSearchView = $state(true);
 
   // Focus on Cancel, so Enter on open does not write a file
   let safeButton = $state<HTMLButtonElement | undefined>(undefined);
@@ -115,18 +126,36 @@
     </label>
   {/if}
 
+  {#if searchViewOffer}
+    <label class="offer">
+      <input type="checkbox" bind:checked={hideSearchView} />
+      Turn off the search-results view for {tokenLabel}. Codex cannot show it,
+      and leaving it on adds about 1k tokens to every search result.
+    </label>
+  {/if}
+
   <div class="actions">
     <button
       type="button"
       bind:this={safeButton}
-      onclick={() => onDecision({ confirmed: false, switchProfile: false })}
+      onclick={() =>
+        onDecision({
+          confirmed: false,
+          switchProfile: false,
+          hideSearchView: false,
+        })}
     >
       Cancel
     </button>
     <button
       type="button"
       class="mod-cta"
-      onclick={() => onDecision({ confirmed: true, switchProfile })}
+      onclick={() =>
+        onDecision({
+          confirmed: true,
+          switchProfile,
+          hideSearchView: searchViewOffer && hideSearchView,
+        })}
     >
       {preview.action === "unchanged" ? "Apply" : "Install"}
     </button>

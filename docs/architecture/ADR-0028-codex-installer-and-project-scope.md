@@ -212,3 +212,24 @@ Both targets use the installer that existed before commit `4a40dc6`:
 - Codex documentation: [Advanced configuration](https://learn.chatgpt.com/docs/config-file/config-advanced), [MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Windows app](https://learn.chatgpt.com/docs/windows/windows-app.md)
 - [Accessing network applications with WSL](https://learn.microsoft.com/en-us/windows/wsl/networking)
 - [Node.js `os.homedir()`](https://nodejs.org/api/os.html#oshomedir)
+
+## Amendment (2026-10-24, #626): the search-results view offer
+
+Codex and Claude Code run in the legacy protocol era and cannot render the MCP Apps `ui://` view, yet they
+receive its `_meta` payload on every search: 3,784 of the 7,153 bytes of a 3-result `search_vault_simple`,
+more than the useful result. The per-token off switch (ADR-0018 addendum) already exists; what was missing is
+setting it where the plugin knows the client.
+
+- **Codex install.** When the row's token still inherits the vault-wide view setting, the preview adds a second
+  box, "Turn off the search-results view", **ticked** by default. Unlike the profile offer (D8, unticked), the
+  change only removes a payload the client cannot show, and it stays editable in the token's Tool Loading
+  panel. It is written only on a confirmed install, after the install succeeds or finds the entry unchanged,
+  and only if the token still inherits when the write happens. An unchanged entry with this offer open still
+  shows the preview instead of the "already up to date" notice.
+- **Claude Code copy.** The "Claude Code" and "Claude Code (.mcp.json)" buttons only copy text, so there is no
+  preview to put a box in. After a successful copy, a token that still inherits gets `searchResultsView: false`
+  and the copy notice says so and where to change it.
+- **Explicit choices win.** A token whose owner set the view on or off is never touched by either path.
+
+The issue proposed setting the value "on the tokens these installers create"; neither installer creates a
+token, both act on an existing row, which is why the change is conditioned on the token still inheriting.

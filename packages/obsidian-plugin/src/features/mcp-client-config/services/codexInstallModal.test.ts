@@ -20,6 +20,7 @@ import { CodexInstallModal } from "./codexInstallModal";
 interface PromptProps {
   preview: CodexInstallPreview;
   profileOffer: CodexProfileOffer;
+  searchViewOffer: boolean;
   tokenLabel: string;
   onDecision: (decision: CodexInstallDecision) => void;
 }
@@ -51,10 +52,14 @@ const offer: CodexProfileOffer = {
   to: "all",
 };
 
-function openModal(profileOffer: CodexProfileOffer = offer) {
+function openModal(
+  profileOffer: CodexProfileOffer = offer,
+  searchViewOffer = true,
+) {
   const modal = new CodexInstallModal(fakeApp, {
     preview,
     profileOffer,
+    searchViewOffer,
     tokenLabel: "Codex",
   });
   modal.open();
@@ -117,6 +122,39 @@ describe("CodexInstallModal decisions", () => {
     props.onDecision({ confirmed: true, switchProfile: false });
     props.onDecision({ confirmed: false, switchProfile: false });
     expect(await decision).toEqual({ confirmed: true, switchProfile: false });
+  });
+});
+
+describe("CodexInstallModal search-results view (#626)", () => {
+  test("a confirmed install keeps the ticked box", async () => {
+    const modal = openModal();
+    const decision = modal.waitForDecision();
+    lastMountProps().onDecision({
+      confirmed: true,
+      switchProfile: false,
+      hideSearchView: true,
+    });
+    expect(await decision).toEqual({
+      confirmed: true,
+      switchProfile: false,
+      hideSearchView: true,
+    });
+  });
+
+  test("a cancel with the box ticked drops it", async () => {
+    const modal = openModal();
+    const decision = modal.waitForDecision();
+    lastMountProps().onDecision({
+      confirmed: false,
+      switchProfile: false,
+      hideSearchView: true,
+    });
+    expect(await decision).toEqual({ confirmed: false, switchProfile: false });
+  });
+
+  test("the offer reaches the prompt", () => {
+    openModal(offer, false);
+    expect(lastMountProps().searchViewOffer).toBe(false);
   });
 });
 

@@ -706,7 +706,10 @@
     }
   }
 
-  /** A Codex install switched a row's profile: re-read the rows, tell the panel. */
+  /**
+   * A Codex install or a Claude Code copy changed a row's policy (profile
+   * or search-results view): re-read the rows, tell the panel.
+   */
   async function handleCodexPolicyChange(): Promise<void> {
     await refreshPolicies();
     dispatch("policychange");
@@ -859,6 +862,7 @@
               tokenId={token.id}
               {mcpbDisabled}
               {claudeCodeProjectPath}
+              on:policychange={() => void handleCodexPolicyChange()}
             >
               <CodexMenu
                 {plugin}

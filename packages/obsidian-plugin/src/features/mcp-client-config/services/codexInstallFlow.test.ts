@@ -320,6 +320,86 @@ describe("commitCodexInstall", () => {
   });
 });
 
+describe("search-results view offer (#626)", () => {
+  async function setView(
+    plugin: ReturnType<typeof makePlugin>,
+    value: boolean,
+  ): Promise<void> {
+    const { updateTokenPolicy } =
+      await import("$/features/adaptive-tool-loading/tokenPolicyStore");
+    await updateTokenPolicy(plugin, TOKEN_ID, { searchResultsView: value });
+  }
+
+  test("a token that inherits the view gets the offer", async () => {
+    const ready = await prepareCodexInstall(makePlugin(), request());
+    expect(ready.searchViewOffer).toBe(true);
+  });
+
+  test("a token with an explicit choice gets no offer", async () => {
+    for (const value of [true, false]) {
+      const plugin = makePlugin();
+      await setView(plugin, value);
+      const ready = await prepareCodexInstall(plugin, request());
+      expect(ready.searchViewOffer).toBe(false);
+    }
+  });
+
+  test("a confirmed install with the box turns the view off and says so", async () => {
+    const plugin = makePlugin();
+    const ready = await prepareCodexInstall(plugin, request());
+    const outcome = await commitCodexInstall(plugin, ready, {
+      confirmed: true,
+      switchProfile: false,
+      hideSearchView: true,
+    });
+    expect(outcome.status).toBe("installed");
+    if (outcome.status !== "installed") return;
+    expect(outcome.searchViewHidden).toBe(true);
+    const policy = await readPolicy(plugin, TOKEN_ID);
+    expect(policy.searchResultsView).toBe(false);
+    expect(policy.profile).toBe("adaptive");
+    expect(codexInstallNotice(outcome)).toContain("search-results view");
+  });
+
+  test("an unticked box or a cancelled install leaves the token inheriting", async () => {
+    const plugin = makePlugin();
+    const before = JSON.stringify(plugin._data);
+    expect(
+      await commitCodexInstall(
+        plugin,
+        await prepareCodexInstall(plugin, request()),
+        { confirmed: false, switchProfile: false, hideSearchView: true },
+      ),
+    ).toEqual({ status: "cancelled" });
+    expect(JSON.stringify(plugin._data)).toBe(before);
+
+    const outcome = await commitCodexInstall(
+      plugin,
+      await prepareCodexInstall(plugin, request()),
+      { confirmed: true, switchProfile: false, hideSearchView: false },
+    );
+    if (outcome.status === "installed")
+      expect(outcome.searchViewHidden).toBeUndefined();
+    expect(
+      (await readPolicy(plugin, TOKEN_ID)).searchResultsView,
+    ).toBeUndefined();
+  });
+
+  test("a choice made while the modal was open is kept", async () => {
+    const plugin = makePlugin();
+    const ready = await prepareCodexInstall(plugin, request());
+    await setView(plugin, true);
+    const outcome = await commitCodexInstall(plugin, ready, {
+      confirmed: true,
+      switchProfile: false,
+      hideSearchView: true,
+    });
+    if (outcome.status === "installed")
+      expect(outcome.searchViewHidden).toBeUndefined();
+    expect((await readPolicy(plugin, TOKEN_ID)).searchResultsView).toBe(true);
+  });
+});
+
 describe("codexInstallNotice", () => {
   function installed(
     over: Partial<CodexInstallResult> = {},

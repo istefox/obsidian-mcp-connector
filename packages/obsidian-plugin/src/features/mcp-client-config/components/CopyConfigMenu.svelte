@@ -1,6 +1,7 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
+  import { createEventDispatcher } from "svelte";
   import { logger } from "$/shared/logger";
   import {
     CLAUDE_CODE_TOKEN_ENV_VAR,
@@ -13,6 +14,10 @@
     wrapInMcpServers,
   } from "../services/generators";
   import { downloadMcpb } from "../services/mcpbDownload";
+  import {
+    hideSearchResultsViewIfInherited,
+    SEARCH_VIEW_HIDDEN_NOTICE,
+  } from "../services/searchViewDefaults";
 
   /**
    * The client families this vault can be configured for, for ONE
@@ -46,21 +51,55 @@
 
   let mcpbBusy = false;
 
+  const dispatch = createEventDispatcher<{ policychange: void }>();
+
   $: offline = !url || !token;
   $: serverId = vaultServerId(plugin.app.vault.getName());
 
-  async function copyText(text: string, label: string): Promise<void> {
+  async function copyText(
+    text: string,
+    label: string,
+    afterCopy?: () => Promise<string | null>,
+  ): Promise<void> {
     try {
       await navigator.clipboard.writeText(text);
-      new Notice(`${label} copied to clipboard.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Copy failed: ${msg}`);
+      return;
     }
+    let extra: string | null = null;
+    try {
+      extra = (await afterCopy?.()) ?? null;
+    } catch (err) {
+      logger.warn("[copy-config] after-copy step failed", { error: err });
+    }
+    new Notice(
+      extra
+        ? `${label} copied to clipboard. ${extra}`
+        : `${label} copied to clipboard.`,
+    );
   }
 
-  function copyJson(payload: unknown, label: string): Promise<void> {
-    return copyText(JSON.stringify(payload, null, 2), `${label} config`);
+  // Claude Code cannot render the MCP Apps search-results view, so a copy
+  // for it turns the view off on a token that still inherits it (#626).
+  async function hideSearchViewForClaudeCode(): Promise<string | null> {
+    if (!tokenId) return null;
+    if (!(await hideSearchResultsViewIfInherited(plugin, tokenId))) return null;
+    dispatch("policychange");
+    return SEARCH_VIEW_HIDDEN_NOTICE;
+  }
+
+  function copyJson(
+    payload: unknown,
+    label: string,
+    afterCopy?: () => Promise<string | null>,
+  ): Promise<void> {
+    return copyText(
+      JSON.stringify(payload, null, 2),
+      `${label} config`,
+      afterCopy,
+    );
   }
 
   function copyClaudeDesktop(): Promise<void> {
@@ -89,7 +128,11 @@
     const scope = claudeCodeProjectPath
       ? `local scope for ${claudeCodeProjectPath}`
       : "user scope";
-    return copyText(command, `Claude Code \`claude mcp add\` command (${scope})`);
+    return copyText(
+      command,
+      `Claude Code \`claude mcp add\` command (${scope})`,
+      hideSearchViewForClaudeCode,
+    );
   }
 
   // A project `.mcp.json` is committed, so the token is a ${VAR} reference
@@ -102,6 +145,7 @@
     return copyJson(
       wrapInMcpServers(claudeCodeEnvConfig({ url }), serverId),
       "Claude Code .mcp.json",
+      hideSearchViewForClaudeCode,
     );
   }
 
