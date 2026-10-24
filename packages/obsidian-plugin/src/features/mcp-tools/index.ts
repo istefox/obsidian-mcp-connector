@@ -77,6 +77,11 @@ import {
   listVaultFilesHandler,
   listVaultFilesSchema,
 } from "./tools/listVaultFiles";
+import {
+  listVaultFoldersHandler,
+  listVaultFoldersSchema,
+} from "./tools/listVaultFolders";
+import { getVaultTreeHandler, getVaultTreeSchema } from "./tools/getVaultTree";
 import { getVaultFileHandler, getVaultFileSchema } from "./tools/getVaultFile";
 import {
   getVaultFilesHandler,
@@ -327,6 +332,12 @@ export async function registerTools(
   // Vault file ops
   registry.register(listVaultFilesSchema, async ({ arguments: args }) =>
     listVaultFilesHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(listVaultFoldersSchema, async ({ arguments: args }) =>
+    listVaultFoldersHandler({ arguments: args, app: ctx.app }),
+  );
+  registry.register(getVaultTreeSchema, async ({ arguments: args }) =>
+    getVaultTreeHandler({ arguments: args, app: ctx.app }),
   );
   registry.register(getVaultFileSchema, async ({ arguments: args }) =>
     getVaultFileHandler({ arguments: args, app: ctx.app, plugin: ctx.plugin }),

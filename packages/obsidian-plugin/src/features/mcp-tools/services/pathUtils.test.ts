@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { comparePaths, folderPrefix, trimSlashes } from "./pathUtils";
+import {
+  comparePaths,
+  folderPrefix,
+  parentPath,
+  pathName,
+  trimSlashes,
+} from "./pathUtils";
 
 describe("trimSlashes", () => {
   test("strips leading and trailing slashes only", () => {
@@ -21,6 +27,22 @@ describe("folderPrefix", () => {
     expect(folderPrefix(undefined)).toBeNull();
     expect(folderPrefix("/")).toBeNull();
     expect(folderPrefix("")).toBeNull();
+  });
+});
+
+describe("parentPath", () => {
+  test("returns the containing folder, or the root marker", () => {
+    expect(parentPath("Projects/2026/Q2")).toBe("Projects/2026");
+    expect(parentPath("Projects")).toBe("");
+    expect(parentPath("")).toBe("");
+  });
+});
+
+describe("pathName", () => {
+  test("returns the last path segment", () => {
+    expect(pathName("Projects/2026/Q2")).toBe("Q2");
+    expect(pathName("Projects")).toBe("Projects");
+    expect(pathName("")).toBe("");
   });
 });
 

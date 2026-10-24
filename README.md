@@ -28,7 +28,7 @@ Obsidian (Electron)                                 your AI client
 ┌──────────────────▼──────────────────┐
 │ MCP Connector plugin, every vault   │
 │  ├─ MCP server (in-process)         │
-│  ├─ 64 tools                        │
+│  ├─ 66 tools                        │
 │  ├─ prompt renderer                 │
 │  └─ on-device embeddings            │◄──stdio─►   Claude Desktop
 └─────────────────────────────────────┘  via .mcpb shim
@@ -121,7 +121,7 @@ arrive as a list you can read instead of a wall of JSON.
 
 | Change | Why it matters |
 |---|---|
-| **Per-client bearer tokens** (1.0.0) | The vault holds up to 10 tokens, one per client. Claude Code can keep all 64 tools while claude.ai sees only the 13-tool Core set, from one vault and one server. |
+| **Per-client bearer tokens** (1.0.0) | The vault holds up to 10 tokens, one per client. Claude Code can keep all 66 tools while claude.ai sees only the 13-tool Core set, from one vault and one server. |
 | **Per-token tool policy** (1.0.0) | Profile, promoted tools and an optional hard allowlist all live on the token, not on the vault. |
 | **Rotation no longer restarts the transport** (1.0.0) | Adding, renaming, regenerating or revoking a token takes effect on the next request. The port cannot drift and in-flight requests finish. |
 | **`.mcpb` bundles are per token** (1.0.0) | Each bundle carries a token id and resolves that token's secret from the vault at connect time. Revoking the token fails the bundle closed instead of silently granting another client's access. |
@@ -144,11 +144,11 @@ Ask the agent to call `get_server_info` to confirm the round trip. Requirements:
 
 ## What it can do
 
-**64 tools**: 61 vault tools plus 3 always-on meta-tools. All active by default.
+**66 tools**: 63 vault tools plus 3 always-on meta-tools. All active by default.
 
 | Family | Tools | Notes |
 |---|---|---|
-| **Files** | `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `list_vault_files`, `get_file_info`, `list_attachments`, `create_vault_directory`, `delete_vault_directory` | `get_file_info` describes a file without reading it (kind, MIME, size, times, backlink and link counts, frontmatter/heading/tag/task counts for notes). `list_attachments` lists non-note files vault-wide, per folder or per note, with reference counts; `unreferencedOnly` finds orphaned attachments. `get_vault_files` reads up to 20 files per call. Text output is capped (default 100 KB) and truncation points at `get_vault_file_partial`. Renames go through `fileManager.renameFile`, so links survive. `delete_vault_file` takes an optional `expectedContent` precondition; `delete_vault_directory` takes `dry_run` (preview) and `trash` (recoverable delete). `get_vault_file` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
+| **Files** | `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `list_vault_files`, `list_vault_folders`, `get_vault_tree`, `get_file_info`, `list_attachments`, `create_vault_directory`, `delete_vault_directory` | `get_file_info` describes a file without reading it (kind, MIME, size, times, backlink and link counts, frontmatter/heading/tag/task counts for notes). `list_vault_folders` lists folders (optionally recursive, including empty ones); `get_vault_tree` returns the nested hierarchy with empty folders and optional direct file names. `list_attachments` lists non-note files vault-wide, per folder or per note, with reference counts; `unreferencedOnly` finds orphaned attachments. `get_vault_files` reads up to 20 files per call. Text output is capped (default 100 KB) and truncation points at `get_vault_file_partial`. Renames go through `fileManager.renameFile`, so links survive. `delete_vault_file` takes an optional `expectedContent` precondition; `delete_vault_directory` takes `dry_run` (preview) and `trash` (recoverable delete). `get_vault_file` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
 | **Active file** | `get_active_file`, `update_active_file`, `append_to_active_file`, `patch_active_file`, `delete_active_file`, `show_file_in_obsidian`, `get_workspace_state` | What the user is looking at right now. `get_workspace_state` lists every open tab (main area and pop-outs; sidebars on request) with its file, view type, editor mode, pin state and which one is active, plus the recently opened files. `update_active_file` and `delete_active_file` take an optional `expectedContent` precondition. `show_file_in_obsidian` errors on a missing file unless `createIfMissing` is set. `get_active_file` also returns an `obsidian://` URI, see [Linking out to Obsidian](#linking-out-to-obsidian). |
 | **Search** | `search_vault_smart`, `search_vault_simple`, `search_vault`, `search_files_by_name`, `execute_dataview_query` | Semantic, plain-text with context windows (literal or `regex`, `caseSensitive`, restricted to a `scope` of files and folders), quick-switcher fuzzy on names and aliases, DQL or JsonLogic. Hits carry a 0-indexed `line`. `search_vault_smart` and `search_vault_simple` also carry a file-level `obsidian://` URI per row, see [Linking out to Obsidian](#linking-out-to-obsidian). `search_vault_smart` takes `excerptLength` to shorten excerpts and `compact` to return only paths and scores, and `groupByFile` to keep the best chunk of each note so `limit` counts notes. |
 | **Structure** | `get_vault_overview`, `get_note_outline`, `list_tags`, `get_files_by_tag`, `get_recent_files`, `get_outgoing_links`, `get_backlinks`, `list_bookmarks`, `ensure_block_id` | `get_vault_overview` replaces the 3 to 5 calls a session spends getting oriented. `ensure_block_id` returns or creates the `^id` of a block (by line or under a heading) and hands back the `[[note#^id]]` link, placed where Obsidian expects it. |
@@ -219,7 +219,7 @@ while a web client does without it.
 
 ## Adaptive tool loading
 
-Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 64 active is roughly 10K tokens or more per session. Adaptive loading cuts that without putting any tool out of reach.
+Every advertised tool costs context tokens on every session: the client downloads each tool's full JSON schema before the model says a word. All 66 active is roughly 10K tokens or more per session. Adaptive loading cuts that without putting any tool out of reach.
 
 ### Profiles
 
@@ -227,7 +227,7 @@ Set per token in **Settings → MCP Connector → Tool Loading**.
 
 | Profile | Advertised | Use when |
 |---|---|---|
-| **All** (default) | 61 vault tools + 3 meta-tools | You want maximum capability and do not care about the schema cost. |
+| **All** (default) | 63 vault tools + 3 meta-tools | You want maximum capability and do not care about the schema cost. |
 | **Core** | 13 core tools + 3 meta-tools + whatever you promoted | You want the smallest, most predictable surface. |
 | **Adaptive** | The same, and it promotes tools you use often on its own | You want the surface to converge on how you actually work. |
 
@@ -599,9 +599,9 @@ Without `PATH`, give the absolute path of the file instead: `node /absolute/path
 
 ### What works
 
-These tools are served, 52 in all with the three adaptive-loading meta-tools (51 with `--no-semantic`):
+These tools are served, 54 in all with the three adaptive-loading meta-tools (53 with `--no-semantic`):
 
-- Files: `list_vault_files`, `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `create_vault_directory`, `delete_vault_directory`, `search_and_replace`, `get_file_info`, `list_attachments`, `get_recent_files`, `get_vault_overview`
+- Files: `list_vault_files`, `list_vault_folders`, `get_vault_tree`, `get_vault_file`, `get_vault_files`, `get_vault_file_partial`, `create_vault_file`, `create_vault_binary_file`, `append_to_vault_file`, `patch_vault_file`, `delete_vault_file`, `rename_vault_file`, `create_vault_directory`, `delete_vault_directory`, `search_and_replace`, `get_file_info`, `list_attachments`, `get_recent_files`, `get_vault_overview`
 - Search: `search_files_by_name`, `search_vault_simple`, `search_vault_smart` (see [Semantic search](#semantic-search)), and `search_vault` with JsonLogic queries (a Dataview query returns `dataview_not_installed`)
 - Properties and tags: `get_note_property`, `get_note_properties`, `set_note_property`, `delete_note_property`, `update_note_properties`, `list_property_values`, `list_tags`, `get_files_by_tag`, `rename_tag`
 - Structure and tasks: `get_note_outline`, `rename_heading`, `ensure_block_id`, `list_tasks`, `set_task_status`

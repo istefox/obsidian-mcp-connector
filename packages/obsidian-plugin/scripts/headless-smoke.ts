@@ -271,6 +271,25 @@ async function stdioChecks(
       read,
     );
 
+    await client.tool("create_vault_directory", {
+      path: "Projects/2026/Empty",
+    });
+    const folders = await client.tool("list_vault_folders", {
+      recursive: true,
+    });
+    check(
+      "stdio: list_vault_folders sees an empty nested folder and hides Excluded files",
+      folders.includes("Projects/2026/Empty") && !folders.includes('"Ignored"'),
+      folders,
+    );
+    const tree = await client.tool("get_vault_tree", {});
+    check(
+      "stdio: get_vault_tree returns the empty nested folder",
+      tree.includes('"path":"Projects/2026/Empty"') &&
+        tree.includes('"empty":true'),
+      tree,
+    );
+
     await client.tool("create_vault_file", {
       path: "Fresh.md",
       content: "---\nstatus: new\n---\nHello #smoke-tag and [[Note]]\n",
