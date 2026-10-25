@@ -75,12 +75,12 @@ export type SemanticSearchState = {
    */
   chooser?: ProviderChooser | null;
   /**
-   * Reference to the model downloader so the settings UI can
-   * subscribe to the first-run download progress without importing
-   * internal feature plumbing. Wired by production setup;
-   * absent in tests and in the early lifecycle.
+   * Every model downloader, one per Transformers.js provider, so the
+   * settings UI can show download progress for whichever model is
+   * being fetched without importing internal feature plumbing. Wired
+   * by production setup; absent in tests and in the early lifecycle.
    */
-  downloader?: ModelDownloader | null;
+  downloaders?: ReadonlyArray<{ label: string; downloader: ModelDownloader }>;
   /**
    * The constructed indexer (live or low-power per setting), when
    * present. Not auto-started — the search tool calls
@@ -262,7 +262,7 @@ export async function setup(
       settings,
       settingsMutex,
       chooser,
-      downloader: null,
+      downloaders: [],
       indexer: null,
       store: opts.factoryDeps?.store ?? null,
       registry: null,

@@ -1,55 +1,64 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { onDestroy, onMount } from "svelte";
-  import type { ModelState } from "../services/modelDownloader";
+  import type {
+    ModelDownloader,
+    ModelState,
+  } from "../services/modelDownloader";
 
   export let plugin: McpToolsPlugin;
 
-  let state: ModelState = { kind: "idle" };
-  let unsubscribe: (() => void) | null = null;
+  // One row per model, so a Gemma or e5 download shows progress too,
+  // not only MiniLM's.
+  type Row = { label: string; downloader: ModelDownloader; state: ModelState };
+
+  let rows: Row[] = [];
+  let unsubscribes: Array<() => void> = [];
 
   onMount(() => {
-    const dl = plugin.semanticSearchState?.downloader;
-    if (!dl) return;
-    unsubscribe = dl.subscribe((s) => {
-      state = s;
-    });
+    const downloaders = plugin.semanticSearchState?.downloaders ?? [];
+    rows = downloaders.map((d) => ({ ...d, state: { kind: "idle" } }));
+    unsubscribes = rows.map((row, i) =>
+      row.downloader.subscribe((s) => {
+        rows[i] = { ...rows[i], state: s };
+      }),
+    );
   });
 
   onDestroy(() => {
-    unsubscribe?.();
+    for (const unsubscribe of unsubscribes) unsubscribe();
   });
-
-  function onRetry() {
-    plugin.semanticSearchState?.downloader?.retry();
-  }
 </script>
 
-{#if state.kind === "downloading"}
-  <div class="model-download" role="status">
-    <div class="header">
-      <span>Downloading embedding model…</span>
-      <span class="pct">{Math.round(state.progress)}%</span>
+{#each rows as row (row.label)}
+  {#if row.state.kind === "downloading"}
+    <div class="model-download" role="status">
+      <div class="header">
+        <span>Downloading {row.label}…</span>
+        <span class="pct">{Math.round(row.state.progress)}%</span>
+      </div>
+      <div class="bar">
+        <div
+          class="fill"
+          style="width: {Math.max(2, Math.min(100, row.state.progress))}%"
+        ></div>
+      </div>
+      {#if row.state.file}
+        <div class="file" title={row.state.file}>{row.state.file}</div>
+      {/if}
     </div>
-    <div class="bar">
-      <div
-        class="fill"
-        style="width: {Math.max(2, Math.min(100, state.progress))}%"
-      ></div>
+  {:else if row.state.kind === "error"}
+    <div class="model-download error" role="alert">
+      <div class="header">
+        <span>{row.label} download failed</span>
+        <button type="button" on:click={() => row.downloader.retry()}>
+          Retry
+        </button>
+      </div>
+      <div class="message">{row.state.message}</div>
     </div>
-    {#if state.file}
-      <div class="file" title={state.file}>{state.file}</div>
-    {/if}
-  </div>
-{:else if state.kind === "error"}
-  <div class="model-download error" role="alert">
-    <div class="header">
-      <span>Model download failed</span>
-      <button type="button" on:click={onRetry}>Retry</button>
-    </div>
-    <div class="message">{state.message}</div>
-  </div>
-{/if}
+  {/if}
+{/each}
 
 <!--
   state.kind === "idle" or "ready" → render nothing. Idle is the

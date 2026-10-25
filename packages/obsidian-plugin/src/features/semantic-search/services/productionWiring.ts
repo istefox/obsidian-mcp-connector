@@ -240,7 +240,13 @@ export async function wireSemanticSearch(
 
   if (semanticResult.success) {
     const state = semanticResult.state;
-    state.downloader = nativeDownloader;
+    // All three, not only MiniLM's: the Gemma and e5 downloads are the
+    // large ones, and showed no progress at all.
+    state.downloaders = [
+      { label: "MiniLM", downloader: nativeDownloader },
+      { label: "EmbeddingGemma 300M", downloader: gemmaDownloader },
+      { label: "Multilingual E5 base", downloader: e5Downloader },
+    ];
     state.store = nativeStore;
     state.registry = registry;
     // DLC readiness came from the probe pass above (no store init);
