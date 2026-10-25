@@ -30,7 +30,10 @@ import {
   vectorRevisionFor,
   type EmbeddingStoreRegistry,
 } from "./storeRegistry";
-import { createEmbeddingGemmaProvider } from "./embeddingGemmaProvider";
+import {
+  createEmbeddingGemmaProvider,
+  EMBEDDING_GEMMA_BACKEND,
+} from "./embeddingGemmaProvider";
 import { createMultilingualE5Provider } from "./multilingualE5Provider";
 import { detectNonAsciiRatio } from "./langDetect";
 import type { VaultAdapter } from "./store";
@@ -214,6 +217,8 @@ export async function wireSemanticSearch(
   const gemmaDownloader = createModelDownloader({
     innerFactory: realPipelineFactory,
     dtype: { wasm: "q8", webgpu: "q4" },
+    // Gemma's vectors are wrong on WebGPU (ADR-0034).
+    backend: EMBEDDING_GEMMA_BACKEND,
   });
   const gemmaProvider = createEmbeddingGemmaProvider(gemmaDownloader.factory);
   const e5Downloader = createModelDownloader({

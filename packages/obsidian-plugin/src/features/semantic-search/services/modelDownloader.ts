@@ -50,6 +50,8 @@ export type ModelDownloaderOpts = {
   innerFactory: PipelineFactoryWithProgress;
   /** Weight precision, forwarded to the inner factory on every backend. */
   dtype?: DtypeSpec;
+  /** Forwarded to the inner factory: run this model on WASM regardless. */
+  backend?: "wasm";
 };
 
 const IDLE: ModelState = { kind: "idle" };
@@ -90,8 +92,15 @@ class ModelDownloaderImpl implements ModelDownloader {
         const pipe = await this.opts.innerFactory(
           model,
           (info) => this.onProgress(info),
-          this.opts.dtype !== undefined
-            ? { dtype: this.opts.dtype }
+          this.opts.dtype !== undefined || this.opts.backend !== undefined
+            ? {
+                ...(this.opts.dtype !== undefined
+                  ? { dtype: this.opts.dtype }
+                  : {}),
+                ...(this.opts.backend !== undefined
+                  ? { backend: this.opts.backend }
+                  : {}),
+              }
             : undefined,
         );
         this.setState({ kind: "ready" });

@@ -80,8 +80,19 @@ export type ProgressCallback = (info: ProgressEvent) => void;
 export type PipelineFactoryWithProgress = (
   model: string,
   onProgress?: ProgressCallback,
-  opts?: { dtype?: DtypeSpec },
+  opts?: PipelineLoadOpts,
 ) => Promise<PipelineFn>;
+
+export type PipelineLoadOpts = {
+  dtype?: DtypeSpec;
+  /**
+   * Run this model on WASM even when WebGPU was resolved for the others.
+   * EmbeddingGemma needs it: on the WebGPU execution provider it returns
+   * vectors that rank notes at random, with q4 and q8 alike, while the
+   * same weights on WASM rank them correctly (ADR-0034).
+   */
+  backend?: "wasm";
+};
 
 /**
  * Model weight precision. A plain string applies to every backend; a
@@ -492,9 +503,13 @@ export function buildPipelineOptions(
 export async function realPipelineFactory(
   model: string,
   onProgress?: ProgressCallback,
-  opts?: { dtype?: DtypeSpec },
+  opts?: PipelineLoadOpts,
 ): Promise<PipelineFn> {
-  const backend = await resolveBackend();
+  // Always resolved first: it configures the ONNX environment once for
+  // the whole plugin. A WASM override then runs on the CPU execution
+  // provider of whichever WASM build that environment loaded.
+  const resolved = await resolveBackend();
+  const backend = opts?.backend ?? resolved;
   const options = buildPipelineOptions(
     backend,
     opts?.dtype,

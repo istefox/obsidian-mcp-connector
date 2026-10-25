@@ -362,13 +362,13 @@ describe("EmbeddingGemmaProvider", () => {
     expect(provider.maxInputTokens).toBe(512);
   });
 
-  test("getMaxInputTokens unlocks 2048 on webgpu", async () => {
+  test("stays at the WASM cap of 512 even when WebGPU is resolved", async () => {
     const { factory } = makeSentenceEmbeddingFactory(768);
     const provider = createEmbeddingGemmaProvider(factory);
     await resolveBackend({
       gpu: { requestAdapter: async () => ({}) },
     });
-    expect(await provider.getMaxInputTokens()).toBe(2048);
+    expect(await provider.getMaxInputTokens()).toBe(512);
   });
 
   test("getModelSizeBytes returns 190 MB", () => {

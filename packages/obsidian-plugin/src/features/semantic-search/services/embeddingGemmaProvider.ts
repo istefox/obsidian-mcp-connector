@@ -4,6 +4,15 @@ import type { PipelineFactory } from "./embedder";
 import { withSentenceEmbedding } from "./sentenceEmbeddingPipeline";
 import { createTransformersProvider } from "./transformersProvider";
 
+/**
+ * EmbeddingGemma runs on WASM only. On the WebGPU execution provider
+ * (onnxruntime-web 1.26.0, in Electron) it returned vectors that ranked
+ * notes at random with both q4 and q8 weights, while the same files on
+ * WASM ranked them correctly (ADR-0034). The model downloader in
+ * productionWiring.ts passes the same value to the factory.
+ */
+export const EMBEDDING_GEMMA_BACKEND = "wasm" as const;
+
 export function createEmbeddingGemmaProvider(
   pipelineFactory: PipelineFactory,
 ): EmbeddingProvider {
@@ -12,9 +21,10 @@ export function createEmbeddingGemmaProvider(
     providerKey: "embedding-gemma-300m",
     dimensions: 768,
     // WASM capped at 512 — onnxruntime-web@1.26.0 SafeInt overflow at 2048
-    // (#202, upstream microsoft/onnxruntime#28726). WebGPU EP bypasses the
-    // WASM int math path and unlocks the model's full 2K context.
+    // (#202, upstream microsoft/onnxruntime#28726). The webgpu entry is
+    // unused while the model is pinned to WASM.
     maxInputTokensByBackend: { wasm: 512, webgpu: 2048 },
+    backend: EMBEDDING_GEMMA_BACKEND,
     modelSizeBytes: 190_000_000,
     taskPrompt: (text, role) =>
       role === "query"

@@ -165,6 +165,23 @@ describe("model downloader — state machine (T13)", () => {
     expect(received).toEqual({ dtype });
   });
 
+  test("forwards a WASM backend override with the dtype", async () => {
+    let received: unknown;
+    const factory: PipelineFactoryWithProgress = async (_model, _cb, opts) => {
+      received = opts;
+      return async () => ({ data: new Float32Array(4), dims: [1, 4] });
+    };
+    const dtype = { wasm: "q8", webgpu: "q4" };
+    const dl = createModelDownloader({
+      innerFactory: factory,
+      dtype,
+      backend: "wasm",
+    });
+
+    await dl.factory("model");
+    expect(received).toEqual({ dtype, backend: "wasm" });
+  });
+
   test("retry during a download is a no-op (state stays downloading)", async () => {
     const ctrl = makeControlledFactory();
     const dl = createModelDownloader({ innerFactory: ctrl.factory });

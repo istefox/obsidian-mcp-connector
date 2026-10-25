@@ -182,7 +182,7 @@ describe("probeAndWipeStaleStores", () => {
     ).toBe(false);
   });
 
-  test("Gemma vectors from before the sentence_embedding fix are wiped, other providers kept", async () => {
+  test("Gemma vectors from before the sentence_embedding and WASM fix are wiped, other providers kept", async () => {
     const mem = memAdapter();
     // Same layout version: only the vector revision tells them apart.
     seedStore(mem, "native-minilm-l6-v2", FORMAT_VERSION, 5, 0);
@@ -193,7 +193,7 @@ describe("probeAndWipeStaleStores", () => {
       mem.adapter,
       BASE,
     );
-    expect(vectorRevisionFor("embedding-gemma-300m")).toBe(1);
+    expect(vectorRevisionFor("embedding-gemma-300m")).toBe(2);
     expect(staleKeys).toEqual(["embedding-gemma-300m"]);
     expect(probedCounts).toEqual({ "native-minilm-l6-v2": 5 });
     expect(registry.isReady("embedding-gemma-300m")).toBe(false);

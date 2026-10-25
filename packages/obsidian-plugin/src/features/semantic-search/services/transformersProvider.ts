@@ -45,6 +45,12 @@ export type TransformersProviderOpts = {
    * batch (EmbeddingGemma uses 4). Default 8.
    */
   batchSize?: number;
+  /**
+   * The model always runs on WASM, whatever backend the others use. Must
+   * match the `backend` its model downloader passes to the factory, so
+   * the input cap is the WASM one.
+   */
+  backend?: "wasm";
 };
 
 const DEFAULT_BATCH_SIZE = 8;
@@ -67,7 +73,7 @@ class TransformersProviderImpl implements EmbeddingProvider {
   getMaxInputTokens(): Promise<number> {
     if (!this.resolvedMaxTokens) {
       this.resolvedMaxTokens = resolveBackend().then(
-        (b) => this.opts.maxInputTokensByBackend[b],
+        (b) => this.opts.maxInputTokensByBackend[this.opts.backend ?? b],
       );
     }
     return this.resolvedMaxTokens;
