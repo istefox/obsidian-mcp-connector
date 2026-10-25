@@ -21,13 +21,13 @@ The fix changes every vector Gemma produces, so stored Gemma vectors have to go.
 
 We built the branch on a Mac (Apple Silicon, Electron, onnxruntime-web 1.26.0) and indexed a 12-note test vault. Eight queries each had an obvious expected note, and one query was nonsense.
 
-| Run | Expected note first | Nonsense query, best score |
-|---|---|---|
-| WebGPU, q4, `sentence_embedding` | 1 of 7 | 0.44 |
-| WebGPU, q8, `sentence_embedding` | 1 of 7 | 0.35 |
-| WASM, q8, `sentence_embedding` | 7 of 7 | 0.17 |
-| Node CPU, fp32 / q8 / q4, `sentence_embedding` | 6 / 7 / 6 of 7 | 0.15 / 0.16 / 0.17 |
-| Node CPU, fp32 / q8 / q4, mean pooling | 7 / 7 / 6 of 7 | 0.50 / 0.49 / 0.50 |
+| Run                                            | Expected note first | Nonsense query, best score |
+| ---------------------------------------------- | ------------------- | -------------------------- |
+| WebGPU, q4, `sentence_embedding`               | 1 of 7              | 0.44                       |
+| WebGPU, q8, `sentence_embedding`               | 1 of 7              | 0.35                       |
+| WASM, q8, `sentence_embedding`                 | 7 of 7              | 0.17                       |
+| Node CPU, fp32 / q8 / q4, `sentence_embedding` | 6 / 7 / 6 of 7      | 0.15 / 0.16 / 0.17         |
+| Node CPU, fp32 / q8 / q4, mean pooling         | 7 / 7 / 6 of 7      | 0.50 / 0.49 / 0.50         |
 
 So the WebGPU execution provider is what broke the rankings, not quantization: the same q8 file ranks correctly on WASM and randomly on WebGPU. In Node on the CPU, `sentence_embedding` and mean pooling both rank well. `sentence_embedding` separates the hits from the nonsense far better (0.6–0.7 against 0.16, compared with about 0.5 for the nonsense under mean pooling). On a Mac the plugin picks WebGPU automatically, so it is the likely main cause of the #597 report. We do not know for sure which backend that reporter was on.
 
