@@ -849,6 +849,7 @@ describe("embedding store — probe() and meta sidecar", () => {
 
     expect(JSON.parse(mem.files.get(META) ?? "{}")).toEqual({
       version: FORMAT_VERSION,
+      revision: 0,
       recordCount: 2,
     });
     // Meta is the commit marker: nothing may be written after it
@@ -875,6 +876,7 @@ describe("embedding store — probe() and meta sidecar", () => {
     const probing = makeOn(spy.adapter);
     expect(await probing.probe()).toEqual({
       version: FORMAT_VERSION,
+      revision: 0,
       recordCount: 1,
     });
     expect(spy.binReads()).toBe(0);
@@ -892,6 +894,7 @@ describe("embedding store — probe() and meta sidecar", () => {
     const spy1 = spying(mem.adapter);
     expect(await makeOn(spy1.adapter).probe()).toEqual({
       version: FORMAT_VERSION,
+      revision: 0,
       recordCount: 1,
     });
     expect(spy1.binReads()).toBe(0);
@@ -900,6 +903,7 @@ describe("embedding store — probe() and meta sidecar", () => {
     mem.files.set(META, "{broken");
     expect(await makeOn(mem.adapter).probe()).toEqual({
       version: FORMAT_VERSION,
+      revision: 0,
       recordCount: 1,
     });
   });
@@ -923,6 +927,50 @@ describe("embedding store — probe() and meta sidecar", () => {
     const store = makeOn(spy.adapter);
     await store.close();
     expect(spy.writes).toEqual([]);
+  });
+
+  test("a vector revision is written, probed, and a different one reloads empty", async () => {
+    const mem = makeMemAdapter();
+    const at = (vectorRevision: number) =>
+      createEmbeddingStore({
+        adapter: mem.adapter,
+        binPath: A,
+        indexPath: I,
+        vectorDim: DIM,
+        vectorRevision,
+      });
+    const store = at(1);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md")]);
+    store.setMtime("a.md", 1);
+    await store.flush();
+
+    expect(await at(1).probe()).toEqual({
+      version: FORMAT_VERSION,
+      revision: 1,
+      recordCount: 1,
+    });
+    const same = at(1);
+    await same.init();
+    expect(same.size()).toBe(1);
+
+    // Vectors from another revision are not reused.
+    const next = at(2);
+    await next.init();
+    expect(next.size()).toBe(0);
+    expect(next.hasRecords("a.md")).toBe(false);
+  });
+
+  test("a store written before vector revisions probes as revision 0", async () => {
+    const mem = makeMemAdapter();
+    const store = makeOn(mem.adapter);
+    await store.init();
+    await store.upsert([rec2("a.md#0", "a.md")]);
+    await store.flush();
+    const meta = JSON.parse(mem.files.get(META) ?? "{}");
+    delete meta.revision;
+    mem.files.set(META, JSON.stringify(meta));
+    expect((await makeOn(mem.adapter).probe())?.revision).toBe(0);
   });
 });
 

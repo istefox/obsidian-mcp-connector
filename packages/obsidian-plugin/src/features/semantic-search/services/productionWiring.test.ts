@@ -6,7 +6,10 @@ import {
   purgeExcludedFromStores,
   wireSemanticSearch,
 } from "./productionWiring";
-import { createEmbeddingStoreRegistry } from "./storeRegistry";
+import {
+  createEmbeddingStoreRegistry,
+  vectorRevisionFor,
+} from "./storeRegistry";
 import { createEmbeddingGemmaProvider } from "./embeddingGemmaProvider";
 import { applySettings } from "..";
 import type { SemanticIndexer } from "./indexer";
@@ -70,15 +73,20 @@ function seedStore(
   key: string,
   version: number,
   recordCount: number,
+  revision = vectorRevisionFor(key),
 ) {
   const dir = `${BASE}/${key}`;
   mem.files.set(
     `${dir}/embeddings.index.json`,
-    JSON.stringify({ version, records: new Array(recordCount).fill({}) }),
+    JSON.stringify({
+      version,
+      revision,
+      records: new Array(recordCount).fill({}),
+    }),
   );
   mem.files.set(
     `${dir}/embeddings.meta.json`,
-    JSON.stringify({ version, recordCount }),
+    JSON.stringify({ version, revision, recordCount }),
   );
   mem.bins.set(`${dir}/embeddings.bin`, new ArrayBuffer(8));
   mem.files.set(`${dir}/mtimes.json`, "{}");
@@ -172,6 +180,39 @@ describe("probeAndWipeStaleStores", () => {
     expect(
       await mem.adapter.exists(`${BASE}/embedding-gemma-300m/embeddings.bin`),
     ).toBe(false);
+  });
+
+  test("Gemma vectors from before the sentence_embedding fix are wiped, other providers kept", async () => {
+    const mem = memAdapter();
+    // Same layout version: only the vector revision tells them apart.
+    seedStore(mem, "native-minilm-l6-v2", FORMAT_VERSION, 5, 0);
+    seedStore(mem, "embedding-gemma-300m", FORMAT_VERSION, 9, 0);
+    const registry = createEmbeddingStoreRegistry(mem.adapter, BASE);
+    const { staleKeys, probedCounts } = await probeAndWipeStaleStores(
+      registry,
+      mem.adapter,
+      BASE,
+    );
+    expect(vectorRevisionFor("embedding-gemma-300m")).toBe(1);
+    expect(staleKeys).toEqual(["embedding-gemma-300m"]);
+    expect(probedCounts).toEqual({ "native-minilm-l6-v2": 5 });
+    expect(registry.isReady("embedding-gemma-300m")).toBe(false);
+    expect(
+      await mem.adapter.exists(`${BASE}/embedding-gemma-300m/mtimes.json`),
+    ).toBe(false);
+  });
+
+  test("a Gemma store at the current revision is kept", async () => {
+    const mem = memAdapter();
+    seedStore(mem, "embedding-gemma-300m", FORMAT_VERSION, 9);
+    const registry = createEmbeddingStoreRegistry(mem.adapter, BASE);
+    const { staleKeys, probedCounts } = await probeAndWipeStaleStores(
+      registry,
+      mem.adapter,
+      BASE,
+    );
+    expect(staleKeys).toEqual([]);
+    expect(probedCounts).toEqual({ "embedding-gemma-300m": 9 });
   });
 });
 

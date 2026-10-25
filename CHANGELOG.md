@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **EmbeddingGemma search results are relevant again.** The provider read the model through Transformers.js's feature-extraction pipeline, which mean-pools the token states and returns them. EmbeddingGemma's sentence vector has two more steps after that pooling, two Dense projections, and the ONNX export returns the finished vector as a separate `sentence_embedding` output that the pipeline never reads. Without the projections, every note scored between 0.85 and 0.89 against any query, a nonsense query still scored 0.79, and searching a note's exact title did not bring that note up. The provider now reads `sentence_embedding`, and fails with an error if a model does not return it instead of falling back to the old vectors. It also passes the input cap to the tokenizer, so the 512-token limit on WASM actually applies. Existing EmbeddingGemma indexes are rebuilt automatically on the first start after the update. MiniLM and multilingual-e5 indexes are left alone (reported on #597, ADR-0034)
+
 ## [3.2.0] — 2026-10-24
 
 ### Fixed

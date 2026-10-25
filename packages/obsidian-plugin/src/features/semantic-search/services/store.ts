@@ -96,7 +96,7 @@ export interface EmbeddingStore {
    * sentinel is present — a pending init() would discard those records,
    * so reporting them as ready would be a lie.
    */
-  probe(): Promise<{ version: number; recordCount: number } | null>;
+  probe(): Promise<StoreProbe | null>;
   scan(): AsyncIterable<EmbeddingRecord>;
   flush(): Promise<void>;
   close(): Promise<void>;
@@ -109,6 +109,22 @@ export type EmbeddingStoreOpts = {
   /** Expected vector dimensionality. Records that don't match are
    *  rejected with an error to keep the store self-consistent. */
   vectorDim?: number;
+  /**
+   * Which vectors this provider's records hold, next to the layout
+   * version. Bumped when the same model starts producing different
+   * vectors, so only that provider's index is rebuilt. A record set
+   * written under another revision loads as a version mismatch.
+   * Default 0, which is also what a store written before this field
+   * existed reads as.
+   */
+  vectorRevision?: number;
+};
+
+export type StoreProbe = {
+  version: number;
+  /** 0 when the store predates the field. */
+  revision: number;
+  recordCount: number;
 };
 
 // v4: chunk size now derived from provider.getMaxInputTokens() (WebGPU lets
@@ -156,8 +172,12 @@ type IndexRecord = {
 
 type IndexFile = {
   version: number;
+  revision?: number;
   records: IndexRecord[];
 };
+
+const revisionOf = (parsed: { revision?: unknown }): number =>
+  typeof parsed.revision === "number" ? parsed.revision : 0;
 
 class EmbeddingStoreImpl implements EmbeddingStore {
   private records = new Map<string, EmbeddingRecord>();
@@ -183,8 +203,11 @@ class EmbeddingStoreImpl implements EmbeddingStore {
   /** Tiny readiness sidecar, e.g. `<dir>/embeddings.meta.json`. */
   private readonly metaPath: string;
 
+  private readonly vectorRevision: number;
+
   constructor(private opts: EmbeddingStoreOpts) {
     this.vectorDim = opts.vectorDim ?? DEFAULT_VECTOR_DIM;
+    this.vectorRevision = opts.vectorRevision ?? 0;
     this.sentinelPath = `${opts.indexPath}.writing`;
     const dir = opts.indexPath.split("/").slice(0, -1).join("/");
     this.mtimesPath = dir ? `${dir}/mtimes.json` : "mtimes.json";
@@ -210,19 +233,20 @@ class EmbeddingStoreImpl implements EmbeddingStore {
     for (let k = 0; k < SEGMENT_COUNT; k++) this.dirtySegments.add(k);
   }
 
-  async probe(): Promise<{ version: number; recordCount: number } | null> {
+  async probe(): Promise<StoreProbe | null> {
     if (await this.opts.adapter.exists(this.sentinelPath)) return null;
     try {
       if (await this.opts.adapter.exists(this.metaPath)) {
         const parsed = JSON.parse(
           await this.opts.adapter.read(this.metaPath),
-        ) as { version?: unknown; recordCount?: unknown };
+        ) as { version?: unknown; revision?: unknown; recordCount?: unknown };
         if (
           typeof parsed.version === "number" &&
           typeof parsed.recordCount === "number"
         ) {
           return {
             version: parsed.version,
+            revision: revisionOf(parsed),
             recordCount: parsed.recordCount,
           };
         }
@@ -239,12 +263,14 @@ class EmbeddingStoreImpl implements EmbeddingStore {
         if (typeof parsed.version !== "number") return null;
         return {
           version: parsed.version,
+          revision: revisionOf(parsed),
           recordCount: parsed.records?.length ?? 0,
         };
       }
       // Segmented store with a missing/corrupt meta sidecar: sum the
       // segment indexes so a healthy store is not misreported as absent.
       let version: number | null = null;
+      let revision = 0;
       let recordCount = 0;
       for (let seg = 0; seg < SEGMENT_COUNT; seg++) {
         const indexPath = this.segIndexPath(seg);
@@ -253,10 +279,11 @@ class EmbeddingStoreImpl implements EmbeddingStore {
           await this.opts.adapter.read(indexPath),
         ) as IndexFile;
         if (typeof parsed.version !== "number") return null;
+        if (version === null) revision = revisionOf(parsed);
         version ??= parsed.version;
         recordCount += parsed.records?.length ?? 0;
       }
-      return version === null ? null : { version, recordCount };
+      return version === null ? null : { version, revision, recordCount };
     } catch {
       return null;
     }
@@ -370,6 +397,13 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       logger.warn("embedding index format version mismatch, re-indexing", {
         expected: FORMAT_VERSION,
         found: parsed.version,
+      });
+      return "version-mismatch";
+    }
+    if (revisionOf(parsed) !== this.vectorRevision) {
+      logger.warn("embedding index vector revision mismatch, re-indexing", {
+        expected: this.vectorRevision,
+        found: revisionOf(parsed),
       });
       return "version-mismatch";
     }
@@ -623,6 +657,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       await this.opts.adapter.writeBinary(this.segBinPath(seg), bin.buffer);
       const indexFile: IndexFile = {
         version: FORMAT_VERSION,
+        revision: this.vectorRevision,
         records: indexRecs,
       };
       await this.opts.adapter.write(
@@ -642,6 +677,7 @@ class EmbeddingStoreImpl implements EmbeddingStore {
       this.metaPath,
       JSON.stringify({
         version: FORMAT_VERSION,
+        revision: this.vectorRevision,
         recordCount: this.records.size,
       }),
     );

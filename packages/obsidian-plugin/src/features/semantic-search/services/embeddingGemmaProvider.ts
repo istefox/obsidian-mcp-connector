@@ -1,6 +1,7 @@
 // Model: onnx-community/embeddinggemma-300m-ONNX (ONNX IR v10; requires onnxruntime-web ≥ 1.20 / the dev build pinned in onnxEnv.ts).
 import type { EmbeddingProvider } from "../types";
 import type { PipelineFactory } from "./embedder";
+import { withSentenceEmbedding } from "./sentenceEmbeddingPipeline";
 import { createTransformersProvider } from "./transformersProvider";
 
 export function createEmbeddingGemmaProvider(
@@ -19,7 +20,9 @@ export function createEmbeddingGemmaProvider(
       role === "query"
         ? "task: search result | query: " + text
         : "title: none | text: " + text,
-    pipelineFactory,
+    // The model's own sentence vector, Dense layers included. Mean
+    // pooling the token states skips them (sentenceEmbeddingPipeline.ts).
+    pipelineFactory: withSentenceEmbedding(pipelineFactory),
     // 2K-context model: padding to the longest text in the batch makes
     // attention memory batch × seq², which can OOM integrated GPUs at
     // the default batch of 8.
