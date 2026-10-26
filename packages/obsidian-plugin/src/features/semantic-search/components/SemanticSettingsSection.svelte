@@ -1,7 +1,7 @@
 <script lang="ts">
   import type McpToolsPlugin from "$/main";
   import { Notice } from "obsidian";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { applySettings } from "../index";
   import {
     DEFAULT_SEMANTIC_SETTINGS,
@@ -18,6 +18,13 @@
   let lastError: string | null = null;
   let pendingProvider: string | null = null;
   let autoSuggestProvider: string | null = null;
+  // #655: build status of the pending DLC provider, refreshed by a poll
+  // while the settings tab is open, so the banner shows what is really
+  // happening (building, failed, or waiting for the user).
+  let pendingBuilding = false;
+  let pendingError: string | null = null;
+  let pollTimer: number | null = null;
+  const POLL_MS = 1000;
 
   const PROVIDER_META: Record<
     string,
@@ -43,6 +50,11 @@
       autoSuggestProvider = state.autoSuggestProvider ?? null;
     }
     refreshStatus();
+    pollTimer = window.setInterval(refreshStatus, POLL_MS);
+  });
+
+  onDestroy(() => {
+    if (pollTimer !== null) window.clearInterval(pollTimer);
   });
 
   function refreshStatus() {
@@ -69,8 +81,29 @@
       storeSize =
         (state?.store?.size?.() ?? 0) || probed["native-minilm-l6-v2"] || 0;
     }
+    const previousPending = pendingProvider;
+    const wasBuilding = pendingBuilding;
     pendingProvider = state?.pendingProvider ?? null;
     autoSuggestProvider = state?.autoSuggestProvider ?? null;
+    pendingBuilding = pendingProvider
+      ? (state?.isRebuildingFor?.(pendingProvider) ?? false)
+      : false;
+    pendingError = pendingProvider
+      ? (state?.dlcRebuildErrors?.get(pendingProvider) ?? null)
+      : null;
+    // The build finished while the tab was open: say so, since the
+    // banner just disappears otherwise.
+    // Switching to another provider also clears pendingProvider, so
+    // check the store really is ready.
+    if (
+      previousPending &&
+      wasBuilding &&
+      !pendingProvider &&
+      registry?.isReady(previousPending)
+    ) {
+      const label = PROVIDER_META[previousPending]?.label ?? previousPending;
+      new Notice(`${label} index is ready.`);
+    }
   }
 
   async function persist(next: SemanticSearchSettings) {
@@ -84,7 +117,7 @@
     try {
       await applySettings(plugin, state, next);
       settings = next;
-      pendingProvider = state.pendingProvider ?? null;
+      refreshStatus();
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -107,11 +140,18 @@
   async function onRebuildNow() {
     const state = plugin.semanticSearchState;
     if (!state || !pendingProvider) return;
-    if (state.startRebuildFor) {
-      state.startRebuildFor(pendingProvider);
-    } else {
+    if (!state.startRebuildFor) {
       new Notice("Rebuild not available yet — reload Obsidian.");
+      return;
     }
+    const label = PROVIDER_META[pendingProvider]?.label ?? pendingProvider;
+    state.startRebuildFor(pendingProvider);
+    refreshStatus();
+    new Notice(
+      pendingBuilding
+        ? `Building ${label} index in background…`
+        : `Could not start the ${label} build. Reload Obsidian and try again.`,
+    );
   }
 
   async function onRebuild() {
@@ -135,6 +175,7 @@
         return;
       }
       state.startRebuildFor(dlcProviderKey);
+      refreshStatus();
       new Notice("Rebuilding index in background…");
       return;
     }
@@ -193,12 +234,24 @@
 
   {#if pendingProvider}
     {@const meta = PROVIDER_META[pendingProvider]}
-    <div class="banner warn">
-      {meta?.label ?? pendingProvider} index is being built ({meta?.size ?? ""}
-      download, ~{meta?.seconds ?? ""}).
-      <button type="button" class="banner-action" on:click={onRebuildNow}>
-        Rebuild now
-      </button>
+    <div class="banner warn" role="status">
+      {#if pendingBuilding}
+        Building the {meta?.label ?? pendingProvider} index: model download
+        ({meta?.size ?? ""}) then indexing, ~{meta?.seconds ?? ""}.
+        {storeSize.toLocaleString()} chunks indexed so far. Search keeps using
+        the previous provider until it is done.
+      {:else if pendingError}
+        {meta?.label ?? pendingProvider} index build failed: {pendingError}
+        <button type="button" class="banner-action" on:click={onRebuildNow}>
+          Retry
+        </button>
+      {:else}
+        {meta?.label ?? pendingProvider} index is not built yet ({meta?.size ??
+          ""} download, ~{meta?.seconds ?? ""}).
+        <button type="button" class="banner-action" on:click={onRebuildNow}>
+          Rebuild now
+        </button>
+      {/if}
     </div>
   {/if}
 

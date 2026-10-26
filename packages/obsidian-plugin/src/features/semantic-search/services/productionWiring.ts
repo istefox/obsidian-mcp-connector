@@ -407,11 +407,16 @@ export async function wireSemanticSearch(
     // stores. Only this step is tracked, not the rebuild itself, which
     // settles once stop() has cut it short.
     const _completingRebuilds = new Set<Promise<void>>();
+    const _rebuildErrors = new Map<string, string>();
+    state.isRebuildingFor = (providerKey: string) =>
+      _rebuildingProviders.has(providerKey);
+    state.dlcRebuildErrors = _rebuildErrors;
     state.startRebuildFor = (providerKey: string) => {
       // After teardown nothing may build or start an indexer: it would
       // be untracked and keep receiving vault events.
       if (closed || _rebuildingProviders.has(providerKey)) return;
       _rebuildingProviders.add(providerKey);
+      _rebuildErrors.delete(providerKey);
       const epKey = providerKey as keyof typeof embeddingProviders;
       const ep = embeddingProviders[epKey];
       if (!ep) {
@@ -459,9 +464,11 @@ export async function wireSemanticSearch(
           });
         })
         .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          _rebuildErrors.set(providerKey, message);
           logger.error("semantic-search: DLC rebuild failed", {
             providerKey,
-            error: err instanceof Error ? err.message : String(err),
+            error: message,
           });
         })
         .finally(() => {

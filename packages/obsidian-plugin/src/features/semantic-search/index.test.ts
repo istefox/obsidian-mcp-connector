@@ -428,6 +428,25 @@ describe("applySettings — UI swap path (T12)", () => {
     expect(result.state.pendingProviderStartedAt).toBeTypeOf("number");
   });
 
+  test("DLC: picking a provider whose store is not ready starts its build (#655)", async () => {
+    const { plugin } = makePluginStub();
+    const result = await setup(plugin);
+    if (!result.success) throw new Error(result.error);
+    const started: string[] = [];
+    result.state.registry = {
+      isReady: () => false,
+    } as unknown as NonNullable<typeof result.state.registry>;
+    result.state.startRebuildFor = (key) => started.push(key);
+
+    await applySettings(plugin, result.state, {
+      ...result.state.settings,
+      provider: "multilingual-e5-base",
+    });
+
+    expect(result.state.pendingProvider).toBe("multilingual-e5-base");
+    expect(started).toEqual(["multilingual-e5-base"]);
+  });
+
   test("DLC: embedding-gemma with store ready swaps provider and clears pendingProvider", async () => {
     const { plugin } = makePluginStub();
     const { createEmbeddingStore } = await import("./services/store");

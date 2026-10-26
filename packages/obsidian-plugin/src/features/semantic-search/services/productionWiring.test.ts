@@ -871,8 +871,8 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
   };
 
   /**
-   * Switches a session to the Gemma provider, starts its rebuild, and
-   * tears the session down while the rebuild is parked on its first
+   * Switches a session to the Gemma provider (which starts its rebuild)
+   * and tears the session down while the rebuild is parked on its first
    * embed. Returns the state, and what the rebuild's success path touched.
    */
   async function interruptRebuild(h: ReturnType<typeof host>) {
@@ -958,11 +958,6 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
     const model = standInModel();
     const state = (await wireSemanticSearch(h.plugin))!;
     try {
-      await applySettings(h.plugin, state, {
-        ...state.settings,
-        provider: "embedding-gemma",
-      });
-      expect(state.pendingProvider).toBe(DLC_KEY);
       const providerBefore = state.provider;
       const swaps: unknown[] = [];
       const chooser = state.chooser!;
@@ -1013,7 +1008,13 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
         };
       }
 
-      state.startRebuildFor?.(DLC_KEY);
+      // Picking the provider starts the build (#655), so every hook
+      // above is in place before the choice is applied.
+      await applySettings(h.plugin, state, {
+        ...state.settings,
+        provider: "embedding-gemma",
+      });
+      expect(state.pendingProvider).toBe(DLC_KEY);
       await flushReached;
       let tearDownDone = false;
       const tearing = state.teardown().then(() => {
@@ -1068,6 +1069,78 @@ describe("wireSemanticSearch — indexer start and vault events", () => {
     } finally {
       model.restore();
       await state?.teardown();
+    }
+  });
+
+  test("picking a DLC provider starts its build, and the build status clears once it is ready (#655)", async () => {
+    const h = host();
+    addNotes("A", "B");
+    const model = standInModel();
+    const state = (await wireSemanticSearch(h.plugin))!;
+    try {
+      await applySettings(h.plugin, state, {
+        ...state.settings,
+        provider: "embedding-gemma",
+      });
+      // No "Rebuild now" press: the choice alone starts the build.
+      expect(state.pendingProvider).toBe(DLC_KEY);
+      expect(state.isRebuildingFor?.(DLC_KEY)).toBe(true);
+      const dlc = state.dlcIndexers!.get(DLC_KEY);
+      expect(dlc).toBeDefined();
+
+      for (let i = 0; i < 50 && state.isRebuildingFor?.(DLC_KEY); i++) {
+        await turn();
+      }
+      expect(state.isRebuildingFor?.(DLC_KEY)).toBe(false);
+      expect(state.registry!.isReady(DLC_KEY)).toBe(true);
+      expect(state.pendingProvider).toBeNull();
+      expect(state.dlcRebuildErrors?.has(DLC_KEY)).toBe(false);
+      expect(model.embedded.map((t) => t.slice(0, 1)).sort()).toEqual([
+        "A",
+        "B",
+      ]);
+    } finally {
+      model.restore();
+      await state.teardown();
+    }
+  });
+
+  test("a failed DLC build records its error, keeps the banner, and a new build clears it (#655)", async () => {
+    const h = host();
+    addNotes("A");
+    const model = standInModel();
+    const state = (await wireSemanticSearch(h.plugin))!;
+    try {
+      const set = state.dlcIndexers!.set.bind(state.dlcIndexers!);
+      state.dlcIndexers!.set = (key, indexer) => {
+        indexer.start = () => Promise.reject(new Error("download failed"));
+        return set(key, indexer);
+      };
+      await applySettings(h.plugin, state, {
+        ...state.settings,
+        provider: "embedding-gemma",
+      });
+      for (let i = 0; i < 20 && state.isRebuildingFor?.(DLC_KEY); i++) {
+        await turn();
+      }
+      expect(state.isRebuildingFor?.(DLC_KEY)).toBe(false);
+      expect(state.dlcRebuildErrors?.get(DLC_KEY)).toBe("download failed");
+      expect(state.pendingProvider).toBe(DLC_KEY);
+      expect(state.registry!.isReady(DLC_KEY)).toBe(false);
+
+      // Retry: the existing indexer runs a fresh rebuild, and the old
+      // error is dropped as soon as it starts.
+      state.startRebuildFor?.(DLC_KEY);
+      expect(state.isRebuildingFor?.(DLC_KEY)).toBe(true);
+      expect(state.dlcRebuildErrors?.has(DLC_KEY)).toBe(false);
+      for (let i = 0; i < 50 && state.isRebuildingFor?.(DLC_KEY); i++) {
+        await turn();
+      }
+      expect(state.registry!.isReady(DLC_KEY)).toBe(true);
+      expect(state.pendingProvider).toBeNull();
+    } finally {
+      model.restore();
+      await state.teardown();
     }
   });
 

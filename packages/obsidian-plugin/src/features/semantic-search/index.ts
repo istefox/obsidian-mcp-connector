@@ -161,6 +161,19 @@ export type SemanticSearchState = {
    */
   startRebuildFor?: ((providerKey: string) => void) | null;
   /**
+   * True while a `startRebuildFor` build (download + index) for this
+   * providerKey is in flight. Lets the settings banner tell "building"
+   * apart from "not started" or "failed" (#655). Wired by production
+   * setup; absent in tests and early lifecycle.
+   */
+  isRebuildingFor?: ((providerKey: string) => boolean) | null;
+  /**
+   * Message of the last failed `startRebuildFor` build per providerKey,
+   * cleared when a new build for that key starts. Surfaced in the
+   * settings banner so a failed build does not look like a silent one.
+   */
+  dlcRebuildErrors?: Map<string, string> | null;
+  /**
    * Persistent DLC indexers keyed by providerKey. Populated lazily by
    * `startRebuildFor` and by the plugin-load auto-subscribe for the
    * active DLC provider. Used by `teardown` to stop and flush every
@@ -303,7 +316,8 @@ const DOWNLOADABLE_PROVIDER_KEYS: Partial<Record<string, string>> = {
  * multilingual-e5-base), if the store is not yet marked ready in the
  * registry, the live provider is NOT swapped — the old results stay
  * available while the index builds — and `state.pendingProvider` is
- * set so the UI can show the rebuild banner.
+ * set so the UI can show the rebuild banner, and the build is started
+ * via `state.startRebuildFor` when wired.
  *
  * Held under the feature mutex so a rapid double-toggle cannot land
  * out-of-order writes against `data.json`.
@@ -321,9 +335,14 @@ export async function applySettings(
 
   const pendingKey = DOWNLOADABLE_PROVIDER_KEYS[next.provider];
   if (pendingKey && state.registry && !state.registry.isReady(pendingKey)) {
-    // Store not yet built — surface the rebuild banner, keep old provider.
+    // Store not yet built — surface the rebuild banner, keep old provider,
+    // and start the download + index build right away (#655): picking
+    // the provider is the user's go-ahead, waiting for "Rebuild now"
+    // left the banner claiming a build that had not started.
+    // startRebuildFor is a no-op while a build for the key is running.
     state.pendingProvider = pendingKey;
     state.pendingProviderStartedAt = Date.now();
+    state.startRebuildFor?.(pendingKey);
     return;
   }
 

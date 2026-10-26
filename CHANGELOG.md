@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **Picking EmbeddingGemma or multilingual-e5 in settings starts the model download and the index build.** Choosing the provider only set the banner, which said the index "is being built" while nothing ran until you pressed "Rebuild now". The build now starts as soon as you pick the provider, and search keeps using the previous provider until it is done (#655)
+- **The provider banner says what the build is doing, and "Rebuild now" answers.** The banner now reads "Building the … index" with the chunks indexed so far while the build runs, "index is not built yet" with a "Rebuild now" button when nothing is running, and "index build failed" with the error and a Retry button when the build stopped. Pressing "Rebuild now" shows a notice, and a notice says when the new index is ready (#655)
+
 ## [3.2.1] — 2026-10-26
 
 ### Fixed
