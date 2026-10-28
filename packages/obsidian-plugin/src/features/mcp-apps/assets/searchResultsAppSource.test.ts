@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { BUNDLE_MARKER } from "../../../../scripts/mcp-apps/buildAppHtml";
+import { encodeAppHtml } from "../../../../scripts/mcp-apps/encodeAppHtml";
 import { SEARCH_RESULTS_PAYLOAD_KEY } from "../services/searchResultsPayload";
-import { SEARCH_RESULTS_APP_HTML as html } from "./searchResultsAppSource";
+import { decodeAppHtml, searchResultsAppHtml } from "./searchResultsAppHtml";
+import { SEARCH_RESULTS_APP_HTML_GZIP_BASE64 } from "./searchResultsAppSource";
+
+const html = searchResultsAppHtml();
 
 // The generated page is compiler output, so its exact bytes move with the
 // Bun version that built it. These checks assert what must hold on any Bun
@@ -49,5 +53,20 @@ describe("generated search-results page (issue #538)", () => {
 
   test("the view's payload key is the server's", () => {
     expect(html).toContain(SEARCH_RESULTS_PAYLOAD_KEY);
+  });
+});
+
+describe("compressed page encoding (#629)", () => {
+  test("decodes to the page and re-encodes to the same bytes, so a regeneration with no change leaves no diff", () => {
+    expect(encodeAppHtml(html)).toBe(SEARCH_RESULTS_APP_HTML_GZIP_BASE64);
+  });
+
+  test("round-trips non-ASCII text", () => {
+    const page = "<p>Città — naïve 日本語 🙂</p>";
+    expect(decodeAppHtml(encodeAppHtml(page))).toBe(page);
+  });
+
+  test("decodes once and serves the same string afterwards", () => {
+    expect(searchResultsAppHtml()).toBe(html);
   });
 });

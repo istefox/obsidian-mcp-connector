@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Changed
+
+- **`main.js` is about 290 KB smaller.** The search-results view that MCP Apps hosts render was embedded as 424 KB of plain HTML, read on every plugin load although only a host that opens the view uses it. It is now stored compressed (about 137 KB) and unpacked the first time a host asks for it; the page itself is unchanged. The plugin file goes from 2.85 MB to 2.56 MB (#629, ADR-0018)
+
 ## [3.2.2] — 2026-10-26
 
 ### Fixed

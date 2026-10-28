@@ -155,8 +155,9 @@ describe("legacy path — resources/list and resources/read serve the ui:// appl
     const server = await startService();
     // Dynamic import so a missing module fails only this assertion, not
     // every test in the file (the placeholder asset is Task 1 step 3).
-    const { SEARCH_RESULTS_APP_HTML } =
-      await import("$/features/mcp-apps/assets/searchResultsAppSource");
+    const { searchResultsAppHtml } =
+      await import("$/features/mcp-apps/assets/searchResultsAppHtml");
+    const SEARCH_RESULTS_APP_HTML = searchResultsAppHtml();
     const res = await postMcp(server.port, {
       jsonrpc: "2.0",
       id: 2,

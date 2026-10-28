@@ -15,7 +15,9 @@
  * makes.
  */
 import { describe, expect, test } from "bun:test";
-import { SEARCH_RESULTS_APP_HTML } from "./searchResultsAppSource";
+import { searchResultsAppHtml } from "./searchResultsAppHtml";
+
+const SEARCH_RESULTS_APP_HTML = searchResultsAppHtml();
 
 function extractModuleScript(html: string): string {
   const match = html.match(/<script type="module">([\s\S]*?)<\/script>/);
