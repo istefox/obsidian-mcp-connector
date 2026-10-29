@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 - **Agents can see the folder tree, empty folders included.** `list_vault_folders` lists folders under a directory, optionally recursive, with an `empty` flag; `get_vault_tree` returns the nested hierarchy from the vault root or a subtree, with depth and file-name options. Each tree node carries its full `path` and an `empty` flag, and a call returns at most 200 folder nodes unless `limit` asks for more (up to 1000). File names are capped at 2000 per response, with `filesTruncated` when the cap is hit, and `totalFolders` counts every descendant even when `depth` shortens the tree. Both are read-only, honour Excluded files, and are served in headless mode too
 
+### Changed
+
+- **`main.js` is about 290 KB smaller.** The search-results view that MCP Apps hosts render was embedded as 424 KB of plain HTML, read on every plugin load although only a host that opens the view uses it. It is now stored compressed (about 137 KB) and unpacked the first time a host asks for it; the page itself is unchanged. The plugin file goes from 2.85 MB to 2.56 MB (#629, ADR-0018)
+
 ## [3.2.2] — 2026-10-26
 
 ### Fixed
