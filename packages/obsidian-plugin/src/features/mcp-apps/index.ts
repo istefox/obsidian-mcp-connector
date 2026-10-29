@@ -13,7 +13,7 @@
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ResourceRegistry } from "$/features/mcp-transport/services/resourceRegistry";
 import type { ToolRegistry } from "$/features/mcp-transport/services/toolRegistry";
-import { SEARCH_RESULTS_APP_HTML } from "./assets/searchResultsAppSource";
+import { searchResultsAppHtml } from "./assets/searchResultsAppHtml";
 
 /** Naming fixed by ADR-0018 — do not derive or re-invent either value. */
 export const SEARCH_RESULTS_RESOURCE_URI = "ui://mcp-connector/search-results";
@@ -49,7 +49,7 @@ export function wireSearchResultsApp(
         {
           uri,
           mimeType: SEARCH_RESULTS_MIME_TYPE,
-          text: SEARCH_RESULTS_APP_HTML,
+          text: searchResultsAppHtml(),
         },
       ],
     };

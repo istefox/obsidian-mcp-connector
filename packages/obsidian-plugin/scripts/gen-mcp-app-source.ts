@@ -2,6 +2,7 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
 import prettier from "prettier";
+import { encodeAppHtml } from "./mcp-apps/encodeAppHtml";
 import { generateSearchResultsHtml } from "./mcp-apps/generateAppHtml";
 
 const outPath = join(
@@ -9,6 +10,7 @@ const outPath = join(
   "../src/features/mcp-apps/assets/searchResultsAppSource.ts",
 );
 const { html, bundle } = await generateSearchResultsHtml();
+const encoded = encodeAppHtml(html);
 
 // Recomputed from the actual compiled view and SDK on every generation.
 const bundleBytes = Buffer.byteLength(bundle, "utf8");
@@ -19,15 +21,15 @@ const header = [
   "// Source: packages/obsidian-plugin/assets/mcp-apps/searchResults.html",
   "//         + assets/mcp-apps/searchResults.js and the ext-apps SDK (compiled inline)",
   "// Regenerate: bun run gen:mcp-app (from packages/obsidian-plugin)",
+  "// Read it through searchResultsAppHtml() in ./searchResultsAppHtml.ts.",
   "//",
   `// Inline view + ext-apps bundle: ${bundleBytes} B raw, ${bundleJsonBytes} B JSON.stringify-escaped (compiler-dependent, informational).`,
+  `// Whole page: ${Buffer.byteLength(html, "utf8")} B, ${encoded.length} B gzipped and base64-encoded (#629).`,
 ].join("\n");
-const raw = `${header}\nexport const SEARCH_RESULTS_APP_HTML = ${JSON.stringify(html)};\n`;
+const raw = `${header}\nexport const SEARCH_RESULTS_APP_HTML_GZIP_BASE64 = ${JSON.stringify(encoded)};\n`;
 
-// Same two constraints as gen-shim-source.ts, for the same reasons:
-// JSON.stringify rather than a template literal because the payload is
-// full of backticks and quotes, Prettier-before-write because the output
-// lands under `src/`, which `format:check` globs.
+// Prettier before writing, as gen-shim-source.ts does: the output lands
+// under `src/`, which `format:check` globs.
 const config = await prettier.resolveConfig(outPath);
 const formatted = await prettier.format(raw, {
   ...config,

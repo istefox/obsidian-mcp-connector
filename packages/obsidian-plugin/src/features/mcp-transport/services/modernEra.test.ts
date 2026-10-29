@@ -381,8 +381,9 @@ describe("modern path — resources/list and resources/read serve the ui:// appl
     // file — the placeholder ships in Task 1 step 3, this test does not
     // depend on its content beyond byte-equality with what the feature
     // actually serves.
-    const { SEARCH_RESULTS_APP_HTML } =
-      await import("$/features/mcp-apps/assets/searchResultsAppSource");
+    const { searchResultsAppHtml } =
+      await import("$/features/mcp-apps/assets/searchResultsAppHtml");
+    const SEARCH_RESULTS_APP_HTML = searchResultsAppHtml();
     const res = await postMcp(
       server.port,
       TOKEN,

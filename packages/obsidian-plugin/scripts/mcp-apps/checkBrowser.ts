@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { SEARCH_RESULTS_APP_HTML } from "../../src/features/mcp-apps/assets/searchResultsAppSource";
+import { searchResultsAppHtml } from "../../src/features/mcp-apps/assets/searchResultsAppHtml";
 
 // Pi MCP Adapter 2.34.0 resource policy. In particular, no blob: or unsafe-eval.
 const csp =
@@ -21,7 +21,7 @@ const server = Bun.serve({
   port: 0,
   fetch(request) {
     return new URL(request.url).pathname === "/app"
-      ? new Response(SEARCH_RESULTS_APP_HTML, {
+      ? new Response(searchResultsAppHtml(), {
           headers: {
             "Content-Type": "text/html",
             "Content-Security-Policy": csp,
