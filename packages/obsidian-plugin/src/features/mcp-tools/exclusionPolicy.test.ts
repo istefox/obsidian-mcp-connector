@@ -110,6 +110,8 @@ const CANARY_ARGS: Record<string, Record<string, unknown>> = {
   delete_active_file: {},
   show_file_in_obsidian: { filename: SECRET_FILE },
   list_vault_files: { directory: SECRET_DIR },
+  list_vault_folders: { directory: SECRET_DIR },
+  get_vault_tree: { path: SECRET_DIR, includeFiles: true },
   get_vault_file: { path: SECRET_FILE },
   get_vault_files: { paths: [SECRET_FILE] },
   create_vault_file: { path: SECRET_FILE, content: "sweep content" },
@@ -447,12 +449,16 @@ describe("registry-wide sweep — refusal is indistinguishable from absence", ()
     set_note_property: (p) => ({ path: p, key: "title", value: "x" }),
     delete_note_property: (p) => ({ path: p, key: "title" }),
     list_vault_files: (p) => ({ directory: p }),
+    list_vault_folders: (p) => ({ directory: p }),
+    get_vault_tree: (p) => ({ path: p }),
     list_property_values: (p) => ({ key: "title", folder: p }),
     find_broken_links: (p) => ({ scope: [p] }),
   };
 
   const DIR_SHAPED = new Set([
     "list_vault_files",
+    "list_vault_folders",
+    "get_vault_tree",
     "list_property_values",
     "find_broken_links",
   ]);

@@ -50,6 +50,8 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = {
 
   // Vault files
   list_vault_files: READ_ONLY,
+  list_vault_folders: READ_ONLY,
+  get_vault_tree: READ_ONLY,
   get_vault_file: READ_ONLY,
   get_vault_files: READ_ONLY,
   get_vault_file_partial: READ_ONLY,

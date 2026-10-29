@@ -21,6 +21,18 @@ export function folderPrefix(folder: string | undefined): string | null {
   return trimmed === "" ? null : `${trimmed}/`;
 }
 
+/** The containing folder path, or `""` for a root-level entry. */
+export function parentPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash);
+}
+
+/** The last segment of a path: `"Projects/2026"` gives `"2026"`. */
+export function pathName(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? path : path.slice(slash + 1);
+}
+
 /**
  * The order every listing tool uses for paths and names: English collation,
  * case- and accent-sensitive, so the output does not depend on the host's
