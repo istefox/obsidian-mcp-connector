@@ -5,9 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-10-29
+
 ### Added
 
-- **Agents can see the folder tree, empty folders included.** `list_vault_folders` lists folders under a directory, optionally recursive, with an `empty` flag; `get_vault_tree` returns the nested hierarchy from the vault root or a subtree, with depth and file-name options. Each tree node carries its full `path` and an `empty` flag, and a call returns at most 200 folder nodes unless `limit` asks for more (up to 1000). File names are capped at 2000 per response, with `filesTruncated` when the cap is hit, and `totalFolders` counts every descendant even when `depth` shortens the tree. Both are read-only, honour Excluded files, and are served in headless mode too
+- **Agents can see the folder tree, empty folders included.** `list_vault_folders` lists folders under a directory, optionally recursive, with an `empty` flag; `get_vault_tree` returns the nested hierarchy from the vault root or a subtree, with depth and file-name options. Each tree node carries its full `path` and an `empty` flag, and a call returns at most 200 folder nodes unless `limit` asks for more (up to 1000). File names are capped at 2000 per response, with `filesTruncated` when the cap is hit, and `totalFolders` counts every descendant even when `depth` shortens the tree. Both are read-only, honour Excluded files, and are served in headless mode too. Contributed by @Karol-Szykula in #639.
 
 ### Changed
 
