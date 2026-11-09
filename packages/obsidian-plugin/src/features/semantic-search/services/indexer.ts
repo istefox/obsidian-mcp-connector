@@ -84,6 +84,14 @@ export type LiveIndexerOpts = {
    * `flush()` method both drain any pending flush before returning.
    */
   flushDebounceMs?: number;
+  /**
+   * Minimum time between checkpoint flushes during a rebuild. The debounced
+   * flush never fires while files are processed back to back, so without
+   * this a long rebuild persists nothing until it ends and a restart
+   * begins again from zero. Default 5 minutes; 0 checkpoints after every
+   * file. Each checkpoint also logs progress.
+   */
+  checkpointIntervalMs?: number;
 };
 
 export type StartOpts = {
@@ -127,6 +135,43 @@ const isMarkdownPath = (path: string): boolean => path.endsWith(".md");
 
 const DEFAULT_DEBOUNCE_MS = 2000;
 const DEFAULT_FLUSH_DEBOUNCE_MS = 5000;
+const DEFAULT_CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Periodic persistence and progress logging for a long rebuild loop.
+ * `tick(done)` is called after each file; once `intervalMs` has passed
+ * since the last checkpoint it awaits `flush` (which must not throw) and
+ * logs files done/total, chunks stored and the chunk rate. The persisted
+ * mtimes and segments are what lets `start()` resume after a restart.
+ */
+function createRebuildCheckpointer(args: {
+  label: string;
+  providerKey: string;
+  store: EmbeddingStore;
+  total: number;
+  intervalMs: number;
+  flush: () => Promise<void>;
+}): (done: number) => Promise<void> {
+  const startedAt = Date.now();
+  const startChunks = args.store.size();
+  let last = startedAt;
+  return async (done) => {
+    const now = Date.now();
+    if (now - last < args.intervalMs) return;
+    await args.flush();
+    last = Date.now();
+    const elapsedSec = Math.max(1, Math.round((last - startedAt) / 1000));
+    const chunks = args.store.size();
+    logger.info(`${args.label}: rebuild checkpoint`, {
+      providerKey: args.providerKey,
+      filesDone: done,
+      fileCount: args.total,
+      chunks,
+      elapsedSec,
+      chunksPerMin: Math.round(((chunks - startChunks) * 60) / elapsedSec),
+    });
+  };
+}
 
 class LiveIndexerImpl implements SemanticIndexer {
   private timers = new Map<string, number>();
@@ -146,11 +191,14 @@ class LiveIndexerImpl implements SemanticIndexer {
   private flushInFlight: Promise<void> | null = null;
   private readonly debounceMs: number;
   private readonly flushDebounceMs: number;
+  private readonly checkpointIntervalMs: number;
   private readonly opts: LiveIndexerOpts;
 
   constructor(opts: LiveIndexerOpts) {
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.flushDebounceMs = opts.flushDebounceMs ?? DEFAULT_FLUSH_DEBOUNCE_MS;
+    this.checkpointIntervalMs =
+      opts.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_INTERVAL_MS;
     this.opts = { ...opts, chunker: wrapChunkerWithOverlap(opts.chunker) };
   }
 
@@ -260,8 +308,24 @@ class LiveIndexerImpl implements SemanticIndexer {
       force,
     });
     let skipped = 0;
+    let visited = 0;
+    const checkpoint = createRebuildCheckpointer({
+      label: "live indexer",
+      providerKey: this.opts.embedder.providerKey,
+      store: this.opts.store,
+      total: files.length,
+      intervalMs: this.checkpointIntervalMs,
+      flush: async () => {
+        // runFlush swallows and logs failures; wait for a debounced one
+        // first so two store.flush() calls never overlap.
+        if (this.flushInFlight) await this.flushInFlight;
+        this.flushInFlight = this.runFlush();
+        await this.flushInFlight;
+      },
+    });
     for (const f of files) {
       if (epoch !== this.epoch) return;
+      visited++;
       // Session-start pass: a file whose persisted mtime matches and
       // whose records are present is current — skip the read entirely.
       // The hasRecords guard self-heals a stale sidecar (e.g. records
@@ -277,6 +341,7 @@ class LiveIndexerImpl implements SemanticIndexer {
         continue;
       }
       await this.processFile(f.path, f.mtime);
+      await checkpoint(visited);
     }
     logger.info("live indexer: rebuildAll finished", {
       providerKey: this.opts.embedder.providerKey,
@@ -423,6 +488,8 @@ export type LowPowerIndexerOpts = {
   isExcluded?: (path: string) => boolean;
   /** Scan interval. Default 5 minutes (300_000 ms). */
   intervalMs?: number;
+  /** See {@link LiveIndexerOpts.checkpointIntervalMs}. */
+  checkpointIntervalMs?: number;
 };
 
 const DEFAULT_LOW_POWER_INTERVAL_MS = 5 * 60 * 1000;
@@ -538,8 +605,27 @@ class LowPowerIndexerImpl implements SemanticIndexer {
       await this.opts.store.init();
       const files = this.opts.vault.getMarkdownFiles();
       const seenPaths = new Set<string>();
+      let visited = 0;
+      const checkpoint = createRebuildCheckpointer({
+        label: "low-power indexer",
+        providerKey: this.opts.embedder.providerKey,
+        store: this.opts.store,
+        total: files.length,
+        intervalMs:
+          this.opts.checkpointIntervalMs ?? DEFAULT_CHECKPOINT_INTERVAL_MS,
+        flush: async () => {
+          try {
+            await this.opts.store.flush();
+          } catch (err) {
+            logger.error("low-power indexer: checkpoint flush failed", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        },
+      });
 
       for (const f of files) {
+        visited++;
         // Add to `seenPaths` before the exclusion check so an
         // already-indexed file that becomes excluded is treated as
         // "seen but skipped", not "vanished" — that keeps the
@@ -561,6 +647,7 @@ class LowPowerIndexerImpl implements SemanticIndexer {
         if (prev !== undefined && cur <= prev) continue;
         await processOnePath(this.opts, f.path, f.mtime);
         if (f.mtime !== undefined) this.lastSeenMtime.set(f.path, f.mtime);
+        await checkpoint(visited);
       }
 
       // Files that vanished from the vault since the last cycle:

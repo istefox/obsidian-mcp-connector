@@ -467,6 +467,96 @@ describe("live indexer", () => {
     await indexer.stop();
   });
 
+  test("rebuildAll checkpoints the store while it is still running", async () => {
+    const { vault } = makeVault({
+      "a.md": "one",
+      "b.md": "two",
+      "c.md": "three",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const flushedAt: number[] = [];
+    const realFlush = store.flush.bind(store);
+    store.flush = async () => {
+      flushedAt.push(store.size());
+      await realFlush();
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      // The debounced flush cannot fire inside this test, so any flush
+      // seen before the rebuild ends is a checkpoint.
+      flushDebounceMs: 60_000,
+      checkpointIntervalMs: 0,
+    });
+    await indexer.rebuildAll();
+    expect(flushedAt).toEqual([1, 2, 3]);
+    await indexer.stop();
+  });
+
+  test("with the default interval a short rebuild does not checkpoint", async () => {
+    const { vault } = makeVault({ "a.md": "one", "b.md": "two" });
+    const { embedder } = fakeEmbeddingProvider();
+    let flushes = 0;
+    const realFlush = store.flush.bind(store);
+    store.flush = async () => {
+      flushes++;
+      await realFlush();
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store,
+      flushDebounceMs: 60_000,
+    });
+    await indexer.rebuildAll();
+    expect(flushes).toBe(0);
+    await indexer.stop();
+  });
+
+  test("an interrupted rebuild leaves its checkpointed files on disk", async () => {
+    const adapter = memAdapter();
+    const mk = async () => {
+      const s = createEmbeddingStore({
+        adapter,
+        binPath: "/p/embeddings.bin",
+        indexPath: "/p/embeddings.index.json",
+        vectorDim: DIM,
+      });
+      await s.init();
+      return s;
+    };
+    const first = await mk();
+    const { vault } = makeVault({
+      "a.md": "one",
+      "b.md": "two",
+      "c.md": "boom",
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const crashing: EmbeddingProvider = {
+      ...embedder,
+      embed: async (texts, role) => {
+        if (texts.includes("boom")) throw new Error("crash");
+        return embedder.embed(texts, role);
+      },
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: crashing,
+      store: first,
+      flushDebounceMs: 60_000,
+      checkpointIntervalMs: 0,
+    });
+    await indexer.rebuildAll().catch(() => {});
+    // Simulated restart: a new store over the same files.
+    const second = await mk();
+    expect(second.size()).toBe(2);
+    await indexer.stop();
+  });
+
   test("chunker yielding zero chunks deletes any prior records for the path", async () => {
     const { vault, files, emit } = makeVault({
       "f.md": "content",
@@ -1071,6 +1161,34 @@ describe("low-power indexer", () => {
     await indexer.start();
     expect(embeds()).toEqual(expect.arrayContaining(["alpha", "bravo"]));
     expect(localStore.size()).toBe(2);
+    await indexer.stop();
+  });
+
+  test("a long cycle checkpoints the store before it ends", async () => {
+    const localStore = await makeStore();
+    const { vault } = makeMtimeVault({
+      "a.md": { content: "alpha", mtime: 100 },
+      "b.md": { content: "bravo", mtime: 200 },
+      "c.md": { content: "charlie", mtime: 300 },
+    });
+    const { embedder } = fakeEmbeddingProvider();
+    const flushedAt: number[] = [];
+    const realFlush = localStore.flush.bind(localStore);
+    localStore.flush = async () => {
+      flushedAt.push(localStore.size());
+      await realFlush();
+    };
+    const indexer = createLowPowerIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder,
+      store: localStore,
+      intervalMs: 10_000,
+      checkpointIntervalMs: 0,
+    });
+    await indexer.start();
+    // Three checkpoints, then the end-of-cycle flush.
+    expect(flushedAt).toEqual([1, 2, 3, 3]);
     await indexer.stop();
   });
 
