@@ -123,12 +123,12 @@ stored-path mismatch to get its `401`. The `wrongPaths` loop at :1051 fails thro
 The first two must be red before Task 2 runs.
 
 Sub-tasks:
-- [ ] In `describe("registration ownership")` (`brokerServer.test.ts:981`), add "admits a registration whose saved settings hold no `dataPath`": `writeVault` with `routeSettings(dataPath(), { dataPath: undefined })` (dropped by `JSON.stringify`), `registerRoute` resolves and a `/v1/<routeId>/mcp` request reaches the transport.
-- [ ] Add "admits a registration whose saved `dataPath` is another platform's path": override `dataPath: "c:\\users\\x\\vault\\.obsidian\\plugins\\<id>\\data.json"`, same assertions as the case above.
-- [ ] Next to "a copied route cannot overwrite or unregister the existing owner" (:886), add the same two-vault case with both vault files seeded without `dataPath` (`vaultTarget` (:232) takes no settings, so rewrite each file through `writeVault` with `routeSettings(file, { dataPath: undefined })` after it): the original registers, the copy's `registerRoute` rejects with `HTTP 409`.
-- [ ] Only if ADR-0035 D6 is confirmed: add a health test asserting the literal body `{"name":"obsidian-mcp-discovery-broker","version":4}` (the assertion at :388 reads the constant, so it never goes red).
-- [ ] Grep `registerRoute(` and `dataPath:` in the file for a test that gets its `401` from a stored-path mismatch. The reject `test.each` row "was saved at another location" (:997, `{ dataPath: "synthetic/copy/data.json" }`) does, and turns red with Task 2: take it out of the reject table, since the second new case covers its admitted counterpart, and name it in the report. The `wrongPaths` loop (:1060) fails through `isPluginDataPath` and stays.
-- [ ] `bun test brokerServer`: the report lists the new cases that are red (the first two with `HTTP 401`, the third at the original's own registration, the health case with `version: 3`), and every pre-existing case green.
+- [x] In `describe("registration ownership")` (`brokerServer.test.ts:981`), add "admits a registration whose saved settings hold no `dataPath`": `writeVault` with `routeSettings(dataPath(), { dataPath: undefined })` (dropped by `JSON.stringify`), `registerRoute` resolves and a `/v1/<routeId>/mcp` request reaches the transport.
+- [x] Add "admits a registration whose saved `dataPath` is another platform's path": override `dataPath: "c:\\users\\x\\vault\\.obsidian\\plugins\\<id>\\data.json"`, same assertions as the case above.
+- [x] Next to "a copied route cannot overwrite or unregister the existing owner" (:886), add the same two-vault case with both vault files seeded without `dataPath` (`vaultTarget` (:232) takes no settings, so rewrite each file through `writeVault` with `routeSettings(file, { dataPath: undefined })` after it): the original registers, the copy's `registerRoute` rejects with `HTTP 409`.
+- [x] Only if ADR-0035 D6 is confirmed: add a health test asserting the literal body `{"name":"obsidian-mcp-discovery-broker","version":4}` (the assertion at :388 reads the constant, so it never goes red).
+- [x] Grep `registerRoute(` and `dataPath:` in the file for a test that gets its `401` from a stored-path mismatch. The reject `test.each` row "was saved at another location" (:997, `{ dataPath: "synthetic/copy/data.json" }`) does, and turns red with Task 2: take it out of the reject table, since the second new case covers its admitted counterpart, and name it in the report. The `wrongPaths` loop (:1060) fails through `isPluginDataPath` and stays.
+- [x] `bun test brokerServer`: the report lists the new cases that are red (the first two with `HTTP 401`, the third at the original's own registration, the health case with `version: 3`), and every pre-existing case green.
 
 ### Task 2 — Drop `dataPath` from the broker's ownership check (R-01, R-02, R-06, R-10)
 Owner: coder
@@ -159,10 +159,19 @@ Task 4.
 R-10 depends on this task. The manual two-device check itself is in Task 6.
 
 Sub-tasks:
-- [ ] Remove `settings.dataPath === registration.dataPath &&` from `ownsRegistration` (`brokerServer.ts:401-418`); `grep -n "settings.dataPath" brokerServer.ts` returns nothing.
-- [ ] Rewrite the doc comment above `ownsRegistration` (:394-400) to the new rule: the file at the registered path, past the data file checks, holds this route ID and the credential.
-- [ ] Leave the same-path eviction and both `409` branches (:704-720) as they are: `git diff` shows no hunk there.
-- [ ] Only if ADR-0035 D6 is confirmed: `BROKER_PROTOCOL_VERSION = 4` at :37 with the line "Version 4: admission no longer compares a saved `dataPath` (ADR-0035)" in its doc comment; the schema at :132 and the health body at :640 keep reading the constant.
-- [ ] `bun test brokerServer` is green, Task 1's new cases included.
-- [ ] The "registration with a real broker" and "broker hosting" describes of `discoveryBroker.test.ts` stay green, and `bun run check` passes.
+- [x] Remove `settings.dataPath === registration.dataPath &&` from `ownsRegistration` (`brokerServer.ts:401-418`); `grep -n "settings.dataPath" brokerServer.ts` returns nothing.
+- [x] Rewrite the doc comment above `ownsRegistration` (:394-400) to the new rule: the file at the registered path, past the data file checks, holds this route ID and the credential.
+- [x] Leave the same-path eviction and both `409` branches (:704-720) as they are: `git diff` shows no hunk there.
+- [x] Only if ADR-0035 D6 is confirmed: `BROKER_PROTOCOL_VERSION = 4` at :37 with the line "Version 4: admission no longer compares a saved `dataPath` (ADR-0035)" in its doc comment; the schema at :132 and the health body at :640 keep reading the constant.
+- [x] `bun test brokerServer` is green, Task 1's new cases included.
+- [x] The "registration with a real broker" and "broker hosting" describes of `discoveryBroker.test.ts` stay green, and `bun run check` passes.
 
+## Build result (2026-11-09)
+BUILD · DONE
+Files: brokerServer.ts, brokerServer.test.ts, discoveryBroker.test.ts, README.md, this plan
+Tests: 4178 pass, 0 fail (full command green), 5 new cases, 1 (coverage)
+Review: sonnet, safe
+Coverage: not run, the plan names no SPEC
+Dispatch: Round 0 (red): tester — Task 1
+INFO: tiered coder low sonnet/medium, Task 2 size: 1 files, low size 2
+INFO: ADR-0035 D6 (BROKER_PROTOCOL_VERSION 3 to 4) adopted as the plan's recommended default; not separately confirmed by the user
