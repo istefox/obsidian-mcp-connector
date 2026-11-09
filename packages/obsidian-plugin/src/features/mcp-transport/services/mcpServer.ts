@@ -289,6 +289,9 @@ export async function createMcpService(
   } = await composeToolRegistry({
     ...config,
     session,
+    // Explicit activate_tool / activate_tools also fan out to modern-era
+    // listen streams (issue #669). A thunk for the same reason as above.
+    notifyToolsChanged: () => modernHandler.notify.toolsChanged(),
   });
 
   // ADR-0020 §D11. The guarded App reads the policy in force for the

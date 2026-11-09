@@ -57,6 +57,12 @@ export type ToolRegistryConfig = {
    * here (ADR-0014 §5).
    */
   session: SessionPromotions;
+  /**
+   * Modern-era `tools/list_changed` fan-out, forwarded to the explicit
+   * activation tools (issue #669). A thunk supplied by the transport
+   * service, which owns the modern handler.
+   */
+  notifyToolsChanged?: () => void;
 };
 
 /**
@@ -149,6 +155,7 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
           config.session.promote(tokenId, name),
         scope,
         sendNotification,
+        notifyToolsChanged: config.notifyToolsChanged,
       }),
   );
   toolRegistry.register(
@@ -168,6 +175,7 @@ export async function composeToolRegistry(config: ToolRegistryConfig): Promise<{
           config.session.promote(tokenId, name),
         scope,
         sendNotification,
+        notifyToolsChanged: config.notifyToolsChanged,
       }),
   );
 

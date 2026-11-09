@@ -171,6 +171,20 @@ Both notification methods are in the 2026 wire registry, but that is a schema fa
 delivery fact: the SSE upgrade is verified against a running server before this is
 considered done.
 
+**Amendment (issue #669): explicit activation now also fans out.** PR #442 left
+`activate_tool` / `activate_tools` off the `notify.toolsChanged()` fan-out, on two premises:
+the caller already hears the change on its own response stream, and "nothing speaks
+`2026-07-28`". Neither holds for the modern era. A conformant 2026-07-28 client receives
+`list_changed` only on a `subscriptions/listen` stream that opted in with
+`toolsListChanged: true`, so the POST-stream send never reaches it, and hosted Claude and
+ChatGPT now use the modern era in practice. Both tools therefore call `notifyToolsChanged`
+(the same bus `onToolsPromoted` drives) after any activation that changed the active set,
+persisted or in-memory, and never on a no-op. The request-scoped POST-stream send is kept
+unchanged, so legacy callers behave exactly as before. The cost #442 cited, waking other
+subscribers, is one extra `tools/list` per open listen stream on a rare explicit activation;
+`list_changed` is advisory and each re-list is scoped to its own token. Skipping the
+POST-stream send on modern requests (an unrequested notification type there) is left as is.
+
 ### 6. `server/discover` is not hand-written
 
 The advertisement is whatever the instance's declared capabilities are. The current
