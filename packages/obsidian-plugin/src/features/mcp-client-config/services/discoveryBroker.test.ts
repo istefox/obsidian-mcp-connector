@@ -1075,6 +1075,15 @@ describe("broker hosting", () => {
       },
       "different MCP Connector version",
     ],
+    [
+      // (coverage) the release before ADR-0035 still compares a saved dataPath
+      "a broker of the previous protocol version 3",
+      (_req: http.IncomingMessage, res: http.ServerResponse) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: BROKER_NAME, version: 3 }));
+      },
+      "different MCP Connector version",
+    ],
   ])(
     "a port held by %s leaves direct ports working and notifies once",
     async (_label, handler, expected) => {

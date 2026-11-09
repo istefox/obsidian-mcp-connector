@@ -601,7 +601,7 @@ To check that an open vault hosts the shared broker, request its health endpoint
 
 ```bash
 curl http://127.0.0.1:27200/_obsidian_mcp_broker/health
-# {"name":"obsidian-mcp-discovery-broker","version":3}
+# {"name":"obsidian-mcp-discovery-broker","version":4}
 ```
 
 ## Headless mode
