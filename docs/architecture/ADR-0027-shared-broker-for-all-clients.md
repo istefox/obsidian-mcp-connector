@@ -1,6 +1,6 @@
 # ADR-0027: Shared broker for all clients
 
-- **Status:** Accepted and implemented, amended by ADR-0028 (Codex installer, project install, entry ownership)
+- **Status:** Accepted and implemented, amended by ADR-0028 (Codex installer, project install, entry ownership) and ADR-0035 (admission without the saved location, per-device location record for the resolver)
 - **Date:** 2026-10-06
 - **Scope:** One stable loopback endpoint per vault for every HTTP client, hosted inside Obsidian
 - **Amends:** [ADR-0021](/docs/architecture/ADR-0021-shared-local-discovery-broker.md) (broker hosting, broker port, Node.js requirement, idle exit, Codex-only registration, the Codex credential swap, Codex entry names and the Codex config installer)
@@ -10,6 +10,12 @@
 > Each token row has a **Codex** menu that copies a `config.toml` entry or a `codex mcp add` command, or installs the entry into the user's Codex config or into a project's `.codex/config.toml` after a preview and a confirmation.
 > The installer keeps the plain `obsidian_<vault>` key, refuses another vault's entry by the route in its URL and migrates this vault's earlier entries, including those on `27206` and those that send the route credential.
 > The passages below marked "Amended by ADR-0028" record this decision's original text
+
+> **Amended by [ADR-0035](/docs/architecture/ADR-0035-per-device-broker-location.md).**
+> The broker admits a registration on the route ID and the route credential held by the `data.json` at the registered path, after every file check, and no longer compares a `dataPath` saved in that file.
+> The client endpoint resolver no longer reads the location from the saved route: it reads this device's record in `window.localStorage`, keyed by route ID, and decides through the same classification as the vault's start.
+> `BROKER_PROTOCOL_VERSION` is 4, so a version 3 host is reported as incompatible.
+> The passages below marked "Amended by ADR-0035" record what changed
 
 ## Context
 
@@ -101,6 +107,7 @@ The route credential is only a registration secret that proves route ownership: 
 The `enabled` and `tokenId` keys that earlier versions stored under the same key are ignored and left in place.
 
 The broker admits a registration when the vault's `data.json` names the same route ID and the same canonical `data.json` path, and the bearer matches the stored route credential.
+*Amended by ADR-0035:* The saved `data.json` path is no longer compared. A `dataPath` in the file, of any value or absent, is ignored, and the route ID and the route credential decide after the file checks below.
 The registered path must have the shape of this plugin's own data file, `<vault>/<config folder>/plugins/<plugin ID>/data.json`, with the plugin ID of the hosting plugin and in canonical form.
 The vault resolves links in that path up to the `plugins` folder and keeps the plugin folder's own name, so a plugin folder linked elsewhere, as `bun run link` creates, still names the plugin ID.
 The config folder name is not checked, because each vault can override it.
@@ -164,6 +171,7 @@ The Claude Desktop config sync also uses it, writes a URL and is applied again w
 While a vault location change is unresolved, the resolver returns no URL, for a fixed port too, because the saved route may still belong to the original vault.
 It compares the location saved with the route against the vault's own canonical `data.json` path, so the check holds while no route runs, for a legacy fixed `27200` and after a failed start.
 Copy buttons are then disabled and the sync writes nothing.
+*Amended by ADR-0035:* The bound location comes from this device's record in `window.localStorage`, keyed by route ID, with a legacy `dataPath` read only when the device has no entry. The resolver and the start call the same classification, and the check still fails closed when the vault's own path cannot be read.
 A legacy fixed `27200` registers no route and still resolves to its direct URL.
 The **Server port** setting shows both the vault's own endpoint and the URL client configs use.
 

@@ -1,6 +1,6 @@
 # ADR-0035: Keep the broker route's location per device, and drop the location from the broker's ownership check
 
-- **Status:** Proposed (2026-11-09), pending approval of `docs/plans/per-device-vault-location-667.md`
+- **Status:** Accepted and implemented (2026-11-09)
 - **Date:** 2026-11-09
 - **Scope:** Where the shared broker route's bound `data.json` location is recorded, how a start classifies first bind, same location, move and copy, and what the broker checks before it admits a registration (#667)
 - **Amends:** [ADR-0021](/docs/architecture/ADR-0021-shared-local-discovery-broker.md) (§ Storage, upgrades and copied vaults: "Discovery settings in the vault remain the durable owner of the route" and the canonical location recorded in them) and [ADR-0027](/docs/architecture/ADR-0027-shared-broker-for-all-clients.md) (the resolver "compares the location saved with the route", and the broker's admission rule)
@@ -87,11 +87,12 @@ also read the `dataPath` beside it, so the equality adds no secret. It is a copy
    ignored. The `409` for a route held under another data path, the per-request file checks and the
    bare `/mcp` copy conflict are unchanged.
 
-6. **`BROKER_PROTOCOL_VERSION` goes from 3 to 4**, subject to confirmation at plan approval. Any open
-   vault can host the broker. A version 3 host keeps the equality check and refuses this release's
-   registrations with a bare `401`, which the vault can only report as "for a reason this vault
-   cannot check". At version 4 the health probe reports the other host as incompatible instead, and
-   the existing "update the plugin in every open vault" message applies.
+6. **`BROKER_PROTOCOL_VERSION` goes from 3 to 4.** Any open vault can host the broker. A version 3
+   host keeps the equality check and refuses this release's registrations with a bare `401`, which
+   the vault can only report as "for a reason this vault cannot check". At version 4 the health
+   probe reports the other host as incompatible instead, and the existing "update the plugin in
+   every open vault" message applies. Outcome: the bump was adopted as the plan's recommended
+   default when the broker change was implemented. It was not separately confirmed by the user.
 
 ## Alternatives considered
 
@@ -108,9 +109,9 @@ also read the `dataPath` beside it, so the equality adds no secret. It is a copy
 - **Send the device record's entry in the registration body for the broker to compare.** Rejected:
   the registrant chooses that value, so comparing it with the registered path proves nothing the
   registrant did not already decide.
-- **Leave the protocol version at 3.** Considered, and kept as the fallback if the bump is
-  declined. It costs nothing while every open vault runs this release, and avoids an
-  "incompatible" notice in a vault that still runs an older one. It was not chosen because the
+- **Leave the protocol version at 3.** Considered as the fallback had the bump been declined. It
+  costs nothing while every open vault runs this release, and avoids an "incompatible" notice in a
+  vault that still runs an older one. It was not chosen because the
   failure it leaves is the worse one: a mixed set of open vaults where an older one hosts gives the
   new vault an unexplained `401` with no hint that updating the other vault fixes it.
 

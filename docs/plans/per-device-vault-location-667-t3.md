@@ -145,12 +145,22 @@ chain (ADR-0035)" with these points:
 - `BROKER_PROTOCOL_VERSION` is 4 (if confirmed).
 
 Sub-tasks:
-- [ ] Rewrite the README moved and copied vaults passage (:572-579) as the prose states, replacing the sentence "Legacy settings bind to their current location on first upgraded use…": `grep -n "Legacy settings bind" README.md` returns nothing.
-- [ ] Keep the 3.0.1 troubleshooting row (:725) and add a row for #667's symptom (synced vault, prompt on every device) naming the fixing release; only if ADR-0035 D6 is confirmed, change the health example (:604) to `"version":4` and add the "every open vault needs this release" note.
-- [ ] Add a `### Fixed` block with the #667 entry under the empty `## [Unreleased]` of `CHANGELOG.md` (:6), with the bump's "update every open vault" note if D6 is confirmed.
-- [ ] Add an "Amended by ADR-0035" blockquote to ADR-0021 § Storage, upgrades and copied vaults (:66), in the format of its :7 blockquote, and name ADR-0035 on its Status line (:3).
-- [ ] Add an "Amended by ADR-0035" blockquote to ADR-0027 for Context :164-165 and the admission rule, and name ADR-0035 on its Status line (:3).
-- [ ] Set ADR-0035's Status to "Accepted and implemented" and record the D6 outcome, in the closing commit of the work.
+- [x] Rewrite the README moved and copied vaults passage (:572-579) as the prose states, replacing the sentence "Legacy settings bind to their current location on first upgraded use…": `grep -n "Legacy settings bind" README.md` returns nothing.
+- [x] Keep the 3.0.1 troubleshooting row (:725) and add a row for #667's symptom (synced vault, prompt on every device) naming the fixing release; only if ADR-0035 D6 is confirmed, change the health example (:604) to `"version":4` and add the "every open vault needs this release" note.
+- [x] Add a `### Fixed` block with the #667 entry under the empty `## [Unreleased]` of `CHANGELOG.md` (:6), with the bump's "update every open vault" note if D6 is confirmed.
+- [x] Add an "Amended by ADR-0035" blockquote to ADR-0021 § Storage, upgrades and copied vaults (:66), in the format of its :7 blockquote, and name ADR-0035 on its Status line (:3).
+- [x] Add an "Amended by ADR-0035" blockquote to ADR-0027 for Context :164-165 and the admission rule, and name ADR-0035 on its Status line (:3).
+- [x] Set ADR-0035's Status to "Accepted and implemented" and record the D6 outcome, in the closing commit of the work.
 - [ ] Run the R-10 manual check, steps 1 to 4, on a macOS and a Windows device sharing one synced vault, and record the outcome on #667 before it is closed.
-- [ ] Hand the proposed `CLAUDE.md` section to the parent session in the report, with no edit to `CLAUDE.md`.
+- [x] Hand the proposed `CLAUDE.md` section to the parent session in the report, with no edit to `CLAUDE.md`.
 
+## Build result (2026-11-09)
+BUILD · DONE WITH WARNINGS
+Files: README.md, CHANGELOG.md, ADR-0021, ADR-0027, ADR-0035, this plan
+Tests: 4283 pass, 0 fail (full command green), docs-only ticket, no new tests
+Review: sonnet, not-safe on the first pass (MAJOR: invented release number 3.3.1 in README.md:731, fixed; NIT: ADR-0027 amendment placement, fixed); no open finding
+Coverage: not run, the plan names no SPEC
+WARN: R-10 manual two-device check not run, it needs a macOS and a Windows device sharing one synced vault; a human runs it and records the outcome on #667 before closing it
+WARN: the fixing release number is not named anywhere; README.md:731 says "the release that lists this fix in the CHANGELOG", the release cut should make the CHANGELOG entry carry the version
+INFO: tester skipped, the ticket changes documentation only and the coder ran the full gate green
+INFO: ADR-0035 D6 (BROKER_PROTOCOL_VERSION 3 to 4) adopted as the plan's recommended default; recorded as not separately confirmed by the user
