@@ -12,7 +12,7 @@ export const getNotePropertySchema = type({
     key: type("string>0").describe("Top-level frontmatter (YAML) key to read."),
   },
 }).describe(
-  'Reads a single frontmatter (note property) value from a vault note, preserving its native YAML type (string, number, boolean, or list). Returns `value: null` when the key is absent or the note has no frontmatter — that is not an error. To read the whole frontmatter block, use `get_vault_file_partial` with `mode:"frontmatter"`.',
+  "Reads a single frontmatter (note property) value from a vault note, preserving its native YAML type (string, number, boolean, or list). Returns `value: null` when the key is absent or the note has no frontmatter — that is not an error. For the whole frontmatter block, use `get_note_properties` (activate it first if it is not listed).",
 );
 
 export type GetNotePropertyContext = {
