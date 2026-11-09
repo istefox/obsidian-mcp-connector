@@ -91,8 +91,8 @@ also read the `dataPath` beside it, so the equality adds no secret. It is a copy
    host keeps the equality check and refuses this release's registrations with a bare `401`, which
    the vault can only report as "for a reason this vault cannot check". At version 4 the health
    probe reports the other host as incompatible instead, and the existing "update the plugin in
-   every open vault" message applies. Outcome: the bump was adopted as the plan's recommended
-   default when the broker change was implemented. It was not separately confirmed by the user.
+   every open vault" message applies. Outcome: the user confirmed the bump to 4 at the
+   auto-run gate on 2026-11-09.
 
 ## Alternatives considered
 

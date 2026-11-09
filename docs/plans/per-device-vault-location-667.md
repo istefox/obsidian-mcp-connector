@@ -1,4 +1,4 @@
-**Requirement set:** `docs/specs/per-device-vault-location-667.SPEC.md`
+**Requirement set:** `docs/archive/specs/per-device-vault-location-667.SPEC.md`
 
 # Implementation plan: per-device vault location record for the shared broker (#667)
 
@@ -464,3 +464,14 @@ Sub-tasks:
 TEST-CMD CANDIDATE: bun run check && bun test && bun run format:check && cd packages/obsidian-plugin && bun run check:svelte && bun run test:mcpb
 
 CHECK-CMD CANDIDATE: bun run check
+
+## Build result
+
+- Tickets 1, 2 and 3 built, reviewed and merged into `feat/per-device-vault-location-667`.
+- Full gate green on the integrated branch: check, format:check, test, check:svelte, test:mcpb.
+- Integration review: verdict safe, no blocker.
+- WARN: R-10 (two-device manual check on macOS and Windows) not run; record the result on #667.
+- WARN: the README names no release number for the fix; fill it at release time.
+- WARN: `watcher.test.ts` "an external file resolves links from an unchanged note" timed out once under load (5 s), passed on rerun and in isolation. Not disabled.
+- DEFER: `acceptDiscoveryMove` and `resetDiscoveryIdentity` swallow a failed device-record write, so a confirmed move with a failing store re-raises the prompt next start. Surface the failure for these two user-initiated actions.
+- DEFER (nit): extract a `locationsOf(opts)` helper and a shared options type in `discoveryBroker.ts`.
