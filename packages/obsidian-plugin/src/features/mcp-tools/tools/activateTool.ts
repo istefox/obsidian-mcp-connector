@@ -31,6 +31,7 @@ export async function activateToolHandler({
   promoteInSession,
   scope,
   sendNotification,
+  notifyToolsChanged,
 }: {
   arguments: { name: string; persist?: boolean };
   registry: RegistryLike;
@@ -61,6 +62,16 @@ export async function activateToolHandler({
     method: string;
     params?: Record<string, unknown>;
   }) => Promise<void>;
+  /**
+   * Publishes `notifications/tools/list_changed` to every open modern-era
+   * `subscriptions/listen` stream (the `onToolsPromoted` fan-out). The
+   * request-scoped `sendNotification` only reaches the caller's own POST
+   * stream, which a conformant 2026-07-28 client does not read for this
+   * notification type (issue #669). Called once, only after an activation
+   * that changed the active set. Absent on the settings-UI and unit-test
+   * paths.
+   */
+  notifyToolsChanged?: () => void;
 }): Promise<{
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
@@ -138,6 +149,17 @@ export async function activateToolHandler({
     }
   } catch {
     // Transport may not support server-initiated notifications on this path.
+    // Clients pick up the change on their next tools/list request.
+  }
+
+  // Modern era (issue #669): a conformant 2026-07-28 client only hears
+  // list_changed on a `subscriptions/listen` stream it opened, so the POST
+  // stream send above never reaches it. Publish through the same fan-out
+  // auto-promotion uses. Advisory and best-effort: a throw must not fail an
+  // activation that already took effect.
+  try {
+    notifyToolsChanged?.();
+  } catch {
     // Clients pick up the change on their next tools/list request.
   }
 
