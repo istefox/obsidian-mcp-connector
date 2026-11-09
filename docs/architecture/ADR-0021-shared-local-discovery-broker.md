@@ -1,6 +1,6 @@
 # ADR-0021: Shared local discovery broker
 
-- **Status:** Accepted, amended by ADR-0027 (hosting, port, Codex-only scope, Codex entry names) and ADR-0028 (Codex installer)
+- **Status:** Accepted, amended by ADR-0027 (hosting, port, Codex-only scope, Codex entry names), ADR-0028 (Codex installer) and ADR-0035 (per-device location record, admission without the saved location)
 - **Date:** 2026-08-22
 - **Scope:** Dynamic Streamable HTTP discovery for Codex without one process per client session
 
@@ -64,6 +64,14 @@ The plugin closes its connection during a clean unload, removing only its own ro
 Closing a downstream client connection releases its upstream transport without synthesizing an MCP cancellation notification or replaying requests
 
 ### Storage, upgrades and copied vaults
+
+> **Amended by [ADR-0035](/docs/architecture/ADR-0035-per-device-broker-location.md).**
+> The discovery settings still own the route ID and the route credential, but no longer the bound location, because they sync with the vault and another device reads a path it can never match.
+> Each device keeps the bound location in one record in `window.localStorage`, a map from route ID to the canonical `data.json` path, and the plugin no longer writes `dataPath`.
+> An existing `dataPath` is left in place and read only when the device has no entry: absent, equal, in the other platform's path style or this vault's own file in the 2.11/2.12 form binds silently, any other value asks once.
+> **This vault was moved** and **Make this copy independent** write the device record only.
+> The broker no longer compares a saved location when it admits a registration, so a copy whose original is closed is caught by the plugin on the device that bound the route, not by the broker.
+> The paragraph below on discovery settings and the first upgraded start records the original decision
 
 The executable lives under `obsidian-mcp-connector/broker-v2` in `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, or `$XDG_DATA_HOME` (default `~/.local/share`) on Linux
 This directory contains generated executable code, not route registrations or credentials
