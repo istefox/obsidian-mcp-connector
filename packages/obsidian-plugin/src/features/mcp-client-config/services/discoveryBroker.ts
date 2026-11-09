@@ -20,6 +20,12 @@ import {
   type BrokerServer,
 } from "./brokerServer";
 import { codexEntryFor, type CodexConnection } from "./codexConfig";
+import {
+  classifyLocation,
+  windowLocationStore,
+  type DeviceLocationStore,
+  type LocationVerdict,
+} from "./deviceLocations";
 import { vaultServerId } from "./generators";
 
 const DISCOVERY_RECONNECT_MS = 1_000;
@@ -105,6 +111,8 @@ type RuntimeOptions = {
    */
   transportPort: number;
   dataPath?: string;
+  /** The per-device location record. Defaults to `window.localStorage`. */
+  locations?: DeviceLocationStore;
   connectRegistration?: (
     port: number,
     routeId: string,
@@ -203,8 +211,21 @@ export async function savedRouteId(
 }
 
 /** A new route identity. */
-function mintSettings(dataPath: string): DiscoverySettings {
-  return { routeId: randomUUID(), accessToken: generateToken(), dataPath };
+function mintSettings(): DiscoverySettings {
+  return { routeId: randomUUID(), accessToken: generateToken() };
+}
+
+/** Record where this device bound a route. A failed write is logged, never thrown. */
+function recordLocation(
+  locations: DeviceLocationStore,
+  routeId: string,
+  dataPath: string,
+): void {
+  try {
+    locations.set(routeId, dataPath);
+  } catch {
+    logger.warn("Could not record the vault location on this device");
+  }
 }
 
 /**
@@ -233,10 +254,15 @@ export function getCodexConnection(
  */
 export async function resetDiscoveryIdentity(
   plugin: DiscoveryPlugin,
-  opts?: { dataPath?: string },
+  opts?: { dataPath?: string; locations?: DeviceLocationStore },
 ): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
-  await updateSettings(plugin, () => mintSettings(dataPath));
+  const settings = await updateSettings(plugin, () => mintSettings());
+  recordLocation(
+    opts?.locations ?? windowLocationStore(),
+    settings.routeId,
+    dataPath,
+  );
 }
 
 /**
@@ -246,36 +272,94 @@ export async function resetDiscoveryIdentity(
  */
 export async function acceptDiscoveryMove(
   plugin: DiscoveryPlugin,
-  opts?: { dataPath?: string },
+  opts?: { dataPath?: string; locations?: DeviceLocationStore },
 ): Promise<void> {
   const dataPath = await canonicalDataPath(plugin, opts);
-  await updateSettings(plugin, (latest) =>
-    latest ? { ...latest, dataPath } : mintSettings(dataPath),
+  // Save the synced settings only when none exist: a confirmed move must
+  // leave data.json untouched.
+  const settings =
+    (await readSettings(plugin)) ??
+    (await updateSettings(plugin, (latest) => latest ?? mintSettings()));
+  recordLocation(
+    opts?.locations ?? windowLocationStore(),
+    settings.routeId,
+    dataPath,
   );
 }
 
 /**
  * True while the saved route belongs to another location: The vault was
  * moved or copied, and neither a confirmed move nor a new identity has
- * resolved it. Read from the saved settings, so it holds whether or not a
- * route runs. Fails closed when the location cannot be read.
+ * resolved it. Judged against this device's record, with the legacy synced
+ * path as a one-time fallback, so it holds whether or not a route runs.
+ * Fails closed when the location cannot be read.
  */
 export async function isLocationUnresolved(
   plugin: LocatedPlugin,
-  opts?: { dataPath?: string },
+  opts?: { dataPath?: string; locations?: DeviceLocationStore },
 ): Promise<boolean> {
-  const saved = (await readSettings(plugin))?.dataPath;
-  if (saved === undefined) return false;
+  const settings = await readSettings(plugin);
+  if (!settings) return false;
   try {
-    if (saved === (await canonicalDataPath(plugin, opts))) return false;
+    const located = await locate(plugin, settings, opts);
+    return located.neverBound ? false : located.verdict === "changed";
   } catch {
     return true;
   }
-  return !(await isLegacyLocation(plugin, saved, opts));
+}
+
+type Located =
+  | { neverBound: true }
+  | { neverBound: false; verdict: LocationVerdict; dataPath: string };
+
+/** This device's entry for a route. A store that cannot be read has none. */
+function readLocal(
+  locations: DeviceLocationStore,
+  routeId: string,
+): string | null {
+  try {
+    return locations.get(routeId);
+  } catch {
+    logger.warn("Could not read the vault location of this device");
+    return null;
+  }
 }
 
 /**
- * The `data.json` path this vault registers and saves with its route.
+ * The one classification behind a start and a check. The cheap inputs come
+ * first: with no entry and no legacy value the route was never bound and
+ * the path is not touched. `current` is passed when the caller has it.
+ */
+async function locate(
+  plugin: LocatedPlugin,
+  settings: DiscoverySettings,
+  opts?: { dataPath?: string; locations?: DeviceLocationStore },
+  current?: string,
+): Promise<Located> {
+  const local = readLocal(
+    opts?.locations ?? windowLocationStore(),
+    settings.routeId,
+  );
+  const legacy = settings.dataPath;
+  if (local === null && legacy === undefined && current === undefined) {
+    return { neverBound: true };
+  }
+  const dataPath = current ?? (await canonicalDataPath(plugin, opts));
+  const legacyIsOwnFile =
+    local === null && legacy !== undefined && legacy !== dataPath
+      ? await isLegacyLocation(plugin, legacy, opts)
+      : false;
+  const verdict = classifyLocation({
+    local,
+    legacy,
+    current: dataPath,
+    legacyIsOwnFile,
+  });
+  return { neverBound: false, verdict, dataPath };
+}
+
+/**
+ * The `data.json` path this vault registers and records on this device.
  * Links are resolved up to the `plugins` folder, so a vault opened through
  * an alias keeps its saved location. The plugin folder and file names are
  * appended unresolved: A plugin folder linked elsewhere, as `bun run link`
@@ -315,9 +399,9 @@ async function legacyDataPath(
 }
 
 /**
- * True when `saved` is this vault's own data file in the form older
- * versions saved. It names the same file, so it is no move: A copy resolves
- * to a different file and stays blocked. A plugin folder shared by two
+ * True when the legacy synced `saved` is this vault's own data file in the
+ * form older versions saved. It names the same file, so it is no move: A
+ * copy resolves to a different file and stays blocked. A plugin folder shared by two
  * vaults is the exception, and the second vault to open then sees the
  * current form of the first and is blocked as a copy.
  */
@@ -344,11 +428,9 @@ export async function startDiscovery(
   const dataPath = await canonicalDataPath(plugin, opts);
   const settings =
     (await readSettings(plugin)) ??
-    (await updateSettings(
-      plugin,
-      (current) => current ?? mintSettings(dataPath),
-    ));
-  return startRuntime(plugin, settings, dataPath, opts);
+    (await updateSettings(plugin, (current) => current ?? mintSettings()));
+  const located = await locate(plugin, settings, opts, dataPath);
+  return startRuntime(plugin, settings, dataPath, opts, located);
 }
 
 function failoverJitter(): number {
@@ -365,6 +447,7 @@ async function startRuntime(
   settings: DiscoverySettings,
   dataPath: string,
   opts: RuntimeOptions,
+  located: Located,
 ): Promise<DiscoveryRuntime> {
   const { host } = opts;
   const routeId = settings.routeId;
@@ -567,12 +650,8 @@ async function startRuntime(
       listeners.clear();
     },
   };
-  const savedPath = settings.dataPath;
-  if (
-    savedPath &&
-    savedPath !== dataPath &&
-    !(await isLegacyLocation(plugin, savedPath, opts))
-  ) {
+  const verdict = located.neverBound ? "bind" : located.verdict;
+  if (verdict === "changed") {
     const message =
       "Vault location changed. Confirm a move or make this copy independent";
     setStatus({ state: "conflict", locationChanged: true, message });
@@ -581,12 +660,9 @@ async function startRuntime(
     );
     return runtime;
   }
-  // First bind, or a location saved in an older form: save the current one
-  if (savedPath !== dataPath) {
-    await updateSettings(plugin, (current) => ({
-      ...(current ?? settings),
-      dataPath,
-    }));
+  // First bind, or a legacy location ignored or in an older form: record it
+  if (verdict === "bind") {
+    recordLocation(opts.locations ?? windowLocationStore(), routeId, dataPath);
   }
   try {
     await establishControl();
