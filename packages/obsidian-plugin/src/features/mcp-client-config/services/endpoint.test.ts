@@ -3,6 +3,7 @@ import fsp from "fs/promises";
 import { FileSystemAdapter } from "obsidian";
 import os from "os";
 import path from "path";
+import { DEVICE_LOCATIONS_KEY } from "./deviceLocations";
 import type { DiscoveryStatus } from "./discoveryBroker";
 import {
   brokerRouteUrl,
@@ -111,6 +112,8 @@ describe("resolveClientEndpoint while the vault location is unresolved", () => {
   let tempDir = "";
 
   beforeEach(async () => {
+    // The resolver reads the default per-device record, shared by the process
+    window.localStorage.clear();
     tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-endpoint-"));
   });
 
@@ -198,6 +201,23 @@ describe("resolveClientEndpoint while the vault location is unresolved", () => {
     expect(await resolveClientEndpoint(await located(27200, false))).toBe(
       "http://127.0.0.1:27200/mcp",
     );
+  });
+
+  test("hands out the endpoint when this device's record matches the vault, whatever a synced legacy value says", async () => {
+    const p = await located(undefined, true, elsewhere());
+    const own = path.join(
+      await fsp.realpath(
+        path.join(tempDir, "vault", ".obsidian", "plugins", pluginId),
+      ),
+      "data.json",
+    );
+    window.localStorage.setItem(
+      DEVICE_LOCATIONS_KEY,
+      JSON.stringify({
+        [routeId]: process.platform === "win32" ? own.toLowerCase() : own,
+      }),
+    );
+    expect(await resolveClientEndpoint(p)).toBe(routeUrl);
   });
 
   test("fails closed when the vault's own location cannot be read", async () => {

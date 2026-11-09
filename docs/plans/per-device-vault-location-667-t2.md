@@ -183,14 +183,14 @@ Then add a `describe("per-device location record")` covering:
 Run `bun test discoveryBroker` and list the red tests in the report.
 
 Sub-tasks:
-- [ ] Create `services/deviceLocations.ts` with `DeviceLocationStore`, `DEVICE_LOCATIONS_KEY`, `PathStyle`, `LocationVerdict`, and `windowLocationStore`, `pathStyle`, `classifyLocation` as stubs that throw `new Error("not implemented")`.
-- [ ] In `discoveryBroker.ts`, add `locations?: DeviceLocationStore` to `RuntimeOptions` (:98) and to the `opts` types of `resetDiscoveryIdentity` (:236), `acceptDiscoveryMove` (:249) and `isLocationUnresolved` (:265): `git diff` touches signature lines only, and `bun run check` passes.
-- [ ] In `src/test-setup.ts`, install the in-memory `window.localStorage` (`getItem`, `setItem`, `removeItem`, `clear`, `length`, `key`) through `Object.defineProperty(window, "localStorage", { configurable: true, … })`; `bun test` boots. If `defineProperty` throws, say so in the report (the Risks fallback).
-- [ ] In `discoveryBroker.test.ts`, add `memoryStore(initial?)` (counts writes) and `throwingStore({ get?, set? })`; a store created fresh in the `beforeEach` at :232 is returned as `locations` by `fakeOpts()` (:160) and passed by `start()` (:877) to every vault of one test.
-- [ ] Pass that store to every inline options literal: `copyOpts` (:1630) gets the store `ownRuntime` was started with, `movedOpts` (:584) is checked to inherit it from `fakeOpts`, and a grep for `startDiscovery(`, `acceptDiscoveryMove(`, `resetDiscoveryIdentity(` and `isLocationUnresolved(` finds no other literal without it.
-- [ ] Add `describe("per-device location record")` with the `pathStyle` cases, the full `classifyLocation` truth table (`legacyIsOwnFile` included) and one case per R-01, R-02, R-03, R-04, R-05, R-06 and R-07 as the prose lists them.
-- [ ] Add the R-08 `test.each` over the shared case table plus its fail-closed and never-bound cases, and the R-09 cases (throwing `get` logs one warning without path or route ID through `captureLogLines`, throwing `set` ends `connected`, `windowLocationStore()` over a throwing, missing and invalid-JSON `window.localStorage`, invalid JSON replaced after a `set`).
-- [ ] Update the stale assertions at :635, :733 and :1454 (leave :752), then run `bun test discoveryBroker` and list the red tests in the report.
+- [x] Create `services/deviceLocations.ts` with `DeviceLocationStore`, `DEVICE_LOCATIONS_KEY`, `PathStyle`, `LocationVerdict`, and `windowLocationStore`, `pathStyle`, `classifyLocation` as stubs that throw `new Error("not implemented")`.
+- [x] In `discoveryBroker.ts`, add `locations?: DeviceLocationStore` to `RuntimeOptions` (:98) and to the `opts` types of `resetDiscoveryIdentity` (:236), `acceptDiscoveryMove` (:249) and `isLocationUnresolved` (:265): `git diff` touches signature lines only, and `bun run check` passes.
+- [x] In `src/test-setup.ts`, install the in-memory `window.localStorage` (`getItem`, `setItem`, `removeItem`, `clear`, `length`, `key`) through `Object.defineProperty(window, "localStorage", { configurable: true, … })`; `bun test` boots. If `defineProperty` throws, say so in the report (the Risks fallback).
+- [x] In `discoveryBroker.test.ts`, add `memoryStore(initial?)` (counts writes) and `throwingStore({ get?, set? })`; a store created fresh in the `beforeEach` at :232 is returned as `locations` by `fakeOpts()` (:160) and passed by `start()` (:877) to every vault of one test.
+- [x] Pass that store to every inline options literal: `copyOpts` (:1630) gets the store `ownRuntime` was started with, `movedOpts` (:584) is checked to inherit it from `fakeOpts`, and a grep for `startDiscovery(`, `acceptDiscoveryMove(`, `resetDiscoveryIdentity(` and `isLocationUnresolved(` finds no other literal without it.
+- [x] Add `describe("per-device location record")` with the `pathStyle` cases, the full `classifyLocation` truth table (`legacyIsOwnFile` included) and one case per R-01, R-02, R-03, R-04, R-05, R-06 and R-07 as the prose lists them.
+- [x] Add the R-08 `test.each` over the shared case table plus its fail-closed and never-bound cases, and the R-09 cases (throwing `get` logs one warning without path or route ID through `captureLogLines`, throwing `set` ends `connected`, `windowLocationStore()` over a throwing, missing and invalid-JSON `window.localStorage`, invalid JSON replaced after a `set`).
+- [x] Update the stale assertions at :635, :733 and :1454 (leave :752), then run `bun test discoveryBroker` and list the red tests in the report.
 
 ### Task 4 — Per-device record and classification bodies (R-01, R-02, R-03, R-04, R-05, R-06, R-07, R-08, R-09)
 Owner: coder
@@ -242,14 +242,14 @@ In `discoveryBroker.ts`:
 only reader is `locate`.
 
 Sub-tasks:
-- [ ] Write `pathStyle`, `classifyLocation` and `windowLocationStore` in `deviceLocations.ts` per micro-decisions 1, 2, 6 and 7 (lazy `window.localStorage` read, throw when unavailable, `get` throws on invalid JSON, `set` replaces it with a fresh map); the `pathStyle`, `classifyLocation` and `windowLocationStore` cases of `describe("per-device location record")` pass.
-- [ ] Make `mintSettings()` (`discoveryBroker.ts:206`) mint without `dataPath` and update its callers at :239, :253 and :349; the R-06 cases pass.
-- [ ] Add the private `locate(plugin, opts)` in the order of micro-decision 10, with `opts.locations ?? windowLocationStore()`, a thrown `get` logged without path or route ID and read as `null`, and the never-bound result returned before the path is resolved.
-- [ ] Rewrite `isLocationUnresolved` (:263-276) on `locate`; the R-08 `test.each`, fail-closed and never-bound cases pass.
-- [ ] Replace the saved-path block of `startRuntime` (:570-590): `changed` keeps the existing conflict status and notice text, `bind` calls `locations.set` (a thrown `set` is logged and the start goes on), `same` writes nothing, and no `updateSettings` call is left in the block; the R-01 to R-05 and R-09 cases pass.
-- [ ] Make `acceptDiscoveryMove` (:247) and `resetDiscoveryIdentity` (:234) record the route ID (the new one after a reset) with the current path, logging a failed `set` without throwing; the R-03 and R-07 cases pass.
-- [ ] Update the doc comments of `canonicalDataPath`, `isLocationUnresolved` and `isLegacyLocation`: `grep -n "saved with its route\|Read from the saved settings" discoveryBroker.ts` returns nothing.
-- [ ] `bun test discoveryBroker` and `bun test brokerServer` are green, and `bun run check` passes.
+- [x] Write `pathStyle`, `classifyLocation` and `windowLocationStore` in `deviceLocations.ts` per micro-decisions 1, 2, 6 and 7 (lazy `window.localStorage` read, throw when unavailable, `get` throws on invalid JSON, `set` replaces it with a fresh map); the `pathStyle`, `classifyLocation` and `windowLocationStore` cases of `describe("per-device location record")` pass.
+- [x] Make `mintSettings()` (`discoveryBroker.ts:206`) mint without `dataPath` and update its callers at :239, :253 and :349; the R-06 cases pass.
+- [x] Add the private `locate(plugin, opts)` in the order of micro-decision 10, with `opts.locations ?? windowLocationStore()`, a thrown `get` logged without path or route ID and read as `null`, and the never-bound result returned before the path is resolved.
+- [x] Rewrite `isLocationUnresolved` (:263-276) on `locate`; the R-08 `test.each`, fail-closed and never-bound cases pass.
+- [x] Replace the saved-path block of `startRuntime` (:570-590): `changed` keeps the existing conflict status and notice text, `bind` calls `locations.set` (a thrown `set` is logged and the start goes on), `same` writes nothing, and no `updateSettings` call is left in the block; the R-01 to R-05 and R-09 cases pass.
+- [x] Make `acceptDiscoveryMove` (:247) and `resetDiscoveryIdentity` (:234) record the route ID (the new one after a reset) with the current path, logging a failed `set` without throwing; the R-03 and R-07 cases pass.
+- [x] Update the doc comments of `canonicalDataPath`, `isLocationUnresolved` and `isLegacyLocation`: `grep -n "saved with its route\|Read from the saved settings" discoveryBroker.ts` returns nothing.
+- [x] `bun test discoveryBroker` and `bun test brokerServer` are green, and `bun run check` passes.
 
 ### Task 5 — Call-sites and the rest of the suite (R-08)
 Owner: tester
@@ -290,10 +290,23 @@ Update the tests and call-sites that assert the old behaviour. A grep on 2026-11
 Then run the full gate (TEST-CMD below), not only the touched files.
 
 Sub-tasks:
-- [ ] Add `window.localStorage.clear()` to the `beforeEach` of `describe("resolveClientEndpoint while the vault location is unresolved")` (`endpoint.test.ts:113`); the `elsewhere()` `test.each` (:169) and the cases at :183, :194 and :203 stay green.
-- [ ] Add the R-04 resolver case: an entry for `routeId` equal to the vault's own path seeded under `DEVICE_LOCATIONS_KEY`, a legacy `dataPath` elsewhere, and `resolveClientEndpointDetails` returns a URL.
-- [ ] Grep `codexDiscovery` in `mcpbDownload.test.ts` and `autoWrite.test.ts`. `autoWrite.test.ts:490` does seed `codexDiscovery.dataPath` to drive the unresolved-location path: run `bun test autoWrite` and report the result, with no edit, since that file is not on this task's `Files:`.
-- [ ] Grep `codexDiscovery` in `scripts/connectorShim.js` and `connectorShimSource.ts` (no hit), and `bun run test:mcpb` passes.
-- [ ] `bun run check:svelte` passes, and `git diff --stat` shows no change to `AccessControlSection.svelte`, `main.ts` or `index.ts`.
-- [ ] Run the full TEST-CMD and record its result in the report.
+- [x] Add `window.localStorage.clear()` to the `beforeEach` of `describe("resolveClientEndpoint while the vault location is unresolved")` (`endpoint.test.ts:113`); the `elsewhere()` `test.each` (:169) and the cases at :183, :194 and :203 stay green.
+- [x] Add the R-04 resolver case: an entry for `routeId` equal to the vault's own path seeded under `DEVICE_LOCATIONS_KEY`, a legacy `dataPath` elsewhere, and `resolveClientEndpointDetails` returns a URL.
+- [x] Grep `codexDiscovery` in `mcpbDownload.test.ts` and `autoWrite.test.ts`. `autoWrite.test.ts:490` does seed `codexDiscovery.dataPath` to drive the unresolved-location path: run `bun test autoWrite` and report the result, with no edit, since that file is not on this task's `Files:`.
+- [x] Grep `codexDiscovery` in `scripts/connectorShim.js` and `connectorShimSource.ts` (no hit), and `bun run test:mcpb` passes.
+- [x] `bun run check:svelte` passes, and `git diff --stat` shows no change to `AccessControlSection.svelte`, `main.ts` or `index.ts`.
+- [x] Run the full TEST-CMD and record its result in the report.
 
+
+## Build result (2026-11-09)
+BUILD · DONE
+Files: deviceLocations.ts (new), discoveryBroker.ts, discoveryBroker.test.ts, endpoint.test.ts, test-setup.ts, this plan
+Tests: 4283 pass, 0 fail (full command green), 84 red-phase cases now green, 1 R-03 guard case, 1 (coverage) case
+Review: sonnet, safe; 2 MINOR and 1 NIT fixed in the tree, no open finding
+Coverage: not run, the plan names no SPEC
+Dispatch: Round 0 (red): tester — Task 3
+DEFER untriaged: discoveryBroker.test.ts, the windowLocationStore "throws when the storage ..." tests assert only that it throws, not why
+DEFER untriaged: deviceLocations.ts, get reads a non-string entry for a route as no entry; the plan states no contract
+DEFER untriaged: features/mcp-client-config/services/autoWrite.test.ts:490 reaches the default window.localStorage store without clearing it, so a leaked entry for the same route ID could change it
+INFO: tiered coder low sonnet/medium
+INFO: ADR-0035 D6 (BROKER_PROTOCOL_VERSION 3 to 4) was adopted in ticket 1 as the plan's recommended default; not separately confirmed by the user
