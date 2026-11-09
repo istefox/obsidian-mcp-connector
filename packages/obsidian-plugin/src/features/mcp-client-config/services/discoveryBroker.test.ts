@@ -25,6 +25,14 @@ import {
   type CodexInstallPreview,
   type CodexTokenForm,
 } from "./codexConfig";
+import {
+  classifyLocation,
+  DEVICE_LOCATIONS_KEY,
+  pathStyle,
+  windowLocationStore,
+  type DeviceLocationStore,
+  type LocationVerdict,
+} from "./deviceLocations";
 import { brokerRouteUrl } from "./endpoint";
 import { vaultServerId } from "./generators";
 import {
@@ -97,10 +105,62 @@ function storedSettings(plugin: ReturnType<typeof fakePlugin>) {
     .codexDiscovery as Record<string, unknown>;
 }
 
+/** A device record in memory that counts how often it was written. */
+function memoryStore(initial: Record<string, string> = {}) {
+  const entries = new Map(Object.entries(initial));
+  return {
+    entries,
+    writes: 0,
+    get(routeId: string): string | null {
+      return entries.get(routeId) ?? null;
+    },
+    set(routeId: string, file: string): void {
+      this.writes += 1;
+      entries.set(routeId, file);
+    },
+  };
+}
+
+/** A device record whose reads, writes or both throw, like a broken localStorage. */
+function throwingStore(
+  broken: { get?: boolean; set?: boolean },
+  initial: Record<string, string> = {},
+) {
+  const inner = memoryStore(initial);
+  return {
+    entries: inner.entries,
+    get(routeId: string): string | null {
+      if (broken.get) throw new Error("storage unavailable");
+      return inner.get(routeId);
+    },
+    set(routeId: string, file: string): void {
+      if (broken.set) throw new Error("storage unavailable");
+      inner.set(routeId, file);
+    },
+  } satisfies DeviceLocationStore & { entries: Map<string, string> };
+}
+
+/**
+ * The path the broker service canonicalises `file` to, written out here so the
+ * tests do not lean on the code under test. The plugin folder keeps its own
+ * name, every folder above it is resolved.
+ */
+async function canonical(file: string): Promise<string> {
+  const pluginDir = path.dirname(file);
+  const resolved = path.join(
+    await fsp.realpath(path.dirname(pluginDir)),
+    path.basename(pluginDir),
+    path.basename(file),
+  );
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
 const ROW_URL = "http://127.0.0.1:27200/v1/synthetic-route/mcp";
 
 let tempDir = "";
 let dataPath = "";
+/** The device record of the running test: one device, so one store. */
+let locations = memoryStore();
 type TestControl = {
   close(): void;
   closed: Promise<void>;
@@ -162,6 +222,7 @@ function fakeOpts(host: BrokerHost = fakeHost(), file = dataPath) {
     host,
     transportPort: 27201,
     dataPath: file,
+    locations,
     connectRegistration,
     reconnectMs: 1,
     failoverDelayMs: () => 1,
@@ -232,6 +293,7 @@ function untilElections(
 beforeEach(async () => {
   tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "mcp-discovery-service-"));
   dataPath = path.join(tempDir, "data.json");
+  locations = memoryStore();
   controls = [];
   registrations = [];
   notices = [];
@@ -632,7 +694,9 @@ test("legacy settings retain route and credential when first bound to a location
     tokenId: "a",
     serverId: "obsidian_123e4567e89b42d3a456426614174000",
   });
-  expect(storedSettings(plugin).dataPath).toBeString();
+  // The path is saved in the device record, never in the synced settings
+  expect(storedSettings(plugin).dataPath).toBeUndefined();
+  expect(locations.get(runtime.routeId)).toBe(await canonical(dataPath));
   expect(
     codexConfigSnippet(
       getCodexConnection(plugin, secretFor("a"), ROW_URL),
@@ -730,7 +794,9 @@ test("a location saved by 2.12 for a linked plugin folder is kept and moved to t
   expect(runtime.status.state).toBe("connected");
   expect(runtime.routeId).toBe("123e4567-e89b-42d3-a456-426614174000");
   expect(storedSettings(plugin).accessToken).toBe(secretFor("broker"));
-  expect(storedSettings(plugin).dataPath).toBe(linked.currentPath);
+  // The synced legacy value stays as it was, the device record gets the form
+  expect(storedSettings(plugin).dataPath).toBe(linked.legacyPath);
+  expect(locations.get(runtime.routeId)).toBe(linked.currentPath);
   expect(registrations).toHaveLength(1);
   expect(registrations[0]?.registration).toMatchObject({
     dataPath: linked.currentPath,
@@ -879,6 +945,7 @@ async function start(vault: Vault, host: BrokerHost, port = vault.port) {
     host,
     transportPort: port,
     dataPath: vault.file,
+    locations,
     reconnectMs: 5,
     failoverDelayMs: () => 1,
     notify: (message: string) => notices.push(message),
@@ -1008,6 +1075,7 @@ describe("broker hosting", () => {
       host,
       transportPort: upstreamPort,
       dataPath: file,
+      locations,
       notify: (message: string) => notices.push(message),
     });
     expect(host.hosting).toBe(true);
@@ -1072,6 +1140,15 @@ describe("broker hosting", () => {
       (_req: http.IncomingMessage, res: http.ServerResponse) => {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ name: BROKER_NAME, version: 2 }));
+      },
+      "different MCP Connector version",
+    ],
+    [
+      // (coverage) the release before ADR-0035 still compares a saved dataPath
+      "a broker of the previous protocol version 3",
+      (_req: http.IncomingMessage, res: http.ServerResponse) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: BROKER_NAME, version: 3 }));
       },
       "different MCP Connector version",
     ],
@@ -1449,9 +1526,9 @@ describe("registration with a real broker", () => {
     return next;
   }
 
-  /** The data file path the vault registered, saved with its route. */
+  /** The data file path the vault registered, saved in the device record. */
   const registeredPath = (vault: Vault) =>
-    storedSettings(vault.plugin).dataPath as string;
+    locations.get(storedSettings(vault.plugin).routeId as string) as string;
 
   test("a linked plugin folder registers under its own name, not its target's", async () => {
     const port = await freePort();
@@ -1631,6 +1708,8 @@ test("a copied vault that claims the original's route is refused until it is mad
     host: hostOn(port),
     transportPort: original.port,
     dataPath: copyFile,
+    // The same device as the original, so the same record
+    locations,
     reconnectMs: 5,
     failoverDelayMs: () => 1,
     notify: (message: string) => notices.push(message),
@@ -1904,5 +1983,817 @@ describe("diagnostic log — broker route registered", () => {
     expect(text).not.toContain(runtime.routeId);
     expect(text).not.toContain(settings.accessToken as string);
     expect(text).not.toContain(secretFor("a"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-0035: where this device bound each route, kept per device
+// ---------------------------------------------------------------------------
+
+describe("per-device location record", () => {
+  const { lines, written } = captureLogLines();
+  const ROUTE = "123e4567-e89b-42d3-a456-426614174000";
+  const WIN = process.platform === "win32";
+
+  /** A path in the style of the other platform, whatever this one is. */
+  const foreignStyle = WIN
+    ? "/Users/someone/vault/.obsidian/plugins/mcp-tools-istefox/data.json"
+    : "c:\\users\\someone\\vault\\.obsidian\\plugins\\mcp-tools-istefox\\data.json";
+  /** A path in this platform's style that names another location. */
+  const elsewhere = WIN
+    ? "c:\\elsewhere\\vault\\.obsidian\\plugins\\mcp-tools-istefox\\data.json"
+    : "/elsewhere/vault/.obsidian/plugins/mcp-tools-istefox/data.json";
+
+  /** A vault with a saved route, and a legacy synced `dataPath` when given. */
+  function routed(legacy?: string) {
+    return fakePlugin({
+      ...withTokens("a"),
+      mcpClientConfig: {
+        codexDiscovery: {
+          routeId: ROUTE,
+          accessToken: secretFor("broker"),
+          ...(legacy === undefined ? {} : { dataPath: legacy }),
+        },
+      },
+    });
+  }
+
+  /** Every combination of device record and legacy value the SPEC names. */
+  type Case = {
+    label: string;
+    /** `current` is this vault's canonical path. */
+    local: (current: string) => string | null;
+    legacy: (current: string) => string | undefined;
+    changed: boolean;
+  };
+  const same = (current: string) => current;
+  const CASES: Case[] = [
+    // R-01
+    {
+      label: "R-01 no entry, no legacy value",
+      local: () => null,
+      legacy: () => undefined,
+      changed: false,
+    },
+    // R-02
+    {
+      label: "R-02 no entry, legacy value of the other platform's style",
+      local: () => null,
+      legacy: () => foreignStyle,
+      changed: false,
+    },
+    // R-03
+    {
+      label: "R-03 no entry, legacy value of this style that differs",
+      local: () => null,
+      legacy: () => elsewhere,
+      changed: true,
+    },
+    {
+      label: "R-03 no entry, legacy value of no known style that differs",
+      local: () => null,
+      legacy: () => "synthetic-original-location/data.json",
+      changed: true,
+    },
+    {
+      label: "no entry, legacy value equal to the current path",
+      local: () => null,
+      legacy: same,
+      changed: false,
+    },
+    // R-04
+    {
+      label: "R-04 entry equal, no legacy value",
+      local: same,
+      legacy: () => undefined,
+      changed: false,
+    },
+    {
+      label: "R-04 entry equal, legacy value equal",
+      local: same,
+      legacy: same,
+      changed: false,
+    },
+    {
+      label: "R-04 entry equal, legacy value of the other style",
+      local: same,
+      legacy: () => foreignStyle,
+      changed: false,
+    },
+    {
+      label: "R-04 entry equal, legacy value of this style that differs",
+      local: same,
+      legacy: () => elsewhere,
+      changed: false,
+    },
+    // R-05
+    {
+      label: "R-05 entry differs, no legacy value",
+      local: () => elsewhere,
+      legacy: () => undefined,
+      changed: true,
+    },
+    {
+      label: "R-05 entry differs, legacy value equal to the current path",
+      local: () => elsewhere,
+      legacy: same,
+      changed: true,
+    },
+    {
+      label: "R-05 entry differs, legacy value of the other style",
+      local: () => elsewhere,
+      legacy: () => foreignStyle,
+      changed: true,
+    },
+  ];
+
+  /** Options with the record `initial` instead of the test's empty one. */
+  function withRecord(initial: Record<string, string>) {
+    locations = memoryStore(initial);
+    return fakeOpts();
+  }
+
+  /** The case's plugin and options, seeded for this vault's own path. */
+  async function seeded(c: Case) {
+    const current = await canonical(dataPath);
+    const local = c.local(current);
+    const opts = withRecord(local === null ? {} : { [ROUTE]: local });
+    return { plugin: routed(c.legacy(current)), opts, current };
+  }
+
+  describe("pathStyle", () => {
+    test.each([
+      ["C:\\Users\\me\\data.json", "windows"],
+      ["c:/users/me/data.json", "windows"],
+      ["c:\\users\\me\\data.json", "windows"],
+      ["Z:/vault/data.json", "windows"],
+      ["\\\\host\\share\\vault\\data.json", "windows"],
+      ["/Users/me/vault/data.json", "posix"],
+      ["/", "posix"],
+      ["vault/data.json", "other"],
+      ["data.json", "other"],
+      ["~/vault/data.json", "other"],
+      ["c:data.json", "other"],
+      ["", "other"],
+    ])("%p is %s", (file, expected) => {
+      expect(pathStyle(file)).toBe(expected as ReturnType<typeof pathStyle>);
+    });
+  });
+
+  describe("classifyLocation", () => {
+    const POSIX = "/vault/.obsidian/plugins/mcp-tools-istefox/data.json";
+    const OTHER_POSIX = "/old/.obsidian/plugins/mcp-tools-istefox/data.json";
+    const WINDOWS =
+      "c:\\vault\\.obsidian\\plugins\\mcp-tools-istefox\\data.json";
+    const OTHER_WINDOWS =
+      "c:\\old\\.obsidian\\plugins\\mcp-tools-istefox\\data.json";
+    const UNC = "\\\\host\\share\\vault\\data.json";
+    const RELATIVE = "synthetic-original-location/data.json";
+
+    type Row = [
+      string,
+      {
+        local: string | null;
+        legacy: string | undefined;
+        current: string;
+        legacyIsOwnFile: boolean;
+      },
+      LocationVerdict,
+    ];
+    const row = (
+      label: string,
+      local: string | null,
+      legacy: string | undefined,
+      current: string,
+      verdict: LocationVerdict,
+      legacyIsOwnFile = false,
+    ): Row => [label, { local, legacy, current, legacyIsOwnFile }, verdict];
+
+    test.each([
+      // No entry: the legacy value decides, once
+      row("no entry, no legacy value", null, undefined, POSIX, "bind"),
+      row("no entry, legacy equal", null, POSIX, POSIX, "bind"),
+      row("no entry, legacy of the other style", null, WINDOWS, POSIX, "bind"),
+      row(
+        "no entry, UNC legacy against a POSIX path",
+        null,
+        UNC,
+        POSIX,
+        "bind",
+      ),
+      row(
+        "no entry, POSIX legacy against a Windows path",
+        null,
+        POSIX,
+        WINDOWS,
+        "bind",
+      ),
+      row(
+        "no entry, same style POSIX that differs",
+        null,
+        OTHER_POSIX,
+        POSIX,
+        "changed",
+      ),
+      row(
+        "no entry, same style Windows that differs",
+        null,
+        OTHER_WINDOWS,
+        WINDOWS,
+        "changed",
+      ),
+      row(
+        "no entry, legacy of no known style that differs",
+        null,
+        RELATIVE,
+        POSIX,
+        "changed",
+      ),
+      row(
+        "no entry, current path of no known style, legacy Windows",
+        null,
+        WINDOWS,
+        RELATIVE,
+        "changed",
+      ),
+      row(
+        "no entry, own file in the older form",
+        null,
+        OTHER_POSIX,
+        POSIX,
+        "bind",
+        true,
+      ),
+      row(
+        "no entry, own file in the older form, Windows",
+        null,
+        OTHER_WINDOWS,
+        WINDOWS,
+        "bind",
+        true,
+      ),
+      row(
+        "no entry, own file in the older form, no known style",
+        null,
+        RELATIVE,
+        POSIX,
+        "bind",
+        true,
+      ),
+      // An entry decides alone
+      row("entry equal, no legacy value", POSIX, undefined, POSIX, "same"),
+      row("entry equal, legacy equal", POSIX, POSIX, POSIX, "same"),
+      row(
+        "entry equal, legacy of the other style",
+        POSIX,
+        WINDOWS,
+        POSIX,
+        "same",
+      ),
+      row(
+        "entry equal, legacy that differs",
+        POSIX,
+        OTHER_POSIX,
+        POSIX,
+        "same",
+      ),
+      row(
+        "entry equal, legacy of no known style",
+        POSIX,
+        RELATIVE,
+        POSIX,
+        "same",
+      ),
+      row(
+        "entry equal, legacy is own file",
+        POSIX,
+        OTHER_POSIX,
+        POSIX,
+        "same",
+        true,
+      ),
+      row(
+        "entry differs, no legacy value",
+        OTHER_POSIX,
+        undefined,
+        POSIX,
+        "changed",
+      ),
+      row(
+        "entry differs, legacy equal to the current path",
+        OTHER_POSIX,
+        POSIX,
+        POSIX,
+        "changed",
+      ),
+      row(
+        "entry differs, legacy of the other style",
+        OTHER_POSIX,
+        WINDOWS,
+        POSIX,
+        "changed",
+      ),
+      row(
+        "entry differs, legacy is own file",
+        OTHER_POSIX,
+        POSIX,
+        POSIX,
+        "changed",
+        true,
+      ),
+      row("entry of the other style", WINDOWS, undefined, POSIX, "changed"),
+    ])("%s", (_label, input, verdict) => {
+      expect(classifyLocation(input)).toBe(verdict);
+    });
+  });
+
+  describe("start", () => {
+    test("R-01 a vault with no entry and no legacy value binds silently and saves no dataPath", async () => {
+      const plugin = fakePlugin(withTokens("a"));
+      const runtime = await startDiscovery(plugin, fakeOpts());
+      runtimes.push(runtime);
+      expect(runtime.status.state).toBe("connected");
+      expect(runtime.status.locationChanged).not.toBe(true);
+      expect(locations.get(runtime.routeId)).toBe(await canonical(dataPath));
+      expect(storedSettings(plugin).dataPath).toBeUndefined();
+      expect(notices).toEqual([]);
+      expect(registrations).toHaveLength(1);
+    });
+
+    test("R-02 a legacy value of the other platform's style is ignored, bound silently and left alone", async () => {
+      const plugin = routed(foreignStyle);
+      const runtime = await startDiscovery(plugin, fakeOpts());
+      runtimes.push(runtime);
+      expect(runtime.status.state).toBe("connected");
+      expect(runtime.status.locationChanged).not.toBe(true);
+      expect(notices).toEqual([]);
+      expect(locations.get(ROUTE)).toBe(await canonical(dataPath));
+      expect(locations.writes).toBe(1);
+      expect(storedSettings(plugin).dataPath).toBe(foreignStyle);
+    });
+
+    test("R-03 a legacy value of this style that differs prompts once, and a confirmed move records the path on this device only", async () => {
+      const plugin = routed(elsewhere);
+      const opts = fakeOpts();
+      const blocked = await startDiscovery(plugin, opts);
+      expect(blocked.status.locationChanged).toBe(true);
+      expect(blocked.status.state).toBe("conflict");
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain("Vault location changed");
+      expect(registrations).toHaveLength(0);
+      expect(locations.get(ROUTE)).toBeNull();
+
+      const moved = await replaceWith(
+        plugin,
+        blocked,
+        () => acceptDiscoveryMove(plugin, opts),
+        opts,
+      );
+      expect(moved.status.state).toBe("connected");
+      expect(moved.routeId).toBe(ROUTE);
+      expect(locations.get(ROUTE)).toBe(await canonical(dataPath));
+      expect(storedSettings(plugin).dataPath).toBe(elsewhere);
+
+      // Started again, as after a reload: silent, nothing new to confirm
+      await moved.stop();
+      const again = await startDiscovery(plugin, opts);
+      runtimes.push(again);
+      expect(again.status.state).toBe("connected");
+      expect(again.status.locationChanged).not.toBe(true);
+      expect(notices).toHaveLength(1);
+    });
+
+    test.each([
+      ["absent", () => undefined],
+      ["equal", (current: string) => current],
+      ["of the other style", () => foreignStyle],
+      ["of this style and differing", () => elsewhere],
+    ])(
+      "R-04 an entry equal to the current path starts silently with a legacy value %s",
+      async (_label, legacy) => {
+        const current = await canonical(dataPath);
+        const opts = withRecord({ [ROUTE]: current });
+        const plugin = routed(legacy(current));
+        const runtime = await startDiscovery(plugin, opts);
+        runtimes.push(runtime);
+        expect(runtime.status.state).toBe("connected");
+        expect(runtime.status.locationChanged).not.toBe(true);
+        expect(notices).toEqual([]);
+        expect(locations.writes).toBe(0);
+        expect(storedSettings(plugin).dataPath).toBe(legacy(current));
+      },
+    );
+
+    test("R-05 an entry that differs for the same route prompts once and registers nothing", async () => {
+      const opts = withRecord({ [ROUTE]: elsewhere });
+      const plugin = routed();
+      const blocked = await startDiscovery(plugin, opts);
+      runtimes.push(blocked);
+      expect(blocked.status.locationChanged).toBe(true);
+      expect(blocked.routeId).toBe(ROUTE);
+      expect(notices).toHaveLength(1);
+      expect(registrations).toHaveLength(0);
+      expect(locations.get(ROUTE)).toBe(elsewhere);
+      expect(locations.writes).toBe(0);
+    });
+
+    test.each(CASES.map((c) => [c.label, c] as const))(
+      "%s writes the record only when it binds",
+      async (_label, c) => {
+        const { plugin, opts, current } = await seeded(c);
+        const before = c.legacy(current);
+        const runtime = await startDiscovery(plugin, opts);
+        runtimes.push(runtime);
+        expect(runtime.status.locationChanged === true).toBe(c.changed);
+        expect(notices).toHaveLength(c.changed ? 1 : 0);
+        expect(storedSettings(plugin).dataPath).toBe(before);
+        if (!c.changed) expect(locations.get(ROUTE)).toBe(current);
+      },
+    );
+  });
+
+  describe("R-06 the synced dataPath is never written", () => {
+    test("a first bind, a confirmed move and a reset leave no dataPath where there was none", async () => {
+      const plugin = fakePlugin(withTokens("a"));
+      const opts = fakeOpts();
+      const first = await startDiscovery(plugin, opts);
+      expect(storedSettings(plugin).dataPath).toBeUndefined();
+
+      const movedOpts = {
+        ...opts,
+        dataPath: path.join(tempDir, "copy", "data.json"),
+      };
+      await fsp.mkdir(path.dirname(movedOpts.dataPath));
+      await first.stop();
+      const blocked = await startDiscovery(plugin, movedOpts);
+      expect(blocked.status.locationChanged).toBe(true);
+      const moved = await replaceWith(
+        plugin,
+        blocked,
+        () => acceptDiscoveryMove(plugin, movedOpts),
+        movedOpts,
+      );
+      expect(storedSettings(plugin).dataPath).toBeUndefined();
+
+      const reset = await replaceWith(
+        plugin,
+        moved,
+        () => resetDiscoveryIdentity(plugin, movedOpts),
+        movedOpts,
+      );
+      runtimes.push(reset);
+      expect(storedSettings(plugin).dataPath).toBeUndefined();
+    });
+
+    test("R-03 a confirmed move does not rewrite the synced data when the route exists", async () => {
+      const plugin = routed(elsewhere);
+      const opts = fakeOpts();
+      const save = plugin.saveData.bind(plugin);
+      let saves = 0;
+      plugin.saveData = async (next: unknown) => {
+        saves += 1;
+        await save(next);
+      };
+      await acceptDiscoveryMove(plugin, opts);
+      expect(saves).toBe(0);
+    });
+
+    test("a seeded legacy value survives a bind, a confirmed move and a reset byte for byte", async () => {
+      const plugin = routed(elsewhere);
+      const opts = fakeOpts();
+      const blocked = await startDiscovery(plugin, opts);
+      expect(storedSettings(plugin).dataPath).toBe(elsewhere);
+      const moved = await replaceWith(
+        plugin,
+        blocked,
+        () => acceptDiscoveryMove(plugin, opts),
+        opts,
+      );
+      expect(storedSettings(plugin).dataPath).toBe(elsewhere);
+      const reset = await replaceWith(
+        plugin,
+        moved,
+        () => resetDiscoveryIdentity(plugin, opts),
+        opts,
+      );
+      runtimes.push(reset);
+      expect(storedSettings(plugin).dataPath).toBe(elsewhere);
+    });
+
+    test("a legacy value of the other style survives the bind it is ignored for", async () => {
+      const plugin = routed(foreignStyle);
+      const runtime = await startDiscovery(plugin, fakeOpts());
+      runtimes.push(runtime);
+      expect(storedSettings(plugin).dataPath).toBe(foreignStyle);
+    });
+  });
+
+  describe("R-07 identity", () => {
+    test("a confirmed move keeps the route ID and the route credential", async () => {
+      const opts = withRecord({ [ROUTE]: elsewhere });
+      const plugin = routed();
+      const blocked = await startDiscovery(plugin, opts);
+      expect(blocked.status.locationChanged).toBe(true);
+      const moved = await replaceWith(
+        plugin,
+        blocked,
+        () => acceptDiscoveryMove(plugin, opts),
+        opts,
+      );
+      runtimes.push(moved);
+      expect(moved.routeId).toBe(ROUTE);
+      expect(storedSettings(plugin).routeId).toBe(ROUTE);
+      expect(storedSettings(plugin).accessToken).toBe(secretFor("broker"));
+      expect(locations.get(ROUTE)).toBe(await canonical(dataPath));
+    });
+
+    test("a reset mints a new route ID and credential, records the new route and keeps the old entry", async () => {
+      const opts = withRecord({ [ROUTE]: elsewhere });
+      const plugin = routed();
+      const blocked = await startDiscovery(plugin, opts);
+      expect(blocked.status.locationChanged).toBe(true);
+      const reset = await replaceWith(
+        plugin,
+        blocked,
+        () => resetDiscoveryIdentity(plugin, opts),
+        opts,
+      );
+      runtimes.push(reset);
+      expect(reset.status.state).toBe("connected");
+      expect(reset.routeId).not.toBe(ROUTE);
+      expect(storedSettings(plugin).routeId).toBe(reset.routeId);
+      expect(storedSettings(plugin).accessToken).not.toBe(secretFor("broker"));
+      expect(locations.get(reset.routeId)).toBe(await canonical(dataPath));
+      expect(locations.get(ROUTE)).toBe(elsewhere);
+    });
+
+    test("a confirmed move on a vault with no saved route mints one and records it", async () => {
+      const plugin = fakePlugin(withTokens("a"));
+      await acceptDiscoveryMove(plugin, fakeOpts());
+      const routeId = storedSettings(plugin).routeId as string;
+      expect(locations.get(routeId)).toBe(await canonical(dataPath));
+      expect(storedSettings(plugin).dataPath).toBeUndefined();
+    });
+  });
+
+  describe("R-08 the check agrees with the start", () => {
+    test.each(CASES.map((c) => [c.label, c] as const))(
+      "%s",
+      async (_label, c) => {
+        const { plugin, opts } = await seeded(c);
+        const unresolved = await isLocationUnresolved(plugin, opts);
+        const runtime = await startDiscovery(plugin, opts);
+        runtimes.push(runtime);
+        expect(unresolved).toBe(c.changed);
+        expect(unresolved).toBe(runtime.status.locationChanged === true);
+      },
+    );
+
+    test("the check never writes the record", async () => {
+      const opts = withRecord({});
+      await isLocationUnresolved(routed(), opts);
+      await isLocationUnresolved(routed(foreignStyle), opts);
+      expect(locations.writes).toBe(0);
+    });
+
+    // The path cannot be read: its parent folder does not exist
+    const unreadable = () => ({
+      dataPath: path.join(tempDir, "missing", "plugins", "data.json"),
+    });
+
+    test.each([
+      ["an entry", () => routed(), { [ROUTE]: elsewhere }],
+      ["a legacy value", () => routed(elsewhere), {}],
+      ["both", () => routed(elsewhere), { [ROUTE]: elsewhere }],
+    ])(
+      "a route with %s and an unreadable location is unresolved",
+      async (_label, plugin, initial) => {
+        const opts = { ...withRecord(initial), ...unreadable() };
+        expect(await isLocationUnresolved(plugin(), opts)).toBe(true);
+      },
+    );
+
+    test("a saved route that was never bound is resolved without reading the path", async () => {
+      const opts = { ...withRecord({}), ...unreadable() };
+      expect(await isLocationUnresolved(routed(), opts)).toBe(false);
+    });
+
+    test("a vault with no saved route is resolved", async () => {
+      const opts = withRecord({ [ROUTE]: elsewhere });
+      expect(
+        await isLocationUnresolved(fakePlugin(withTokens("a")), opts),
+      ).toBe(false);
+    });
+  });
+
+  describe("R-09 a record that cannot be read or written", () => {
+    function warnings(all: Awaited<ReturnType<typeof lines>>) {
+      return all.filter((line) => line.level === "WARN");
+    }
+
+    /** What a log line must never carry: a path or a route ID. */
+    function expectNoPathOrRoute(text: string, routeId: string) {
+      expect(text).not.toContain(routeId);
+      expect(text).not.toContain(tempDir);
+      expect(text).not.toContain(path.basename(tempDir));
+    }
+
+    test("a store whose get throws reads as empty and logs one warning with no path or route ID", async () => {
+      locations = throwingStore({ get: true }) as unknown as ReturnType<
+        typeof memoryStore
+      >;
+      const plugin = routed();
+      const runtime = await startDiscovery(plugin, fakeOpts());
+      runtimes.push(runtime);
+      // Empty record and no legacy value: a first bind, never a prompt
+      expect(runtime.status.state).toBe("connected");
+      expect(runtime.status.locationChanged).not.toBe(true);
+      expect(notices).toEqual([]);
+      const all = await lines(() => true);
+      expect(warnings(all)).toHaveLength(1);
+      expectNoPathOrRoute(written(), ROUTE);
+    });
+
+    test("a store whose get throws does not hide a legacy value that differs", async () => {
+      locations = throwingStore({ get: true }) as unknown as ReturnType<
+        typeof memoryStore
+      >;
+      const runtime = await startDiscovery(routed(elsewhere), fakeOpts());
+      runtimes.push(runtime);
+      expect(runtime.status.locationChanged).toBe(true);
+    });
+
+    test("a store whose set throws still ends connected and logs the failed write without path or route ID", async () => {
+      locations = throwingStore({ set: true }) as unknown as ReturnType<
+        typeof memoryStore
+      >;
+      const plugin = routed();
+      const runtime = await startDiscovery(plugin, fakeOpts());
+      runtimes.push(runtime);
+      expect(runtime.status.state).toBe("connected");
+      expect(notices).toEqual([]);
+      expect(registrations).toHaveLength(1);
+      const all = await lines(() => true);
+      expect(warnings(all)).toHaveLength(1);
+      expectNoPathOrRoute(written(), ROUTE);
+    });
+
+    test.each(["move", "reset"])(
+      "a confirmed %s with a store whose set throws does not throw",
+      async (scenario) => {
+        locations = throwingStore({ set: true }) as unknown as ReturnType<
+          typeof memoryStore
+        >;
+        const opts = fakeOpts();
+        const plugin = routed(elsewhere);
+        const run =
+          scenario === "move"
+            ? acceptDiscoveryMove(plugin, opts)
+            : resetDiscoveryIdentity(plugin, opts);
+        await expect(run).resolves.toBeUndefined();
+      },
+    );
+
+    describe("windowLocationStore over window.localStorage", () => {
+      const original = Object.getOwnPropertyDescriptor(window, "localStorage");
+
+      function installStorage(descriptor: PropertyDescriptor) {
+        Object.defineProperty(window, "localStorage", {
+          configurable: true,
+          ...descriptor,
+        });
+      }
+
+      /** The call throws, and not with the unfinished stub's own error. */
+      function expectStorageError(call: () => unknown) {
+        let message: string | null = null;
+        try {
+          call();
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).not.toBeNull();
+        expect(message).not.toBe("not implemented");
+      }
+
+      beforeEach(() => {
+        window.localStorage.clear();
+      });
+
+      afterEach(() => {
+        if (original) Object.defineProperty(window, "localStorage", original);
+        window.localStorage.clear();
+      });
+
+      test("keeps one entry per route under the shared key", () => {
+        const store = windowLocationStore();
+        expect(store.get(ROUTE)).toBeNull();
+        store.set(ROUTE, "/one/data.json");
+        store.set("another-route", "/two/data.json");
+        expect(store.get(ROUTE)).toBe("/one/data.json");
+        expect(store.get("another-route")).toBe("/two/data.json");
+        expect(
+          JSON.parse(window.localStorage.getItem(DEVICE_LOCATIONS_KEY)!),
+        ).toEqual({
+          [ROUTE]: "/one/data.json",
+          "another-route": "/two/data.json",
+        });
+      });
+
+      test("is read on every call, so a later storage is seen", () => {
+        const store = windowLocationStore();
+        store.set(ROUTE, "/one/data.json");
+        window.localStorage.setItem(
+          DEVICE_LOCATIONS_KEY,
+          JSON.stringify({ [ROUTE]: "/two/data.json" }),
+        );
+        expect(store.get(ROUTE)).toBe("/two/data.json");
+      });
+
+      test("a start with no injected record binds into window.localStorage", async () => {
+        const { locations: _unused, ...opts } = fakeOpts();
+        const runtime = await startDiscovery(fakePlugin(withTokens("a")), opts);
+        runtimes.push(runtime);
+        expect(runtime.status.state).toBe("connected");
+        expect(
+          JSON.parse(window.localStorage.getItem(DEVICE_LOCATIONS_KEY)!),
+        ).toEqual({ [runtime.routeId]: await canonical(dataPath) });
+      });
+
+      /** The three ways the storage can be unusable, plus a corrupt value. */
+      const BROKEN: Array<[string, () => void]> = [
+        [
+          "throws on access",
+          () =>
+            installStorage({
+              get: () => {
+                throw new Error("SecurityError");
+              },
+            }),
+        ],
+        ["is missing", () => installStorage({ value: undefined })],
+        ["has no getItem and setItem", () => installStorage({ value: {} })],
+        [
+          "holds invalid JSON under the key",
+          () => window.localStorage.setItem(DEVICE_LOCATIONS_KEY, "{not json"),
+        ],
+      ];
+
+      test.each(BROKEN)("get throws when the storage %s", (_label, break_) => {
+        break_();
+        expectStorageError(() => windowLocationStore().get(ROUTE));
+      });
+
+      test.each(BROKEN.slice(0, 3))(
+        "set throws when the storage %s",
+        (_label, break_) => {
+          break_();
+          expectStorageError(() =>
+            windowLocationStore().set(ROUTE, "/one/data.json"),
+          );
+        },
+      );
+
+      test.each(BROKEN)(
+        "a start over a storage that %s behaves as an empty record and still connects",
+        async (_label, break_) => {
+          break_();
+          const { locations: _unused, ...opts } = fakeOpts();
+          const runtime = await startDiscovery(routed(), opts);
+          runtimes.push(runtime);
+          expect(runtime.status.state).toBe("connected");
+          expect(runtime.status.locationChanged).not.toBe(true);
+          expect(notices).toEqual([]);
+          const all = await lines(() => true);
+          expect(warnings(all).length).toBeGreaterThanOrEqual(1);
+          expectNoPathOrRoute(written(), ROUTE);
+        },
+      );
+
+      // (coverage) valid JSON that is not a route map is as invalid as text
+      // that does not parse: get throws and a set replaces it
+      test.each([["[]"], ["null"], ["42"], ['"text"']])(
+        "(coverage) %s under the key is invalid: get throws and a set replaces it",
+        (raw) => {
+          window.localStorage.setItem(DEVICE_LOCATIONS_KEY, raw);
+          const store = windowLocationStore();
+          expectStorageError(() => store.get(ROUTE));
+          store.set(ROUTE, "/one/data.json");
+          expect(
+            JSON.parse(window.localStorage.getItem(DEVICE_LOCATIONS_KEY)!),
+          ).toEqual({ [ROUTE]: "/one/data.json" });
+        },
+      );
+
+      test("a set replaces invalid JSON under the key with a valid map", () => {
+        window.localStorage.setItem(DEVICE_LOCATIONS_KEY, "{not json");
+        const store = windowLocationStore();
+        store.set(ROUTE, "/one/data.json");
+        expect(
+          JSON.parse(window.localStorage.getItem(DEVICE_LOCATIONS_KEY)!),
+        ).toEqual({ [ROUTE]: "/one/data.json" });
+        expect(store.get(ROUTE)).toBe("/one/data.json");
+      });
+    });
   });
 });

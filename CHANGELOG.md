@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **A vault synced between devices no longer keeps showing "Vault location changed".** The broker route saved the vault's absolute location in `data.json`, which syncs with the vault, so a second device read the first one's path as a moved or copied vault, dropped the broker route, and confirming the move there wrote a path that broke the first device. A vault synced between macOS and Windows could never match. Each device now keeps the location in Obsidian's local storage, keyed by the route, and the plugin no longer writes it to `data.json`; a value saved there by an older release is left in place. A synced vault registers its route on every device with no prompt, and a move or a copy on the same device is still caught. On the first start after the update, a device whose older saved location has the same path style but another path, such as a second Mac, asks once, and the answer is kept on that device only. The broker no longer compares that saved location when it admits a vault, and its protocol version goes from 3 to 4, so update every open vault: until they all run this release, the vault that does not host the broker shows the Notice to update the plugin in every open vault (#667, ADR-0035)
+
 ## [3.3.0] — 2026-10-29
 
 ### Added
