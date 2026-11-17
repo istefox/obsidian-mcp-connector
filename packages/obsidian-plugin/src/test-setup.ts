@@ -59,6 +59,32 @@ const moment = (await import("moment")).default;
     ),
 };
 
+// A deterministic in-memory `window.localStorage`. Obsidian provides a real
+// one; Bun may ship none, a partial one or a native one, so install ours and
+// the per-device location record tests behave the same everywhere. A test
+// that reaches the default store clears it in its own `beforeEach`.
+{
+  const entries = new Map<string, string>();
+  const memoryStorage = {
+    getItem: (key: string) => entries.get(String(key)) ?? null,
+    setItem: (key: string, value: string) => {
+      entries.set(String(key), String(value));
+    },
+    removeItem: (key: string) => {
+      entries.delete(String(key));
+    },
+    clear: () => entries.clear(),
+    key: (index: number) => [...entries.keys()][index] ?? null,
+    get length() {
+      return entries.size;
+    },
+  };
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: memoryStorage,
+  });
+}
+
 void mock.module("obsidian", () => {
   class Notice {
     constructor(_message?: string, _timeout?: number) {}

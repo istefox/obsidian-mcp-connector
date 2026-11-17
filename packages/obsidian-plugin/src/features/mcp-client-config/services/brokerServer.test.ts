@@ -902,6 +902,31 @@ test("a copied route cannot overwrite or unregister the existing owner", async (
   ).toBe("original|Bearer vault-token");
 });
 
+test("a copied route still gets a 409 while the original is registered, with no dataPath saved in either file", async () => {
+  const first = await vaultTarget("original", "original");
+  const copy = await vaultTarget("copy", "copy");
+  // A vault minted by this release keeps no dataPath in its settings
+  for (const file of [first, copy]) {
+    await writeVault(file, {
+      settings: routeSettings(file, { dataPath: undefined }),
+    });
+  }
+  const port = await startBroker();
+  await registerRoute(port, routeCredential, "lease", routeId, first);
+  await expect(
+    registerRoute(port, routeCredential, "lease", routeId, copy),
+  ).rejects.toThrow("HTTP 409");
+  expect(
+    (
+      await request(port, {
+        path: `/v1/${routeId}/mcp`,
+        token: "vault-token",
+        body: "{}",
+      })
+    ).body,
+  ).toBe("original|Bearer vault-token");
+});
+
 test("a same-vault reconnect evicts its own stale control instead of a 409", async () => {
   const file = await vaultTarget("second-connection", "vault");
   const port = await startBroker();
@@ -978,6 +1003,15 @@ test("reconnects on one lease never count as evictions", async () => {
   }
 });
 
+test("the health endpoint reports protocol version 4, the first without a saved dataPath comparison", async () => {
+  const port = await startBroker();
+  const health = await request(port, { path: HEALTH_PATH });
+  expect(health.status).toBe(200);
+  expect(health.body).toBe(
+    '{"name":"obsidian-mcp-discovery-broker","version":4}',
+  );
+});
+
 describe("registration ownership", () => {
   const dataPath = () => vaultFile();
 
@@ -989,12 +1023,53 @@ describe("registration ownership", () => {
     await registerRoute(port, routeCredential, "lease");
   });
 
+  test("admits a registration whose saved settings hold no dataPath", async () => {
+    const file = await vaultTarget("vault", "vault");
+    await writeVault(file, {
+      settings: routeSettings(file, { dataPath: undefined }),
+    });
+    expect(
+      JSON.parse(await fsp.readFile(file, "utf8")).mcpClientConfig
+        .codexDiscovery,
+    ).not.toHaveProperty("dataPath");
+    const port = await startBroker();
+    await registerRoute(port, routeCredential, "lease", routeId, file);
+    expect(
+      (
+        await request(port, {
+          path: `/v1/${routeId}/mcp`,
+          token: "vault-token",
+          body: "{}",
+        })
+      ).body,
+    ).toBe("vault|Bearer vault-token");
+  });
+
+  test("admits a registration whose saved dataPath is another platform's path", async () => {
+    const file = await vaultTarget("vault", "vault");
+    await writeVault(file, {
+      settings: routeSettings(file, {
+        dataPath: `c:\\users\\x\\vault\\.obsidian\\plugins\\${pluginId}\\data.json`,
+      }),
+    });
+    const port = await startBroker();
+    await registerRoute(port, routeCredential, "lease", routeId, file);
+    expect(
+      (
+        await request(port, {
+          path: `/v1/${routeId}/mcp`,
+          token: "vault-token",
+          body: "{}",
+        })
+      ).body,
+    ).toBe("vault|Bearer vault-token");
+  });
+
   test.each([
     [
       "names a different route",
       { routeId: "123e4567-e89b-42d3-a456-426614174099" },
     ],
-    ["was saved at another location", { dataPath: "synthetic/copy/data.json" }],
     ["holds a rotated credential", { accessToken: "a-newer-rotated-token" }],
   ])("rejects a registration whose saved settings %s", async (_, override) => {
     await writeVault(dataPath(), {

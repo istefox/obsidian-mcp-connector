@@ -33,8 +33,9 @@ export const BROKER_NAME = "obsidian-mcp-discovery-broker";
 /**
  * Version 3: in-process host, optional Codex owner, bare `/mcp` routing and
  * the transport port in the registration.
+ * Version 4: admission no longer compares a saved `dataPath` (ADR-0035).
  */
-export const BROKER_PROTOCOL_VERSION = 3;
+export const BROKER_PROTOCOL_VERSION = 4;
 export const HEALTH_PATH = "/_obsidian_mcp_broker/health";
 export const REGISTRATION_PATH = "/_obsidian_mcp_broker/register";
 export const LEASE_HEADER = "x-obsidian-mcp-lease-id";
@@ -392,9 +393,10 @@ async function readVaultFile(
 }
 
 /**
- * The route belongs to the vault whose saved settings name both the route
- * and this canonical `data.json` path, and whose route credential the
- * registrant presented. That credential is only a registration secret: no
+ * The route belongs to the vault whose `data.json`, at the registered path
+ * (already past the data file checks), holds this route ID and the route
+ * credential the registrant presented. A saved `dataPath` is not compared:
+ * it differs per device. That credential is only a registration secret: no
  * client sends it, and the stored `enabled` and `tokenId` keys of older
  * versions play no part.
  */
@@ -411,7 +413,6 @@ async function ownsRegistration(
   return (
     isRecord(settings) &&
     settings.routeId === registration.routeId &&
-    settings.dataPath === registration.dataPath &&
     typeof settings.accessToken === "string" &&
     credentialMatches(credential, settings.accessToken)
   );
