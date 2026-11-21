@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   __resetBackendForTesting,
   buildPipelineOptions,
+  chooseModelBackend,
   createEmbedder,
   resolveBackend,
   type PipelineFactory,
   type PipelineFn,
 } from "./embedder";
+import { logger } from "$/shared/logger";
 
 /**
  * Deterministic mock factory: returns a pipeline that hashes the
@@ -544,5 +546,49 @@ describe("buildPipelineOptions", () => {
     expect(
       buildPipelineOptions("wasm", "q8", onProgress).progress_callback,
     ).toBe(onProgress);
+  });
+});
+
+describe("chooseModelBackend", () => {
+  function logged(fn: () => void): unknown[][] {
+    const calls: unknown[][] = [];
+    const spy = spyOn(logger, "info").mockImplementation(
+      (...args: unknown[]) => {
+        calls.push(args);
+      },
+    );
+    try {
+      fn();
+    } finally {
+      spy.mockRestore();
+    }
+    return calls;
+  }
+
+  test("logs the override, not the machine backend (#665)", () => {
+    let backend: string | undefined;
+    const calls = logged(() => {
+      backend = chooseModelBackend("gemma", "webgpu", "wasm");
+    });
+    expect(backend).toBe("wasm");
+    expect(calls).toEqual([
+      [
+        "semantic-search: model backend",
+        { model: "gemma", backend: "wasm", machineBackend: "webgpu" },
+      ],
+    ]);
+  });
+
+  test("falls back to the machine backend without an override", () => {
+    let backend: string | undefined;
+    const calls = logged(() => {
+      backend = chooseModelBackend("minilm", "webgpu", undefined);
+    });
+    expect(backend).toBe("webgpu");
+    expect(calls[0]?.[1]).toEqual({
+      model: "minilm",
+      backend: "webgpu",
+      machineBackend: "webgpu",
+    });
   });
 });
