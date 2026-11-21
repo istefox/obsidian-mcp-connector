@@ -14,7 +14,7 @@
  */
 
 import type { BackendKind, EmbeddingProvider } from "../types";
-import { disposePipeline, resolveBackend } from "./embedder";
+import { disposePipeline, probeBackend } from "./embedder";
 import type { PipelineFactory, PipelineFn } from "./embedder";
 
 export type TaskPromptFn = (text: string, role: "document" | "query") => string;
@@ -72,7 +72,9 @@ class TransformersProviderImpl implements EmbeddingProvider {
 
   getMaxInputTokens(): Promise<number> {
     if (!this.resolvedMaxTokens) {
-      this.resolvedMaxTokens = resolveBackend().then(
+      // The probe alone: resolving would evaluate Transformers.js on the
+      // main thread even when the model runs in a worker (ADR-0036).
+      this.resolvedMaxTokens = probeBackend().then(
         (b) => this.opts.maxInputTokensByBackend[this.opts.backend ?? b],
       );
     }
@@ -85,6 +87,10 @@ class TransformersProviderImpl implements EmbeddingProvider {
 
   async isAvailable(): Promise<boolean> {
     return true;
+  }
+
+  documentConcurrency(): number {
+    return this.pipeline?.concurrency?.() ?? 1;
   }
 
   async embed(
@@ -114,6 +120,9 @@ class TransformersProviderImpl implements EmbeddingProvider {
         normalize: true,
         truncation: true,
         max_length: maxLen,
+        ...(role === "query" && pipe.acceptsPriority
+          ? { priority: "query" as const }
+          : {}),
       });
       // [batch, dim] tensor, row-major. Fall back to the declared
       // dimensions if dims is missing.

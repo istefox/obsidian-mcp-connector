@@ -6,6 +6,7 @@
  * onload() awaits this and assigns the returned state.
  */
 
+import os from "os";
 import { type EventRef, Notice, TFile } from "obsidian";
 import type McpToolsPlugin from "$/main";
 import { logger } from "$/shared/logger";
@@ -19,6 +20,11 @@ import {
   type SemanticSearchState,
 } from "../index";
 import { createEmbedder, realPipelineFactory } from "./embedder";
+import { embeddingWorkerSpawner } from "./embeddingWorkerSpawn";
+import {
+  createWorkerPipelineFactory,
+  workerPoolSize,
+} from "./workerPipelineFactory";
 import { ALL_PROVIDER_KEYS, type ProviderKey } from "./providerFactory";
 import {
   createNativeEmbeddingProvider,
@@ -189,9 +195,23 @@ export async function wireSemanticSearch(
     });
   }
 
+  // WASM inference runs in a Web Worker; WebGPU models, and every model
+  // when no worker can start, stay on the main thread (ADR-0036).
+  const pipelineFactory = createWorkerPipelineFactory({
+    inner: realPipelineFactory,
+    spawn: embeddingWorkerSpawner(),
+    poolSize: workerPoolSize({
+      cores:
+        typeof navigator !== "undefined"
+          ? navigator.hardwareConcurrency
+          : undefined,
+      totalMemoryBytes: os.totalmem(),
+    }),
+  });
+
   // Native MiniLM — always available (store loads lazily).
   const nativeDownloader = createModelDownloader({
-    innerFactory: realPipelineFactory,
+    innerFactory: pipelineFactory,
   });
   // Construction-time read: toggling the setting takes effect at
   // the next plugin reload (the settings UI says so).
@@ -215,14 +235,14 @@ export async function wireSemanticSearch(
   // (#597). Gemma has a 4-bit build (~197 MB) that WebGPU supports; fp16
   // and q4f16 do not work for it. E5's q4 is 823 MB, so it keeps q8.
   const gemmaDownloader = createModelDownloader({
-    innerFactory: realPipelineFactory,
+    innerFactory: pipelineFactory,
     dtype: { wasm: "q8", webgpu: "q4" },
     // Gemma's vectors are wrong on WebGPU (ADR-0034).
     backend: EMBEDDING_GEMMA_BACKEND,
   });
   const gemmaProvider = createEmbeddingGemmaProvider(gemmaDownloader.factory);
   const e5Downloader = createModelDownloader({
-    innerFactory: realPipelineFactory,
+    innerFactory: pipelineFactory,
     dtype: { wasm: "q8", webgpu: "q8" },
   });
   const e5Provider = createMultilingualE5Provider(e5Downloader.factory);
