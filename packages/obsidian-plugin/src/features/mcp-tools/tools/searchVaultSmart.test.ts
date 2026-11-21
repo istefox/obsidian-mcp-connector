@@ -12,6 +12,13 @@ import {
   setMockIgnored,
 } from "$/test-setup";
 import { _resetIsUserIgnoredWarning } from "$/shared/isUserIgnored";
+import { startSmartSearchBinding } from "$/shared";
+import type McpToolsPlugin from "$/main";
+import {
+  refreshAutoProvider,
+  type SemanticSearchState,
+} from "$/features/semantic-search";
+import { createProviderFactory } from "$/features/semantic-search/services/providerFactory";
 import type {
   SearchOpts,
   SearchResult,
@@ -1035,5 +1042,199 @@ describe("search_vault_smart — groupByFile", () => {
       "B.md",
       "C.md",
     ]);
+  });
+});
+
+describe("search_vault_smart — Smart Connections that loads after the startup poll (#676)", () => {
+  const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * The production shape: a real binding (poll + refresh), a real provider
+   * factory and the real `refreshAutoProvider`, wired the way main.ts's
+   * `bindSmartSearch` / `refreshSmartSearchBinding` wire them. Only the
+   * Smart Connections plugin itself is fake, and it is absent until the
+   * test installs it, after the poll has already given up.
+   */
+  async function lateSmartConnections(provider: "auto" | "smart-connections") {
+    setMockFile("Notes/late.md", "late body");
+    const registry: Record<string, unknown> = {};
+    const lookups: string[][] = [];
+    const plugin = mockPlugin() as McpToolsPlugin & {
+      refreshSmartSearchBinding: () => boolean;
+    };
+    (plugin.app as unknown as { plugins: unknown }).plugins = {
+      plugins: registry,
+    };
+    let kicks = 0;
+    const choose = createProviderFactory({
+      plugin,
+      embedder: {} as never,
+      store: {} as never,
+    });
+    const settings = { provider, indexingMode: "live" } as const;
+    const state = {
+      provider: choose(settings as never),
+      settings,
+      chooser: choose,
+      startIndexerIfNeeded: () => {
+        kicks += 1;
+      },
+    } as unknown as SemanticSearchState;
+    plugin.semanticSearchState = state;
+    let completed = 0;
+    const binding = startSmartSearchBinding(plugin, {
+      bind: (dep) => {
+        plugin.smartSearch = dep.api;
+        refreshAutoProvider(state);
+      },
+      onComplete: () => completed++,
+      intervalMs: 5,
+      timeoutMs: 30,
+    });
+    plugin.refreshSmartSearchBinding = () => binding.refresh();
+    await settle(60);
+    expect(completed).toBe(1);
+    expect(plugin.smartSearch).toBeUndefined();
+
+    const install = () => {
+      registry["smart-connections"] = {
+        env: {
+          smart_sources: {
+            lookup: async (params: { hypotheticals: string[] }) => {
+              lookups.push(params.hypotheticals);
+              return [
+                {
+                  item: {
+                    path: "Notes/late.md",
+                    breadcrumbs: "Late",
+                    read: async () => "late body",
+                  },
+                  score: 0.9,
+                },
+              ];
+            },
+          },
+        },
+      };
+    };
+    const call = () =>
+      searchVaultSmartHandler({
+        arguments: { query: "late" },
+        app: mockApp(),
+        plugin,
+      });
+    return {
+      state,
+      binding,
+      install,
+      call,
+      lookups,
+      kicks: () => kicks,
+    };
+  }
+
+  test("auto: the next call binds Smart Connections, re-runs the chooser and is served by it", async () => {
+    const t = await lateSmartConnections("auto");
+    const nativeProvider = t.state.provider;
+    t.install();
+    const result = await t.call();
+    expect(result.isError).toBeFalsy();
+    expect(t.state.provider).not.toBe(nativeProvider);
+    expect(t.lookups).toEqual([["late"]]);
+    expect(result.content[0]?.text).toContain("Notes/late.md");
+    expect(t.kicks()).toBe(0);
+    t.binding.cancel();
+  });
+
+  test("smart-connections: not ready before it loads, served on the next call after", async () => {
+    const t = await lateSmartConnections("smart-connections");
+    const before = await t.call();
+    expect(before.isError).toBe(true);
+    const text = before.content[0]?.text ?? "";
+    expect(text).toMatch(/smart connections/i);
+    expect(text).toMatch(/checks again/i);
+    expect(text).not.toMatch(/\bwait\b/i);
+
+    t.install();
+    const after = await t.call();
+    expect(after.isError).toBeFalsy();
+    expect(t.lookups).toEqual([["late"]]);
+    expect(after.content[0]?.text).toContain("Notes/late.md");
+    t.binding.cancel();
+  });
+});
+
+describe("search_vault_smart — v2 window.SmartSearch that gains search after the poll (#676)", () => {
+  const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("auto: the bound object turning callable in place swaps the provider and Smart Connections serves", async () => {
+    setMockFile("Notes/v2.md", "v2 body");
+    const queries: string[] = [];
+    const legacy: {
+      search?: (q: string) => Promise<unknown[]>;
+    } = {};
+    const w = window as unknown as { SmartSearch?: unknown };
+    w.SmartSearch = legacy;
+    try {
+      const plugin = mockPlugin() as McpToolsPlugin & {
+        refreshSmartSearchBinding: () => boolean;
+      };
+      (plugin.app as unknown as { plugins: unknown }).plugins = {
+        plugins: {},
+      };
+      const choose = createProviderFactory({
+        plugin,
+        embedder: {} as never,
+        store: {} as never,
+      });
+      const settings = { provider: "auto", indexingMode: "live" } as const;
+      const state = {
+        provider: choose(settings as never),
+        settings,
+        chooser: choose,
+        startIndexerIfNeeded: () => {},
+      } as unknown as SemanticSearchState;
+      plugin.semanticSearchState = state;
+      const binding = startSmartSearchBinding(plugin, {
+        bind: (dep) => {
+          plugin.smartSearch = dep.api;
+          refreshAutoProvider(state);
+        },
+        onComplete: () => {},
+        intervalMs: 5,
+        timeoutMs: 30,
+      });
+      plugin.refreshSmartSearchBinding = () => binding.refresh();
+      await settle(60);
+      // The poll bound the incomplete object and gave up; auto is native.
+      expect(plugin.smartSearch).toBe(legacy as never);
+      const nativeProvider = state.provider;
+
+      legacy.search = async (q: string) => {
+        queries.push(q);
+        return [
+          {
+            item: {
+              path: "Notes/v2.md",
+              breadcrumbs: "V2",
+              read: async () => "v2 body",
+            },
+            score: 0.8,
+          },
+        ];
+      };
+      const result = await searchVaultSmartHandler({
+        arguments: { query: "v2" },
+        app: mockApp(),
+        plugin,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(state.provider).not.toBe(nativeProvider);
+      expect(queries).toEqual(["v2"]);
+      expect(result.content[0]?.text).toContain("Notes/v2.md");
+      binding.cancel();
+    } finally {
+      delete w.SmartSearch;
+    }
   });
 });

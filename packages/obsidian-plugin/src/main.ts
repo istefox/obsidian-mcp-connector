@@ -39,7 +39,11 @@ import {
 } from "./features/semantic-search";
 import { wireSemanticSearch } from "./features/semantic-search/services/productionWiring";
 import { createSemanticWiring } from "./features/semantic-search/services/wiringLifecycle";
-import { loadSmartSearchAPI } from "./shared";
+import {
+  startSmartSearchBinding,
+  type Dependencies,
+  type SmartSearchBinding,
+} from "./shared";
 import { releaseArkRegistry } from "./shared/arkRegistry";
 import { killTrackedChildren } from "./features/mcp-client-config/services/childProcesses";
 import { createGuardedApp, isGuardedApp } from "./shared/guardedApp";
@@ -88,22 +92,60 @@ export default class McpToolsPlugin extends Plugin {
 
   /**
    * Resolved Smart Connections search API, populated best-effort at
-   * onload by the `loadSmartSearchAPI` poll. The
-   * SmartConnectionsProvider + provider factory read this field to
-   * decide readiness and to dispatch `search_vault_smart` queries when
-   * the user picks the "smart-connections" (or "auto") provider.
-   * Undefined until the loader resolves, or permanently if Smart
-   * Connections is not installed (#99).
+   * onload by the `startSmartSearchBinding` poll, and later by
+   * `refreshSmartSearchBinding` when Smart Connections exposes its API
+   * after the poll gave up (#676). The SmartConnectionsProvider +
+   * provider factory read this field to decide readiness and to
+   * dispatch `search_vault_smart` queries when the user picks the
+   * "smart-connections" (or "auto") provider. Undefined until Smart
+   * Connections exposes a callable search API (#99).
    */
   smartSearch?: SmartConnections.SmartSearch;
 
   /**
-   * Cancels the Smart Connections detection poll (up to 5s at onload).
-   * Kept so onunload can stop it — without this, disabling the plugin
-   * inside the poll window leaves the timer running against an unloaded
-   * plugin instance.
+   * The Smart Connections binding: a detection poll (up to 5s at onload)
+   * plus the on-demand `refresh` that `search_vault_smart` runs.
+   * Cancelled by onunload — without this, disabling the plugin inside
+   * the poll window leaves the timer running against an unloaded plugin
+   * instance, and a late `refresh` would bind onto it.
    */
-  private cancelSmartSearchPoll?: () => void;
+  private smartSearchBinding?: SmartSearchBinding;
+
+  /**
+   * Make sure `smartSearch` is bound if Smart Connections has a callable
+   * search API by now, whenever it appeared (#676). `search_vault_smart`
+   * calls this before it reads the provider. Returns whether the binding
+   * is callable; false once the plugin is unloading.
+   */
+  refreshSmartSearchBinding(): boolean {
+    if (this.unloaded || !this.smartSearchBinding) return false;
+    try {
+      return this.smartSearchBinding.refresh();
+    } catch (error) {
+      logger.debug("Smart Connections re-check skipped", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * The one bind path for the startup poll and for
+   * `refreshSmartSearchBinding`, so a late binding re-runs the `auto`
+   * chooser exactly like an early one.
+   */
+  private bindSmartSearch(dep: Dependencies["smart-connections"]): void {
+    this.smartSearch = dep.api;
+    // #430: `wireSemanticSearch` already cached a provider choice before
+    // this binding could exist, so "auto" was pinned to the native
+    // fallback regardless of how fast Smart Connections loaded.
+    // Reconsider now that the binding is real. `semanticSearchState` is
+    // guaranteed set-or-absent here: the binding is not started until
+    // `await wireSemanticSearch(this)` in onload has already resolved.
+    if (this.semanticSearchState) {
+      refreshAutoProvider(this.semanticSearchState);
+    }
+  }
 
   /**
    * In-process permission check for `execute_obsidian_command`,
@@ -267,30 +309,19 @@ export default class McpToolsPlugin extends Plugin {
     // undefined and the provider can never become ready even with
     // Smart Connections fully loaded (#99). Best-effort, same shape as
     // the Local REST API binding above.
-    // The returned cancel function lets onunload stop the poll if the
-    // plugin is disabled inside the 5s detection window.
-    this.cancelSmartSearchPoll = loadSmartSearchAPI(this, {
-      onNext: (dep) => {
-        this.smartSearch = dep.api;
-        // #430: `wireSemanticSearch` above already cached a provider
-        // choice before this binding could exist, so "auto" was pinned
-        // to the native fallback regardless of how fast Smart
-        // Connections loaded. Reconsider now that the binding is real.
-        // `semanticSearchState` is guaranteed set-or-absent by this
-        // point: this subscription is not created until the `await
-        // wireSemanticSearch(this)` above has already resolved.
-        if (this.semanticSearchState) {
-          refreshAutoProvider(this.semanticSearchState);
-        }
-      },
+    // The poll gives up after 5s; a Smart Connections that exposes its
+    // API later is bound by `refreshSmartSearchBinding` on the next
+    // `search_vault_smart` call (#676). onunload cancels both.
+    this.smartSearchBinding = startSmartSearchBinding(this, {
+      bind: (dep) => this.bindSmartSearch(dep),
       onComplete: () => {
-        if (this.smartSearch) {
+        if (typeof this.smartSearch?.search === "function") {
           logger.info(
             "Smart Connections detected — `search_vault_smart` can use it",
           );
         } else {
           logger.debug(
-            "Smart Connections not installed — `search_vault_smart` falls back to the native provider unless reconfigured",
+            "Smart Connections not ready at startup — `search_vault_smart` checks again on every call",
           );
         }
       },
@@ -329,8 +360,8 @@ export default class McpToolsPlugin extends Plugin {
     // call back into this instance when it exits.
     killTrackedChildren();
     disableSettingsReadCache(this);
-    this.cancelSmartSearchPoll?.();
-    this.cancelSmartSearchPoll = undefined;
+    this.smartSearchBinding?.cancel();
+    this.smartSearchBinding = undefined;
     if (this.promptsState) {
       promptsTeardown(this.promptsState);
       this.promptsState = undefined;
