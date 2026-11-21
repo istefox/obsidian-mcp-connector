@@ -246,6 +246,21 @@ export async function searchVaultSmartHandler(
   // native (the historical unconditional behaviour) to avoid
   // regressing the native default.
   const settings = state.settings;
+
+  // #676: Smart Connections can expose its API long after the startup
+  // poll gave up (a minute or more on a large vault). Re-check it now,
+  // before anything below reads the binding: under "auto" with Smart
+  // Connections unbound the cached provider is the native one, whose
+  // isReady() is always true, so a re-check left for the not-ready
+  // branch would never run. The bind re-runs the "auto" chooser (#430).
+  // Optional: headless host data and test fixtures do not carry it.
+  if (
+    settings?.provider === "smart-connections" ||
+    settings?.provider === "auto"
+  ) {
+    ctx.plugin.refreshSmartSearchBinding?.();
+  }
+
   const usingSmartConnections =
     settings?.provider === "smart-connections" ||
     (settings?.provider === "auto" && isSmartConnectionsAvailable(ctx.plugin));
@@ -310,7 +325,7 @@ export async function searchVaultSmartHandler(
     }
     return errorJson(
       usingSmartConnections
-        ? "Semantic search is not ready: the Smart Connections plugin is not loaded or has not finished indexing this vault. Wait for Smart Connections to finish loading, or open Settings → MCP Connector → Semantic Search to switch providers."
+        ? "Semantic search is not ready: Smart Connections has not exposed its search API yet. It may be disabled, or still loading or indexing this vault. Every call checks again, so retry once Smart Connections has finished loading, or open Settings → MCP Connector → Semantic Search to switch providers."
         : "Semantic search is not ready. The provider may still be loading the embedding model, or the configured backend is unavailable. Open Settings → MCP Connector → Semantic Search to choose or reconfigure a provider.",
       "semantic_search_unavailable",
     );

@@ -192,7 +192,11 @@ export function detectSmartConnections(
 }
 
 export type SmartSearchPollOptions = {
-  /** Called when `installed` changes, the first tick included. */
+  /**
+   * Called on the first tick and whenever `installed` or the callability
+   * of `api.search` changes (#676: an API that turns callable while
+   * `installed` stays the same must still be reported).
+   */
   onNext: (dep: Dependencies["smart-connections"]) => void;
   /** Called once: a usable API was found, the horizon passed, or a tick threw. */
   onComplete: () => void;
@@ -204,13 +208,25 @@ export type SmartSearchPollOptions = {
   timeoutMs?: number;
 };
 
+function hasCallableSearch(
+  api: SmartConnections.SmartSearch | undefined,
+): boolean {
+  return typeof api?.search === "function";
+}
+
 /**
  * Poll for the Smart Connections search API while Obsidian is still
  * loading plugins. Ticks every `intervalMs` up to `timeoutMs`, reports a
- * detection result whenever `installed` flips (so the first tick always
- * reports), and stops right after the first result whose `api.search` is
- * callable. Returns a cancel function for `onunload`: cancelling does not
- * call `onComplete`.
+ * detection result whenever `installed` or the callability of
+ * `api.search` changes (so the first tick always reports, and so does the
+ * tick that finds a usable API), and stops right after the first result
+ * whose `api.search` is callable. Returns a cancel function for
+ * `onunload`: cancelling does not call `onComplete`.
+ *
+ * The poll is only the fast path for a normal startup. A Smart
+ * Connections that exposes its API after the horizon is bound by
+ * `startSmartSearchBinding`'s `refresh`, which `search_vault_smart` runs
+ * on every call (#676).
  *
  * Plain timers on purpose. This was the one rxjs site in the plugin and
  * carried the whole library (~330 KB unminified) into the bundle.
@@ -221,7 +237,8 @@ export function loadSmartSearchAPI(
 ): () => void {
   const intervalMs = options.intervalMs ?? 200;
   const timeoutMs = options.timeoutMs ?? 5000;
-  let lastInstalled: boolean | undefined;
+  // Never a dep's own key on the first tick, so the first tick reports.
+  let lastKey: string | undefined;
   let done = false;
 
   const stop = () => {
@@ -245,16 +262,92 @@ export function loadSmartSearchAPI(
       finish();
       return;
     }
-    if (dep.installed !== lastInstalled) {
-      lastInstalled = dep.installed;
+    // Not the `api` identity: the v3 branch builds a new wrapper on every
+    // detection, so identity would report on every tick.
+    const callable = hasCallableSearch(dep.api);
+    const key = `${dep.installed}|${callable}`;
+    if (key !== lastKey) {
+      lastKey = key;
       options.onNext(dep);
     }
-    if (typeof dep.api?.search === "function") finish();
+    if (callable) finish();
   }, intervalMs);
   const horizon = window.setTimeout(finish, timeoutMs);
 
   return () => {
     if (!done) stop();
+  };
+}
+
+export type SmartSearchBindingOptions = Omit<
+  SmartSearchPollOptions,
+  "onNext"
+> & {
+  /**
+   * The one bind path: assigns the API and re-runs whatever depends on it.
+   * Called by the startup poll and by `refresh`.
+   */
+  bind: (dep: Dependencies["smart-connections"]) => void;
+};
+
+export type SmartSearchBinding = {
+  /**
+   * When `plugin.smartSearch` has no callable `search`, look at Smart
+   * Connections once more and, if a usable API is there now, hand it to
+   * `bind`. Returns whether `plugin.smartSearch.search` is callable
+   * afterwards. A no-op returning false once cancelled.
+   */
+  refresh: () => boolean;
+  /** Stops the startup poll and turns `refresh` into a no-op. */
+  cancel: () => void;
+};
+
+/**
+ * Binds the Smart Connections search API onto `plugin.smartSearch`: the
+ * startup poll (`loadSmartSearchAPI`) for the common case, plus an
+ * on-demand `refresh` for a Smart Connections that exposes its API only
+ * after the poll's horizon, which on a large vault can be a minute or
+ * more (#676). Both go through the same `bind`, so a late binding re-runs
+ * the `auto` chooser exactly like an early one (#430).
+ *
+ * `refresh` is called at the time the binding matters, on a
+ * `search_vault_smart` call, rather than from a timer that keeps running
+ * for the whole session: no reader of `plugin.smartSearch` sits outside
+ * that call path, and a vault without Smart Connections pays nothing.
+ */
+export function startSmartSearchBinding(
+  plugin: McpToolsPlugin,
+  options: SmartSearchBindingOptions,
+): SmartSearchBinding {
+  const { bind: bindApi, ...pollOptions } = options;
+  let cancelled = false;
+  // Whether `bind` has been handed a callable API. Not the same as
+  // `plugin.smartSearch.search` being callable now: a v2
+  // `window.SmartSearch` can be bound while it has no `search` and gain
+  // one later IN PLACE, which makes the bound field callable without
+  // `bind` (and the `auto` chooser it re-runs) ever having seen it.
+  let boundCallable = false;
+  const bind = (dep: Dependencies["smart-connections"]) => {
+    boundCallable = hasCallableSearch(dep.api);
+    bindApi(dep);
+  };
+  const cancelPoll = loadSmartSearchAPI(plugin, {
+    ...pollOptions,
+    onNext: bind,
+  });
+  return {
+    refresh: () => {
+      if (cancelled) return false;
+      if (boundCallable && hasCallableSearch(plugin.smartSearch)) return true;
+      const dep = detectSmartConnections(plugin);
+      if (!hasCallableSearch(dep.api)) return false;
+      bind(dep);
+      return hasCallableSearch(plugin.smartSearch);
+    },
+    cancel: () => {
+      cancelled = true;
+      cancelPoll();
+    },
   };
 }
 
