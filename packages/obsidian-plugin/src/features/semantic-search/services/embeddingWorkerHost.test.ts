@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { EmbedTensor } from "./embedder";
+import type { EmbedTensor, PipelineFn } from "./embedder";
 import {
   createWorkerPipeline,
   WorkerBootError,
@@ -299,7 +299,7 @@ describe("createWorkerPipeline", () => {
     expect(workers[0]?.terminated).toBe(true);
   });
 
-  test("a crash fails the call that was running, and a new worker takes what waited", async () => {
+  test("a crash puts the running call on a new worker, ahead of what waited", async () => {
     const { lib, order, release } = gated();
     const { workers, spawn } = start(lib);
     const pipe = await createWorkerPipeline({
@@ -313,15 +313,208 @@ describe("createWorkerPipeline", () => {
     const waiting = pipe("doc-2");
     await tick();
     workers[0]!.crash("out of memory");
-
-    await expect(running).rejects.toThrow("embedding worker crashed");
     expect(workers[0]!.terminated).toBe(true);
     await tick();
     expect(workers).toHaveLength(2);
     expect(lib.loads).toHaveLength(2);
-    expect(order).toEqual(["doc-1", "doc-2"]);
+    expect(order).toEqual(["doc-1", "doc-1"]);
     release[1]?.();
+    await running;
+    await tick();
+    release[2]?.();
     await waiting;
+    expect(order).toEqual(["doc-1", "doc-1", "doc-2"]);
+  });
+
+  test("a call the worker never answers ends as a crash and is tried on a new worker", async () => {
+    const { lib, order, release } = gated();
+    const { workers, spawn } = start(lib);
+    const pipe = await createWorkerPipeline({
+      spawn,
+      model: "m",
+      options: OPTIONS,
+      env: ENV,
+      callTimeoutMs: 20,
+    });
+
+    const call = pipe("doc-1");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(workers[0]!.terminated).toBe(true);
+    expect(workers).toHaveLength(2);
+    release[1]?.();
+    await call;
+    expect(order).toEqual(["doc-1", "doc-1"]);
+    await pipe.dispose!();
+  });
+
+  test("a message that cannot be read is a crash", async () => {
+    const { lib, release } = gated();
+    const { workers, spawn } = start(lib);
+    const pipe = await createWorkerPipeline({
+      spawn,
+      model: "m",
+      options: OPTIONS,
+      env: ENV,
+    });
+
+    const call = pipe("doc-1");
+    await tick();
+    workers[0]!.onmessageerror?.();
+    expect(workers[0]!.terminated).toBe(true);
+    await tick();
+    release[1]?.();
+    await call;
+    await pipe.dispose!();
+  });
+
+  test("a call that takes two workers down fails alone", async () => {
+    const { lib, order, release } = gated();
+    const { workers, spawn } = start(lib);
+    const pipe = await createWorkerPipeline({
+      spawn,
+      model: "m",
+      options: OPTIONS,
+      env: ENV,
+    });
+
+    const poison = pipe("poison");
+    const next = pipe("doc-2");
+    await tick();
+    workers[0]!.crash("out of memory");
+    await tick();
+    workers[1]!.crash("out of memory");
+    await expect(poison).rejects.toThrow("embedding worker crashed");
+    await tick();
+    expect(workers).toHaveLength(3);
+    release[2]?.();
+    await next;
+    expect(order).toEqual(["poison", "poison", "doc-2"]);
+  });
+
+  describe("main-thread takeover", () => {
+    /** A main-thread pipeline that also answers the sentence path. */
+    const mainPipe = () => {
+      const calls: { kind: string; input: unknown; opts: unknown }[] = [];
+      const pipe: PipelineFn = async (input, opts) => {
+        calls.push({ kind: "pooled", input, opts });
+        return { data: new Float32Array([9]) };
+      };
+      let disposed = 0;
+      pipe.dispose = async () => {
+        disposed += 1;
+      };
+      Object.assign(pipe, {
+        tokenizer: (texts: string[]) => texts,
+        model: async (inputs: unknown) => {
+          calls.push({ kind: "sentence", input: inputs, opts: undefined });
+          return {
+            sentence_embedding: {
+              data: new Float32Array([3, 4]),
+              dims: [1, 2],
+            },
+          };
+        },
+      });
+      return { pipe, calls, disposed: () => disposed };
+    };
+
+    const takeover = async (extra: {
+      failSpawnAfter?: number;
+      fallback?: () => Promise<PipelineFn>;
+    }) => {
+      const { lib, release } = gated();
+      const workers: FakeWorker[] = [];
+      const here = mainPipe();
+      let unavailable = 0;
+      const pipe = await createWorkerPipeline({
+        spawn: () => {
+          if (workers.length >= (extra.failSpawnAfter ?? Infinity)) {
+            throw new Error("workers are blocked");
+          }
+          const w = fakeWorker(lib);
+          workers.push(w);
+          return w;
+        },
+        model: "m",
+        options: OPTIONS,
+        env: ENV,
+        fallback: extra.fallback ?? (async () => here.pipe),
+        onWorkerUnavailable: () => {
+          unavailable += 1;
+        },
+      });
+      return { pipe, workers, here, release, unavailable: () => unavailable };
+    };
+
+    test("no worker comes back: the queue runs on the main thread", async () => {
+      const t = await takeover({ failSpawnAfter: 1 });
+      const first = t.pipe("doc-1", { pooling: "mean", priority: "query" });
+      const second = t.pipe.sentenceEmbedding!("doc-2", { normalize: false });
+      await tick();
+      t.workers[0]!.crash("gone");
+
+      expect((await first).data).toEqual(new Float32Array([9]));
+      // The sentence path reads `sentence_embedding`, as in the worker.
+      expect((await second).data).toEqual(new Float32Array([3, 4]));
+      expect(t.here.calls.map((c) => c.kind)).toEqual(["pooled", "sentence"]);
+      // `priority` is the host's own and does not reach the pipeline.
+      expect(t.here.calls[0]!.opts).toEqual({ pooling: "mean" });
+      expect(t.unavailable()).toBe(1);
+      expect(t.pipe.concurrency!()).toBe(1);
+
+      await t.pipe("doc-3");
+      expect(t.workers).toHaveLength(1);
+      await t.pipe.dispose!();
+      expect(t.here.disposed()).toBe(1);
+    });
+
+    test("three crashes in a row with no answer in between", async () => {
+      const t = await takeover({});
+      const poison = t.pipe("poison");
+      const next = t.pipe("doc-2");
+      await tick();
+      t.workers[0]!.crash("gone");
+      await tick();
+      t.workers[1]!.crash("gone");
+      await expect(poison).rejects.toThrow("embedding worker crashed");
+      await tick();
+      t.workers[2]!.crash("gone");
+
+      expect((await next).data).toEqual(new Float32Array([9]));
+      expect(t.workers).toHaveLength(3);
+      expect(t.workers.every((w) => w.terminated)).toBe(true);
+      // The worker booted each time: the machine can still run workers.
+      expect(t.unavailable()).toBe(0);
+      await t.pipe.dispose!();
+    });
+
+    test("an answered call resets the count of crashes", async () => {
+      const t = await takeover({});
+      for (let i = 0; i < 4; i++) {
+        const call = t.pipe(`doc-${i}`);
+        await tick();
+        t.workers[i]!.crash("gone");
+        await tick();
+        t.release[2 * i + 1]?.();
+        await call;
+      }
+      expect(t.here.calls).toHaveLength(0);
+      expect(t.workers).toHaveLength(5);
+      await t.pipe.dispose!();
+    });
+
+    test("dispose does not wait for a main-thread load that never ends", async () => {
+      const t = await takeover({
+        failSpawnAfter: 1,
+        fallback: () => new Promise(() => {}),
+      });
+      const call = t.pipe("doc-1").catch((e: unknown) => e);
+      await tick();
+      t.workers[0]!.crash("gone");
+      await tick();
+      await t.pipe.dispose!();
+      expect(await call).toBeInstanceOf(Error);
+    });
   });
 
   describe("pool", () => {
@@ -555,6 +748,52 @@ describe("createWorkerPipeline", () => {
       expect(workers.map((w) => w.terminated)).toEqual([true, true]);
       expect(lib.disposed).toBe(2);
     });
+
+    test("dispose does not wait for a spare whose load never ends", async () => {
+      const { lib, release } = gated();
+      const load = lib.pipeline;
+      let loads = 0;
+      // The first worker loads; the spare's load hangs, as a stalled
+      // download of the weights would.
+      lib.pipeline = (...args) =>
+        ++loads === 1 ? load(...args) : new Promise(() => {});
+      const { pipe, workers } = await pool(lib, 2);
+      const calls = Promise.allSettled([pipe("a"), pipe("b")]);
+      await settle();
+      expect(workers).toHaveLength(2);
+      expect(workers[1]!.terminated).toBe(false);
+
+      const disposing = pipe.dispose!();
+      release[0]?.();
+      await disposing;
+      await calls;
+      expect(workers.map((w) => w.terminated)).toEqual([true, true]);
+    });
+  });
+
+  test("a load that goes silent ends as a load error, worker terminated", async () => {
+    const lib = fakeLib(() => ({ data: new Float32Array([1]) }));
+    lib.pipeline = () => new Promise(() => {});
+    const workers: FakeWorker[] = [];
+    const loading = createWorkerPipeline({
+      spawn: () => {
+        const w = fakeWorker(lib);
+        workers.push(w);
+        return w;
+      },
+      model: "m",
+      options: OPTIONS,
+      env: ENV,
+      loadStallTimeoutMs: 10,
+    });
+    const err = await loading.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(WorkerBootError);
+    expect((err as Error).message).toContain("stopped answering");
+    expect(workers[0]!.terminated).toBe(true);
   });
 
   test("dispose releases the model in the worker, then terminates it", async () => {

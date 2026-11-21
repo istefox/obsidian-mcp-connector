@@ -60,6 +60,13 @@ export function embeddingWorkerSpawner(): (() => WorkerLike) | null {
     const revoke = (): void => URL.revokeObjectURL(url);
     worker.addEventListener("message", revoke, { once: true });
     worker.addEventListener("error", revoke, { once: true });
+    // A worker that stayed silent is terminated by the host: the URL goes
+    // then, at the latest.
+    const terminate = worker.terminate.bind(worker);
+    worker.terminate = () => {
+      revoke();
+      terminate();
+    };
     return worker as unknown as WorkerLike;
   };
 }

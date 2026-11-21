@@ -17,6 +17,7 @@
  * ready first takes the head of the queue.
  */
 import { logger } from "$/shared/logger";
+import { wrapSentenceEmbedding } from "./sentenceEmbeddingPipeline";
 import type {
   EmbedTensor,
   PipelineCallOpts,
@@ -35,6 +36,8 @@ export type WorkerLike = {
   terminate(): void;
   onmessage: ((event: { data: WorkerMessage }) => void) | null;
   onerror: ((event: { message?: string }) => void) | null;
+  /** A message from the worker that could not be read. */
+  onmessageerror?: (() => void) | null;
 };
 
 /**
@@ -59,21 +62,46 @@ export type WorkerPipelineOpts = {
   onProgress?: ProgressCallback;
   /** How long a worker may take to evaluate the library. Default 30 s. */
   bootTimeoutMs?: number;
+  /**
+   * How long a model load may go without a word from the worker, progress
+   * events included. Default 5 min: a download that stalls ends there.
+   */
+  loadStallTimeoutMs?: number;
+  /**
+   * How long a worker may take to answer one call. Default 30 min: a call
+   * is 8 texts at most, about a minute on the machine measured, and a
+   * false timeout costs a crash. Past it the worker counts as dead.
+   */
+  callTimeoutMs?: number;
   /** Most workers alive at once. Default 1. */
   poolSize?: number;
   /** How long a spare worker may sit idle before it is released. */
   idleReleaseMs?: number;
+  /**
+   * Loads the same model on the main thread. Given, the pipeline moves
+   * there for good once its workers stop coming back, instead of failing
+   * every call; absent, those calls are rejected.
+   */
+  fallback?: () => Promise<PipelineFn>;
+  /** Called when a worker could not even boot after the first one did. */
+  onWorkerUnavailable?: () => void;
 };
 
 const DEFAULT_BOOT_TIMEOUT_MS = 30_000;
+const DEFAULT_LOAD_STALL_TIMEOUT_MS = 300_000;
+const DEFAULT_CALL_TIMEOUT_MS = 1_800_000;
 const DISPOSE_TIMEOUT_MS = 5_000;
 const DEFAULT_IDLE_RELEASE_MS = 60_000;
+/** A call that took this many workers down with it is rejected. */
+const MAX_CRASHES_PER_JOB = 2;
+/** Worker crashes in a row, no call answered in between, before giving up. */
+const MAX_CONSECUTIVE_CRASHES = 3;
 
 type Job = {
   id: number;
   query: boolean;
-  /** Already put back once after its worker died. */
-  retried: boolean;
+  /** How many workers died while running it. */
+  crashes: number;
   input: string | string[];
   opts: PipelineCallOpts | undefined;
   sentence: boolean;
@@ -89,8 +117,16 @@ type Session = {
   onResult: ((message: WorkerMessage) => void) | null;
 };
 
-function startSession(opts: WorkerPipelineOpts): Promise<Session> {
-  return new Promise<Session>((resolve, reject) => {
+/** A worker being started, and the way to give up on it. */
+type Starting = {
+  ready: Promise<Session>;
+  /** Terminates the worker if it is not up yet. No effect afterwards. */
+  cancel: (err: Error) => void;
+};
+
+function startSession(opts: WorkerPipelineOpts): Starting {
+  let cancel: (err: Error) => void = () => {};
+  const ready = new Promise<Session>((resolve, reject) => {
     let worker: WorkerLike;
     try {
       worker = opts.spawn();
@@ -105,22 +141,41 @@ function startSession(opts: WorkerPipelineOpts): Promise<Session> {
 
     let booted = false;
     let loaded = false;
+    let settled = false;
     const session: Session = { worker, onCrash: null, onResult: null };
 
     const bootTimer = setTimeout(() => {
       fail(new WorkerBootError("embedding worker did not start in time"));
     }, opts.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS);
 
+    // Armed once the worker booted, pushed back by every message from it:
+    // a load is allowed to be long, not to be silent.
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    const stallMs = opts.loadStallTimeoutMs ?? DEFAULT_LOAD_STALL_TIMEOUT_MS;
+    const stopStallTimer = (): void => {
+      if (stallTimer !== null) clearTimeout(stallTimer);
+      stallTimer = null;
+    };
+    const armStallTimer = (): void => {
+      stopStallTimer();
+      stallTimer = setTimeout(() => {
+        fail(new Error("embedding worker stopped answering while loading"));
+      }, stallMs);
+    };
+
     const fail = (err: Error): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(bootTimer);
+      stopStallTimer();
       worker.onmessage = null;
       worker.onerror = null;
+      worker.onmessageerror = null;
       worker.terminate();
       reject(err);
     };
 
-    worker.onerror = (event) => {
-      const detail = event.message ?? "unknown error";
+    const failed = (detail: string): void => {
       if (!booted) {
         fail(
           new WorkerBootError(`embedding worker failed to start: ${detail}`),
@@ -130,16 +185,21 @@ function startSession(opts: WorkerPipelineOpts): Promise<Session> {
       } else {
         worker.onmessage = null;
         worker.onerror = null;
+        worker.onmessageerror = null;
         worker.terminate();
         session.onCrash?.(new Error(`embedding worker crashed: ${detail}`));
       }
     };
+    worker.onerror = (event) => failed(event.message ?? "unknown error");
+    // A result that cannot be read is a call that will never be answered.
+    worker.onmessageerror = () => failed("unreadable message");
 
     worker.onmessage = (event) => {
       const message = event.data;
       if (message.type === "booted") {
         booted = true;
         clearTimeout(bootTimer);
+        armStallTimer();
         worker.postMessage({
           type: "load",
           model: opts.model,
@@ -147,9 +207,12 @@ function startSession(opts: WorkerPipelineOpts): Promise<Session> {
           env: opts.env,
         });
       } else if (message.type === "progress") {
+        armStallTimer();
         opts.onProgress?.(message.info);
       } else if (message.type === "loaded") {
         loaded = true;
+        settled = true;
+        stopStallTimer();
         resolve(session);
       } else if (message.type === "load-error") {
         fail(new Error(message.message));
@@ -157,15 +220,21 @@ function startSession(opts: WorkerPipelineOpts): Promise<Session> {
         session.onResult?.(message);
       }
     };
+    cancel = fail;
   });
+  return { ready, cancel };
 }
 
 /** One place in the pool: a worker, or one being started, and its call. */
 type Slot = {
   session: Session | null;
   starting: Promise<void> | null;
+  /** Gives up on the worker being started. Set while `starting` is. */
+  cancelStart: ((err: Error) => void) | null;
   running: Job | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  /** Ends a call the worker does not answer. Set while `running` is. */
+  callTimer: ReturnType<typeof setTimeout> | null;
 };
 
 /**
@@ -188,6 +257,7 @@ async function closeSession(s: Session): Promise<void> {
   });
   s.worker.onmessage = null;
   s.worker.onerror = null;
+  s.worker.onmessageerror = null;
   s.worker.terminate();
 }
 
@@ -196,7 +266,7 @@ export async function createWorkerPipeline(
 ): Promise<PipelineFn> {
   // The first start is awaited: a worker that cannot boot rejects here,
   // where the caller can still choose the main thread.
-  const first = await startSession(opts);
+  const first = await startSession(opts).ready;
 
   let disposed = false;
   let nextId = 1;
@@ -207,14 +277,77 @@ export async function createWorkerPipeline(
   const slots: Slot[] = [];
   const queries: Job[] = [];
   const documents: Job[] = [];
+  let consecutiveCrashes = 0;
+  // Set once the workers are given up on: no worker is started after
+  // that, and with none left the calls run here, one at a time.
+  let onMainThread = false;
+  const main: {
+    loading: Promise<PipelineFn> | null;
+    pipe: PipelineFn | null;
+    sentence: PipelineFn | null;
+    running: Job | null;
+  } = { loading: null, pipe: null, sentence: null, running: null };
+
+  const moveToMainThread = (cause: Error): void => {
+    if (onMainThread) return;
+    onMainThread = true;
+    logger.warn(
+      "semantic-search: embedding workers given up on, running on the main thread",
+      { model: opts.model, message: cause.message },
+    );
+    for (const slot of [...slots]) {
+      if (slot.starting) {
+        slot.cancelStart?.(cause);
+        remove(slot);
+      } else if (!slot.session) {
+        remove(slot);
+      }
+    }
+  };
+
+  const runOnMainThread = async (job: Job): Promise<void> => {
+    main.running = job;
+    try {
+      if (!main.pipe) {
+        main.loading ??= opts.fallback!();
+        try {
+          main.pipe = await main.loading;
+        } finally {
+          main.loading = null;
+        }
+        if (disposed) {
+          void main.pipe.dispose?.();
+          return;
+        }
+      }
+      let run = main.pipe;
+      if (job.sentence) {
+        main.sentence ??= wrapSentenceEmbedding(main.pipe);
+        run = main.sentence;
+      }
+      job.resolve(await run(job.input, job.opts));
+    } catch (err) {
+      job.reject(toError(err));
+    } finally {
+      main.running = null;
+      pump();
+    }
+  };
 
   const stopIdleTimer = (slot: Slot): void => {
     if (slot.idleTimer !== null) clearTimeout(slot.idleTimer);
     slot.idleTimer = null;
   };
 
+  const callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const stopCallTimer = (slot: Slot): void => {
+    if (slot.callTimer !== null) clearTimeout(slot.callTimer);
+    slot.callTimer = null;
+  };
+
   const remove = (slot: Slot): void => {
     stopIdleTimer(slot);
+    stopCallTimer(slot);
     const at = slots.indexOf(slot);
     if (at !== -1) slots.splice(at, 1);
   };
@@ -227,8 +360,10 @@ export async function createWorkerPipeline(
       if (message.type !== "result" && message.type !== "run-error") return;
       const job = slot.running;
       if (!job || job.id !== message.id) return;
+      stopCallTimer(slot);
       slot.running = null;
       if (message.type === "result") {
+        consecutiveCrashes = 0;
         job.resolve({
           data: message.data,
           ...(message.dims ? { dims: message.dims } : {}),
@@ -238,40 +373,51 @@ export async function createWorkerPipeline(
       }
       pump();
     };
-    s.onCrash = (err) => {
-      logger.warn("semantic-search: embedding worker crashed", {
-        message: err.message,
-        workers: slots.length,
-      });
-      const job = slot.running;
-      slot.running = null;
-      slot.session = null;
-      if (slots.length > 1) {
-        // One of several died, most likely for want of memory: stop
-        // asking for that many, and give its call to the others once.
-        remove(slot);
-        maxSize = slots.length;
-        if (job && !job.retried) {
-          job.retried = true;
-          (job.query ? queries : documents).unshift(job);
-        } else {
-          job?.reject(err);
-        }
+    s.onCrash = (err) => crashed(slot, err);
+  };
+
+  /** The one place a dead worker is handled, whatever killed it. */
+  const crashed = (slot: Slot, err: Error): void => {
+    logger.warn("semantic-search: embedding worker crashed", {
+      message: err.message,
+      workers: slots.length,
+    });
+    const job = slot.running;
+    stopCallTimer(slot);
+    slot.running = null;
+    slot.session = null;
+    consecutiveCrashes += 1;
+    if (slots.length > 1 || onMainThread) {
+      // One of several died, most likely for want of memory: stop
+      // asking for that many.
+      remove(slot);
+      maxSize = Math.max(1, slots.length);
+    }
+    // Its call goes back to the head of the queue, for another worker or
+    // a fresh one. A call that keeps killing its worker fails alone.
+    if (job) {
+      job.crashes += 1;
+      if (job.crashes < MAX_CRASHES_PER_JOB) {
+        (job.query ? queries : documents).unshift(job);
       } else {
-        // The only worker: its call fails, and the next one starts a
-        // fresh worker. The weights are in the browser cache by then.
-        job?.reject(err);
+        job.reject(err);
       }
-      pump();
-    };
+    }
+    if (opts.fallback && consecutiveCrashes >= MAX_CONSECUTIVE_CRASHES) {
+      moveToMainThread(err);
+    }
+    pump();
   };
 
   const start = (slot: Slot): void => {
     // Progress goes nowhere here: the downloader that listened to the
     // first load has long reported "ready".
-    slot.starting = startSession({ ...opts, onProgress: undefined }).then(
+    const attempt = startSession({ ...opts, onProgress: undefined });
+    slot.cancelStart = attempt.cancel;
+    slot.starting = attempt.ready.then(
       async (s) => {
         slot.starting = null;
+        slot.cancelStart = null;
         if (disposed || !slots.includes(slot)) {
           await closeSession(s);
           return;
@@ -282,6 +428,7 @@ export async function createWorkerPipeline(
       },
       (err: unknown) => {
         slot.starting = null;
+        slot.cancelStart = null;
         if (disposed) return;
         if (slots.some((o) => o !== slot && (o.session || o.starting))) {
           // A spare that would not start: carry on with the workers
@@ -292,6 +439,12 @@ export async function createWorkerPipeline(
             message: toError(err).message,
             workers: slots.length,
           });
+        } else if (opts.fallback) {
+          // No worker at all, and none to be had: the queue runs on the
+          // main thread from here on.
+          remove(slot);
+          if (err instanceof WorkerBootError) opts.onWorkerUnavailable?.();
+          moveToMainThread(toError(err));
         } else {
           // No worker at all: the call at the head of the queue fails,
           // and the one after it tries again.
@@ -326,6 +479,18 @@ export async function createWorkerPipeline(
       if (!job) break;
       stopIdleTimer(slot);
       slot.running = job;
+      slot.callTimer = setTimeout(() => {
+        // Nothing can be asked of a worker that is stuck in a call: it is
+        // terminated, and handled as any other dead worker.
+        slot.callTimer = null;
+        live.onResult = null;
+        live.onCrash = null;
+        live.worker.onmessage = null;
+        live.worker.onerror = null;
+        live.worker.onmessageerror = null;
+        live.worker.terminate();
+        crashed(slot, new Error("embedding worker crashed: no answer in time"));
+      }, callTimeoutMs);
       live.worker.postMessage({
         type: "run",
         id: job.id,
@@ -334,7 +499,12 @@ export async function createWorkerPipeline(
         sentence: job.sentence,
       });
     }
-    if (queries.length > 0 || documents.length > 0) {
+    if (onMainThread) {
+      if (slots.length === 0 && !main.running) {
+        const job = queries.shift() ?? documents.shift();
+        if (job) void runOnMainThread(job);
+      }
+    } else if (queries.length > 0 || documents.length > 0) {
       if (!slots.some((s) => s.session || s.starting)) {
         // The only worker died: any call brings a new one.
         const cold = slots[0] ?? newSlot();
@@ -358,8 +528,10 @@ export async function createWorkerPipeline(
     const slot: Slot = {
       session: null,
       starting: null,
+      cancelStart: null,
       running: null,
       idleTimer: null,
+      callTimer: null,
     };
     slots.push(slot);
     return slot;
@@ -381,7 +553,7 @@ export async function createWorkerPipeline(
       const job: Job = {
         id: nextId++,
         query: priority === "query",
-        retried: false,
+        crashes: 0,
         input,
         opts: callOpts ? rest : undefined,
         sentence,
@@ -395,7 +567,7 @@ export async function createWorkerPipeline(
 
   const pipe: PipelineFn = (input, callOpts) => submit(input, callOpts, false);
   pipe.acceptsPriority = true;
-  pipe.concurrency = () => maxSize;
+  pipe.concurrency = () => (onMainThread ? Math.max(1, slots.length) : maxSize);
   pipe.sentenceEmbedding = (input, callOpts) => submit(input, callOpts, true);
   pipe.dispose = async () => {
     if (disposed) return;
@@ -403,22 +575,35 @@ export async function createWorkerPipeline(
     const err = new Error("embedding worker pipeline was disposed");
     const lost = [
       ...slots.flatMap((s) => (s.running ? [s.running] : [])),
+      ...(main.running ? [main.running] : []),
       ...queries,
       ...documents,
     ];
     queries.length = 0;
     documents.length = 0;
     const live = slots.flatMap((s) => (s.session ? [s.session] : []));
-    // A worker still starting closes itself once it is up.
+    // A worker still starting is terminated where it stands: its load may
+    // never end, and the plugin's unload waits on this call.
     const starting = slots.flatMap((s) => (s.starting ? [s.starting] : []));
     for (const slot of slots) {
+      slot.cancelStart?.(err);
       stopIdleTimer(slot);
+      stopCallTimer(slot);
       slot.running = null;
       slot.session = null;
     }
     slots.length = 0;
     for (const job of lost) job.reject(err);
-    await Promise.all([...live.map(closeSession), ...starting]);
+    // A main-thread load still in flight is not waited for: it releases
+    // itself in `runOnMainThread` once it lands.
+    const loadedHere = main.pipe;
+    main.pipe = null;
+    main.sentence = null;
+    await Promise.all([
+      ...live.map(closeSession),
+      ...starting,
+      ...(loadedHere?.dispose ? [loadedHere.dispose()] : []),
+    ]);
   };
 
   // The first worker takes its handlers now, so a crash while idle is seen.

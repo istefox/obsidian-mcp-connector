@@ -97,6 +97,12 @@ export function createWorkerPipelineFactory(
         onProgress,
         bootTimeoutMs: opts.bootTimeoutMs,
         poolSize: opts.poolSize,
+        // Workers that die later and do not come back: same answer as a
+        // load that fails, without the caller seeing an error.
+        fallback: () => opts.inner(model, undefined, loadOpts),
+        onWorkerUnavailable: () => {
+          workerUnavailable = true;
+        },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

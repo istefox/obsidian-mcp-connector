@@ -6,6 +6,7 @@ import { join, parse } from "path";
 import process from "process";
 import { compile, preprocess } from "svelte/compiler";
 import { version } from "../../package.json" assert { type: "json" };
+import { checkWorkerSource } from "./scripts/workerSourceCheck";
 import svelteConfig from "./svelte.config.js";
 
 // The version line makes every release's main.js byte-unique. Identical
@@ -417,6 +418,24 @@ async function build() {
           `Transformers.js must enter main.js through transformersFactory only (ADR-0036).`,
       );
       process.exit(1);
+    }
+
+    // The worker starts from the text of two functions in this file.
+    // Proven here for the Bun that built it, rather than found out in
+    // Obsidian as a silent return to the main thread (ADR-0036).
+    if (isProd) {
+      try {
+        const sizes = checkWorkerSource(bundle);
+        console.warn(
+          `[bun.config] embedding worker boots from main.js (library ${sizes.libraryChars} chars, runtime ${sizes.runtimeChars} chars)`,
+        );
+      } catch (error) {
+        console.error(
+          "[bun.config] embedding worker source check failed:",
+          error instanceof Error ? error.message : error,
+        );
+        process.exit(1);
+      }
     }
 
     console.warn("Build successful");

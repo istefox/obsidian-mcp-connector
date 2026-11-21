@@ -61,7 +61,7 @@ way into `embeddingWorkerRuntimeFactory.ts`.
   `Function.prototype.toString` (`embeddingWorkerSpawn.ts`).
 
 So `main.js` carries the library once and stays the plugin's only file. Measured locally with Bun
-1.4.5, `main.js` grew from 2,567,715 to 2,576,994 bytes (+0.36%).
+1.4.5, `main.js` grew from 2,567,715 to 2,579,137 bytes (+0.44%).
 
 Nothing is evaluated from a string on the main thread: no `eval`, no `new Function`, no library
 kept as a string literal. The only text that becomes code is the source of functions already in
@@ -71,6 +71,21 @@ Electron reports `process.type === "worker"` inside a worker with Node integrati
 Transformers.js then takes neither its browser branch nor its renderer one. The worker script's
 first line sets `process.type` to `"renderer"`, so both threads run the same code path of the
 library.
+
+**The build proves the worker can start.** The worker's script is text cut out of `main.js`, and a
+second bundler pass that hoisted a helper out of either function, or rewrote its `require`, would
+break it in Obsidian only, where §5 answers with the main thread and one warning in the log: #664
+again, silently. So a production build ends with `checkWorkerSource`
+(`scripts/workerSourceCheck.ts`): it finds the two functions in the `main.js` just written, takes
+their source text as `Function.prototype.toString` would return it, assembles it with the same
+`buildWorkerSource` the plugin uses, and runs it in an empty `node:vm` context. The build fails
+unless the library evaluates and the runtime posts `booted`. It proves the start, not a model load:
+that needs Electron and the weights.
+
+The release workflows pin Bun 1.4.2. A production build with that version passes the check and
+writes a `main.js` byte for byte equal to the one Bun 1.4.5 writes (2026-11-21).
+The release build (`release.yml`, the plugin's `release` script) is the same `--prod` build, so the
+check runs on the file that ships.
 
 ### 3. Vectors are identical, and the index revision does not change
 
@@ -117,14 +132,43 @@ in the log (Stefano's choice on 2026-11-21): a failure that belongs to the worke
 memory) then costs a slow rebuild instead of a search that does not start, and a failure that
 belongs to the network fails a second time and is reported as the main thread reports it.
 
-A worker that crashes after it was ready fails the call it was running. The next call starts a new
-worker; the weights are in the browser cache by then.
+A **load that goes silent** is ended. Once a worker has booted, five minutes without a message
+from it, download progress included, fail the load and terminate the worker. A slow download keeps
+reporting progress and is not cut; a stalled one no longer holds a worker, or the plugin's unload,
+forever.
+
+A **call that is never answered** is a crash. A worker that takes more than 30 minutes over one
+call, or posts a message that cannot be read, is terminated and handled as below. The limit is
+set wide on purpose. One call carries 8 texts at most (`EMBED_BATCH_SIZE`); two texts at 512 tokens
+took 14.5 s on the test machine, so a full call is about a minute there, and the limit leaves room
+for a machine some thirty times slower. A false timeout is expensive, since it counts as a crash
+toward the rules below; a worker that is really stuck costs one slot for half an hour.
+
+A **worker that crashes after it was ready** does not fail the rebuild:
+
+- The call it was running goes back to the head of its queue and runs on another worker, or on a
+  new one when it was the only worker. The weights are in the browser cache by then.
+- A call that has taken two workers down is rejected, alone. One chunk that kills its worker must
+  not push an hours-long rebuild onto the renderer.
+- The pipeline moves to the main thread for the rest of its life when no worker can be started
+  again, or after three crashes in a row with no call answered in between. It loads the same model
+  through `inner` with the same options, runs the calls still queued one at a time, queries first,
+  and logs a warning that names the model and the cause. EmbeddingGemma's calls go through the same
+  `sentence_embedding` reader there as in the worker, so the vectors do not change mid-rebuild.
+- When the restart failed because the worker could not boot at all, the factory also stops trying
+  workers for the models loaded after that.
+
+`dispose` terminates a worker that is still starting instead of waiting for it, and does not wait
+for a main-thread load in flight either: the plugin's unload must not depend on a load that may
+never end.
 
 ### 6. A pool for rebuilds, grown on demand
 
 `poolSize` workers at most serve one model, each with its own copy of the model and its own WASM
 heap. `workerPoolSize` gives `min(4, cores / 2, total memory / 4 GB)`, at least 1: 4 on 18 cores
-and 36 GB, 2 on 16 GB, 1 on 8 GB.
+and 36 GB, 4 on 8 cores and 16 GB, 2 on 8 GB with four cores or more, 1 on 4 GB or on two cores.
+The pooled run in the measurements peaked at about 3.2 GB for four workers, about 0.8 GB each, so
+4 GB of total memory per worker leaves the rest of the machine most of it.
 
 - The first worker is the only one a search or a live edit ever uses.
 - A further worker starts only while **document batches are waiting**, one at a time, and only
@@ -173,7 +217,12 @@ several workers at full load would not. It goes through the same `runFiles` with
 | A query sent 1.5 s into the pooled run | answered in 1.3 s |
 | Peak resident memory, all Obsidian helper processes, pooled run | about 3.2 GB |
 
-One run each. The timer-gap figure is coarse: the window was in the background and its timers were
+| Plugin reloaded with three workers alive | every worker terminated |
+| Main thread while four workers embedded for 111 s (worker-message probe) | longest gap 183 ms; idle baseline over 60 s, 152 ms |
+
+One run each. The probe is a worker that posts a message every few milliseconds while the main
+thread records when each arrives: unlike a timer, it is not throttled in a hidden window. It
+covers inference only, not the indexer's own main-thread work between batches. The timer-gap figure is coarse: the window was in the background and its timers were
 throttled. The speedup is what this machine gave; a machine with fewer cores or less memory gets a
 smaller pool.
 
@@ -244,6 +293,8 @@ Two things this run showed:
 - A machine with no WebGPU adapter, where MiniLM and E5 also run in the worker. The code path is
   the one EmbeddingGemma takes; no such machine was at hand.
 - Windows and Linux.
+- A worker crash in a real vault. The retry and the move to the main thread are covered by tests
+  with a worker that has no thread, not by a worker that Electron killed.
 
 ## References
 

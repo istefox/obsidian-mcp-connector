@@ -137,6 +137,34 @@ describe("createWorkerPipelineFactory", () => {
     expect(attempts).toBe(1);
   });
 
+  test("a worker that dies and cannot be started again moves the model to the main thread, with the same load options, and stops trying", async () => {
+    const main = mainThread();
+    const lib = fakeLib(() => ({ data: new Float32Array([1, 2]) }));
+    const spawned: FakeWorker[] = [];
+    let attempts = 0;
+    const factory = createWorkerPipelineFactory({
+      inner: main.inner,
+      spawn: () => {
+        attempts += 1;
+        if (spawned.length >= 1) throw new Error("workers are blocked");
+        const w = fakeWorker(lib);
+        spawned.push(w);
+        return w;
+      },
+      probe: async () => "wasm",
+    });
+    const loadOpts = { dtype: { wasm: "q8", webgpu: "q4" } } as const;
+
+    const pipe = await factory("some/model", undefined, loadOpts);
+    spawned[0]!.crash("gone");
+    expect(Array.from((await pipe("x")).data)).toEqual([7]);
+    expect(main.calls).toEqual([{ model: "some/model", opts: loadOpts }]);
+
+    await factory("other/model", undefined, loadOpts);
+    expect(attempts).toBe(2);
+    expect(main.calls).toHaveLength(2);
+  });
+
   test("a model that fails to load in the worker is tried once on the main thread", async () => {
     const main = mainThread();
     const { spawned, spawn } = workers(
