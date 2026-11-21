@@ -6,6 +6,7 @@ import { join, parse } from "path";
 import process from "process";
 import { compile, preprocess } from "svelte/compiler";
 import { version } from "../../package.json" assert { type: "json" };
+import { checkWorkerSource } from "./scripts/workerSourceCheck";
 import svelteConfig from "./svelte.config.js";
 
 // The version line makes every release's main.js byte-unique. Identical
@@ -120,91 +121,274 @@ const sveltePlugin: BunPlugin = {
   },
 };
 
-const config: BuildConfig = {
-  entrypoints: ["./src/main.ts"],
-  outdir: "../..",
-  minify: isProd,
-  plugins: [stubEmptyModulesPlugin, sveltePlugin],
-  external: [
-    "obsidian",
-    "electron",
-    "@codemirror/autocomplete",
-    "@codemirror/collab",
-    "@codemirror/commands",
-    "@codemirror/language",
-    "@codemirror/lint",
-    "@codemirror/search",
-    "@codemirror/state",
-    "@codemirror/view",
-    "@lezer/common",
-    "@lezer/highlight",
-    "@lezer/lr",
-    // Note: `onnxruntime-node` and `sharp` are NOT in this `external`
-    // list. They're handled by the `stubEmptyModulesPlugin` above
-    // which replaces them with empty modules at bundle time —
-    // marking them `external` would leave a literal
-    // `require("onnxruntime-node")` in main.js that Electron cannot
-    // resolve (observed: "Cannot find module 'onnxruntime-node'" at
-    // plugin load).
-  ],
-  target: "node",
-  format: "cjs",
-  conditions: ["browser", isProd ? "production" : "development"],
-  sourcemap: isProd ? "none" : "inline",
-  define: {
-    "process.env.NODE_ENV": JSON.stringify(
-      isProd ? "production" : "development",
-    ),
-    "import.meta.filename": JSON.stringify("mcp-tools-for-obsidian.ts"),
-    // Bundled deps (notably `@huggingface/transformers/src/env.js`) call
-    // `fileURLToPath(import.meta.url)` eagerly at module init. Without
-    // this define, Bun bakes the BUILD MACHINE's absolute path (the
-    // GitHub Actions Linux runner: `file:///home/runner/...`). On
-    // Windows `getPathFromURLWin32` rejects a drive-less POSIX path with
-    // `TypeError: File URL path must be absolute`, crashing the plugin
-    // on load before any of our code runs (#100). The placeholder MUST
-    // carry a drive letter — a drive-less `file:///x` URL throws on
-    // Windows for the exact same reason (that IS the bug's mechanism);
-    // `file:///C:/…` is accepted by `fileURLToPath` on every platform.
-    // The resolved value is dead in our build (`env.allowRemoteModels =
-    // true`, ONNX wasm pinned to a CDN) — only the eager call must not
-    // throw.
-    "import.meta.url": JSON.stringify("file:///C:/mcp-tools-for-obsidian.ts"),
-    // Same class of bug as #100 but via the CommonJS path identifiers.
-    // `onnxruntime-web/dist/ort-web.node.js` resolves its dist dir from
-    // `__dirname`/`__filename`; with `target:"node"` Bun bakes the BUILD
-    // MACHINE's absolute path (`/home/runner/work/.../onnxruntime-web/...`)
-    // into main.js, so a rebuild on any other machine differs byte-for-byte
-    // and Obsidian's automated "Build verification" fails (release artifact
-    // != source rebuild). Neutralise to a stable placeholder: the resolved
-    // value is dead in our build (onnxruntime-web runs as WASM, CDN-pinned,
-    // `allowLocalModels=false`, `onnxruntime-node` shimmed) — nothing reads
-    // the real dirname at runtime.
-    __dirname: JSON.stringify("/"),
-    __filename: JSON.stringify("/mcp-tools-for-obsidian.js"),
-    // These environment variables are critical for the MCP server download functionality.
-    // In CI the release workflow injects the correct values (see .github/workflows/release.yml);
-    // the fallback targets the active fork repo so local builds keep working.
-    // Hardcoding upstream here silently overrode the CI env vars and shipped 404-ing
-    // download URLs in releases — see issue #3.
-    "process.env.GITHUB_DOWNLOAD_URL": JSON.stringify(
-      process.env.GITHUB_DOWNLOAD_URL ??
-        `https://github.com/istefox/obsidian-mcp-connector/releases/download/${version}`,
-    ),
-    "process.env.GITHUB_REF_NAME": JSON.stringify(
-      process.env.GITHUB_REF_NAME ?? version,
-    ),
-  },
-  naming: {
-    entry: "main.js", // Match original output name
-  },
-  // Add banner to output
-  banner,
+const mode = isProd ? "production" : "development";
+
+// Shared by both build stages, so the pre-bundled library resolves and
+// reads its environment exactly as the rest of main.js does.
+const sharedDefine = {
+  "process.env.NODE_ENV": JSON.stringify(mode),
+  "import.meta.filename": JSON.stringify("mcp-tools-for-obsidian.ts"),
+  // Bundled deps (notably `@huggingface/transformers/src/env.js`) call
+  // `fileURLToPath(import.meta.url)` eagerly at module init. Without
+  // this define, Bun bakes the BUILD MACHINE's absolute path (the
+  // GitHub Actions Linux runner: `file:///home/runner/...`). On
+  // Windows `getPathFromURLWin32` rejects a drive-less POSIX path with
+  // `TypeError: File URL path must be absolute`, crashing the plugin
+  // on load before any of our code runs (#100). The placeholder MUST
+  // carry a drive letter — a drive-less `file:///x` URL throws on
+  // Windows for the exact same reason (that IS the bug's mechanism);
+  // `file:///C:/…` is accepted by `fileURLToPath` on every platform.
+  // The resolved value is dead in our build (`env.allowRemoteModels =
+  // true`, ONNX wasm pinned to a CDN) — only the eager call must not
+  // throw.
+  "import.meta.url": JSON.stringify("file:///C:/mcp-tools-for-obsidian.ts"),
+  // Same class of bug as #100 but via the CommonJS path identifiers.
+  // `onnxruntime-web/dist/ort-web.node.js` resolves its dist dir from
+  // `__dirname`/`__filename`; with `target:"node"` Bun bakes the BUILD
+  // MACHINE's absolute path (`/home/runner/work/.../onnxruntime-web/...`)
+  // into main.js, so a rebuild on any other machine differs byte-for-byte
+  // and Obsidian's automated "Build verification" fails (release artifact
+  // != source rebuild). Neutralise to a stable placeholder: the resolved
+  // value is dead in our build (onnxruntime-web runs as WASM, CDN-pinned,
+  // `allowLocalModels=false`, `onnxruntime-node` shimmed) — nothing reads
+  // the real dirname at runtime.
+  __dirname: JSON.stringify("/"),
+  __filename: JSON.stringify("/mcp-tools-for-obsidian.js"),
 };
+
+const OBJ_URL_PATTERN = "Object(import.meta).url";
+const TYPEOF_PATTERN = "typeof import.meta";
+const count = (text: string, pattern: string) => text.split(pattern).length - 1;
+
+/**
+ * Stage 1 (ADR-0036): Transformers.js and onnxruntime-web as ONE CommonJS
+ * bundle, returned as text. Stage 2 wraps that text in a function and puts
+ * it into main.js as code, never as a string: the main thread calls the
+ * function, and the embedding worker starts from its source
+ * (`Function.prototype.toString`). One copy of the library serves both, and
+ * nothing is evaluated from a string on the main thread.
+ */
+async function buildTransformersBundle(): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: ["transformers-entry"],
+    minify: isProd,
+    plugins: [
+      {
+        name: "transformers-entry",
+        setup(build) {
+          build.onResolve({ filter: /^transformers-entry$/ }, () => ({
+            path: "transformers-entry",
+            namespace: "transformers-entry",
+          }));
+          build.onLoad(
+            { filter: /.*/, namespace: "transformers-entry" },
+            () => ({
+              // An ES import, so the library's ES module build is chosen,
+              // as the `import()` it replaces chose it.
+              contents: 'export * from "@huggingface/transformers";',
+              loader: "js",
+              resolveDir: import.meta.dir,
+            }),
+          );
+        },
+      },
+      stubEmptyModulesPlugin,
+    ],
+    target: "node",
+    format: "cjs",
+    conditions: ["browser", mode],
+    sourcemap: "none",
+    define: sharedDefine,
+  });
+  if (!result.success || result.outputs.length !== 1) {
+    for (const message of result.logs) console.error(message);
+    throw new Error("transformers bundle (stage 1) failed");
+  }
+  let bundle = await result.outputs[0].text();
+
+  // B1: Bun's `define` does literal token-replacement and does not catch
+  // `Object(import.meta).url` or `typeof import.meta` because `import.meta`
+  // is used as a function argument, not a member-access target.
+  // @huggingface/transformers v4 emits both patterns; replace them with
+  // semantically equivalent constants after every build.
+  // Remove this step when Bun supports `define` on import.meta as an
+  // object, or when upstream fixes the emit pattern.
+  const countObjUrl = count(bundle, OBJ_URL_PATTERN);
+  const countTypeof = count(bundle, TYPEOF_PATTERN);
+  if (countObjUrl === 0 || countTypeof === 0) {
+    throw new Error(
+      `B1 post-build: expected patterns not found — ` +
+        `Object(import.meta).url ×${countObjUrl}, typeof import.meta ×${countTypeof}. ` +
+        `Upstream may have changed its emit; review the post-build step.`,
+    );
+  }
+  bundle = bundle
+    .split(OBJ_URL_PATTERN)
+    .join('"file:///C:/mcp-tools-for-obsidian.ts"');
+  bundle = bundle.split(TYPEOF_PATTERN).join('"object"');
+  console.warn(
+    `[bun.config] B1 replace (stage 1): Object(import.meta).url ×${countObjUrl}, typeof import.meta ×${countTypeof}`,
+  );
+  return bundle;
+}
+
+/**
+ * Stage 1, second bundle (ADR-0036): the code that runs inside the
+ * embedding worker, as CommonJS text. It is small and imports no library:
+ * Transformers.js reaches it as an argument.
+ */
+async function buildWorkerRuntimeBundle(): Promise<string> {
+  const result = await Bun.build({
+    entrypoints: [
+      "./src/features/semantic-search/services/embeddingWorkerRuntime.ts",
+    ],
+    minify: isProd,
+    target: "node",
+    format: "cjs",
+    sourcemap: "none",
+    define: sharedDefine,
+  });
+  if (!result.success || result.outputs.length !== 1) {
+    for (const message of result.logs) console.error(message);
+    throw new Error("embedding worker runtime bundle (stage 1) failed");
+  }
+  const bundle = await result.outputs[0].text();
+  // The worker has no module loader for the plugin's own code: anything
+  // this bundle still requires would fail there, at runtime only.
+  if (/\brequire\(/.test(bundle)) {
+    throw new Error(
+      "embedding worker runtime must be self-contained, but its bundle calls require()",
+    );
+  }
+  return bundle;
+}
+
+/**
+ * Stage 2 side of ADR-0036. Replaces `transformersFactory.ts` with the
+ * stage 1 bundle wrapped in a function, and stubs the package itself: the
+ * `import()` fallback in `transformersModule.ts` is unreachable once a
+ * factory exists, and resolving it for real would bundle a second copy.
+ */
+let factoryRedirectUsed = false;
+let runtimeRedirectUsed = false;
+function transformersFactoryPlugin(
+  bundle: string,
+  runtimeBundle: string,
+): BunPlugin {
+  return {
+    name: "transformers-factory",
+    setup(build) {
+      build.onResolve({ filter: /\/transformersFactory$/ }, () => {
+        factoryRedirectUsed = true;
+        return { path: "transformers-factory", namespace: "tf-factory" };
+      });
+      build.onLoad({ filter: /.*/, namespace: "tf-factory" }, () => ({
+        contents:
+          "export const transformersFactory = function (module, exports, require) {\n" +
+          bundle +
+          "\n};",
+        loader: "js",
+      }));
+      build.onResolve({ filter: /\/embeddingWorkerRuntimeFactory$/ }, () => {
+        runtimeRedirectUsed = true;
+        return { path: "worker-runtime-factory", namespace: "wr-factory" };
+      });
+      build.onLoad({ filter: /.*/, namespace: "wr-factory" }, () => ({
+        contents:
+          "export const embeddingWorkerRuntimeFactory = function (module, exports) {\n" +
+          runtimeBundle +
+          "\n};",
+        loader: "js",
+      }));
+      build.onResolve({ filter: /^@huggingface\/transformers$/ }, () => ({
+        path: "transformers-unbundled",
+        namespace: "tf-unbundled",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "tf-unbundled" }, () => ({
+        contents:
+          'throw new Error("@huggingface/transformers is bundled as transformersFactory");',
+        loader: "js",
+      }));
+    },
+  };
+}
+
+function mainConfig(
+  transformersBundle: string,
+  runtimeBundle: string,
+): BuildConfig {
+  return {
+    entrypoints: ["./src/main.ts"],
+    outdir: "../..",
+    minify: isProd,
+    plugins: [
+      transformersFactoryPlugin(transformersBundle, runtimeBundle),
+      stubEmptyModulesPlugin,
+      sveltePlugin,
+    ],
+    external: [
+      "obsidian",
+      "electron",
+      "@codemirror/autocomplete",
+      "@codemirror/collab",
+      "@codemirror/commands",
+      "@codemirror/language",
+      "@codemirror/lint",
+      "@codemirror/search",
+      "@codemirror/state",
+      "@codemirror/view",
+      "@lezer/common",
+      "@lezer/highlight",
+      "@lezer/lr",
+      // Note: `onnxruntime-node` and `sharp` are NOT in this `external`
+      // list. They're handled by the `stubEmptyModulesPlugin` above
+      // which replaces them with empty modules at bundle time —
+      // marking them `external` would leave a literal
+      // `require("onnxruntime-node")` in main.js that Electron cannot
+      // resolve (observed: "Cannot find module 'onnxruntime-node'" at
+      // plugin load).
+    ],
+    target: "node",
+    format: "cjs",
+    conditions: ["browser", mode],
+    sourcemap: isProd ? "none" : "inline",
+    define: {
+      ...sharedDefine,
+      // These environment variables are critical for the MCP server download functionality.
+      // In CI the release workflow injects the correct values (see .github/workflows/release.yml);
+      // the fallback targets the active fork repo so local builds keep working.
+      // Hardcoding upstream here silently overrode the CI env vars and shipped 404-ing
+      // download URLs in releases — see issue #3.
+      "process.env.GITHUB_DOWNLOAD_URL": JSON.stringify(
+        process.env.GITHUB_DOWNLOAD_URL ??
+          `https://github.com/istefox/obsidian-mcp-connector/releases/download/${version}`,
+      ),
+      "process.env.GITHUB_REF_NAME": JSON.stringify(
+        process.env.GITHUB_REF_NAME ?? version,
+      ),
+    },
+    naming: {
+      entry: "main.js", // Match original output name
+    },
+    // Add banner to output
+    banner,
+  };
+}
+
+// The library does not change while watching `src`, so stage 1 runs once.
+let transformersBundle: Promise<string> | undefined;
 
 async function build() {
   try {
-    const result = await Bun.build(config);
+    factoryRedirectUsed = false;
+    runtimeRedirectUsed = false;
+    const result = await Bun.build(
+      mainConfig(
+        await (transformersBundle ??= buildTransformersBundle()),
+        // Not cached: it is the plugin's own source, and watch mode edits it.
+        await buildWorkerRuntimeBundle(),
+      ),
+    );
 
     if (!result.success) {
       console.error("Build failed");
@@ -214,38 +398,45 @@ async function build() {
       process.exit(1);
     }
 
-    // B1: Bun's `define` does literal token-replacement and does not catch
-    // `Object(import.meta).url` or `typeof import.meta` because `import.meta`
-    // is used as a function argument, not a member-access target.
-    // @huggingface/transformers v4 emits both patterns; replace them with
-    // semantically equivalent constants after every build.
-    // Remove this step when Bun supports `define` on import.meta as an
-    // object, or when upstream fixes the emit pattern.
+    // One copy of Transformers.js, the factory. A second one, reached by
+    // any other route, would arrive without stage 1's B1 replace, so its
+    // unpatched patterns are the tell.
     const mainJsPath = join(import.meta.dir, "../../main.js");
-    let bundle = await Bun.file(mainJsPath).text();
-
-    const objUrlPattern = "Object(import.meta).url";
-    const typeofPattern = "typeof import.meta";
-    const countObjUrl = bundle.split(objUrlPattern).length - 1;
-    const countTypeof = bundle.split(typeofPattern).length - 1;
-
-    if (countObjUrl === 0 || countTypeof === 0) {
+    const bundle = await Bun.file(mainJsPath).text();
+    const strayObjUrl = count(bundle, OBJ_URL_PATTERN);
+    const strayTypeof = count(bundle, TYPEOF_PATTERN);
+    if (!runtimeRedirectUsed) {
       console.error(
-        `[bun.config] B1 post-build: expected patterns not found — ` +
-          `Object(import.meta).url ×${countObjUrl}, typeof import.meta ×${countTypeof}. ` +
-          `Upstream may have changed its emit; review the post-build step.`,
+        "[bun.config] embedding worker runtime was not injected: nothing imports embeddingWorkerRuntimeFactory (ADR-0036).",
+      );
+      process.exit(1);
+    }
+    if (!factoryRedirectUsed || strayObjUrl !== 0 || strayTypeof !== 0) {
+      console.error(
+        `[bun.config] single-copy check failed — factory redirect used: ${factoryRedirectUsed}, ` +
+          `unpatched Object(import.meta).url ×${strayObjUrl}, typeof import.meta ×${strayTypeof}. ` +
+          `Transformers.js must enter main.js through transformersFactory only (ADR-0036).`,
       );
       process.exit(1);
     }
 
-    bundle = bundle
-      .split(objUrlPattern)
-      .join('"file:///C:/mcp-tools-for-obsidian.ts"');
-    bundle = bundle.split(typeofPattern).join('"object"');
-    await Bun.write(mainJsPath, bundle);
-    console.warn(
-      `[bun.config] B1 post-build replace: Object(import.meta).url ×${countObjUrl}, typeof import.meta ×${countTypeof}`,
-    );
+    // The worker starts from the text of two functions in this file.
+    // Proven here for the Bun that built it, rather than found out in
+    // Obsidian as a silent return to the main thread (ADR-0036).
+    if (isProd) {
+      try {
+        const sizes = checkWorkerSource(bundle);
+        console.warn(
+          `[bun.config] embedding worker boots from main.js (library ${sizes.libraryChars} chars, runtime ${sizes.runtimeChars} chars)`,
+        );
+      } catch (error) {
+        console.error(
+          "[bun.config] embedding worker source check failed:",
+          error instanceof Error ? error.message : error,
+        );
+        process.exit(1);
+      }
+    }
 
     console.warn("Build successful");
   } catch (error) {

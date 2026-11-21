@@ -38,10 +38,7 @@
 // Transformers.js loads on first use (transformersModule.ts), not with the plugin.
 import { loadTransformers } from "./transformersModule";
 import { logger } from "$/shared/logger";
-
-// Stable build; required for ONNX IR v10 support (onnxruntime-web ≥ 1.20).
-const ORT_WASM_PATHS =
-  "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/";
+import { ORT_WASM_PATHS } from "./ortWasmPaths";
 
 type HfEnv = {
   backends?: {

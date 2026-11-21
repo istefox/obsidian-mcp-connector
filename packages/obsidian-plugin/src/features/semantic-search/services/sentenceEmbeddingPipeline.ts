@@ -41,10 +41,26 @@ export const SENTENCE_EMBEDDING_OUTPUT = "sentence_embedding";
 export function withSentenceEmbedding(
   factory: PipelineFactory,
 ): PipelineFactory {
-  return async (model) => wrap((await factory(model)) as LoadedPipeline);
+  return async (model) => {
+    const pipe = await factory(model);
+    // A pipeline that lives in an embedding worker has no tokenizer or
+    // model on this side: it reads the output there (ADR-0036).
+    const remote = pipe.sentenceEmbedding;
+    if (typeof remote === "function") {
+      const delegated: PipelineFn = (input, opts) => remote(input, opts);
+      if (pipe.acceptsPriority) delegated.acceptsPriority = true;
+      if (pipe.concurrency) delegated.concurrency = pipe.concurrency;
+      if (typeof pipe.dispose === "function") {
+        delegated.dispose = () => pipe.dispose!();
+      }
+      return delegated;
+    }
+    return wrapSentenceEmbedding(pipe);
+  };
 }
 
-function wrap(pipe: LoadedPipeline): PipelineFn {
+export function wrapSentenceEmbedding(loaded: PipelineFn): PipelineFn {
+  const pipe = loaded as LoadedPipeline;
   const { tokenizer, model } = pipe;
   if (typeof tokenizer !== "function" || typeof model !== "function") {
     throw new Error(

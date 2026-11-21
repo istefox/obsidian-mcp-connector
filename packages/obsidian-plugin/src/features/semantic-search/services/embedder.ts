@@ -40,15 +40,42 @@ export type EmbedTensor = { data: Float32Array; dims?: number[] };
  * `await pipeline("feature-extraction", model)`. We type only the
  * call signature we use.
  */
+export type PipelineCallOpts = {
+  pooling?: "mean" | "cls" | "none";
+  normalize?: boolean;
+  truncation?: boolean;
+  max_length?: number;
+  /**
+   * Run this call ahead of queued document batches. Pass it only to a
+   * pipeline that sets `acceptsPriority`: Transformers.js itself must not
+   * receive an option it does not know.
+   */
+  priority?: "query";
+};
+
 export type PipelineFn = ((
   input: string | string[],
-  opts?: {
-    pooling?: "mean" | "cls" | "none";
-    normalize?: boolean;
-    truncation?: boolean;
-    max_length?: number;
-  },
+  opts?: PipelineCallOpts,
 ) => Promise<EmbedTensor>) & {
+  /**
+   * Set by a pipeline that queues its calls (the embedding worker,
+   * ADR-0036) and so can honour `priority`.
+   */
+  acceptsPriority?: boolean;
+  /**
+   * How many calls the pipeline can run at the same time, now. Absent
+   * means one: Transformers.js on the main thread (ADR-0036).
+   */
+  concurrency?: () => number;
+  /**
+   * Set by a pipeline that runs in an embedding worker: the same call,
+   * reading the model's `sentence_embedding` output over there
+   * (sentenceEmbeddingPipeline.ts).
+   */
+  sentenceEmbedding?: (
+    input: string | string[],
+    opts?: PipelineCallOpts,
+  ) => Promise<EmbedTensor>;
   /**
    * Releases the pipeline's ONNX sessions (`Pipeline.dispose` in
    * Transformers.js). Optional so a test's plain function qualifies.
@@ -103,7 +130,16 @@ export type DtypeSpec = string | Partial<Record<BackendKind, string>>;
 
 export interface Embedder {
   embed(text: string): Promise<Float32Array>;
-  embedBatch(texts: string[]): Promise<Float32Array[]>;
+  /**
+   * `priority: "query"` marks the batch as search queries, which a
+   * queueing pipeline runs ahead of document batches (ADR-0036).
+   */
+  embedBatch(
+    texts: string[],
+    opts?: { priority?: "query" },
+  ): Promise<Float32Array[]>;
+  /** See `EmbeddingProvider.documentConcurrency`. */
+  documentConcurrency?(): number;
   unload(): Promise<void>;
   isLoaded(): boolean;
 }
@@ -138,6 +174,10 @@ class EmbedderImpl implements Embedder {
     return this.pipeline !== null;
   }
 
+  documentConcurrency(): number {
+    return this.pipeline?.concurrency?.() ?? 1;
+  }
+
   async embed(text: string): Promise<Float32Array> {
     this.touchIdle();
 
@@ -155,6 +195,8 @@ class EmbedderImpl implements Embedder {
         normalize: true,
         truncation: true,
         max_length: this.opts.maxInputTokens,
+        // A single text is a search query: ahead of indexing batches.
+        ...(pipe.acceptsPriority ? { priority: "query" as const } : {}),
       });
       // Copy into a fresh Float32Array so the cache holds an owned
       // reference even if the pipeline reuses internal buffers.
@@ -169,7 +211,10 @@ class EmbedderImpl implements Embedder {
     return promise;
   }
 
-  async embedBatch(texts: string[]): Promise<Float32Array[]> {
+  async embedBatch(
+    texts: string[],
+    opts?: { priority?: "query" },
+  ): Promise<Float32Array[]> {
     this.touchIdle();
     // Before ensurePipeline(): an all-cached or empty batch must not
     // cold-load the model.
@@ -205,6 +250,9 @@ class EmbedderImpl implements Embedder {
           normalize: true,
           truncation: true,
           max_length: this.opts.maxInputTokens,
+          ...(opts?.priority === "query" && pipe.acceptsPriority
+            ? { priority: "query" as const }
+            : {}),
         });
         // [batch, dim] row-major; without dims, derive the stride from
         // the flat length (must divide evenly).
@@ -411,19 +459,13 @@ export type NavigatorLike = {
   gpu?: { requestAdapter(): Promise<unknown> };
 };
 
-// Resolved once: "webgpu" if requestAdapter() returns a non-null adapter,
-// "wasm" otherwise. Cached so all subsequent factory calls share the same
-// backend and env configuration without re-probing.
+// Probed once: "webgpu" if requestAdapter() returns a non-null adapter,
+// "wasm" otherwise. Cached so every factory call shares the same answer
+// without re-probing.
+let _backendProbe: Promise<BackendKind> | null = null;
+// The probe plus the matching one-shot env configuration.
 let _backendConfig: Promise<BackendKind> | null = null;
 
-/**
- * Probe the active inference backend. Calls the matching env configurator
- * (`configureEnvForWebGpu` on success, `configureEnv` otherwise) so the
- * one-shot env state is consistent with the resolved backend.
- *
- * Cached after first call. Tests should call `__resetBackendForTesting()`
- * in `afterEach` to clear the cache.
- */
 /**
  * Read the global navigator as NavigatorLike. The `unknown` hop is
  * deliberate: this repo's DOM lib predates WebGPU (Navigator has no
@@ -437,12 +479,55 @@ function detectNavigator(): NavigatorLike | undefined {
   return nav as NavigatorLike;
 }
 
+/**
+ * Which backend this machine gets, without touching Transformers.js.
+ *
+ * `resolveBackend` also configures the library, which evaluates it on the
+ * main thread. A caller that only needs the answer (the input cap, the
+ * choice between the embedding worker and the main thread) asks here, so
+ * a WASM-only machine never evaluates the library outside its worker
+ * (ADR-0036).
+ */
+export function probeBackend(
+  navigatorRef: NavigatorLike | undefined = detectNavigator(),
+): Promise<BackendKind> {
+  return (_backendProbe ??= probeBackendInner(navigatorRef));
+}
+
+async function probeBackendInner(
+  navigatorRef: NavigatorLike | undefined,
+): Promise<BackendKind> {
+  if (!navigatorRef?.gpu) return "wasm";
+  try {
+    const adapter = await navigatorRef.gpu.requestAdapter();
+    if (adapter !== null) return "webgpu";
+  } catch {
+    // adapter probe failed — fall through to wasm
+  }
+  return "wasm";
+}
+
+/**
+ * Probe the active inference backend and call the matching env
+ * configurator (`configureEnvForWebGpu` on WebGPU, `configureEnv`
+ * otherwise) so the one-shot env state is consistent with it.
+ *
+ * Cached after first call. Tests should call `__resetBackendForTesting()`
+ * in `afterEach` to clear the cache.
+ */
 export function resolveBackend(
   navigatorRef: NavigatorLike | undefined = detectNavigator(),
 ): Promise<BackendKind> {
   if (!_backendConfig) {
     _backendConfig = (async (): Promise<BackendKind> => {
-      const backend = await resolveBackendInner(navigatorRef);
+      const backend = await probeBackend(navigatorRef);
+      if (backend === "webgpu") {
+        // JSEP WASM path: omit numThreads so onnxruntime-web selects
+        // ort-wasm-simd.jsep.wasm, which registers the WebGPU EP.
+        await configureEnvForWebGpu();
+      } else {
+        await configureEnv();
+      }
       logger.info("semantic-search: backend resolved", { backend });
       return backend;
     })();
@@ -450,30 +535,9 @@ export function resolveBackend(
   return _backendConfig;
 }
 
-async function resolveBackendInner(
-  navigatorRef: NavigatorLike | undefined,
-): Promise<BackendKind> {
-  if (!navigatorRef?.gpu) {
-    await configureEnv();
-    return "wasm";
-  }
-  try {
-    const adapter = await navigatorRef.gpu.requestAdapter();
-    if (adapter !== null) {
-      // JSEP WASM path: omit numThreads so onnxruntime-web selects
-      // ort-wasm-simd.jsep.wasm, which registers the WebGPU EP.
-      await configureEnvForWebGpu();
-      return "webgpu";
-    }
-  } catch {
-    // adapter probe failed — fall through to wasm
-  }
-  await configureEnv();
-  return "wasm";
-}
-
 /** Test-only: reset the cached backend resolution. */
 export function __resetBackendForTesting(): void {
+  _backendProbe = null;
   _backendConfig = null;
 }
 

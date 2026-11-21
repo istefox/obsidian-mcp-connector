@@ -4,7 +4,7 @@
  * to treat the native backend identically to the new multilingual providers
  * while reusing the existing pipeline + LRU-cache + idle-unload logic.
  *
- * MiniLM does not use asymmetric task prompts, so `role` is ignored.
+ * MiniLM does not use asymmetric task prompts, so `role` changes no vector.
  */
 
 import type { Embedder } from "./embedder";
@@ -38,11 +38,20 @@ class NativeEmbeddingProviderImpl implements EmbeddingProvider {
     return true;
   }
 
+  documentConcurrency(): number {
+    return this.embedder.documentConcurrency?.() ?? 1;
+  }
+
   async embed(
     texts: string[],
-    _role: "document" | "query",
+    role: "document" | "query",
   ): Promise<Float32Array[]> {
-    return this.embedder.embedBatch(texts);
+    // The role changes no vector, only the order: a query goes ahead of
+    // indexing batches when the model runs in a worker (ADR-0036).
+    return this.embedder.embedBatch(
+      texts,
+      role === "query" ? { priority: "query" } : undefined,
+    );
   }
 }
 

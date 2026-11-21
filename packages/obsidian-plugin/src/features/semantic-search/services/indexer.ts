@@ -139,11 +139,16 @@ const DEFAULT_CHECKPOINT_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Periodic persistence and progress logging for a long rebuild loop.
- * `tick(done)` is called after each file; once `intervalMs` has passed
- * since the last checkpoint it awaits `flush` (which must not throw) and
- * logs files done/total, chunks stored and the chunk rate. The persisted
+ * Once `intervalMs` has passed since the last checkpoint `due()` turns
+ * true; `run(done)` then awaits `flush` (which must not throw) and logs
+ * files done/total, chunks stored and the chunk rate. The persisted
  * mtimes and segments are what lets `start()` resume after a restart.
  */
+type RebuildCheckpointer = {
+  due(): boolean;
+  run(done: number): Promise<void>;
+};
+
 function createRebuildCheckpointer(args: {
   label: string;
   providerKey: string;
@@ -151,26 +156,120 @@ function createRebuildCheckpointer(args: {
   total: number;
   intervalMs: number;
   flush: () => Promise<void>;
-}): (done: number) => Promise<void> {
+}): RebuildCheckpointer {
   const startedAt = Date.now();
   const startChunks = args.store.size();
   let last = startedAt;
-  return async (done) => {
-    const now = Date.now();
-    if (now - last < args.intervalMs) return;
-    await args.flush();
-    last = Date.now();
-    const elapsedSec = Math.max(1, Math.round((last - startedAt) / 1000));
-    const chunks = args.store.size();
-    logger.info(`${args.label}: rebuild checkpoint`, {
-      providerKey: args.providerKey,
-      filesDone: done,
-      fileCount: args.total,
-      chunks,
-      elapsedSec,
-      chunksPerMin: Math.round(((chunks - startChunks) * 60) / elapsedSec),
-    });
+  return {
+    due: () => Date.now() - last >= args.intervalMs,
+    run: async (done) => {
+      await args.flush();
+      last = Date.now();
+      const elapsedSec = Math.max(1, Math.round((last - startedAt) / 1000));
+      const chunks = args.store.size();
+      logger.info(`${args.label}: rebuild checkpoint`, {
+        providerKey: args.providerKey,
+        filesDone: done,
+        fileCount: args.total,
+        chunks,
+        elapsedSec,
+        chunksPerMin: Math.round(((chunks - startChunks) * 60) / elapsedSec),
+      });
+    },
   };
+}
+
+/**
+ * Runs `processFile` over `files`, several at a time when the provider
+ * can embed several at a time (ADR-0036).
+ *
+ * It starts with one file. `limit()` is read again whenever a file ends,
+ * so a provider that reports more only once its model is loaded widens
+ * the run from the second file on, and a run where every file is skipped
+ * never asks for more than one.
+ *
+ * `processFile` resolves `true` for a file it processed and `false` for
+ * one it skipped. A checkpoint that falls due after a processed file
+ * holds the files not yet started, waits for the ones in flight, and
+ * only then flushes: what reaches the disk is always whole files, as in
+ * a run of one, and `done` counts the files that ended.
+ *
+ * The first failure stops new files from starting, lets the ones in
+ * flight end, and is thrown. `stopped()` turning true ends the run the
+ * same way, without an error.
+ */
+async function runFiles<T>(args: {
+  files: readonly T[];
+  limit: () => number;
+  stopped?: () => boolean;
+  processFile: (file: T) => Promise<boolean>;
+  checkpoint: RebuildCheckpointer;
+}): Promise<void> {
+  const { files, checkpoint } = args;
+  let next = 0;
+  let done = 0;
+  let active = 0;
+  let lanes = 0;
+  let failed = false;
+  let failure: unknown;
+  let gate: Promise<void> | null = null;
+  let whenIdle: (() => void) | null = null;
+  const running: Promise<void>[] = [];
+
+  const halted = (): boolean => failed || (args.stopped?.() ?? false);
+
+  const lane = async (): Promise<void> => {
+    try {
+      for (;;) {
+        while (gate) await gate;
+        if (halted() || next >= files.length) return;
+        const file = files[next++] as T;
+        active++;
+        let processed = false;
+        try {
+          processed = await args.processFile(file);
+        } catch (err) {
+          if (!failed) {
+            failed = true;
+            failure = err;
+          }
+        } finally {
+          active--;
+          if (active === 0) whenIdle?.();
+        }
+        done++;
+        if (processed && !halted() && !gate && checkpoint.due()) {
+          const at = done;
+          gate = (async () => {
+            if (active > 0) {
+              await new Promise<void>((resolve) => (whenIdle = resolve));
+            }
+            whenIdle = null;
+            await checkpoint.run(Math.max(at, done));
+          })().finally(() => {
+            gate = null;
+          });
+        }
+        widen();
+      }
+    } finally {
+      lanes--;
+    }
+  };
+
+  function widen(): void {
+    const wanted = Math.max(1, Math.floor(args.limit()));
+    while (lanes < wanted && next < files.length && !halted() && !gate) {
+      lanes++;
+      running.push(lane());
+    }
+  }
+
+  widen();
+  // Lanes are added while others run: wait until none is left.
+  for (let i = 0; i < running.length; i++) await running[i];
+  if (gate) await gate;
+  if (failed) throw failure;
 }
 
 class LiveIndexerImpl implements SemanticIndexer {
@@ -308,7 +407,6 @@ class LiveIndexerImpl implements SemanticIndexer {
       force,
     });
     let skipped = 0;
-    let visited = 0;
     const checkpoint = createRebuildCheckpointer({
       label: "live indexer",
       providerKey: this.opts.embedder.providerKey,
@@ -323,26 +421,31 @@ class LiveIndexerImpl implements SemanticIndexer {
         await this.flushInFlight;
       },
     });
-    for (const f of files) {
-      if (epoch !== this.epoch) return;
-      visited++;
-      // Session-start pass: a file whose persisted mtime matches and
-      // whose records are present is current — skip the read entirely.
-      // The hasRecords guard self-heals a stale sidecar (e.g. records
-      // discarded by sentinel recovery while mtimes survived a crash
-      // window elsewhere).
-      if (
-        !force &&
-        f.mtime !== undefined &&
-        f.mtime === this.opts.store.mtimeFor(f.path) &&
-        this.opts.store.hasRecords(f.path)
-      ) {
-        skipped++;
-        continue;
-      }
-      await this.processFile(f.path, f.mtime);
-      await checkpoint(visited);
-    }
+    await runFiles({
+      files,
+      limit: () => this.opts.embedder.documentConcurrency?.() ?? 1,
+      stopped: () => epoch !== this.epoch,
+      checkpoint,
+      processFile: async (f) => {
+        // Session-start pass: a file whose persisted mtime matches and
+        // whose records are present is current — skip the read entirely.
+        // The hasRecords guard self-heals a stale sidecar (e.g. records
+        // discarded by sentinel recovery while mtimes survived a crash
+        // window elsewhere).
+        if (
+          !force &&
+          f.mtime !== undefined &&
+          f.mtime === this.opts.store.mtimeFor(f.path) &&
+          this.opts.store.hasRecords(f.path)
+        ) {
+          skipped++;
+          return false;
+        }
+        await this.processFile(f.path, f.mtime);
+        return true;
+      },
+    });
+    if (epoch !== this.epoch) return;
     logger.info("live indexer: rebuildAll finished", {
       providerKey: this.opts.embedder.providerKey,
       fileCount: files.length,
@@ -605,7 +708,6 @@ class LowPowerIndexerImpl implements SemanticIndexer {
       await this.opts.store.init();
       const files = this.opts.vault.getMarkdownFiles();
       const seenPaths = new Set<string>();
-      let visited = 0;
       const checkpoint = createRebuildCheckpointer({
         label: "low-power indexer",
         providerKey: this.opts.embedder.providerKey,
@@ -624,31 +726,37 @@ class LowPowerIndexerImpl implements SemanticIndexer {
         },
       });
 
-      for (const f of files) {
-        visited++;
-        // Add to `seenPaths` before the exclusion check so an
-        // already-indexed file that becomes excluded is treated as
-        // "seen but skipped", not "vanished" — that keeps the
-        // vanished-file cleanup below from destructively purging its
-        // stale chunks on a settings change (D3: leave them in place,
-        // hide at query time, physical cleanup only via manual Rebuild).
-        seenPaths.add(f.path);
-        if (this.isExcluded(f.path)) continue;
-        // Seed from the persisted sidecar so the first cycle after a
-        // restart skips unchanged files too. Guarded by hasRecords so
-        // a stale sidecar without records self-heals, and bypassed
-        // entirely during a forced rebuild.
-        const persisted =
-          this.bypassPersistedMtime || !this.opts.store.hasRecords(f.path)
-            ? undefined
-            : this.opts.store.mtimeFor(f.path);
-        const prev = this.lastSeenMtime.get(f.path) ?? persisted;
-        const cur = f.mtime ?? Number.POSITIVE_INFINITY; // unknown mtime → process every cycle
-        if (prev !== undefined && cur <= prev) continue;
-        await processOnePath(this.opts, f.path, f.mtime);
-        if (f.mtime !== undefined) this.lastSeenMtime.set(f.path, f.mtime);
-        await checkpoint(visited);
-      }
+      await runFiles({
+        files,
+        // One file at a time: this mode exists to stay out of the way,
+        // and several workers would not (ADR-0036).
+        limit: () => 1,
+        checkpoint,
+        processFile: async (f) => {
+          // Add to `seenPaths` before the exclusion check so an
+          // already-indexed file that becomes excluded is treated as
+          // "seen but skipped", not "vanished" — that keeps the
+          // vanished-file cleanup below from destructively purging its
+          // stale chunks on a settings change (D3: leave them in place,
+          // hide at query time, physical cleanup only via manual Rebuild).
+          seenPaths.add(f.path);
+          if (this.isExcluded(f.path)) return false;
+          // Seed from the persisted sidecar so the first cycle after a
+          // restart skips unchanged files too. Guarded by hasRecords so
+          // a stale sidecar without records self-heals, and bypassed
+          // entirely during a forced rebuild.
+          const persisted =
+            this.bypassPersistedMtime || !this.opts.store.hasRecords(f.path)
+              ? undefined
+              : this.opts.store.mtimeFor(f.path);
+          const prev = this.lastSeenMtime.get(f.path) ?? persisted;
+          const cur = f.mtime ?? Number.POSITIVE_INFINITY; // unknown mtime → process every cycle
+          if (prev !== undefined && cur <= prev) return false;
+          await processOnePath(this.opts, f.path, f.mtime);
+          if (f.mtime !== undefined) this.lastSeenMtime.set(f.path, f.mtime);
+          return true;
+        },
+      });
 
       // Files that vanished from the vault since the last cycle:
       // drop their records from the store and forget their mtime.

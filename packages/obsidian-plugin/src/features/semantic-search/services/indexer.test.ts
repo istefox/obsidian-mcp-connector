@@ -2079,3 +2079,288 @@ describe("indexer — stop during a manual rebuild", () => {
     expect(pathsOf(await collect(store))).toEqual(new Set(["a.md"]));
   });
 });
+
+describe("indexer — concurrent files (ADR-0036)", () => {
+  /**
+   * A provider whose document calls stay open until released, and which
+   * reports `limit` calls at a time once the first one has ended: a pool
+   * that only exists after the model is loaded.
+   */
+  function pooledProvider(limit: number) {
+    const { embedder } = fakeEmbeddingProvider();
+    let open = 0;
+    let peak = 0;
+    let loaded = false;
+    const waiting: (() => void)[] = [];
+    const started: string[] = [];
+    const provider: EmbeddingProvider = {
+      ...embedder,
+      documentConcurrency: () => (loaded ? limit : 1),
+      embed: async (texts, role) => {
+        open++;
+        peak = Math.max(peak, open);
+        started.push(texts[0] ?? "");
+        await new Promise<void>((resolve) => waiting.push(resolve));
+        open--;
+        loaded = true;
+        if (texts.includes("boom")) throw new Error("crash");
+        return embedder.embed(texts, role);
+      },
+    };
+    return {
+      provider,
+      started,
+      peak: () => peak,
+      open: () => open,
+      releaseOne: async () => {
+        waiting.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      releaseAll: async () => {
+        for (let i = 0; i < 200 && (waiting.length > 0 || open > 0); i++) {
+          while (waiting.length > 0) waiting.shift()?.();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+      },
+    };
+  }
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const vaultOf = (n: number, extra: Record<string, string> = {}) =>
+    makeVault({
+      ...Object.fromEntries(
+        Array.from({ length: n }, (_, i) => [`f${i}.md`, `text ${i}`]),
+      ),
+      ...extra,
+    });
+
+  test("one file first, then as many at once as the provider reports", async () => {
+    const store = await makeStore();
+    const { vault } = vaultOf(7);
+    const p = pooledProvider(3);
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: p.provider,
+      store,
+      flushDebounceMs: 60_000,
+    });
+    const rebuild = indexer.rebuildAll();
+    await settle();
+    expect(p.open()).toBe(1);
+    await p.releaseOne();
+    expect(p.open()).toBe(3);
+    await p.releaseAll();
+    await rebuild;
+    expect(p.peak()).toBe(3);
+    expect(pathsOf(await collect(store)).size).toBe(7);
+    await indexer.stop();
+  });
+
+  test("a provider without the hint is fed one file at a time", async () => {
+    const store = await makeStore();
+    const { vault } = vaultOf(4);
+    const p = pooledProvider(3);
+    const { documentConcurrency: _unused, ...serial } = p.provider;
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: serial,
+      store,
+      flushDebounceMs: 60_000,
+    });
+    const rebuild = indexer.rebuildAll();
+    await settle();
+    await p.releaseAll();
+    await rebuild;
+    expect(p.peak()).toBe(1);
+    await indexer.stop();
+  });
+
+  test("a checkpoint waits for the files in flight and starts none meanwhile", async () => {
+    const store = await makeStore();
+    const { vault } = vaultOf(8);
+    const p = pooledProvider(3);
+    const inFlightAtFlush: number[] = [];
+    const sizeAtFlush: number[] = [];
+    const realFlush = store.flush.bind(store);
+    store.flush = async () => {
+      inFlightAtFlush.push(p.open());
+      sizeAtFlush.push(store.size());
+      await realFlush();
+    };
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: p.provider,
+      store,
+      flushDebounceMs: 60_000,
+      checkpointIntervalMs: 0,
+    });
+    const rebuild = indexer.rebuildAll();
+    await settle();
+    await p.releaseAll();
+    await rebuild;
+    await indexer.stop();
+    expect(inFlightAtFlush.length).toBeGreaterThan(1);
+    expect(inFlightAtFlush.every((n) => n === 0)).toBe(true);
+    // Every flush saw whole files only: one record per file here.
+    expect(sizeAtFlush.at(-1)).toBe(8);
+    expect(pathsOf(await collect(store)).size).toBe(8);
+  });
+
+  test("an interrupted concurrent rebuild resumes from what was checkpointed", async () => {
+    const adapter = memAdapter();
+    const mk = async () => {
+      const s = createEmbeddingStore({
+        adapter,
+        binPath: "/p/embeddings.bin",
+        indexPath: "/p/embeddings.index.json",
+        vectorDim: DIM,
+      });
+      await s.init();
+      return s;
+    };
+    const files: Record<string, { content: string; mtime: number }> = {};
+    for (let i = 0; i < 6; i++) {
+      files[`f${i}.md`] = { content: `text ${i}`, mtime: 100 };
+    }
+    files["z.md"] = { content: "boom", mtime: 100 };
+    const { vault } = makeMtimeVault(files);
+
+    const first = await mk();
+    const p = pooledProvider(3);
+    const crashed = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: p.provider,
+      store: first,
+      flushDebounceMs: 60_000,
+      checkpointIntervalMs: 0,
+    });
+    const failing = crashed.rebuildAll().catch((err: unknown) => err);
+    await settle();
+    await p.releaseAll();
+    expect(await failing).toBeInstanceOf(Error);
+
+    // Simulated restart: a new store over the same files, nothing flushed
+    // since the last checkpoint.
+    const second = await mk();
+    const persisted = pathsOf(await collect(second));
+    expect(persisted.size).toBeGreaterThan(0);
+    expect(persisted.has("z.md")).toBe(false);
+    for (const path of persisted) {
+      expect(second.mtimeFor(path)).toBe(100);
+    }
+
+    const { embedder, embeds } = fakeEmbeddingProvider();
+    const resumed = createLiveIndexer({
+      vault: {
+        ...vault,
+        read: async (path) => (path === "z.md" ? "fixed" : vault.read(path)),
+      },
+      chunker: fakeChunker,
+      embedder,
+      store: second,
+      flushDebounceMs: 60_000,
+    });
+    await resumed.start();
+    await resumed.stop();
+    // Only the files that never reached a checkpoint are embedded again.
+    expect(embeds().length).toBe(7 - persisted.size);
+    expect(pathsOf(await collect(second)).size).toBe(7);
+  });
+
+  test("the first failure stops new files and is thrown once those in flight end", async () => {
+    const store = await makeStore();
+    const { vault } = vaultOf(1, {
+      "g1.md": "boom",
+      "g2.md": "late a",
+      "g3.md": "late b",
+      "g4.md": "late c",
+      "g5.md": "late d",
+    });
+    const p = pooledProvider(2);
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: p.provider,
+      store,
+      flushDebounceMs: 60_000,
+    });
+    const failing = indexer.rebuildAll().catch((err: unknown) => err);
+    await settle();
+    await p.releaseAll();
+    const err = await failing;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("crash");
+    expect(p.started.length).toBeLessThan(6);
+    expect(p.open()).toBe(0);
+    await indexer.stop();
+  });
+
+  test("stop() during a concurrent rebuild waits for the files in flight", async () => {
+    const store = await makeStore();
+    const { vault } = vaultOf(9);
+    const p = pooledProvider(3);
+    const indexer = createLiveIndexer({
+      vault,
+      chunker: fakeChunker,
+      embedder: p.provider,
+      store,
+      flushDebounceMs: 60_000,
+    });
+    const rebuild = indexer.rebuildAll().catch(() => undefined);
+    await settle();
+    await p.releaseOne();
+    expect(p.open()).toBe(3);
+    const startedAtStop = p.started.length;
+    let stopped = false;
+    const stopping = indexer.stop().then(() => {
+      stopped = true;
+    });
+    await settle();
+    expect(stopped).toBe(false);
+    await p.releaseAll();
+    await stopping;
+    await rebuild;
+    expect(p.started.length).toBe(startedAtStop);
+    expect(p.open()).toBe(0);
+  });
+
+  test("the low-power cycle stays at one file at a time, and prunes as before", async () => {
+    const store = await makeStore();
+    const files: Record<string, { content: string; mtime: number }> = {};
+    for (let i = 0; i < 6; i++) {
+      files[`f${i}.md`] = { content: `text ${i}`, mtime: 100 };
+    }
+    const { vault, files: live } = makeMtimeVault(files);
+    const p = pooledProvider(3);
+    const make = () =>
+      createLowPowerIndexer({
+        vault,
+        chunker: fakeChunker,
+        embedder: p.provider,
+        store,
+        intervalMs: 1_000_000,
+      });
+    const first = make();
+    const starting = first.start();
+    await settle();
+    await p.releaseAll();
+    await starting;
+    await first.stop();
+    expect(p.peak()).toBe(1);
+    expect(pathsOf(await collect(store)).size).toBe(6);
+
+    live.delete("f0.md");
+    const second = make();
+    const again = second.start();
+    await settle();
+    await p.releaseAll();
+    await again;
+    await second.stop();
+    // Nothing changed: no file embedded again, the vanished one pruned.
+    expect(p.started.length).toBe(6);
+    expect(pathsOf(await collect(store)).has("f0.md")).toBe(false);
+  });
+});
