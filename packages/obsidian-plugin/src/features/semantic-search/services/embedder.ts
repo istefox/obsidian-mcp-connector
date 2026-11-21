@@ -500,6 +500,28 @@ export function buildPipelineOptions(
   };
 }
 
+/**
+ * The backend one model actually runs on, logged once per load.
+ *
+ * `backend resolved` names the machine's default, which a model may
+ * override: EmbeddingGemma runs on WASM where that line says `webgpu`
+ * (#665, ADR-0034). Every path that loads a model goes through here, so
+ * the log tells which execution provider produced the vectors.
+ */
+export function chooseModelBackend(
+  model: string,
+  machineBackend: BackendKind,
+  override: PipelineLoadOpts["backend"],
+): BackendKind {
+  const backend = override ?? machineBackend;
+  logger.info("semantic-search: model backend", {
+    model,
+    backend,
+    machineBackend,
+  });
+  return backend;
+}
+
 export async function realPipelineFactory(
   model: string,
   onProgress?: ProgressCallback,
@@ -509,7 +531,7 @@ export async function realPipelineFactory(
   // the whole plugin. A WASM override then runs on the CPU execution
   // provider of whichever WASM build that environment loaded.
   const resolved = await resolveBackend();
-  const backend = opts?.backend ?? resolved;
+  const backend = chooseModelBackend(model, resolved, opts?.backend);
   const options = buildPipelineOptions(
     backend,
     opts?.dtype,
