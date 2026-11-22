@@ -1238,3 +1238,233 @@ describe("search_vault_smart — v2 window.SmartSearch that gains search after t
     }
   });
 });
+
+describe("search_vault_smart — DLC index not ready (reported on #678)", () => {
+  const GEMMA = "embedding-gemma-300m";
+  const hit: SearchResult = {
+    filePath: "a.md",
+    heading: null,
+    excerpt: "alpha",
+    line: 1,
+    score: 0.9,
+  };
+
+  /**
+   * State as production wires it under the Gemma setting. The provider
+   * is a ready one, like the real native provider, whose isReady() is
+   * always true: a `ready: false` fake would hide the empty-index path.
+   */
+  function gemmaState(opts: {
+    results?: SearchResult[];
+    ready?: boolean;
+    building?: boolean;
+    buildError?: string;
+    switching?: boolean;
+    /** The live provider's own readiness (Smart Connections can be false). */
+    providerReady?: boolean;
+    /**
+     * `pendingProvider` set while the live provider already reads the
+     * Gemma store: Gemma selected at startup with no index, then any
+     * settings save goes through `applySettings`.
+     */
+    pendingWithoutSwitch?: boolean;
+  }) {
+    const spy = fakeProvider({
+      ready: opts.providerReady ?? true,
+      results: opts.results ?? [],
+    });
+    const storeKeys: string[] = [];
+    const rebuildsStarted: string[] = [];
+    const gemmaStore = { hasRecords: (path: string) => path === "a.md" };
+    const state = {
+      provider: spy.provider,
+      settings: { provider: "embedding-gemma", indexingMode: "live" },
+      pendingProvider:
+        opts.switching || opts.pendingWithoutSwitch ? GEMMA : null,
+      pendingProviderStartedAt:
+        opts.switching || opts.pendingWithoutSwitch ? Date.now() - 5_000 : null,
+      // A switch keeps the provider built from the previous setting.
+      providerSetting: opts.switching ? "native" : "embedding-gemma",
+      // MiniLM's store: progress must never be read from it.
+      store: { hasRecords: () => false },
+      registry: {
+        isReady: (key: string) => key === GEMMA && opts.ready === true,
+        storeFor: (key: string) => {
+          storeKeys.push(key);
+          return gemmaStore;
+        },
+      },
+      isRebuildingFor: (key: string) => key === GEMMA && opts.building === true,
+      dlcRebuildErrors: new Map(
+        opts.buildError ? [[GEMMA, opts.buildError]] : [],
+      ),
+      startRebuildFor: (key: string) => {
+        rebuildsStarted.push(key);
+      },
+    };
+    return { spy, state, storeKeys, rebuildsStarted };
+  }
+
+  async function run(state: unknown) {
+    const result = await searchVaultSmartHandler({
+      arguments: { query: "x" },
+      app: mockApp(),
+      plugin: mockPlugin({ semanticSearchState: state } as never),
+    });
+    return {
+      result,
+      parsed: JSON.parse(result.content[0]?.text ?? "{}"),
+    };
+  }
+
+  beforeEach(() => {
+    setMockFile("a.md", "# A");
+    setMockFile("b.md", "# B");
+  });
+
+  test("first-ever build: index_building with Gemma's progress, the unfinished index is not queried", async () => {
+    const { spy, state, storeKeys } = gemmaState({ building: true });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBe(true);
+    expect(parsed.errorCode).toBe("index_building");
+    expect(parsed.filesIndexed).toBe(1);
+    expect(parsed.filesTotal).toBe(2);
+    expect(parsed.percent).toBe(50);
+    expect(storeKeys).toEqual([GEMMA]);
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("first-ever build with some notes indexed: still a status, never partial results", async () => {
+    const { spy, state } = gemmaState({ building: true, results: [hit] });
+    const { parsed } = await run(state);
+    expect(parsed.errorCode).toBe("index_building");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("switch into Gemma, previous index empty: index_building instead of a silent []", async () => {
+    const { spy, state } = gemmaState({ building: true, switching: true });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBe(true);
+    expect(parsed.errorCode).toBe("index_building");
+    expect(parsed.percent).toBe(50);
+    expect(typeof parsed.retryAfterSeconds).toBe("number");
+    expect(spy.calls()).toHaveLength(1);
+  });
+
+  test("switch into Gemma, previous index populated: its results are served", async () => {
+    const { state } = gemmaState({
+      building: true,
+      switching: true,
+      results: [hit],
+    });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.results.map((r: SearchResult) => r.filePath)).toEqual([
+      "a.md",
+    ]);
+  });
+
+  test("Gemma unready since startup, then a settings save: still a status, the partial index is not served", async () => {
+    const { spy, state } = gemmaState({
+      building: true,
+      pendingWithoutSwitch: true,
+      results: [hit],
+    });
+    const { parsed } = await run(state);
+    expect(parsed.errorCode).toBe("index_building");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("switch with an unknown provider origin: fails closed to a status", async () => {
+    const { spy, state } = gemmaState({
+      building: true,
+      switching: true,
+      results: [hit],
+    });
+    const { parsed } = await run({ ...state, providerSetting: null });
+    expect(parsed.errorCode).toBe("index_building");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("switch to e5 away from an unfinished Gemma index: no complete previous index, so a status", async () => {
+    const E5 = "multilingual-e5-base";
+    const spy = fakeProvider({ ready: true, results: [hit] });
+    const { parsed } = await run({
+      provider: spy.provider,
+      settings: { provider: "multilingual-e5-base", indexingMode: "live" },
+      pendingProvider: E5,
+      pendingProviderStartedAt: Date.now() - 5_000,
+      providerSetting: "embedding-gemma",
+      registry: {
+        isReady: () => false,
+        storeFor: () => ({ hasRecords: () => false }),
+      },
+      isRebuildingFor: (key: string) => key === E5,
+      dlcRebuildErrors: new Map(),
+    });
+    expect(parsed.errorCode).toBe("index_building");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("rebuild over a ready Gemma index: the previous index keeps answering", async () => {
+    const { spy, state } = gemmaState({
+      ready: true,
+      building: true,
+      results: [hit],
+    });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.results).toHaveLength(1);
+    expect(spy.calls()).toHaveLength(1);
+  });
+
+  test("rebuild finished: results come from the Gemma index", async () => {
+    const { state } = gemmaState({ ready: true, results: [hit] });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.results).toHaveLength(1);
+  });
+
+  test("rebuild finished on an index with no match: [] is a real answer", async () => {
+    const { result, parsed } = await run(gemmaState({ ready: true }).state);
+    expect(result.isError).toBeFalsy();
+    expect(parsed.results).toEqual([]);
+  });
+
+  test("failed build: index_build_failed with the reason, not a permanent index_building", async () => {
+    const { spy, state } = gemmaState({ buildError: "network down" });
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBe(true);
+    expect(parsed.errorCode).toBe("index_build_failed");
+    expect(parsed.error).toContain("network down");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("failed build during a switch, previous index empty: index_build_failed", async () => {
+    const { parsed } = await run(
+      gemmaState({ buildError: "network down", switching: true }).state,
+    );
+    expect(parsed.errorCode).toBe("index_build_failed");
+  });
+
+  test("failed build during a switch from a provider that is not ready: index_build_failed, not index_building", async () => {
+    const { spy, state } = gemmaState({
+      buildError: "network down",
+      switching: true,
+      providerReady: false,
+    });
+    const { parsed } = await run(state);
+    expect(parsed.errorCode).toBe("index_build_failed");
+    expect(spy.calls()).toHaveLength(0);
+  });
+
+  test("index never built and no build running: index_not_built, no build is started", async () => {
+    const { spy, state, rebuildsStarted } = gemmaState({});
+    const { result, parsed } = await run(state);
+    expect(result.isError).toBe(true);
+    expect(parsed.errorCode).toBe("index_not_built");
+    expect(parsed.error).toMatch(/Rebuild index from scratch/);
+    expect(spy.calls()).toHaveLength(0);
+    expect(rebuildsStarted).toEqual([]);
+  });
+});

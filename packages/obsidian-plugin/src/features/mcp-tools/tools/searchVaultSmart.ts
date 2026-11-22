@@ -154,6 +154,85 @@ async function maybeSendProgress(
   }
 }
 
+/**
+ * Store key and vector size of each provider setting that has its own
+ * downloadable index. Mirrors `DOWNLOADABLE_PROVIDER_KEYS` in
+ * `semantic-search/index.ts`, plus the dimension `storeFor` needs.
+ */
+const DLC_INDEXES: Partial<Record<string, { key: string; dims: number }>> = {
+  "embedding-gemma": { key: "embedding-gemma-300m", dims: 768 },
+  "multilingual-e5-base": { key: "multilingual-e5-base", dims: 768 },
+};
+
+type SemanticState = NonNullable<McpToolsPlugin["semanticSearchState"]>;
+
+/** Where a not-yet-ready DLC index stands. */
+type DlcIndexStatus =
+  | { kind: "building"; key: string; dims: number }
+  | { kind: "failed"; key: string; dims: number; message: string }
+  | { kind: "not_built"; key: string; dims: number };
+
+/**
+ * Status of the selected DLC provider's index, or `null` when it is
+ * ready, when the setting is not a DLC provider, or when the state
+ * carries no registry to ask (partial wiring, test fixtures).
+ *
+ * Read at query time from the registry and the rebuild bookkeeping,
+ * never from `pendingProvider` alone: that one is cleared only on
+ * success, so after a failed build it would claim "still building"
+ * forever (the #344 trap).
+ */
+function dlcIndexStatus(
+  state: SemanticState,
+  provider: string | undefined,
+): DlcIndexStatus | null {
+  const entry = provider ? DLC_INDEXES[provider] : undefined;
+  if (!entry || !state.registry) return null;
+  if (state.registry.isReady(entry.key)) return null;
+  if (state.isRebuildingFor?.(entry.key)) return { kind: "building", ...entry };
+  const message = state.dlcRebuildErrors?.get(entry.key);
+  if (message) return { kind: "failed", ...entry, message };
+  return { kind: "not_built", ...entry };
+}
+
+/**
+ * The explicit answer for a DLC index that cannot serve yet. Never an
+ * empty result list: an empty list reads as "nothing matches" (reported on #678).
+ */
+async function dlcNotReadyError(
+  ctx: SearchVaultSmartContext,
+  state: SemanticState,
+  status: DlcIndexStatus,
+): Promise<ToolResult> {
+  if (status.kind === "failed") {
+    return errorJson(
+      `Semantic search is not ready: the "${status.key}" index build failed: ${status.message}. Open Settings → MCP Connector → Semantic Search to retry the build.`,
+      "index_build_failed",
+    );
+  }
+  if (status.kind === "not_built") {
+    return errorJson(
+      `Semantic search is not ready: the "${status.key}" index has not been built. Open Settings → MCP Connector → Semantic Search and click "Rebuild index from scratch".`,
+      "index_not_built",
+    );
+  }
+  const { filesIndexed, filesTotal, percent } = computeIndexProgress(
+    ctx.app,
+    state.registry?.storeFor(status.key, status.dims),
+  );
+  const retryAfterSeconds = estimateRetryAfterSeconds(
+    state.pendingProviderStartedAt,
+    percent,
+    Date.now(),
+  );
+  await maybeSendProgress(ctx, percent, retryAfterSeconds);
+  return errorJson(
+    `Semantic search is not ready: the "${status.key}" index is still being built. Retry shortly.`,
+    "index_building",
+    { filesIndexed, filesTotal, percent, retryAfterSeconds },
+  );
+}
+
 const DEFAULT_LIMIT = 10;
 /** `groupByFile` asks the provider for this many chunks per requested note. */
 const GROUP_POOL_FACTOR = 4;
@@ -304,8 +383,41 @@ export async function searchVaultSmartHandler(
     }
   }
 
+  // The selected DLC index is not ready. Two cases:
+  // - A switch into it (`pendingProvider` names it): the previous
+  //   provider is kept on purpose and serves its own, complete index
+  //   meanwhile (`applySettings`). Its isReady() cannot say whether that
+  //   index holds anything (the native one is always true), so it is
+  //   asked below and only an empty answer turns into a status.
+  // - Anything else (first build, a store wiped as stale, a deleted
+  //   index): the live provider reads the unfinished store itself, so
+  //   it is not queried. Partial results would pass for complete ones.
+  const dlcStatus = usingDlcProvider
+    ? dlcIndexStatus(state, settings?.provider)
+    : null;
+  // "Previous" means the live provider was built from another setting
+  // whose own index is complete. `pendingProvider` is also set when the
+  // live provider already reads this unfinished store (startup with no
+  // index, then a settings save), and a switch away from another
+  // unfinished DLC index has no complete previous index either.
+  const servingPreviousIndex =
+    dlcStatus !== null &&
+    state.pendingProvider === dlcStatus.key &&
+    // Unknown origin: fail closed, a status rather than maybe-partial results.
+    state.providerSetting != null &&
+    state.providerSetting !== settings?.provider &&
+    dlcIndexStatus(state, state.providerSetting) === null;
+  if (dlcStatus && !servingPreviousIndex) {
+    return dlcNotReadyError(ctx, state, dlcStatus);
+  }
+
   const provider = state.provider;
   if (!provider.isReady()) {
+    // A previous provider that cannot answer (Smart Connections not
+    // bound yet) while the selected index is not ready: report that
+    // index's real state. `pendingProvider` alone would say "building"
+    // forever after a failed build.
+    if (dlcStatus) return dlcNotReadyError(ctx, state, dlcStatus);
     if (state.pendingProvider) {
       const { filesIndexed, filesTotal, percent } = computeIndexProgress(
         ctx.app,
@@ -352,6 +464,15 @@ export async function searchVaultSmartHandler(
       `Semantic search failed: ${message}`,
       "semantic_search_failed",
     );
+  }
+
+  // The previous index answered nothing while the new one builds.
+  // Most likely it was never built (a vault that went straight to Gemma
+  // keeps an empty MiniLM store), and `[]` would read as "no match".
+  // Checked before the exclusion filter: an index that matched only
+  // excluded notes is not empty.
+  if (servingPreviousIndex && dlcStatus && results.length === 0) {
+    return dlcNotReadyError(ctx, state, dlcStatus);
   }
 
   // Query-time exclusion (RFC #238, D3): drop hits in folders the user

@@ -119,6 +119,20 @@ export type SemanticSearchState = {
    */
   pendingProviderStartedAt?: number | null;
   /**
+   * The `settings.provider` value the live `provider` was built from.
+   * It differs from `settings.provider` while a switch into a DLC
+   * provider keeps the previous one serving. `pendingProvider` cannot
+   * say that alone: it is also set when the live provider already reads
+   * the unfinished DLC store (Gemma selected at startup with no index,
+   * then any settings save). `search_vault_smart` serves the previous
+   * index only when it really is another, complete one.
+   *
+   * Written where the chooser builds the provider here; the
+   * production swap to a just-finished DLC provider leaves it behind,
+   * which is safe: it is read only while that index is not ready.
+   */
+  providerSetting?: string | null;
+  /**
    * True while the native provider's lazy first-time index build (or a
    * post-reopen catch-up rebuild) is in flight — set by
    * `startIndexerIfNeeded`'s production wiring right before
@@ -272,6 +286,7 @@ export async function setup(
 
     const state: SemanticSearchState = {
       provider,
+      providerSetting: chooser ? settings.provider : null,
       settings,
       settingsMutex,
       chooser,
@@ -350,6 +365,7 @@ export async function applySettings(
   state.pendingProviderStartedAt = null;
   if (state.chooser) {
     state.provider = state.chooser(next);
+    state.providerSetting = next.provider;
   }
 }
 
@@ -386,5 +402,6 @@ export async function applySettings(
 export function refreshAutoProvider(state: SemanticSearchState): void {
   if (state.chooser && state.settings.provider === "auto") {
     state.provider = state.chooser(state.settings);
+    state.providerSetting = state.settings.provider;
   }
 }

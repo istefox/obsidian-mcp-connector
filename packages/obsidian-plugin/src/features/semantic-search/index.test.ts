@@ -414,6 +414,8 @@ describe("applySettings — UI swap path (T12)", () => {
     if (!result.success) throw new Error(result.error);
     result.state.registry = registry;
     const initialProvider = result.state.provider;
+    const initialSetting = result.state.settings.provider;
+    expect(result.state.providerSetting).toBe(initialSetting);
 
     await applySettings(plugin, result.state, {
       ...result.state.settings,
@@ -423,9 +425,40 @@ describe("applySettings — UI swap path (T12)", () => {
     // Store not marked ready → pendingProvider set, live provider unchanged.
     expect(result.state.pendingProvider).toBe("embedding-gemma-300m");
     expect(result.state.provider).toBe(initialProvider);
+    expect(result.state.providerSetting).toBe(initialSetting);
     // #344: pendingProviderStartedAt set alongside pendingProvider, used by
     // search_vault_smart to estimate retryAfterSeconds.
     expect(result.state.pendingProviderStartedAt).toBeTypeOf("number");
+  });
+
+  test("providerSetting names the setting the live provider was built from", async () => {
+    const { plugin } = makePluginStub();
+    const result = await setup(plugin);
+    if (!result.success) throw new Error(result.error);
+    const state = result.state;
+    state.chooser = () => ({ isReady: () => true, search: async () => [] });
+    let gemmaReady = false;
+    state.registry = {
+      isReady: () => gemmaReady,
+    } as unknown as NonNullable<typeof state.registry>;
+    state.startRebuildFor = () => {};
+    state.providerSetting = "native";
+
+    // Switch into an unready Gemma: the native provider keeps serving.
+    await applySettings(plugin, state, {
+      ...state.settings,
+      provider: "embedding-gemma",
+    });
+    expect(state.pendingProvider).toBe("embedding-gemma-300m");
+    expect(state.providerSetting).toBe("native");
+
+    // Once the index is ready, the next save swaps and records it.
+    gemmaReady = true;
+    await applySettings(plugin, state, {
+      ...state.settings,
+      provider: "embedding-gemma",
+    });
+    expect(state.providerSetting).toBe("embedding-gemma");
   });
 
   test("DLC: picking a provider whose store is not ready starts its build (#655)", async () => {
