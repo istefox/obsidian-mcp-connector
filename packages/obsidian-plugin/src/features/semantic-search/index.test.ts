@@ -429,6 +429,21 @@ describe("applySettings — UI swap path (T12)", () => {
     // #344: pendingProviderStartedAt set alongside pendingProvider, used by
     // search_vault_smart to estimate retryAfterSeconds.
     expect(result.state.pendingProviderStartedAt).toBeTypeOf("number");
+
+    // Switch on to e5 before Gemma finishes, then Gemma finishes:
+    // production marks it ready and swaps through the chooser
+    // (productionWiring's post-build step) while e5 is still pending.
+    await applySettings(plugin, result.state, {
+      ...result.state.settings,
+      provider: "multilingual-e5-base",
+    });
+    expect(result.state.pendingProvider).toBe("multilingual-e5-base");
+    registry.markReady("embedding-gemma-300m");
+    if (!result.state.chooser) throw new Error("chooser missing");
+    result.state.provider = result.state.chooser(result.state.settings);
+    // The live provider now reads e5's unfinished store: the field must
+    // say so, or search would serve it as the "previous" index.
+    expect(result.state.providerSetting).toBe("multilingual-e5-base");
   });
 
   test("providerSetting names the setting the live provider was built from", async () => {

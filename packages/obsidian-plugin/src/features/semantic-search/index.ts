@@ -127,9 +127,10 @@ export type SemanticSearchState = {
    * then any settings save). `search_vault_smart` serves the previous
    * index only when it really is another, complete one.
    *
-   * Written where the chooser builds the provider here; the
-   * production swap to a just-finished DLC provider leaves it behind,
-   * which is safe: it is read only while that index is not ready.
+   * Written by the chooser `setup` installs, so every path that builds
+   * the live provider records it, production's post-build swap
+   * included. The explicit writes in `applySettings` and
+   * `refreshAutoProvider` cover a chooser replaced after setup.
    */
   providerSetting?: string | null;
   /**
@@ -302,6 +303,21 @@ export async function setup(
         // store, stop the indexer, and unload the embedder model.
       },
     };
+    // Every chooser call becomes the live provider (here, applySettings,
+    // refreshAutoProvider, and production's swap once a DLC build
+    // finishes), so the chooser itself records the setting it built from.
+    // That swap can build a provider for a *different*, still-unfinished
+    // index than the one that just finished (Gemma done while e5 is
+    // pending): a field written only at the call sites here would keep
+    // naming the previous provider and pass e5's partial index off as it.
+    if (chooser) {
+      const build = chooser;
+      state.chooser = (s) => {
+        const built = build(s);
+        state.providerSetting = s.provider;
+        return built;
+      };
+    }
     return { success: true, state };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

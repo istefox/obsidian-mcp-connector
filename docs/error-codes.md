@@ -94,6 +94,7 @@ hand-rolls it. Before adding a code, reuse one from this list.
 | `dataview_not_installed`, `dataview_not_ready`, `dataview_query_failed` | Dataview is missing, still indexing, or rejected the query. | `query` |
 | `templater_not_installed`, `template_not_found`, `template_execution_failed`, `core_templates_execution_failed` | `execute_template` refusals. | `path` |
 | `semantic_search_unavailable`, `semantic_search_failed`, `index_building` | `search_vault_smart`: no provider, provider threw, or the index is still being built (with progress fields). | `filesIndexed`, `filesTotal`, `percent`, `retryAfterSeconds` |
+| `index_build_failed`, `index_not_built` | `search_vault_smart`: the selected EmbeddingGemma or multilingual-e5 index stopped building (the message carries the reason), or has never been built (rebuild it from the settings). | none |
 | `fetch_timeout`, `fetch_failed` | `fetch` timed out or the request threw. | `url`, `timeoutMs` |
 
 ## Transport-level
