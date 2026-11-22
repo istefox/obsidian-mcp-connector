@@ -119,6 +119,21 @@ export type SemanticSearchState = {
    */
   pendingProviderStartedAt?: number | null;
   /**
+   * The `settings.provider` value the live `provider` was built from.
+   * It differs from `settings.provider` while a switch into a DLC
+   * provider keeps the previous one serving. `pendingProvider` cannot
+   * say that alone: it is also set when the live provider already reads
+   * the unfinished DLC store (Gemma selected at startup with no index,
+   * then any settings save). `search_vault_smart` serves the previous
+   * index only when it really is another, complete one.
+   *
+   * Written by the chooser `setup` installs, so every path that builds
+   * the live provider records it, production's post-build swap
+   * included. The explicit writes in `applySettings` and
+   * `refreshAutoProvider` cover a chooser replaced after setup.
+   */
+  providerSetting?: string | null;
+  /**
    * True while the native provider's lazy first-time index build (or a
    * post-reopen catch-up rebuild) is in flight — set by
    * `startIndexerIfNeeded`'s production wiring right before
@@ -272,6 +287,7 @@ export async function setup(
 
     const state: SemanticSearchState = {
       provider,
+      providerSetting: chooser ? settings.provider : null,
       settings,
       settingsMutex,
       chooser,
@@ -287,6 +303,21 @@ export async function setup(
         // store, stop the indexer, and unload the embedder model.
       },
     };
+    // Every chooser call becomes the live provider (here, applySettings,
+    // refreshAutoProvider, and production's swap once a DLC build
+    // finishes), so the chooser itself records the setting it built from.
+    // That swap can build a provider for a *different*, still-unfinished
+    // index than the one that just finished (Gemma done while e5 is
+    // pending): a field written only at the call sites here would keep
+    // naming the previous provider and pass e5's partial index off as it.
+    if (chooser) {
+      const build = chooser;
+      state.chooser = (s) => {
+        const built = build(s);
+        state.providerSetting = s.provider;
+        return built;
+      };
+    }
     return { success: true, state };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -350,6 +381,7 @@ export async function applySettings(
   state.pendingProviderStartedAt = null;
   if (state.chooser) {
     state.provider = state.chooser(next);
+    state.providerSetting = next.provider;
   }
 }
 
@@ -386,5 +418,6 @@ export async function applySettings(
 export function refreshAutoProvider(state: SemanticSearchState): void {
   if (state.chooser && state.settings.provider === "auto") {
     state.provider = state.chooser(state.settings);
+    state.providerSetting = state.settings.provider;
   }
 }
