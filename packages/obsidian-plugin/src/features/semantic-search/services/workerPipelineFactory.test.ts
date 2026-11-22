@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import type {
-  PipelineFactoryWithProgress,
-  PipelineFn,
-  PipelineLoadOpts,
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { logger } from "$/shared/logger";
+import {
+  chooseModelBackend,
+  type PipelineFactoryWithProgress,
+  type PipelineFn,
+  type PipelineLoadOpts,
 } from "./embedder";
 import { withSentenceEmbedding } from "./sentenceEmbeddingPipeline";
 import { fakeLib, fakeWorker, type FakeWorker } from "./embeddingWorkerTestKit";
@@ -224,6 +226,183 @@ describe("createWorkerPipelineFactory", () => {
     });
     await pipe.dispose!();
     expect(spawned[0]!.terminated).toBe(true);
+  });
+});
+
+/**
+ * The line `semantic-search: model backend` (#665) on each path a load can
+ * take. `inner` here logs the way `realPipelineFactory` does, through
+ * `chooseModelBackend` with the default thread, so these tests pin who
+ * logs on which path: the worker factory after a worker load, `inner` on
+ * every path that ends on the main thread, and never both for one load.
+ */
+describe("model backend log", () => {
+  const LINE = "semantic-search: model backend";
+  let lines: unknown[] = [];
+  let spies: { mockRestore: () => void }[] = [];
+
+  beforeEach(() => {
+    lines = [];
+    spies = [
+      spyOn(logger, "info").mockImplementation((...args: unknown[]) => {
+        if (args[0] === LINE) lines.push(args[1]);
+      }),
+      spyOn(logger, "warn").mockImplementation(() => {}),
+    ];
+  });
+  afterEach(() => {
+    for (const spy of spies) spy.mockRestore();
+  });
+
+  const pipe: PipelineFn = async () => ({ data: new Float32Array([7]) });
+  /** Stands in for `realPipelineFactory` on a machine with WebGPU. */
+  const loggingInner: PipelineFactoryWithProgress = async (
+    model,
+    _progress,
+    opts,
+  ) => {
+    chooseModelBackend(model, "webgpu", opts?.backend);
+    return pipe;
+  };
+  const pinned = { backend: "wasm" as const };
+
+  test("a model loaded in a worker logs thread worker, once", async () => {
+    const { spawn } = workers();
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn,
+      probe: async () => "webgpu",
+    });
+
+    await factory("gemma", undefined, pinned);
+
+    expect(lines).toEqual([
+      {
+        model: "gemma",
+        backend: "wasm",
+        machineBackend: "webgpu",
+        thread: "worker",
+      },
+    ]);
+  });
+
+  test("a WASM-only machine logs its worker loads too", async () => {
+    const { spawn } = workers();
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn,
+      probe: async () => "wasm",
+    });
+
+    await factory("minilm");
+
+    expect(lines).toEqual([
+      {
+        model: "minilm",
+        backend: "wasm",
+        machineBackend: "wasm",
+        thread: "worker",
+      },
+    ]);
+  });
+
+  test("a worker that cannot start logs thread main, once", async () => {
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn: () => {
+        throw new Error("Worker blocked by policy");
+      },
+      probe: async () => "webgpu",
+    });
+
+    await factory("gemma", undefined, pinned);
+
+    expect(lines).toEqual([
+      {
+        model: "gemma",
+        backend: "wasm",
+        machineBackend: "webgpu",
+        thread: "main",
+      },
+    ]);
+  });
+
+  test("a model that fails to load in the worker logs thread main, and no worker line", async () => {
+    const { spawn } = workers(
+      fakeLib(() => ({ data: new Float32Array(0) }), {
+        loadError: "Failed to fetch",
+      }),
+    );
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn,
+      probe: async () => "webgpu",
+    });
+
+    await factory("gemma", undefined, pinned);
+
+    expect(lines).toEqual([
+      {
+        model: "gemma",
+        backend: "wasm",
+        machineBackend: "webgpu",
+        thread: "main",
+      },
+    ]);
+  });
+
+  test("workers given up on at run time log thread main after the worker line", async () => {
+    const lib = fakeLib(() => ({ data: new Float32Array([1, 2]) }));
+    const spawned: FakeWorker[] = [];
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn: () => {
+        if (spawned.length >= 1) throw new Error("workers are blocked");
+        const w = fakeWorker(lib);
+        spawned.push(w);
+        return w;
+      },
+      probe: async () => "webgpu",
+    });
+
+    const workerPipe = await factory("gemma", undefined, pinned);
+    spawned[0]!.crash("gone");
+    await workerPipe("x");
+
+    expect(lines).toEqual([
+      {
+        model: "gemma",
+        backend: "wasm",
+        machineBackend: "webgpu",
+        thread: "worker",
+      },
+      {
+        model: "gemma",
+        backend: "wasm",
+        machineBackend: "webgpu",
+        thread: "main",
+      },
+    ]);
+  });
+
+  test("a WebGPU model, left on the main thread, logs thread main", async () => {
+    const { spawn } = workers();
+    const factory = createWorkerPipelineFactory({
+      inner: loggingInner,
+      spawn,
+      probe: async () => "webgpu",
+    });
+
+    await factory("minilm");
+
+    expect(lines).toEqual([
+      {
+        model: "minilm",
+        backend: "webgpu",
+        machineBackend: "webgpu",
+        thread: "main",
+      },
+    ]);
   });
 });
 

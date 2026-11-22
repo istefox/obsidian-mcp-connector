@@ -564,24 +564,34 @@ export function buildPipelineOptions(
   };
 }
 
+/** Where a model's inference runs: an embedding worker or the renderer. */
+export type ModelThread = "worker" | "main";
+
 /**
- * The backend one model actually runs on, logged once per load.
+ * The backend one model actually runs on, and the thread, logged once per
+ * load.
  *
  * `backend resolved` names the machine's default, which a model may
  * override: EmbeddingGemma runs on WASM where that line says `webgpu`
- * (#665, ADR-0034). Every path that loads a model goes through here, so
- * the log tells which execution provider produced the vectors.
+ * (#665, ADR-0034). Two callers cover every load. `realPipelineFactory`
+ * logs each main-thread load, the ones the worker factory hands back to
+ * it included (no worker, a worker that cannot boot or load the model,
+ * workers given up on after crashes). `createWorkerPipelineFactory` logs a
+ * model once its worker has loaded it (ADR-0036). So the log tells which
+ * execution provider produced the vectors, and where.
  */
 export function chooseModelBackend(
   model: string,
   machineBackend: BackendKind,
   override: PipelineLoadOpts["backend"],
+  thread: ModelThread = "main",
 ): BackendKind {
   const backend = override ?? machineBackend;
   logger.info("semantic-search: model backend", {
     model,
     backend,
     machineBackend,
+    thread,
   });
   return backend;
 }

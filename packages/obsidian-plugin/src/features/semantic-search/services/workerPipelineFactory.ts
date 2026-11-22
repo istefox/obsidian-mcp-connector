@@ -16,6 +16,7 @@ import { logger } from "$/shared/logger";
 import type { BackendKind } from "../types";
 import {
   buildPipelineOptions,
+  chooseModelBackend,
   probeBackend,
   type PipelineFactoryWithProgress,
 } from "./embedder";
@@ -89,7 +90,7 @@ export function createWorkerPipelineFactory(
 
     const { device, dtype } = buildPipelineOptions(backend, loadOpts?.dtype);
     try {
-      return await createWorkerPipeline({
+      const pipe = await createWorkerPipeline({
         spawn,
         model,
         options: { device, ...(dtype !== undefined ? { dtype } : {}) },
@@ -104,6 +105,10 @@ export function createWorkerPipelineFactory(
           workerUnavailable = true;
         },
       });
+      // After the load, not before: a model the worker could not load is
+      // logged by `inner`, with the thread it ended up on.
+      chooseModelBackend(model, machineBackend, loadOpts?.backend, "worker");
+      return pipe;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof WorkerBootError) {

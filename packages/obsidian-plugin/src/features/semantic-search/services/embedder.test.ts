@@ -574,9 +574,26 @@ describe("chooseModelBackend", () => {
     expect(calls).toEqual([
       [
         "semantic-search: model backend",
-        { model: "gemma", backend: "wasm", machineBackend: "webgpu" },
+        {
+          model: "gemma",
+          backend: "wasm",
+          machineBackend: "webgpu",
+          thread: "main",
+        },
       ],
     ]);
+  });
+
+  test("names the worker thread when the caller loaded the model there", () => {
+    const calls = logged(() => {
+      chooseModelBackend("gemma", "webgpu", "wasm", "worker");
+    });
+    expect(calls[0]?.[1]).toEqual({
+      model: "gemma",
+      backend: "wasm",
+      machineBackend: "webgpu",
+      thread: "worker",
+    });
   });
 
   test("falls back to the machine backend without an override", () => {
@@ -589,6 +606,7 @@ describe("chooseModelBackend", () => {
       model: "minilm",
       backend: "webgpu",
       machineBackend: "webgpu",
+      thread: "main",
     });
   });
 });
