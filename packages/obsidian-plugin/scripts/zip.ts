@@ -3,6 +3,7 @@ import { createWriteStream, existsSync } from "fs";
 import fs from "fs-extra";
 import { join, resolve } from "path";
 import { version } from "../../../package.json" with { type: "json" };
+import { vectorProbeBundleProblem } from "./vectorProbeBundleCheck";
 
 /**
  * Build the user-installable zip for a manual "drop into vault" install
@@ -25,6 +26,19 @@ import { version } from "../../../package.json" with { type: "json" };
 async function zipPlugin() {
   const pluginDir = resolve(import.meta.dir, "..");
   const repoRoot = resolve(pluginDir, "..", "..");
+
+  // A `--vector-probe` bundle is a diagnostic build (#680). `release`
+  // rebuilds before zipping, so this only catches `zip` run on its own.
+  const mainJsPath = join(repoRoot, "main.js");
+  if (
+    existsSync(mainJsPath) &&
+    vectorProbeBundleProblem(fs.readFileSync(mainJsPath, "utf8"), false) !==
+      null
+  ) {
+    throw new Error(
+      `${mainJsPath} holds the vector probe hook: rebuild with "bun run build" before zipping.`,
+    );
+  }
 
   const releaseDir = join(pluginDir, "releases");
   fs.ensureDirSync(releaseDir);
