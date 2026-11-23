@@ -6,6 +6,8 @@ import {
 import { SettingsStore } from "$/shared/settingsStore";
 import {
   DEFAULT_SEMANTIC_SETTINGS,
+  remoteProviderKey,
+  resolveRemoteConfig,
   semanticSearchSettingsSchema,
   type SemanticSearchSettings,
 } from "./types";
@@ -206,6 +208,19 @@ export type SemanticSearchState = {
    * Wired by production setup; absent in tests and early lifecycle.
    */
   purgeExcludedFolders?: (() => Promise<number>) | null;
+  /**
+   * Rebuild the remote embedding provider from a settings block and
+   * register it under its (model + width derived) store key, returning
+   * that key — or null when the block is incomplete.
+   *
+   * Called by the settings UI immediately before `applySettings` so a
+   * newly-configured or re-pointed server is live without an Obsidian
+   * reload. Wired by production setup; absent in tests and in the early
+   * lifecycle, where the chooser simply falls back to native.
+   */
+  configureRemote?:
+    | ((settings: SemanticSearchSettings) => string | null)
+    | null;
   teardown: () => Promise<void>;
 };
 
@@ -297,6 +312,7 @@ export async function setup(
       registry: null,
       pendingProvider: null,
       autoSuggestProvider: null,
+      configureRemote: null, // production wiring overrides this
       startIndexerIfNeeded: undefined, // production wiring overrides this
       teardown: async () => {
         // production wiring overrides this to flush+close the
@@ -340,6 +356,26 @@ const DOWNLOADABLE_PROVIDER_KEYS: Partial<Record<string, string>> = {
 };
 
 /**
+ * The store key a provider setting needs built before it can serve
+ * results, or undefined when the setting is immediately swappable
+ * (native, auto, smart-connections).
+ *
+ * "remote" is computed rather than looked up: its key encodes the model
+ * and width, so pointing the server at a different model is a different
+ * store and needs its own build — exactly like switching between the
+ * two bundled DLC models.
+ */
+export function pendingStoreKeyFor(
+  settings: SemanticSearchSettings,
+): string | undefined {
+  if (settings.provider === "remote") {
+    const cfg = resolveRemoteConfig(settings.remote);
+    return cfg ? remoteProviderKey(cfg.model, cfg.dimensions) : undefined;
+  }
+  return DOWNLOADABLE_PROVIDER_KEYS[settings.provider];
+}
+
+/**
  * Persist a new SemanticSearchSettings value and swap the live
  * provider via the chooser closure when one is available.
  *
@@ -364,7 +400,7 @@ export async function applySettings(
   );
   state.settings = next;
 
-  const pendingKey = DOWNLOADABLE_PROVIDER_KEYS[next.provider];
+  const pendingKey = pendingStoreKeyFor(next);
   if (pendingKey && state.registry && !state.registry.isReady(pendingKey)) {
     // Store not yet built — surface the rebuild banner, keep old provider,
     // and start the download + index build right away (#655): picking

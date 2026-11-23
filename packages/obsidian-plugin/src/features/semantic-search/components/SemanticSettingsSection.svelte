@@ -4,9 +4,16 @@
   import { onDestroy, onMount } from "svelte";
   import { applySettings } from "../index";
   import {
+    DEFAULT_REMOTE_SETTINGS,
     DEFAULT_SEMANTIC_SETTINGS,
+    remoteProviderKey,
+    type RemoteEmbeddingSettings,
     type SemanticSearchSettings,
   } from "../types";
+  import {
+    listRemoteModels,
+    probeRemoteDimensions,
+  } from "../services/remoteEmbeddingProvider";
   import ModelDownloadProgress from "./ModelDownloadProgress.svelte";
 
   export let plugin: McpToolsPlugin;
@@ -25,6 +32,17 @@
   let pendingError: string | null = null;
   let pollTimer: number | null = null;
   const POLL_MS = 1000;
+
+  // Working copy of the remote block. Edited freely and written back on
+  // blur or on an explicit action, so typing a URL does not re-persist
+  // and re-instantiate the provider on every keystroke.
+  let remote: Required<RemoteEmbeddingSettings> = {
+    ...DEFAULT_REMOTE_SETTINGS,
+  };
+  let testing = false;
+  let testMessage: string | null = null;
+  let testOk = false;
+  let knownModels: string[] = [];
 
   const PROVIDER_META: Record<
     string,
@@ -46,6 +64,7 @@
     const state = plugin.semanticSearchState;
     if (state) {
       settings = { ...state.settings };
+      remote = { ...DEFAULT_REMOTE_SETTINGS, ...(state.settings.remote ?? {}) };
       pendingProvider = state.pendingProvider ?? null;
       autoSuggestProvider = state.autoSuggestProvider ?? null;
     }
@@ -76,6 +95,11 @@
       storeSize =
         registry.storeFor("multilingual-e5-base", 768).size() ||
         probed["multilingual-e5-base"] ||
+        0;
+    } else if (provider === "remote" && registry && remote.dimensions > 0) {
+      const key = remoteProviderKey(remote.model, remote.dimensions);
+      storeSize = registry.storeFor(key, remote.dimensions).size() ||
+        probed[key] ||
         0;
     } else {
       storeSize =
@@ -115,6 +139,10 @@
     saving = true;
     lastError = null;
     try {
+      // Rebuild the remote provider FIRST: applySettings runs the
+      // chooser, which reads the live remote key. Reversing these two
+      // would leave the chooser resolving against the previous server.
+      state.configureRemote?.(next);
       await applySettings(plugin, state, next);
       settings = next;
       refreshStatus();
@@ -127,6 +155,55 @@
 
   async function onProviderChange(value: SemanticSearchSettings["provider"]) {
     await persist({ ...settings, provider: value });
+  }
+
+  /** Write the working copy of the remote block back to settings. */
+  async function persistRemote(patch: Partial<RemoteEmbeddingSettings> = {}) {
+    remote = { ...remote, ...patch };
+    await persist({ ...settings, remote: { ...remote } });
+  }
+
+  /**
+   * Changing the server or the model invalidates the detected width:
+   * it is part of the store directory name, so keeping a stale value
+   * would point at another model's vectors. Clearing it forces a probe
+   * before the provider can be used, which is the safe default.
+   */
+  async function onRemoteTargetChange(
+    patch: Partial<RemoteEmbeddingSettings>,
+  ) {
+    testMessage = null;
+    await persistRemote({ ...patch, dimensions: 0 });
+  }
+
+  /**
+   * Probe the server: list its models (best effort) and embed one short
+   * string to learn the vector width, which is then cached in settings.
+   * This is the only place the width is discovered from the UI.
+   */
+  async function onTestConnection() {
+    testing = true;
+    testMessage = null;
+    testOk = false;
+    try {
+      knownModels = await listRemoteModels(remote).catch(() => []);
+      if (!remote.model) {
+        testMessage =
+          knownModels.length > 0
+            ? `Server reachable. Pick a model: ${knownModels.slice(0, 8).join(", ")}`
+            : "Server reachable, but no model id is set.";
+        return;
+      }
+      const dimensions = await probeRemoteDimensions(remote);
+      await persistRemote({ dimensions });
+      testOk = true;
+      testMessage = `OK — ${remote.model} returns ${dimensions}-dimensional vectors. Index directory: ${remoteProviderKey(remote.model, dimensions)}`;
+      refreshStatus();
+    } catch (e) {
+      testMessage = e instanceof Error ? e.message : String(e);
+    } finally {
+      testing = false;
+    }
   }
 
   async function onModeChange(value: SemanticSearchSettings["indexingMode"]) {
@@ -167,7 +244,16 @@
         ? "embedding-gemma-300m"
         : settings.provider === "multilingual-e5-base"
           ? "multilingual-e5-base"
-          : null;
+          : settings.provider === "remote" && remote.dimensions > 0
+            ? remoteProviderKey(remote.model, remote.dimensions)
+            : null;
+
+    if (settings.provider === "remote" && !dlcProviderKey) {
+      new Notice(
+        "Run “Test connection” first — the vector width has to be known before an index can be built.",
+      );
+      return;
+    }
 
     if (dlcProviderKey) {
       if (!state.startRebuildFor) {
@@ -236,8 +322,13 @@
     {@const meta = PROVIDER_META[pendingProvider]}
     <div class="banner warn" role="status">
       {#if pendingBuilding}
-        Building the {meta?.label ?? pendingProvider} index: model download
-        ({meta?.size ?? ""}) then indexing, ~{meta?.seconds ?? ""}.
+        {#if meta}
+          Building the {meta.label} index: model download ({meta.size}) then
+          indexing, ~{meta.seconds}.
+        {:else}
+          Building the <code>{pendingProvider}</code> index on the embedding
+          server.
+        {/if}
         {storeSize.toLocaleString()} chunks indexed so far. Search keeps using
         the previous provider until it is done.
       {:else if pendingError}
@@ -246,8 +337,12 @@
           Retry
         </button>
       {:else}
-        {meta?.label ?? pendingProvider} index is not built yet ({meta?.size ??
-          ""} download, ~{meta?.seconds ?? ""}).
+        {#if meta}
+          {meta.label} index is not built yet ({meta.size} download, ~{meta.seconds}).
+        {:else}
+          The index for <code>{pendingProvider}</code> is not built yet. Search
+          keeps using the previous provider until it is.
+        {/if}
         <button type="button" class="banner-action" on:click={onRebuildNow}>
           Rebuild now
         </button>
@@ -319,7 +414,198 @@
         >multilingual, 768d, 512 context (~280 MB download)</span
       >
     </label>
+    <label>
+      <input
+        type="radio"
+        name="ss-provider"
+        value="remote"
+        checked={settings.provider === "remote"}
+        on:change={() => onProviderChange("remote")}
+      />
+      Remote server
+      <span class="hint"
+        >any OpenAI-compatible /v1/embeddings endpoint — LM Studio,
+        llama.cpp, Ollama, TEI. Nothing is downloaded into the vault.</span
+      >
+    </label>
   </fieldset>
+
+  {#if settings.provider === "remote"}
+    <fieldset disabled={saving || testing}>
+      <legend>Remote embedding server</legend>
+
+      <label class="field">
+        <span class="field-label">Base URL</span>
+        <input
+          type="text"
+          spellcheck="false"
+          value={remote.baseUrl}
+          placeholder="http://localhost:1234"
+          on:change={(e) =>
+            onRemoteTargetChange({
+              baseUrl: (e.target as HTMLInputElement).value,
+            })}
+        />
+      </label>
+      <p class="hint block">
+        The server root, a <code>/v1</code> root, or the full
+        <code>/v1/embeddings</code> URL — all three work.
+      </p>
+
+      <label class="field">
+        <span class="field-label">Model</span>
+        <input
+          type="text"
+          spellcheck="false"
+          list="ss-remote-models"
+          value={remote.model}
+          placeholder="text-embedding-…"
+          on:change={(e) =>
+            onRemoteTargetChange({
+              model: (e.target as HTMLInputElement).value,
+            })}
+        />
+      </label>
+      <datalist id="ss-remote-models">
+        {#each knownModels as id}
+          <option value={id}></option>
+        {/each}
+      </datalist>
+
+      <label class="field">
+        <span class="field-label">API key</span>
+        <input
+          type="password"
+          autocomplete="off"
+          value={remote.apiKey}
+          placeholder="(not needed for LM Studio)"
+          on:change={(e) =>
+            persistRemote({ apiKey: (e.target as HTMLInputElement).value })}
+        />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Query instruction</span>
+        <input
+          type="text"
+          value={remote.queryInstruction}
+          on:change={(e) =>
+            persistRemote({
+              queryInstruction: (e.target as HTMLInputElement).value,
+            })}
+        />
+      </label>
+      <p class="hint block">
+        Sent as <code>Instruct: …\nQuery: …</code> in front of search queries
+        only; indexed passages are always embedded bare. This is what
+        instruction-tuned retrieval models (F2LLM, E5, BGE, Qwen3-Embedding)
+        expect. Leave empty for symmetric models. Changing it does not
+        require a re-index — only queries are affected.
+      </p>
+
+      <div class="field-row">
+        <label class="field narrow">
+          <span class="field-label">Chunk budget (tokens)</span>
+          <input
+            type="number"
+            min="64"
+            max="8192"
+            value={remote.maxInputTokens}
+            on:change={(e) =>
+              persistRemote({
+                maxInputTokens: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+        <label class="field narrow">
+          <span class="field-label">Batch size</span>
+          <input
+            type="number"
+            min="1"
+            max="128"
+            value={remote.batchSize}
+            on:change={(e) =>
+              persistRemote({
+                batchSize: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+        <label class="field narrow">
+          <span class="field-label">Timeout (ms)</span>
+          <input
+            type="number"
+            min="1000"
+            max="600000"
+            step="1000"
+            value={remote.timeoutMs}
+            on:change={(e) =>
+              persistRemote({
+                timeoutMs: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+      </div>
+      <p class="hint block">
+        The chunk budget only sizes chunks — the server enforces its own
+        context. Changing it re-cuts every chunk boundary, so rebuild the
+        index afterwards.
+      </p>
+
+      <div class="field-row">
+        <label class="field narrow">
+          <span class="field-label">Max chars per text</span>
+          <input
+            type="number"
+            min="500"
+            max="200000"
+            step="500"
+            value={remote.maxInputChars}
+            on:change={(e) =>
+              persistRemote({
+                maxInputChars: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+        <label class="field narrow">
+          <span class="field-label">Max chars per request</span>
+          <input
+            type="number"
+            min="500"
+            max="1000000"
+            step="1000"
+            value={remote.maxRequestChars}
+            on:change={(e) =>
+              persistRemote({
+                maxRequestChars: Number((e.target as HTMLInputElement).value),
+              })}
+          />
+        </label>
+      </div>
+      <p class="hint block">
+        Safety ceilings for the server, not quality settings. A note that is
+        one long code block reaches the chunker as a single oversized chunk;
+        sending it whole can exhaust GPU memory and drop the model. Lower
+        these if a large model crashes mid-rebuild.
+      </p>
+
+      <div class="status">
+        <span>
+          {#if remote.dimensions > 0}
+            {remote.dimensions}-dimensional vectors
+          {:else}
+            Vector width not detected yet
+          {/if}
+        </span>
+        <button type="button" on:click={onTestConnection} disabled={testing}>
+          {testing ? "Testing…" : "Test connection"}
+        </button>
+      </div>
+
+      {#if testMessage}
+        <div class={testOk ? "banner info" : "error"}>{testMessage}</div>
+      {/if}
+    </fieldset>
+  {/if}
 
   {#if settings.provider !== "smart-connections"}
     <fieldset disabled={saving}>
@@ -456,5 +742,48 @@
     color: var(--text-error);
     font-size: 0.9em;
     margin-top: 0.5em;
+  }
+
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 0.75em;
+    margin: 0.4em 0;
+  }
+
+  .field-label {
+    flex: 0 0 11em;
+    font-size: 0.9em;
+  }
+
+  .field input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .field-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1em;
+  }
+
+  .field-row .field.narrow {
+    flex: 1 1 10em;
+  }
+
+  .field-row .field.narrow .field-label {
+    flex: 0 0 auto;
+  }
+
+  .field-row .field.narrow input {
+    width: 6em;
+    flex: 0 0 auto;
+  }
+
+  .hint.block {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.85em;
+    margin: 0 0 0.75em 0;
   }
 </style>

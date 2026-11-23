@@ -12,9 +12,19 @@
  *   provider="multilingual-e5-base"→ NativeProvider backed by the
  *                                    multilingual-e5-base store
  *
+ *   provider="remote"              → NativeProvider backed by the store
+ *                                    for the configured remote model
+ *
  * For "embedding-gemma" and "multilingual-e5-base", `deps.registry`
  * and `deps.embeddingProviders` must be supplied; when absent the
  * factory falls back to the native provider (degraded but safe).
+ *
+ * "remote" resolves its store key through `deps.getRemoteProviderKey()`
+ * rather than a constant, because the key encodes the configured model
+ * and vector width, both of which can change while the plugin is
+ * loaded. Reading it through a closure is what lets a settings change
+ * take effect without a reload — a captured string would pin the
+ * chooser to whatever was configured at startup.
  */
 
 import type McpToolsPlugin from "$/main";
@@ -28,9 +38,14 @@ import type { EmbeddingStore } from "./store";
 import type { EmbeddingStoreRegistry } from "./storeRegistry";
 
 /**
- * Canonical list of all known provider keys. Used by main.ts to scan
- * for stale per-provider index directories without hard-coding a
- * separate array.
+ * Canonical list of the *bundled* provider keys — the ones whose store
+ * directory name is known at compile time. Used for the startup
+ * stale-format probe and the hidden-folder purge sweep.
+ *
+ * The remote provider is deliberately absent: its key is derived at
+ * runtime from the configured model and width
+ * (`remoteProviderKey(model, dims)`), so both call sites take the
+ * active remote key as an extra argument instead.
  */
 export const ALL_PROVIDER_KEYS = [
   "native-minilm-l6-v2",
@@ -48,6 +63,12 @@ export type ProviderFactoryDeps = {
   /** Required for "embedding-gemma" and "multilingual-e5-base" cases. */
   registry?: EmbeddingStoreRegistry;
   embeddingProviders?: Record<string, EmbeddingProvider>;
+  /**
+   * Store key of the currently configured remote model, or null when
+   * the remote block is incomplete (no server, no model, or no detected
+   * width). Read on every chooser call — see the header.
+   */
+  getRemoteProviderKey?: () => string | null;
 };
 
 export type ProviderChooser = (
@@ -129,6 +150,22 @@ export function createProviderFactory(
         return buildNativeSearchProvider(
           ep,
           deps.registry.storeFor("multilingual-e5-base", 768),
+        );
+      }
+      case "remote": {
+        const key = deps.getRemoteProviderKey?.() ?? null;
+        const ep = key ? deps.embeddingProviders?.[key] : undefined;
+        // Unconfigured, unreachable at load, or width not yet detected:
+        // fall back to native rather than handing back a provider whose
+        // store cannot be read. The settings UI is where the user learns
+        // why; search keeps working meanwhile.
+        if (!key || !ep || !deps.registry) return buildNative();
+        // Width comes from the provider, not the settings block, so the
+        // store is always opened at the same width the vectors were
+        // written with.
+        return buildNativeSearchProvider(
+          ep,
+          deps.registry.storeFor(key, ep.dimensions),
         );
       }
     }
