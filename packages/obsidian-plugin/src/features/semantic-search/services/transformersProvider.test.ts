@@ -563,3 +563,100 @@ describe("TransformersProviderImpl — batched pipeline calls", () => {
     expect(loads).toBe(0);
   });
 });
+
+describe("TransformersProviderImpl — sub-batch concurrency (#14)", () => {
+  /**
+   * A pipeline whose vectors carry the number of the text they embed
+   * (`t7` → 7 in every slot), whose calls end in reverse order of their
+   * start, and which records how many calls were in flight at once.
+   */
+  function makeTrackingFactory(opts: {
+    concurrency?: number;
+    failOn?: string;
+  }): {
+    factory: (model: string) => Promise<MockPipelineFn>;
+    started: string[][];
+    peak: () => number;
+  } {
+    const started: string[][] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const factory = async (_model: string): Promise<MockPipelineFn> => {
+      const pipe = (async (input: string | string[]) => {
+        const texts = Array.isArray(input) ? input : [input];
+        started.push(texts);
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        // Later calls end first, so order can only come from the provider.
+        await new Promise((r) => setTimeout(r, 20 - started.length));
+        inFlight--;
+        if (opts.failOn && texts.includes(opts.failOn)) {
+          throw new Error(`boom on ${opts.failOn}`);
+        }
+        const data = new Float32Array(2 * texts.length);
+        texts.forEach((t, i) =>
+          data.fill(Number(t.slice(1)), i * 2, i * 2 + 2),
+        );
+        return { data, dims: [texts.length, 2] };
+      }) as MockPipelineFn & { concurrency?: () => number };
+      if (opts.concurrency !== undefined) {
+        pipe.concurrency = () => opts.concurrency!;
+      }
+      return pipe;
+    };
+    return { factory, started, peak: () => peak };
+  }
+
+  function providerWith(factory: (model: string) => Promise<MockPipelineFn>) {
+    return createTransformersProvider({
+      modelId: "test-model",
+      providerKey: "test",
+      dimensions: 2,
+      maxInputTokensByBackend: { wasm: 512, webgpu: 512 },
+      modelSizeBytes: 1,
+      taskPrompt: (t) => t,
+      pipelineFactory: factory,
+      batchSize: 2,
+    });
+  }
+
+  const texts = Array.from({ length: 9 }, (_, i) => `t${i}`);
+
+  test("runs up to concurrency() sub-batches at once and keeps input order", async () => {
+    const { factory, started, peak } = makeTrackingFactory({ concurrency: 3 });
+    const vectors = await providerWith(factory).embed(texts, "document");
+
+    expect(peak()).toBe(3);
+    expect(started.flat().sort()).toEqual([...texts].sort());
+    expect(vectors.map((v) => v[0])).toEqual(texts.map((_, i) => i));
+  });
+
+  test("a pipeline with no concurrency() runs its sub-batches one at a time", async () => {
+    const { factory, peak } = makeTrackingFactory({});
+    const vectors = await providerWith(factory).embed(texts, "document");
+
+    expect(peak()).toBe(1);
+    expect(vectors.map((v) => v[0])).toEqual(texts.map((_, i) => i));
+  });
+
+  test("never runs more sub-batches than there are", async () => {
+    const { factory, peak } = makeTrackingFactory({ concurrency: 4 });
+    await providerWith(factory).embed(["t0", "t1", "t2"], "document");
+
+    expect(peak()).toBe(2);
+  });
+
+  test("a failed sub-batch rejects the call and starts no further ones", async () => {
+    const { factory, started } = makeTrackingFactory({
+      concurrency: 2,
+      failOn: "t0",
+    });
+
+    await expect(
+      providerWith(factory).embed(texts, "document"),
+    ).rejects.toThrow("boom on t0");
+    // t0's batch fails; only the batch already running beside it may
+    // hand its lane one more before the failure is seen.
+    expect(started.length).toBeLessThan(5);
+  });
+});

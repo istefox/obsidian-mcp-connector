@@ -107,11 +107,28 @@ class TransformersProviderImpl implements EmbeddingProvider {
     // One pipeline call per sub-batch: tokenization and the forward
     // pass are batched by Transformers.js, which beats per-text calls
     // by a wide margin (kernel-launch and tensor-upload overhead
-    // dominates at batch size 1, especially on WebGPU). Sub-batches
-    // run sequentially — concurrent pipe() calls on one ORT session
-    // queue anyway but multiply peak memory.
-    const out: Float32Array[] = [];
+    // dominates at batch size 1, especially on WebGPU).
+    //
+    // A pipeline that runs each call on its own ORT session (the
+    // embedding worker pool, ADR-0036) gets up to `concurrency()`
+    // sub-batches of this text list at once, so one long note keeps
+    // every worker busy instead of one (#14: a rebuild checkpoint waits
+    // for the longest file in flight, and with its sub-batches in series
+    // the other workers sat idle until the idle release dropped them).
+    // Anything else stays at one: concurrent calls on a single session
+    // queue anyway and only multiply peak memory.
+    const starts: number[] = [];
     for (let start = 0; start < texts.length; start += batchSize) {
+      starts.push(start);
+    }
+    const width = Math.max(
+      1,
+      Math.min(starts.length, Math.floor(pipe.concurrency?.() ?? 1)),
+    );
+    const rows: Float32Array[][] = new Array(starts.length);
+    let next = 0;
+    const runBatch = async (at: number): Promise<void> => {
+      const start = starts[at] as number;
       const batch = texts
         .slice(start, start + batchSize)
         .map((text) => this.opts.taskPrompt(text, role));
@@ -130,17 +147,34 @@ class TransformersProviderImpl implements EmbeddingProvider {
         result.dims?.length === 2 && typeof result.dims[1] === "number"
           ? result.dims[1]
           : this.opts.dimensions;
+      const own: Float32Array[] = [];
       for (let row = 0; row < batch.length; row++) {
         // Copy each row into an owned Float32Array, independent of the
         // pipeline's internal buffer.
-        out.push(
+        own.push(
           new Float32Array(
             result.data.subarray(row * stride, (row + 1) * stride),
           ),
         );
       }
-    }
-    return out;
+      rows[at] = own;
+    };
+    // A failed sub-batch stops this lane from taking more; the others
+    // finish the call they are in, and the first error is thrown.
+    let failure: { err: unknown } | null = null;
+    const lane = async (): Promise<void> => {
+      while (!failure && next < starts.length) {
+        const at = next++;
+        try {
+          await runBatch(at);
+        } catch (err) {
+          failure ??= { err };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: width }, lane));
+    if (failure) throw (failure as { err: unknown }).err;
+    return rows.flat();
   }
 
   /**
