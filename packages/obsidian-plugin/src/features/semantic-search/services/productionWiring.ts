@@ -19,7 +19,14 @@ import {
   createModelDownloader,
   type SemanticSearchState,
 } from "../index";
-import { createEmbedder, realPipelineFactory } from "./embedder";
+import {
+  createEmbedder,
+  DEFAULT_MODEL,
+  probeBackend,
+  realPipelineFactory,
+  type DtypeSpec,
+} from "./embedder";
+import { installVectorProbeHook } from "./vectorProbeHook";
 import { embeddingWorkerSpawner } from "./embeddingWorkerSpawn";
 import {
   createWorkerPipelineFactory,
@@ -39,8 +46,12 @@ import {
 import {
   createEmbeddingGemmaProvider,
   EMBEDDING_GEMMA_BACKEND,
+  EMBEDDING_GEMMA_MODEL_ID,
 } from "./embeddingGemmaProvider";
-import { createMultilingualE5Provider } from "./multilingualE5Provider";
+import {
+  createMultilingualE5Provider,
+  MULTILINGUAL_E5_MODEL_ID,
+} from "./multilingualE5Provider";
 import { detectNonAsciiRatio } from "./langDetect";
 import type { VaultAdapter } from "./store";
 import { FORMAT_VERSION, SEGMENT_COUNT } from "./store";
@@ -69,6 +80,12 @@ export function isIndexableFile(f: unknown): f is TFile {
 }
 
 /** First wait after a failed native first start, doubling up to the cap. */
+// Weight precision per backend, read by the model downloaders below and
+// by the vector probe's model table (#680). The reasons are next to the
+// downloaders.
+const GEMMA_DTYPE: DtypeSpec = { wasm: "q8", webgpu: "q4" };
+const E5_DTYPE: DtypeSpec = { wasm: "q8", webgpu: "q8" };
+
 const START_RETRY_BASE_MS = 30_000;
 const START_RETRY_CAP_MS = 10 * 60_000;
 
@@ -209,6 +226,41 @@ export async function wireSemanticSearch(
     }),
   });
 
+  // Diagnostic build only (#680). The comparison is written out here, not
+  // behind a helper, so every other build folds it to dead code.
+  if (process.env.MCP_VECTOR_PROBE === "1") {
+    installVectorProbeHook(globalThis as Record<string, unknown>, {
+      pipelineFactory,
+      machineBackend: () => probeBackend(),
+      models: [
+        {
+          label: "MiniLM",
+          modelId: DEFAULT_MODEL,
+          maxInputTokens: NATIVE_MAX_INPUT_TOKENS,
+          queryPrefix: "",
+          passagePrefix: "",
+        },
+        {
+          label: "Multilingual E5 base",
+          modelId: MULTILINGUAL_E5_MODEL_ID,
+          dtype: E5_DTYPE,
+          maxInputTokens: 512,
+          queryPrefix: "query: ",
+          passagePrefix: "passage: ",
+        },
+        {
+          label: "EmbeddingGemma 300M",
+          modelId: EMBEDDING_GEMMA_MODEL_ID,
+          dtype: GEMMA_DTYPE,
+          backend: EMBEDDING_GEMMA_BACKEND,
+          maxInputTokens: 512,
+          queryPrefix: "task: search result | query: ",
+          passagePrefix: "title: none | text: ",
+        },
+      ],
+    });
+  }
+
   // Native MiniLM — always available (store loads lazily).
   const nativeDownloader = createModelDownloader({
     innerFactory: pipelineFactory,
@@ -236,14 +288,14 @@ export async function wireSemanticSearch(
   // and q4f16 do not work for it. E5's q4 is 823 MB, so it keeps q8.
   const gemmaDownloader = createModelDownloader({
     innerFactory: pipelineFactory,
-    dtype: { wasm: "q8", webgpu: "q4" },
+    dtype: GEMMA_DTYPE,
     // Gemma's vectors are wrong on WebGPU (ADR-0034).
     backend: EMBEDDING_GEMMA_BACKEND,
   });
   const gemmaProvider = createEmbeddingGemmaProvider(gemmaDownloader.factory);
   const e5Downloader = createModelDownloader({
     innerFactory: pipelineFactory,
-    dtype: { wasm: "q8", webgpu: "q8" },
+    dtype: E5_DTYPE,
   });
   const e5Provider = createMultilingualE5Provider(e5Downloader.factory);
 

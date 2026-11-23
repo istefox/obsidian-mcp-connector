@@ -7,6 +7,7 @@ import process from "process";
 import { compile, preprocess } from "svelte/compiler";
 import { version } from "../../package.json" assert { type: "json" };
 import { checkWorkerSource } from "./scripts/workerSourceCheck";
+import { vectorProbeBundleProblem } from "./scripts/vectorProbeBundleCheck";
 import svelteConfig from "./svelte.config.js";
 
 // The version line makes every release's main.js byte-unique. Identical
@@ -26,6 +27,9 @@ if you want to view the source, please visit https://github.com/istefox/obsidian
 const args = process.argv.slice(2);
 const isWatch = args.includes("--watch");
 const isProd = args.includes("--prod");
+// Diagnostic bundle for the vector probe (#680). Never part of a release:
+// `build` and `release` do not pass it, and `zip.ts` refuses its output.
+const withVectorProbe = args.includes("--vector-probe");
 
 // `onnxruntime-node` redirect + `sharp` stub. @huggingface/transformers v4
 // still imports `onnxruntime-node` at the backend level and chooses it
@@ -127,6 +131,7 @@ const mode = isProd ? "production" : "development";
 // reads its environment exactly as the rest of main.js does.
 const sharedDefine = {
   "process.env.NODE_ENV": JSON.stringify(mode),
+  "process.env.MCP_VECTOR_PROBE": JSON.stringify(withVectorProbe ? "1" : ""),
   "import.meta.filename": JSON.stringify("mcp-tools-for-obsidian.ts"),
   // Bundled deps (notably `@huggingface/transformers/src/env.js`) call
   // `fileURLToPath(import.meta.url)` eagerly at module init. Without
@@ -418,6 +423,18 @@ async function build() {
           `Transformers.js must enter main.js through transformersFactory only (ADR-0036).`,
       );
       process.exit(1);
+    }
+
+    // The probe's access point exists in a `--vector-probe` bundle only.
+    const probeProblem = vectorProbeBundleProblem(bundle, withVectorProbe);
+    if (probeProblem !== null) {
+      console.error(`[bun.config] ${probeProblem} (#680).`);
+      process.exit(1);
+    }
+    if (withVectorProbe) {
+      console.warn(
+        "[bun.config] DIAGNOSTIC BUNDLE: main.js holds the vector probe hook. Not for release.",
+      );
     }
 
     // The worker starts from the text of two functions in this file.

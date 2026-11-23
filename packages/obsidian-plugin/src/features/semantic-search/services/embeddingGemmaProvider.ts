@@ -13,11 +13,14 @@ import { createTransformersProvider } from "./transformersProvider";
  */
 export const EMBEDDING_GEMMA_BACKEND = "wasm" as const;
 
+export const EMBEDDING_GEMMA_MODEL_ID =
+  "onnx-community/embeddinggemma-300m-ONNX";
+
 export function createEmbeddingGemmaProvider(
   pipelineFactory: PipelineFactory,
 ): EmbeddingProvider {
   return createTransformersProvider({
-    modelId: "onnx-community/embeddinggemma-300m-ONNX",
+    modelId: EMBEDDING_GEMMA_MODEL_ID,
     providerKey: "embedding-gemma-300m",
     dimensions: 768,
     // WASM capped at 512 — onnxruntime-web@1.26.0 SafeInt overflow at 2048

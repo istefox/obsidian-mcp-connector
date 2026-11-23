@@ -25,7 +25,7 @@
  * model download, no WASM, no sharp transitive resolution.
  */
 
-const DEFAULT_MODEL = "Xenova/all-MiniLM-L6-v2";
+export const DEFAULT_MODEL = "Xenova/all-MiniLM-L6-v2";
 const DEFAULT_CACHE_SIZE = 32;
 const DEFAULT_IDLE_MS = 60_000;
 // Max texts per pipeline call in embedBatch. The tokenizer pads to the

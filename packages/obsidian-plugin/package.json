@@ -19,6 +19,7 @@
 		"gen:mcp-app": "bun scripts/gen-mcp-app-source.ts",
 		"release": "bun run build && bun run zip",
 		"zip": "bun scripts/zip.ts",
+		"build:vector-probe": "bun run check && bun bun.config.ts --prod --vector-probe && bun scripts/build-vector-probe.ts",
 		"build:headless": "bun bun.headless.config.ts",
 		"test:headless": "bun run build:headless && bun scripts/headless-smoke.ts",
 		"test:mcpb": "bun scripts/mcpb-smoke.ts",
